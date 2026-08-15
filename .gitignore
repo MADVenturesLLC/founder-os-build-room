@@ -1,0 +1,23 @@
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor/tool state
+.vscode/
+.idea/
+*.swp
+
+# Never commit secrets
+.env
+.env.*
+*.pem
+*.key
+credentials*.json
+
+# Node
+node_modules/
+dist/
+.tsbuildinfo
+
+# Build artifacts
+*.log
