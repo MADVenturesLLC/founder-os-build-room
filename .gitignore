@@ -10,6 +10,7 @@ Thumbs.db
 # Never commit secrets
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 credentials*.json
