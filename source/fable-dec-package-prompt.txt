@@ -1,0 +1,375 @@
+ guessing. </role>
+
+<goal>
+Draft the narrow FounderOS decision required to separately resume the “MADVentures_OS Build Room” for product definition through WF-03 — Idea to PRD only.
+
+This is Option 1:
+
+Resume the Build Room only far enough to run WF-03 and produce a governed Build Room PRD proposal for Founder review.
+
+The decision must not authorize WF-04, Slice 1, repository creation, implementation, infrastructure, credentials, agent execution, deployment, merge, or production operation.
+
+Produce a proposed decision package only. Do not modify a repository, create a branch, open a pull request, reserve an ID, change infrastructure, or execute any implementation. </goal>
+
+<current_context>
+Repository to inspect:
+
+MADVenturesLLC/FounderOS
+
+Published Build Room planning package:
+
+https://claude.ai/code/artifact/34072ac3-28f3-4e8b-99d7-442354a5c4b7
+
+Treat that architecture package as planning evidence only. It is not an approved PRD, canonical FounderOS authority, an implementation authorization, or a source of truth.
+
+The following observations were previously reported at FounderOS commit:
+
+d2fa2a0d815263700a331976f53f6038b13599c2
+
+They are provisional and must be reverified against the current default-branch head and relevant open pull requests:
+
+* DEC-20260807-01 explicitly excludes and pauses the MADVentures_OS Build Room until the Founder separately resumes it.
+* WF-03 — Idea to PRD is active and governs movement from a feature idea through acceptance, product-review questions, PRD drafting, a noncanonical roadmap draft, Founder scope approval, and its completion gate.
+* WF-04 — PRD to Build begins only after an approved PRD and separate build authority.
+* WF-18 — Multi-Agent Structural Build is draft, source_of_truth: false, and blocked pending Founder review and promotion.
+* WF-11 and WF-13 may describe future handoff and review behavior but do not independently authorize this product or activate its runtime.
+* The planning package recommends a standalone founder-os-build-room repository, but that recommendation is not implementation authority.
+
+Correct these observations wherever fresh repository evidence differs.
+</current_context>
+
+<authority_order>
+Determine and apply the repository’s actual authority order.
+
+At minimum, distinguish between:
+
+1. Founder-authored active decisions and constitutional doctrine.
+2. Active source-of-truth workflows and registries.
+3. Current role and execution-surface authority.
+4. Approved product documents.
+5. Draft workflows, proposals, planning artifacts, and historical evidence.
+6. External references and architectural recommendations.
+
+A lower-authority artifact must not override a higher-authority source.
+
+When authorities conflict, preserve the stricter boundary and report the conflict. Do not silently reconcile it.
+</authority_order>
+
+<required_research>
+Use high effort and inspect fresh evidence from the current default-branch head and relevant open pull requests.
+
+Inspect all files necessary to establish:
+
+* The exact text, status, scope, and continuing effect of DEC-20260807-01.
+* The current canonical definition, owner, participants, gates, and completion state of WF-03.
+* The entry conditions and authority boundary of WF-04.
+* The status of WF-18 in both its workflow file and workflow registry.
+* Any relevant future relationship to WF-11 and WF-13.
+* Product philosophy and product-brief requirements.
+* Roadmap rules and the distinction between canonical and noncanonical entries.
+* Runtime boundaries and repository write boundaries.
+* Agent rules and prohibitions.
+* Role registry and execution-surface registry.
+* Decision-log requirements.
+* Decision-ID reservations.
+* Decision naming and frontmatter conventions.
+* The repository’s canonical decision-ID allocation or collision-check procedure.
+* Any open PR that could change these findings.
+
+Every material current-state claim must cite:
+
+* The exact repository SHA.
+* The exact file path.
+* The relevant heading, field, or line range when available.
+
+Do not cite the previously reported SHA as current evidence unless it remains the current relevant authority.
+
+Perform the complete canonical five-source decision-ID collision check. At minimum, account for:
+
+* Existing decision files.
+* The decision log or index.
+* Decision-ID reservations.
+* Relevant open pull requests and proposed files.
+* Recent/default-branch history or any additional allocation source required by the repository’s canonical guard.
+
+If FounderOS defines a more precise five-source procedure, follow that procedure exactly.
+
+Return the next clean canonical DEC identifier, but do not reserve it.
+</required_research>
+
+<decision_scope>
+If fresh evidence confirms that a new decision is required and lawful, draft a proposed DEC whose operative effect is limited to the following:
+
+1. Satisfy DEC-20260807-01’s requirement that the Founder separately resume the MADVentures_OS Build Room.
+2. Resume it in a product-definition-only state.
+3. Authorize only the current WF-03 owner and participants to perform the actions already governed by WF-03.
+4. Permit preparation of a Build Room PRD draft.
+5. Permit preparation of the noncanonical roadmap draft entry required by WF-03.
+6. Require the existing WF-03 Founder acceptance gate.
+7. Require answers to the ten product-review questions or the current canonical equivalent if WF-03 has changed.
+8. Require Founder scope approval and every existing WF-03 completion condition.
+9. Treat the published architecture package as reference evidence available to WF-03—not as an approved PRD, canonical authority, source of truth, or implementation mandate.
+10. State explicitly that completion of WF-03 does not automatically initiate WF-04.
+11. Require a later, separate Founder decision before WF-04, Slice 1, repository creation, or any implementation can begin.
+12. Preserve every stricter constitutional, workflow, runtime, credential, repository, and Founder-approval boundary already in force.
+13. Define the exact outcome if WF-03 rejects or defers the idea: the Build Room returns to or remains in a paused state, and no downstream authority is created.
+14. Keep the proposed DEC noncanonical and inactive until the Founder personally reviews and ratifies it through the required process.
+
+Follow current FounderOS DEC structure and frontmatter conventions. Do not invent a new document format if a canonical one exists.
+</decision_scope>
+
+<negative_constraints>
+The proposed decision must explicitly state that it does not authorize:
+
+* WF-04 — PRD to Build.
+* Any implementation activity.
+* Slice 1.
+* packages/contracts.
+* packages/ledger.
+* Creation of founder-os-build-room.
+* Creation of any repository, branch, commit, or pull request.
+* Railway, Cloudflare, database, queue, storage, or hosting changes.
+* A local gateway or daemon.
+* OAuth integrations.
+* API integrations.
+* Billing or subscription changes.
+* Provider configuration changes.
+* Custody, transfer, storage, or use of provider credentials.
+* Live agent execution.
+* Multi-agent orchestration.
+* Worktree creation.
+* Local-drive access.
+* GitHub write operations.
+* Promotion or activation of WF-18.
+* G3 Slice B+ MP-1 activation.
+* Autonomous approval, merge, deployment, release, or production operation.
+* Changes to current repository ownership or write boundaries.
+* Any agent claiming Founder authority.
+* Any agent writing the Founder’s personal approval, ratification, attestation, or voice.
+* Any automatic downstream authorization resulting from completion of WF-03.
+
+Do not use permissive language such as “including but not limited to” where it could unintentionally broaden authority.
+
+Do not convert architectural recommendations into decisions.
+
+Do not describe WF-18 as active unless fresh canonical evidence proves that its status has changed.
+
+Do not draft a Founder-voice ratification statement, imitate Mike’s voice, or pre-sign the decision for him.
+
+Do not include unresolved placeholders, invented file paths, fabricated citations, or assumed decision IDs.
+</negative_constraints>
+
+<working_method>
+When sufficient evidence exists, proceed without asking unnecessary questions.
+
+Ask one concise, consolidated blocking question only if a genuine Founder-only choice would materially change the authority granted by the DEC.
+
+Do not ask for preferences that can be resolved from canonical repository conventions.
+
+If useful, use parallel research for independent evidence gathering. Before finalizing, use a fresh-context verifier that did not author the draft to check:
+
+* Authority scope.
+* Decision-ID availability.
+* Workflow status.
+* Frontmatter conformity.
+* Negative constraints.
+* Traceability.
+* Citation accuracy.
+* Whether any clause could be interpreted as implementation authority.
+
+Do not expose private chain-of-thought. Return findings, evidence, decisions, uncertainties, and verification results.
+</working_method>
+
+<output_specification>
+Return one complete Markdown planning artifact containing the following sections:
+
+## 1. Controlled Verdict
+
+State findings first.
+
+Answer:
+
+* Is a separate resumption DEC still required?
+* Is the proposed WF-03-only scope lawful under current FounderOS authority?
+* Is this DEC sufficient to begin WF-03?
+* What remains blocked?
+
+Use one of:
+
+* READY FOR FOUNDER REVIEW
+* BLOCKED
+* DEC NO LONGER REQUIRED
+
+Explain the evidence supporting the verdict.
+
+## 2. Current Authority Findings
+
+Provide a table containing:
+
+* Finding.
+* Status.
+* Authority level.
+* Exact SHA.
+* Exact file.
+* Evidence location.
+* Effect on this DEC.
+
+Explicitly report the verified status of WF-03, WF-04, WF-18, WF-11, WF-13, and DEC-20260807-01.
+
+## 3. Decision-ID Collision Check
+
+Show the results of the canonical five-source check.
+
+Include:
+
+* Every source checked.
+* Search result.
+* Potential collisions.
+* Reservations.
+* Open-PR conflicts.
+* The next clean DEC identifier.
+
+Do not reserve or mutate the identifier.
+
+## 4. Exact Proposed DEC Markdown
+
+Provide the complete proposed DEC as a single fenced Markdown block.
+
+It must include:
+
+* The clean proposed DEC filename.
+* Complete canonical frontmatter.
+* Proposed/inactive status.
+* source_of_truth: false unless current conventions require another equivalent.
+* Background.
+* Evidence and authority.
+* Decision.
+* Authorized scope.
+* Explicit nonauthorization.
+* WF-03 gates.
+* Relationship to the architecture package.
+* Pause, rejection, and deferral behavior.
+* Completion condition.
+* Requirement for a later Founder decision.
+* Risks and drift protections.
+* Verification requirements.
+* Founder action required.
+
+The DEC must be complete without pretending that Founder ratification has occurred.
+
+Do not insert a fake Founder statement or a placeholder for one. Instead, identify outside the DEC the semantic facts the Founder must personally confirm during ratification.
+
+## 5. Companion-File Amendment Map
+
+List every companion file that would require an amendment if the Founder ratifies the DEC.
+
+For each file provide:
+
+* Exact path.
+* Why it changes.
+* Exact section or entry affected.
+* Proposed semantic change.
+* Whether the change is required immediately upon ratification or later during WF-03.
+* Any ordering dependency.
+
+Provide exact proposed snippets when repository conventions make them deterministic.
+
+Do not make the changes.
+
+## 6. Requirement-to-Clause Traceability
+
+Create a table mapping every required effect and every negative constraint in this prompt to:
+
+* DEC section.
+* Exact operative clause.
+* Verification method.
+
+No requirement may be unmapped.
+
+## 7. Authority Matrix
+
+Provide an explicit matrix with two columns:
+
+* Authorized after Founder ratification.
+* Still prohibited after Founder ratification.
+
+The authorized column must contain only WF-03 product-definition activity.
+
+## 8. Verification Package
+
+Provide:
+
+* Exact read-only commands used or recommended.
+* Frontmatter/schema checks.
+* Decision-ID checks.
+* Workflow-status checks.
+* Repository-diff checks.
+* Negative-language checks.
+* A check proving the DEC cannot be interpreted as WF-04 or Slice 1 authority.
+
+Report actual results separately from recommended future checks.
+
+Never claim a command ran unless tool output proves it.
+
+## 9. Founder Action Checklist
+
+Describe exactly what Mike must do personally, including:
+
+* Review the evidence and scope.
+* Confirm that only WF-03 is being authorized.
+* Confirm that implementation remains blocked.
+* Personally author the required Founder ratification language.
+* Approve or reject the proposed DEC through the canonical process.
+* Initiate WF-03 only after the DEC becomes active.
+
+List the semantic facts the Founder’s personally authored ratification must establish, but do not write the ratification in his voice.
+
+## 10. Remaining Blockers
+
+State clearly that, even after this DEC is ratified, the following remain blocked unless separately authorized:
+
+* WF-04.
+* Slice 1.
+* Repository creation.
+* Implementation.
+* Infrastructure.
+* Provider authentication and credentials.
+* Live agent orchestration.
+* GitHub writes beyond the governed WF-03 artifacts.
+* WF-18 promotion.
+* Merge.
+* Deployment.
+* Production operation.
+  </output_specification>
+
+<verification_gate>
+Before returning the artifact, verify all of the following:
+
+* The DEC resumes Build Room for WF-03 only.
+* No clause grants implicit WF-04 authority.
+* No clause grants Slice 1 or implementation authority.
+* WF-18 is not silently activated or promoted.
+* The architecture package remains noncanonical reference evidence.
+* Founder authority and Founder voice are preserved.
+* WF-03 rejection or deferral returns the initiative to a paused state.
+* Completion of WF-03 creates no automatic downstream authority.
+* The proposed DEC uses a collision-checked identifier.
+* All current-state claims have fresh SHA-and-file evidence.
+* Every requirement and prohibition is traceable to an operative clause.
+* The companion amendment map does not perform any writes.
+* No placeholder, fabricated citation, or unresolved drafting choice remains.
+* A fresh-context verification pass finds no authority leak.
+
+If any check fails, repair the draft and run the verification again before returning it.
+</verification_gate>
+
+<stop_condition>
+Stop after delivering the proposed DEC planning package.
+
+Do not:
+
+* Commit anything.
+* Create or modify repository files.
+* Open a branch or pull request.
+* Reserve the DEC identifier.
+* Ratify or activate the DE
