@@ -65,8 +65,14 @@ export function ordinal(state: State): number {
 
 /**
  * Inclusive range over declaration order, as used by T18's `{PUSHED..AUTHORIZED}`.
- * Ruling 2 fixes that range to exactly six states; `range()` is the mechanism
- * that derives it rather than hard-coding the list twice.
+ * Founder Ruling — Declaration Order Canonical, ruling 2 fixes that range to
+ * exactly six states; `range()` is the mechanism that derives it rather than
+ * hard-coding the list twice.
+ *
+ * The section matters: the other numbered section in the same decision,
+ * `Non-Plain Transition Semantics`, has its OWN ruling 2 (the RECONCILING
+ * self-loop bar), and it is the section named elsewhere in this file — so a
+ * bare "ruling 2" here resolves to the wrong ruling.
  */
 export function range(from: State, to: State): readonly State[] {
   const start = ordinal(from);

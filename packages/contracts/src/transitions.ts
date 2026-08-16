@@ -274,7 +274,12 @@ export const GUARDS: Readonly<Record<GuardId, GuardFn>> = {
   // T19 — typed cause
   G19: (_s, f) => (nonEmpty(f.typedCause) ? PASS : fail('no typed cause')),
   // T20 — state verified consistent; and `manual_required` not set
-  //       *(guard amended by Founder ruling 2026-08-15 — not the package's text)*
+  //       *(amended by `Founder Ruling — manual_required Blocks Resume`
+  //       (2026-08-15), unnumbered operative text — not the package's text.
+  //       Named rather than dated: all three Founder Ruling sections carry
+  //       2026-08-15, and the plausible mis-resolution — Non-Plain ruling 5,
+  //       "manual_required has one exit" — is about T21/T22 and never touches
+  //       T20's guard.)*
   G20: (s, f) => {
     if (f.stateVerifiedConsistent !== true) return fail('state not verified consistent');
     if (s.overlays.includes('manual_required')) {
