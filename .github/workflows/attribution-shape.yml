@@ -1,0 +1,146 @@
+# ACTIVE — authorized AND scheduled by DEC-20260718-05 clauses 19/21
+# (Layer 2 shape-only attribution check, activated in the same sequence as
+# Layer 1 per the founder's 2026-07-18 ruling). Modeled on path-audit.yml /
+# DEC-20260718-02's "gate, never edit" pattern. PR-body mode, hardening,
+# and promotion to a required check are proposed under DEC-20260721-01.
+#
+# SHAPE-ONLY (DEC-20260718-05 clause 20): this check validates the FORM of
+# the Attribution block — it never asserts that an attested Role-Id is true,
+# who authored a PR body, or which surface a branch was.
+#
+# Clause 19(c) path filter: `**` — every tracked path in the repository; a
+# commit is applicable if it changes at least one file. See the script
+# header for the full statement.
+#
+# Untrusted-input handling (independent review, 2026-07-21): every
+# PR-controlled value (branch name, PR body) reaches the checker through
+# env mappings only — never inline shell interpolation — and on
+# pull_request events the checker is executed from the TRUSTED BASE
+# revision, so a PR cannot weaken the gate that judges it. Residual:
+# workflow-file edits themselves — covered by the founder-approval rule
+# below and Layer 1 (DEC-20260718-04).
+#
+# Cursor Cloud Agent PR-body chrome (2026-07-25): the platform wraps the
+# author body in CURSOR_AGENT_PR_BODY_* markers and appends an agent-link
+# <div> after the Attribution trailer block. The prbody step strips that
+# platform chrome (markers + trailing cursor.com agent footer) before
+# invoking the trusted checker so the end-anchored gate judges the author
+# description. Trailer rules are unchanged.
+#
+# Changes to this workflow's triggers, permissions, or steps require founder
+# approval before merge (same rule class as DEC-20260718-02 clause 4).
+
+name: Attribution Shape Check
+
+on:
+  pull_request:
+    # `edited` included so a body-only change re-runs the PR-body gate
+    # (independent review, 2026-07-21).
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  attribution-shape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for range + historical-branch checks)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select trusted checker (base revision on pull requests)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git show "$BASE_SHA:00-system/scripts/attribution-shape-check.sh" > "$RUNNER_TEMP/attribution-shape-check.sh" 2>/dev/null; then
+            echo "using trusted base-revision checker ($BASE_SHA)"
+          else
+            echo "checker absent on base — using PR revision"
+            cp 00-system/scripts/attribution-shape-check.sh "$RUNNER_TEMP/attribution-shape-check.sh"
+          fi
+
+      - name: Run attribution shape check (pull request)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          bash "$RUNNER_TEMP/attribution-shape-check.sh" pr \
+            "$BASE_SHA" "$HEAD_SHA" "$BRANCH"
+
+      - name: Run checker self-test (prbody parser regression cases)
+        if: github.event_name == 'pull_request'
+        run: |
+          if bash "$RUNNER_TEMP/attribution-shape-check.sh" selftest; then
+            echo "selftest mode present and green"
+          else
+            rc=$?
+            if [[ "$rc" -eq 2 ]]; then
+              echo "base-revision checker predates selftest mode — skipping (adopted after DEC-20260721-01 merges)"
+            else
+              exit "$rc"
+            fi
+          fi
+
+      - name: Run proposed-revision self-test (the PR's own parser must pass its own cases)
+        if: github.event_name == 'pull_request'
+        run: bash 00-system/scripts/attribution-shape-check.sh selftest
+
+      - name: Run attribution shape check (pull request body — DEC-20260721-01 item 1)
+        if: github.event_name == 'pull_request'
+        env:
+          # The PR body is untrusted input: it reaches the sanitizer and the
+          # checker ONLY via environment variables, never shell interpolation.
+          # Cursor Cloud Agent wraps the author body in
+          # CURSOR_AGENT_PR_BODY_* markers and appends an agent-link <div>
+          # after the Attribution trailer block. The end-anchored prbody
+          # gate must judge the author description, not that platform
+          # chrome — strip markers and a trailing cursor.com agent footer
+          # before invoking the trusted checker. Does not weaken the
+          # trailer rules; prose after trailers inside the author body
+          # still fails.
+          PR_BODY_RAW: ${{ github.event.pull_request.body }}
+        run: |
+          PR_BODY="$(python3 -c '
+          import os, re
+          raw = os.environ.get("PR_BODY_RAW", "")
+          # Drop wrapper marker comment lines only (keep surrounding content).
+          body = re.sub(
+              r"^[ \t]*<!--\s*CURSOR_AGENT_PR_BODY_(?:BEGIN|END)\s*-->[ \t]*\n?",
+              "",
+              raw,
+              flags=re.M,
+          )
+          # Drop trailing Cursor agent-link footer <div> (agents / background-agent).
+          body = re.sub(
+              r"\n*<div>\s*<a href=\"https://cursor\.com/(?:agents|background-agent)[\s\S]*?</div>\s*$",
+              "\n",
+              body,
+          )
+          print(body, end="")
+          ')"
+          export PR_BODY
+          if bash "$RUNNER_TEMP/attribution-shape-check.sh" prbody; then
+            exit 0
+          else
+            rc=$?
+            if [[ "$rc" -eq 2 ]]; then
+              echo "base-revision checker predates prbody mode — skipping (enforced once DEC-20260721-01 merges)"
+            else
+              exit "$rc"
+            fi
+          fi
+
+      - name: Run attribution shape check (final merged commit on main)
+        if: github.event_name == 'push'
+        run: >
+          bash 00-system/scripts/attribution-shape-check.sh main
+          "${{ github.sha }}"
