@@ -20,10 +20,16 @@ export const SHA = 'a'.repeat(40);
 export const SHA_OLD = 'b'.repeat(40);
 export const SHA_NEW = 'c'.repeat(40);
 
+/**
+ * A fixture, not a record of who did anything. `actualModel` carries a
+ * placeholder deliberately: the field's contract is "the model that ACTUALLY
+ * performed the work", so naming a real model here would state something the
+ * fixture cannot know and does not mean.
+ */
 export const ATTRIBUTION: Attribution = {
   roleId: 'builder',
-  actorId: 'session:claude-code/wf04-step3-slice1',
-  actualModel: 'claude-opus-5',
+  actorId: 'session:test-fixture',
+  actualModel: 'model-under-test',
   executionSurface: 'claude-code',
 };
 
