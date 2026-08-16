@@ -37,9 +37,17 @@ describe('AC#6 — the attributed record on every accepted transition', () => {
         const entry = result.entry;
         const where = `${state}|${event} (${entry.transition})`;
 
-        // 1 — accountable role
-        if (entry.attribution.roleId === null || !isRoleId(entry.attribution.roleId)) {
-          missing.push(`${where}: role`);
+        // 1 — accountable role.
+        //
+        // The check is "shape-valid attribution", NOT "non-null roleId".
+        // Direct-Founder work carries `roleId: null` with `actorId: 'founder'`,
+        // because `Role-Id: founder` is invalid under DEC-20260718-05 and the
+        // actor trailer stands alone. Requiring a non-null role here would
+        // reject a legitimately attributed founder-raised event — it passed
+        // only because this fixture always sets `builder`, which is fixture
+        // shape, not a property of the ledger.
+        if (!isAttributionShapeValid(entry.attribution)) {
+          missing.push(`${where}: attribution`);
         }
         // 2 — the model that ACTUALLY performed the work
         if (!entry.attribution.actualModel) missing.push(`${where}: actualModel`);
@@ -66,6 +74,46 @@ describe('AC#6 — the attributed record on every accepted transition', () => {
     assert.equal(fired, accepted.size, 'not every accepted pair produced a transition');
     assert.equal(fired, 61);
     assert.deepEqual(missing, [], 'accepted transitions with an incomplete attribution record');
+  });
+
+  it('accepts a founder-raised event carrying direct-Founder attribution', () => {
+    // The fixture always sets `roleId: 'builder'`, which is why the completeness
+    // check above used to pass while silently rejecting the direct-Founder
+    // shape. This drives the real thing end to end so the loosened assertion is
+    // backed by a case that exercises it. Found by CodeRabbit on PR #1.
+    const direct = {
+      roleId: null,
+      actorId: 'founder',
+      actualModel: 'n/a',
+      executionSurface: 'claude-code',
+    } as const;
+
+    const result = apply(
+      ledgerAt('ROOM_CREATED'),
+      makeEvent('scope.captured', { attribution: direct }),
+    );
+    assert.ok(result.ok && result.kind === 'transition', 'direct-Founder work was rejected');
+    if (result.ok && result.kind === 'transition') {
+      assert.equal(result.entry.attribution.roleId, null);
+      assert.equal(result.entry.attribution.actorId, 'founder');
+      assert.equal(result.entry.resultingState, 'SCOPED');
+    }
+  });
+
+  it('still rejects a null role whose actor is not the founder', () => {
+    const result = apply(
+      ledgerAt('ROOM_CREATED'),
+      makeEvent('scope.captured', {
+        attribution: {
+          roleId: null,
+          actorId: 'session:someone',
+          actualModel: 'm',
+          executionSurface: 'claude-code',
+        },
+      }),
+    );
+    assert.equal(result.ok, false, 'a roleless non-founder attribution was accepted');
+    if (!result.ok) assert.equal(result.code, 'attribution_invalid');
   });
 
   it('also records the transition and guard that admitted the event', () => {

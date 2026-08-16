@@ -101,6 +101,13 @@ export type ApplyResult =
   | { readonly ok: true; readonly kind: 'conjunction_pending'; readonly state: LedgerState; readonly awaiting: readonly EventName[] }
   | { readonly ok: false; readonly kind: 'rejected'; readonly code: RejectionCode; readonly reason: string };
 
+/**
+ * The transitions that move the branch head, derived from the table's guards
+ * (T9 "push confirmed remote", T12 "new head ≠ old head", T18 "git.pushed (new
+ * sha)"). Exported so a test can pin the set rather than trusting the comment.
+ */
+export const HEAD_MOVING_TRANSITIONS: readonly TransitionId[] = ['T9', 'T12', 'T18'];
+
 export function initialLedger(): LedgerState {
   return {
     state: 'ROOM_CREATED',
@@ -304,10 +311,24 @@ function commit(
     // MERGE_CONFIRMED. Single-use is enforced here, not merely asserted.
     authorization = { ...authorization, consumed: true };
   }
-  if (typeof facts.newHeadSha === 'string') {
-    headSha = facts.newHeadSha;
-  } else if (typeof facts.remoteHeadSha === 'string') {
-    headSha = facts.remoteHeadSha;
+  // Only the transitions that actually MOVE the branch head may update it.
+  //
+  // The head-moving set is derived from the transition table's own text, not
+  // chosen: T9 `git.pushed + pr.draft_created` guarded by "push confirmed
+  // remote"; T12 guarded by "new head ≠ old head"; and T18 `git.pushed (new
+  // sha)`. No other row moves the head — T10, T13, T15 and T16 compare against
+  // it but never advance it.
+  //
+  // Leaving this unscoped was a real defect: `headSha` is read by G12
+  // ("new head ≠ old head"), so an unrelated event carrying `newHeadSha` in its
+  // facts — `decision.answered`, say — could rewrite the head and change
+  // whether a later T12 passes.
+  if (HEAD_MOVING_TRANSITIONS.includes(spec.id)) {
+    if (typeof facts.newHeadSha === 'string') {
+      headSha = facts.newHeadSha;
+    } else if (typeof facts.remoteHeadSha === 'string') {
+      headSha = facts.remoteHeadSha;
+    }
   }
 
   const entry: LedgerEntry = {

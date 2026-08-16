@@ -227,6 +227,18 @@ export const GUARDS: Readonly<Record<GuardId, GuardFn>> = {
     if (f.authorizedSha !== f.remoteHeadSha || f.authorizedSha !== f.reviewedSha) {
       return fail('authorized_sha != head != reviewed_sha (SHA-stale)');
     }
+    // The asserted reviewed_sha must agree with the review the LEDGER actually
+    // recorded, not merely with the other asserted facts. Without this, T18
+    // clears `reviewedSha` and the room re-enters IN_REVIEW, from which
+    // T13 -> T14 -> T15 can reach AUTHORIZED without T10 ever running again —
+    // minting an authorization on caller-asserted facts alone, which is the
+    // push-voids invariant (clause 3) failing open.
+    if (s.reviewedSha === null) {
+      return fail('no ledger-recorded review — T10 has not run since the review was voided');
+    }
+    if (s.reviewedSha !== f.reviewedSha) {
+      return fail('asserted reviewed_sha does not match the ledger-recorded review');
+    }
     const live = s.authorization;
     if (live !== null && !live.consumed && !live.voided) {
       return fail('an authorization is already outstanding (single-use)');

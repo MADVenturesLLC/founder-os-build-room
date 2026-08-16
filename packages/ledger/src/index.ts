@@ -11,6 +11,7 @@ export {
   acceptedPairs,
   initialLedger,
   snapshot,
+  HEAD_MOVING_TRANSITIONS,
   type ApplyResult,
   type LedgerEntry,
   type LedgerState,

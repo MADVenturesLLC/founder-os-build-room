@@ -13,7 +13,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { STATES, TRANSITIONS, range, type State } from '../packages/contracts/src/index.js';
-import { apply, type LedgerState } from '../packages/ledger/src/index.js';
+import { apply, HEAD_MOVING_TRANSITIONS, type LedgerState } from '../packages/ledger/src/index.js';
 import { SHA, SHA_OLD, ledgerAt, makeEvent, PERMISSIVE_FACTS } from './helpers.js';
 
 describe('AC#3 / INV-1 — no MERGE_CONFIRMED without a consumed Founder authorization', () => {
@@ -208,6 +208,92 @@ describe('AC#3 / INV-3 — push-voids cascade (T18)', () => {
   it('is unconditional — G18 passes with no facts asserted at all', () => {
     const result = apply(ledgerAt('IN_REVIEW'), makeEvent('git.push.voided', { facts: {} }));
     assert.ok(result.ok && result.kind === 'transition');
+  });
+});
+
+describe('AC#3 / INV-2+INV-3 — a voided review cannot be re-authorized without a fresh T10', () => {
+  // Regression: T18 clears `reviewedSha` and returns the room to IN_REVIEW.
+  // T13 -> T14 -> T15 is then structurally available WITHOUT T10 running again.
+  // If G15 trusted only caller-asserted facts, it would mint an authorization
+  // on a review the ledger never recorded — the push-voids invariant failing
+  // open. Found by CodeRabbit on PR #1.
+  function drivePushVoidedToAuth() {
+    let state = ledgerAt('AUTHORIZED');
+    const voided = apply(state, makeEvent('git.push.voided'));
+    assert.ok(voided.ok && voided.kind === 'transition');
+    if (!(voided.ok && voided.kind === 'transition')) throw new Error('setup');
+    state = voided.state;
+    assert.equal(state.state, 'IN_REVIEW');
+    assert.equal(state.reviewedSha, null, 'T18 did not clear the recorded review');
+
+    // T13 needs both compound members; companions were cleared by the transition.
+    const passed = apply(state, makeEvent('review.passed'));
+    assert.ok(passed.ok);
+    if (!passed.ok) throw new Error('setup');
+    const verified = apply(passed.state, makeEvent('checks.verified'));
+    assert.ok(verified.ok && verified.kind === 'transition');
+    if (!(verified.ok && verified.kind === 'transition')) throw new Error('setup');
+
+    const ready = apply(verified.state, makeEvent('readiness.presented'));
+    assert.ok(ready.ok && ready.kind === 'transition');
+    if (!(ready.ok && ready.kind === 'transition')) throw new Error('setup');
+    return ready.state;
+  }
+
+  it('reaches AWAITING_FOUNDER_AUTH after a push-void without any fresh T10', () => {
+    const state = drivePushVoidedToAuth();
+    assert.equal(state.state, 'AWAITING_FOUNDER_AUTH');
+    assert.equal(state.reviewedSha, null, 'a review was recorded without T10');
+  });
+
+  it('rejects T15 there — no ledger-recorded review to authorize against', () => {
+    const state = drivePushVoidedToAuth();
+    const auth = apply(state, makeEvent('founder.authorization.granted'));
+    assert.equal(auth.ok, false, 'authorization was minted with no recorded review');
+    if (!auth.ok) {
+      assert.equal(auth.code, 'guard_failed');
+      assert.match(auth.reason, /no ledger-recorded review/);
+    }
+  });
+
+  it('rejects T15 when the asserted reviewed_sha disagrees with the ledger', () => {
+    const result = apply(
+      ledgerAt('AWAITING_FOUNDER_AUTH', { reviewedSha: 'ledger-recorded-sha' }),
+      makeEvent('founder.authorization.granted'),
+    );
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.reason, /does not match the ledger-recorded review/);
+  });
+
+  it('still authorizes normally when T10 did record the review', () => {
+    const result = apply(ledgerAt('AWAITING_FOUNDER_AUTH'), makeEvent('founder.authorization.granted'));
+    assert.ok(result.ok && result.kind === 'transition', 'the fix broke the legitimate path');
+  });
+});
+
+describe('AC#3 — only head-moving transitions may advance headSha', () => {
+  // Regression: the headSha update was unscoped, so any accepted transition
+  // carrying `newHeadSha` in its facts rewrote the head that G12 reads.
+  // Found by CodeRabbit on PR #1.
+  it('pins the head-moving set to the transitions whose guards move the head', () => {
+    assert.deepEqual([...HEAD_MOVING_TRANSITIONS], ['T9', 'T12', 'T18']);
+  });
+
+  it('does not let an unrelated transition rewrite the head', () => {
+    // T6 carries newHeadSha in PERMISSIVE_FACTS but does not move the head.
+    const result = apply(ledgerAt('BUILDING', { headSha: SHA_OLD }), makeEvent('decision.requested'));
+    assert.ok(result.ok && result.kind === 'transition');
+    if (result.ok && result.kind === 'transition') {
+      assert.equal(result.state.headSha, SHA_OLD, 'an unrelated event moved the head');
+    }
+  });
+
+  it('does advance the head on T12, whose guard is "new head ≠ old head"', () => {
+    const result = apply(ledgerAt('REMEDIATION', { headSha: SHA_OLD }), makeEvent('remediation.complete'));
+    assert.ok(result.ok && result.kind === 'transition');
+    if (result.ok && result.kind === 'transition') {
+      assert.notEqual(result.state.headSha, SHA_OLD, 'T12 did not advance the head');
+    }
   });
 });
 
