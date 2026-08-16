@@ -403,7 +403,7 @@ export const TRANSITIONS: readonly TransitionSpec[] = [
   },
   {
     // `{PUSHED..AUTHORIZED}` resolved through canonical declaration order —
-    // exactly six states (Founder Ruling, 2026-08-15, ruling 2).
+    // exactly six states (Founder Ruling — Declaration Order Canonical, 2026-08-15, ruling 2).
     id: 'T18', guard: 'G18', from: range('PUSHED', 'AUTHORIZED'), target: state('IN_REVIEW'),
     triggers: ['git.push.voided'], conjunction: null, actors: ['system'],
     setsOverlay: null, incrementsRound: true,
@@ -411,7 +411,7 @@ export const TRANSITIONS: readonly TransitionSpec[] = [
   },
   {
     // "any non-terminal" EXCLUDING the current state — bars the
-    // RECONCILING -> RECONCILING self-loop (ruling 2).
+    // RECONCILING -> RECONCILING self-loop (Founder Ruling — Non-Plain Transition Semantics, ruling 2).
     id: 'T19', guard: 'G19', from: anyNonTerminalExcluding('RECONCILING'),
     target: state('RECONCILING'),
     triggers: ['recon.opened'], conjunction: null, actors: ['system'],

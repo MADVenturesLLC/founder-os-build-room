@@ -176,7 +176,7 @@ export function apply(current: LedgerState, event: LifecycleEvent): ApplyResult 
     return reject('unknown_event', `not a canonical event: ${String(event.event)}`);
   }
 
-  // The terminal set is closed (Founder Ruling, ruling 1). No transition has a
+  // The terminal set is closed (Founder Ruling — Non-Plain Transition Semantics, ruling 1). No transition has a
   // terminal state in its from-set, so this is defence in depth — but it gives
   // the closure its own rejection code rather than an incidental one.
   if (isTerminal(current.state)) {
@@ -259,8 +259,13 @@ function commit(
   let reviewedSha = current.reviewedSha;
   let headSha = current.headSha;
 
-  // T19 — store the single prior_state slot on entering RECONCILING. A single
-  // slot suffices because the self-loop is barred (ruling 3).
+  // T19 — store the single prior_state slot on entering RECONCILING.
+  //
+  // Two DIFFERENT rulings, both in `Founder Ruling — Non-Plain Transition
+  // Semantics`: ruling 3 is prior-state storage ("a single slot is
+  // sufficient"); ruling 2 is the self-loop bar that MAKES one slot
+  // sufficient. An earlier revision of this comment collapsed them and cited
+  // ruling 3 for the self-loop bar, which is ruling 2's.
   if (spec.id === 'T19') {
     priorState = current.state;
   }
@@ -381,7 +386,7 @@ function assertInvariants(next: LedgerState): void {
       throw new Error('INV-1 violated: MERGE_CONFIRMED without a consumed Founder authorization');
     }
   }
-  // Terminal closure (Founder Ruling, ruling 1).
+  // Terminal closure (Founder Ruling — Non-Plain Transition Semantics, ruling 1).
   const leavingTerminal = next.entries.some((e) => isTerminal(e.fromState));
   if (leavingTerminal) {
     throw new Error('terminal closure violated: a transition left a terminal state');

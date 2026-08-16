@@ -23,7 +23,7 @@ No implementation beyond that slice, and no infrastructure, credentials, provide
 
 ## Verifying
 
-```
+```sh
 npm install
 npm test                            # build + the acceptance-criteria suite
 npm run gate:path-audit             # required check
@@ -40,7 +40,7 @@ npm run gate:attribution-selftest   # required check, parser regression cases
 
 - `DEC-20260815-01` — repository creation authority
 - `DEC-20260815-08` — hosting/runtime stack
-- `DEC-20260815-09` / `DEC-20260815-16` — cost ceilings; recognition choice recorded in `docs/cost-recognition-choice.md`
+- `DEC-20260815-09` / `DEC-20260815-16` — cost ceilings; the **open** recognition choice is documented, and deliberately not selected, in `docs/cost-recognition-choice.md`
 - `DEC-20260815-11` — the concrete lifecycle this slice implements (v0.10)
 - `DEC-20260815-17` — phase sequencing and stop gates
 - `DEC-20260815-18` — attribution and gate conventions
