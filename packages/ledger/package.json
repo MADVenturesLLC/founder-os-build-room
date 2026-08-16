@@ -1,0 +1,13 @@
+{
+  "name": "@build-room/ledger",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build Room pure ledger — enforces the lifecycle and its four core invariants. Pure, zero I/O.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@build-room/contracts": "*"
+  }
+}

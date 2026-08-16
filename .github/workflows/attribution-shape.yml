@@ -1,8 +1,18 @@
-# ACTIVE — authorized AND scheduled by DEC-20260718-05 clauses 19/21
-# (Layer 2 shape-only attribution check, activated in the same sequence as
-# Layer 1 per the founder's 2026-07-18 ruling). Modeled on path-audit.yml /
-# DEC-20260718-02's "gate, never edit" pattern. PR-body mode, hardening,
-# and promotion to a required check are proposed under DEC-20260721-01.
+# ACTIVE — adopted for this repository by DEC-20260815-18 clause 1, which makes
+# attribution trailers, the attribution-shape gate, and path-audit required
+# checks here. Adoption is a CONVENTION, not governance (clause 2): FounderOS
+# remains the system of record and this repository is not a second authority.
+#
+# PORTED VERBATIM from FounderOS `.github/workflows/attribution-shape.yml`.
+# The ONLY change is the checker's path: `scripts/` here, `00-system/scripts/`
+# there. Everything else — the trusted-base-revision selection, the Cursor
+# PR-body chrome sanitizer, the selftest steps, the triggers — is unmodified,
+# so the two files stay diffable.
+#
+# The checker SCRIPT carries one intentional behavioural divergence, documented
+# at HISTORICAL_BRANCH_ALLOWLIST in `scripts/attribution-shape-check.sh`: this
+# repository grants no historical branch exemption, making the gate strictly
+# stronger here than in FounderOS.
 #
 # SHAPE-ONLY (DEC-20260718-05 clause 20): this check validates the FORM of
 # the Attribution block — it never asserts that an attested Role-Id is true,
@@ -25,7 +35,8 @@
 # <div> after the Attribution trailer block. The prbody step strips that
 # platform chrome (markers + trailing cursor.com agent footer) before
 # invoking the trusted checker so the end-anchored gate judges the author
-# description. Trailer rules are unchanged.
+# description. Trailer rules are unchanged. Retained on adoption: dropping it
+# would fail the gate on any legitimate Cursor-authored body.
 #
 # Changes to this workflow's triggers, permissions, or steps require founder
 # approval before merge (same rule class as DEC-20260718-02 clause 4).
@@ -59,11 +70,11 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          if git show "$BASE_SHA:00-system/scripts/attribution-shape-check.sh" > "$RUNNER_TEMP/attribution-shape-check.sh" 2>/dev/null; then
+          if git show "$BASE_SHA:scripts/attribution-shape-check.sh" > "$RUNNER_TEMP/attribution-shape-check.sh" 2>/dev/null; then
             echo "using trusted base-revision checker ($BASE_SHA)"
           else
             echo "checker absent on base — using PR revision"
-            cp 00-system/scripts/attribution-shape-check.sh "$RUNNER_TEMP/attribution-shape-check.sh"
+            cp scripts/attribution-shape-check.sh "$RUNNER_TEMP/attribution-shape-check.sh"
           fi
 
       - name: Run attribution shape check (pull request)
@@ -92,7 +103,7 @@ jobs:
 
       - name: Run proposed-revision self-test (the PR's own parser must pass its own cases)
         if: github.event_name == 'pull_request'
-        run: bash 00-system/scripts/attribution-shape-check.sh selftest
+        run: bash scripts/attribution-shape-check.sh selftest
 
       - name: Run attribution shape check (pull request body — DEC-20260721-01 item 1)
         if: github.event_name == 'pull_request'
@@ -142,5 +153,5 @@ jobs:
       - name: Run attribution shape check (final merged commit on main)
         if: github.event_name == 'push'
         run: >
-          bash 00-system/scripts/attribution-shape-check.sh main
+          bash scripts/attribution-shape-check.sh main
           "${{ github.sha }}"

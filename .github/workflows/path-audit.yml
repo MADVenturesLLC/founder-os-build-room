@@ -1,21 +1,24 @@
-# ACTIVE — authorized by DEC-20260718-02 (Path-Audit CI Gate Activation),
-# ruled active by the founder 2026-07-18. Proposed under DEC-20260718-01
-# clause 6 as path-audit.yml.proposed; activated by rename per
-# DEC-20260718-02 clause 2.
+# ACTIVE — adopted for this repository by DEC-20260815-18 clause 1, which makes
+# path-audit a required check here alongside attribution-shape.
 #
-# On pull requests that touch doctrine files (any Markdown in the
-# repository — the audit surface and everything it references are .md),
-# run the deterministic path audit adopted by DEC-20260718-01. No LLM,
-# no network beyond checkout, no secrets, read-only. Changes to this
-# workflow's triggers, permissions, or steps require founder approval
-# before merge (DEC-20260718-02 clause 4).
+# Adapted from FounderOS `.github/workflows/path-audit.yml`, with ONE deliberate
+# difference in the trigger. FounderOS filters on `**.md`, because there the
+# audit surface AND everything it references are Markdown. Here the audit
+# surface is Markdown but the paths it references are CODE — so a commit that
+# deletes or moves `packages/ledger` without touching a `.md` file would break a
+# documented reference and, under the `**.md` filter, never run the audit. This
+# workflow therefore runs on every pull request, and on push to `main`.
+#
+# Changes to this workflow's triggers, permissions, or steps require founder
+# approval before merge (DEC-20260718-02 clause 4).
 
 name: Path Audit
 
 on:
   pull_request:
-    paths:
-      - '**.md'
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -30,4 +33,4 @@ jobs:
           persist-credentials: false
 
       - name: Run deterministic path audit
-        run: bash 00-system/scripts/path-audit.sh
+        run: bash scripts/path-audit.sh
