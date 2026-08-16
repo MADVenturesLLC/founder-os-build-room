@@ -1,0 +1,54 @@
+# CI baseline for the Build Room.
+#
+# Stands up the WF-17 step 4 baseline that `DEC-20260815-01` clause 3 requires
+# this repository to be onboarded against: locked install, typecheck, tests.
+#
+# NOT YET CONFIGURED, and deliberately not claimed as passing: **lint** and
+# **dependency audit**, the two remaining limbs of WF-17 step 4. No linter is
+# installed and no audit step runs. WF-17 onboarding as a whole is a separate
+# act requiring Founder sign-off per control (step 8), and this workflow does
+# not complete it.
+#
+# CI runs credential-free: the packages under test are pure, so nothing here
+# needs a secret, a provider, or a network call beyond the registry install.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Use Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Locked install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (acceptance-criteria suite)
+        run: npm test
+
+      - name: Path audit
+        run: npm run gate:path-audit
+
+      - name: Attribution checker self-test
+        run: npm run gate:attribution-selftest

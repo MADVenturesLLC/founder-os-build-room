@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
-# attribution-shape-check.sh — Layer 2 shape-only attribution check for the
-# MAD Ventures OS (DEC-20260718-05 clause 19, activated in the same sequence
-# as Layer 1 per clause 21).
+# attribution-shape-check.sh — Layer 2 shape-only attribution check.
+#
+# PORTED VERBATIM from FounderOS `00-system/scripts/attribution-shape-check.sh`
+# under `DEC-20260815-18` clause 1, which adopts the FounderOS attribution
+# conventions for this repository as a CONVENTION, not as a second governance
+# authority (clause 2). FounderOS remains the system of record; this copy is
+# kept byte-comparable so the two can be diffed, with exactly ONE intentional
+# behavioural divergence, marked below at HISTORICAL_BRANCH_ALLOWLIST.
+#
+# Original header follows.
+#
+# Layer 2 shape-only attribution check for the MAD Ventures OS
+# (DEC-20260718-05 clause 19, activated in the same sequence as Layer 1 per
+# clause 21).
 #
 # Pattern: "gate, never edit" (DEC-20260718-02 / path-audit.sh). This script
 # reads git state and exits pass/fail. It never modifies anything, and it is
@@ -33,15 +44,29 @@
 # for merge commits, the combined diff — a clean merge with no conflict
 # resolutions changes no files and is therefore not applicable inside a PR
 # range, but the final merged commit on main is always evaluated). In this
-# doctrine repository every file-changing commit lands role-accountable
+# product repository every file-changing commit lands role-accountable
 # work unless it is direct-founder work, which the block still records via
 # Actor-Id: founder.
 #
-# Clause 19(a) historical exemption — pinned allowlist (DEC-20260721-01):
-# exactly the pre-activation branches that existed when the exemption was
-# ruled. Immutable and trusted; extending it requires founder approval of
-# a change to this script.
-HISTORICAL_BRANCH_ALLOWLIST='^(plato/architecture-governance-reconciliation|copilot/approve-founder-constitution-edits)$'
+# Clause 19(a) historical exemption — pinned allowlist (DEC-20260721-01).
+#
+# ===================== DELIBERATE DIVERGENCE FROM FounderOS ====================
+# In FounderOS this allowlist pins exactly the two pre-activation branches that
+# existed when the exemption was ruled. THIS REPOSITORY HAS NO SUCH BRANCHES:
+# the gate is adopted at first commit (`DEC-20260815-18` clause 3 — "a
+# convention adopted at first commit is expensive to retrofit"), so no branch
+# predates it and nothing can qualify for a historical exemption.
+#
+# The allowlist is therefore deliberately EMPTY: `^$` never matches, because the
+# branch name is a required non-empty argument. That makes this gate strictly
+# STRONGER than the FounderOS one, never weaker — a `plato/` or `copilot/`
+# branch is prohibited here with no exemption path at all.
+#
+# This is the ONE intentional behavioural difference from the ported script. The
+# `selftest` case below asserts the rejection rather than the exemption, and the
+# two must be changed together if a Founder ever grants an exemption here.
+# =============================================================================
+HISTORICAL_BRANCH_ALLOWLIST='^$'
 #
 # Usage:
 #   attribution-shape-check.sh pr   <base-sha> <head-sha> <head-branch-name>
@@ -323,8 +348,12 @@ case "$MODE" in
     stb "prohibited plato/ prefix"       1 'plato/anything'
     stb "prohibited mixed-case Plato/"   1 'Plato/anything'
     stb "prohibited COPILOT/ prefix"     1 'COPILOT/feature'
-    stb "pinned-allowlist branch exempt" 0 'plato/architecture-governance-reconciliation'
+    # DIVERGENCE FROM FounderOS (see HISTORICAL_BRANCH_ALLOWLIST above): this
+    # repository grants NO historical exemption, so the branch FounderOS exempts
+    # is rejected here. Expectation is 1, not 0, deliberately.
+    stb "no historical exemption here"   1 'plato/architecture-governance-reconciliation'
     stb "normal branch accepted"         0 'claude/feature-x'
+    stb "builder branch accepted"        0 'builder/wf04-step3-slice1-contracts-ledger'
     ;;
 
   *)
