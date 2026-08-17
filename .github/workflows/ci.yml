@@ -9,8 +9,10 @@
 # act requiring Founder sign-off per control (step 8), and this workflow does
 # not complete it.
 #
-# CI runs credential-free: the packages under test are pure, so nothing here
-# needs a secret, a provider, or a network call beyond the registry install.
+# CI runs credential-free. The unit suite covers pure packages and stubbed
+# I/O; the integration job below runs the storage suite against a Postgres
+# service container, so it needs no provider account and no secret — the
+# throwaway database lives and dies with the job.
 
 name: CI
 
@@ -52,3 +54,54 @@ jobs:
 
       - name: Attribution checker self-test
         run: npm run gate:attribution-selftest
+
+  # The storage suite skips itself when DATABASE_URL is unset, which is the
+  # right default locally and the wrong one in CI: coverage that depends on
+  # someone remembering to export a variable is coverage that quietly lapses.
+  # This job supplies the database so the suite always runs.
+  storage-integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: buildroom_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Use Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Locked install
+        run: npm ci
+
+      - name: Test (storage suite against Postgres)
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/buildroom_test
+        run: npm test
+
+      # The suite is designed to be re-runnable against a database that
+      # already holds a previous run's rows. It was not, at first: room ids
+      # came from a per-process counter, so a second run collided with the
+      # first and six assertions failed. Running it twice is what caught that,
+      # so CI runs it twice.
+      - name: Test again (proves the suite is re-runnable, not virgin-only)
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/buildroom_test
+        run: npm test
