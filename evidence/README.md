@@ -6,12 +6,25 @@ committed unmodified.
 
 ## What is here
 
-`phase2-runs-2026-08-17T21-10-24-425Z.json` — the Phase 2 three-run gate,
-performed 2026-08-17 against the deployed control plane. **Three consecutive
-passes, no failed runs.**
+Two bundles. Both are kept; the second supersedes the first as the description
+of what is deployed, and neither is edited.
 
-- **Commit under test:** `d4dab780e0790fde49ed0907b2f81f9a7bf37245`, as the
-  service itself reported it on `/version` — not as the harness assumed it.
+**`phase2-runs-2026-08-17T21-50-57-741Z.json` — current.** Commit
+`19b496899c87781257e1c8961a3c2ab6de41c728`, **Node 22 pinned**. Three
+consecutive passes, no failed runs. This is the bundle that describes the
+deployed configuration.
+
+**`phase2-runs-2026-08-17T21-10-24-425Z.json` — superseded, retained.** Commit
+`d4dab780e0790fde49ed0907b2f81f9a7bf37245` on Node v24.10.0. Three consecutive
+passes, no failed runs. Superseded not because anything in it failed or was
+wrong, but because the runtime it exercised is no longer the deployed one — see
+*A gate is bound to a runtime* below. Deleting it would erase the reason the
+second gate exists.
+
+Everything below describes both, except where a difference is named.
+
+- **Commit under test:** as the service itself reported it on `/version` — not
+  as the harness assumed it.
 - **Stack:** Railway service `rare-enjoyment` (project
   `compassionate-happiness`) plus Neon project `founder-os-build-room`. This is
   the bound reduced Phase 2 stack; the web tier, gateway platform and
@@ -38,6 +51,16 @@ teardown — passing only if all three conditions hold (`DEC-20260815-17`,
 Each run's process identity before the restart equals the previous run's
 identity after it:
 
+Node 22 gate (`21-50-57`), the current one:
+
+```
+run #1  21:37:24.777Z -> 21:49:02.323Z
+run #2  21:49:02.323Z -> 21:49:34.771Z
+run #3  21:49:34.771Z -> 21:50:56.447Z
+```
+
+Node 24 gate (`21-10-24`), superseded:
+
 ```
 run #1  21:01:13.178Z -> 21:08:40.666Z
 run #2  21:08:40.666Z -> 21:09:25.894Z
@@ -59,28 +82,29 @@ it confers no activation, no further phase, and no spend authority.
 The bundle states the same thing in its own `authorizes` field, so a reader who
 sees only the JSON is told as plainly as one who reads this file.
 
-## The bundle is bound to a runtime, and the runtime has since changed
+## A gate is bound to a runtime, which is why there are two bundles
 
-**The three runs were performed against Node v24.10.0.** `/version` reported it
-during every run and the figure is in the bundle. That was not a choice — it was
-a consequence of `engines.node` reading `>=22`, under which Nixpacks selected
-the newest satisfying version, while CI and every local verification ran on 22.
+The first gate ran against **Node v24.10.0**. That was not a choice — it
+followed from `engines.node` reading `>=22`, under which Nixpacks took the
+newest satisfying version, while CI and every local verification ran on 22.
+Production was the one place running a runtime nothing had been tested against.
 
-The Founder ruled on 2026-08-17 that Railway is **pinned to Node 22**, recorded
-verbatim in `railway.toml`. So the deployed runtime after that change is not
-the runtime these runs exercised.
+The Founder ruled Railway **pinned to Node 22** (recorded verbatim in
+`railway.toml`), which made the first bundle describe a configuration that was
+no longer deployed. The bundle stayed true of what it described and simply
+stopped describing the deployed system.
 
-**What follows, stated rather than left for a reader to notice.** This bundle
-remains true of what it describes: commit `d4dab78` on Node 24, three
-consecutive passes. It is not evidence about the pinned configuration. The
-three-run gate exists to show the skeleton is stable enough to build on, and a
-Node major version is part of that skeleton — so a gate satisfied on one
-runtime does not carry to another by itself.
+**That gap was closed by re-running rather than by argument.** The pinned build
+deployed as commit `19b4968` with `/version` reporting `v22.14.0` — verified,
+not assumed, because a pin is a request to the builder and only the running
+service proves it was honoured. The gate was then performed again against it:
+three consecutive passes, no failed runs.
 
-Re-running against the pinned build costs three restarts and a few minutes, and
-produces a bundle that describes what is actually deployed. Until that happens,
-the honest reading of this directory is: **the gate was satisfied, on a
-configuration that is no longer the deployed one.**
+The principle worth keeping: **the three-run gate shows the skeleton is stable
+enough to build on, and the runtime is part of the skeleton.** A gate satisfied
+on one runtime does not carry to another. Re-running cost three restarts and a
+few minutes; a stale claim would have cost more, and would have been discovered
+at the stop gate rather than before it.
 
 ## Retention
 
