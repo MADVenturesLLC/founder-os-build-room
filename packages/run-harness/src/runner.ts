@@ -181,7 +181,7 @@ export async function performRun(config: RunnerConfig, deps: RunnerDeps): Promis
   // ---- verify: write and read back ---------------------------------------
   const roomId = newId();
   const writeStep = open('verify_write');
-  const written = await writeAndReadBack(client, roomId, deps);
+  const written = await writeAndReadBack(client, roomId, commit, deps);
   if (!written.ok) {
     finish(writeStep, 'failed', written.detail, written.observations);
     conditions.push({ condition: 'reads_and_writes', held: false, evidence: written.detail });
@@ -392,9 +392,52 @@ const EMPTY_FINGERPRINT: RoomFingerprint = {
  * event, which is the lifecycle's opening transition — so this exercises the
  * reducer, the store and the schema together rather than a synthetic table.
  */
+export function buildVerificationEvent(
+  roomId: string,
+  commit: string,
+  eventId: string,
+  occurredAt: string,
+): Record<string, unknown> {
+  return {
+    eventId,
+    event: 'scope.captured',
+    actor: 'founder',
+    attribution: {
+      roleId: null,
+      actorId: 'founder',
+      actualModel: 'n/a — harness-generated verification event',
+      executionSurface: 'claude-code',
+    },
+    scope: { roomId, repo: 'MADVenturesLLC/founder-os-build-room', paths: [] },
+    evidence: [],
+    occurredAt,
+    /*
+     * Guard facts are caller-asserted by contract, and G1 requires
+     * `repoInAllowlist`, a non-empty `baseSha` and `remoteHeadSha`, and the two
+     * SHAs equal. The harness asserts the DEPLOYED commit for both.
+     *
+     * Said plainly, because an assertion that reads as a claim about a real
+     * build would be a false one: this is a synthetic verification event, not a
+     * build. The two SHAs are equal by construction rather than by observing a
+     * remote, and what the assertion actually means here is "the commit under
+     * test is the commit under test". The facts are stored verbatim in the
+     * event payload and appear in the evidence bundle, so an auditor sees
+     * exactly what was asserted rather than having to infer it.
+     */
+    facts: {
+      repoInAllowlist: true,
+      baseSha: commit,
+      remoteHeadSha: commit,
+      scopePathsCanonical: true,
+      rolesAssigned: true,
+    },
+  };
+}
+
 async function writeAndReadBack(
   client: ControlPlaneClient,
   roomId: string,
+  commit: string,
   deps: RunnerDeps,
 ): Promise<WriteResult> {
   const created = await client.createRoom(roomId);
@@ -408,21 +451,7 @@ async function writeAndReadBack(
   }
 
   const eventId = deps.newId();
-  const event = {
-    eventId,
-    event: 'scope.captured',
-    actor: 'founder',
-    attribution: {
-      roleId: null,
-      actorId: 'founder',
-      actualModel: 'n/a — harness-generated verification event',
-      executionSurface: 'claude-code',
-    },
-    scope: { roomId, repo: 'MADVenturesLLC/founder-os-build-room', paths: [] },
-    evidence: [],
-    occurredAt: deps.now(),
-    facts: { repoInAllowlist: true, scopePathsCanonical: true, rolesAssigned: true },
-  };
+  const event = buildVerificationEvent(roomId, commit, eventId, deps.now());
 
   const appended = await client.appendEvent(roomId, event);
   if (!appended.ok) {

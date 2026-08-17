@@ -46,6 +46,32 @@ Against a deployed control plane. The evidence bundle is written whether or
 not the gate passes — a failed sequence is exactly what exit criterion 4 wants
 retained — and the exit code follows the gate.
 
+### Dry run, against a local Postgres
+
+The gate can be exercised end to end with no deployed service and no provider
+account, which is how the harness gets tested before it is pointed at real
+infrastructure:
+
+```sh
+# a throwaway Postgres, then:
+export DATABASE_URL=postgresql://…/buildroom_dev
+npm run build && ./scripts/local-control-plane.sh start
+
+export CONTROL_PLANE_URL=http://127.0.0.1:8080
+export PHASE2_RESTART_COMMAND="$PWD/scripts/local-control-plane.sh restart"
+export PHASE2_ACTOR_ID=… PHASE2_ACTUAL_MODEL=…
+export PHASE2_ENVIRONMENT=local-dry-run   # so the bundle cannot be mistaken
+export PHASE2_EVIDENCE_PATH=/tmp/dry-run  # for Phase 2 evidence
+npm run phase2:runs
+```
+
+A dry run on 2026-08-17 is what caught the harness sending a verification event
+the ledger refused — every stubbed test passed while all three real runs failed.
+Write the bundle outside the repository and label the environment, so a dry run
+is never mistaken for the gate's evidence.
+
+### Against a deployed control plane
+
 ```sh
 export CONTROL_PLANE_URL=https://…      # the deployed control plane
 export PHASE2_ACTOR_ID=…                # who is running this; never inferred

@@ -17,6 +17,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildVerificationEvent,
   ExternalPlatform,
   performRun,
   type ConditionRecord,
@@ -25,6 +26,7 @@ import {
   type RunnerDeps,
 } from '../packages/run-harness/src/index.js';
 import type { ControlPlaneClient } from '../packages/run-harness/src/client.js';
+import { apply, initialLedger, type LifecycleEvent } from '../packages/ledger/src/index.js';
 
 const CONFIG: RunnerConfig = {
   baseUrl: 'http://fake',
@@ -232,5 +234,50 @@ describe('run cycle — surviving a restart', () => {
 
     assert.equal(condition(draft.conditions, 'survives_restart')?.held, false);
     assert.match(condition(draft.conditions, 'survives_restart')?.evidence ?? '', /state differs/);
+  });
+});
+
+describe('run cycle — the verification event the harness actually sends', () => {
+  /*
+   * This is the regression test for a defect a local dry run caught and every
+   * stubbed test missed. The harness built its verification event with facts
+   * that did not satisfy G1 — which requires `repoInAllowlist`, a non-empty
+   * `baseSha` and `remoteHeadSha`, and the two equal — so the ledger refused
+   * it with `guard_failed` and all three runs failed at `verify_write`.
+   *
+   * A stub cannot catch that: it answers however it is scripted. So the event
+   * is checked against the REAL reducer here, not against a fake service.
+   */
+  it('is accepted by the real reducer, not merely by a stubbed service', () => {
+    const event = buildVerificationEvent(
+      '11111111-2222-4333-8444-555555555555',
+      'a'.repeat(40),
+      'evt-verification',
+      '2026-08-17T12:00:00.000Z',
+    );
+
+    const result = apply(initialLedger(), event as unknown as LifecycleEvent);
+
+    assert.equal(result.ok, true, `the ledger refused the harness's own event: ${JSON.stringify(result)}`);
+    assert.equal(result.ok && result.kind, 'transition');
+  });
+
+  it('asserts the deployed commit as both base and remote head', () => {
+    const commit = 'b'.repeat(40);
+    const event = buildVerificationEvent('room', commit, 'evt', '2026-08-17T12:00:00.000Z');
+    const facts = event['facts'] as Record<string, unknown>;
+
+    assert.equal(facts['baseSha'], commit);
+    assert.equal(facts['remoteHeadSha'], commit);
+  });
+
+  it('fails the guard if the SHA facts are dropped — proving the test has teeth', () => {
+    const event = buildVerificationEvent('room', 'c'.repeat(40), 'evt', '2026-08-17T12:00:00.000Z');
+    const withoutShas = { ...event, facts: { repoInAllowlist: true } };
+
+    const result = apply(initialLedger(), withoutShas as unknown as LifecycleEvent);
+
+    assert.equal(result.ok, false);
+    assert.equal(!result.ok && result.code, 'guard_failed');
   });
 });

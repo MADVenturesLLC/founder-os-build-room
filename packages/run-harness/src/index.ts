@@ -49,6 +49,7 @@ export {
 } from './platform.js';
 
 export {
+  buildVerificationEvent,
   DEFAULT_RUNNER_CONFIG,
   defaultDeps,
   performRun,
