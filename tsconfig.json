@@ -14,6 +14,7 @@
     "packages/contracts/src/**/*.ts",
     "packages/ledger/src/**/*.ts",
     "packages/control-plane/src/**/*.ts",
+    "packages/cost-meter/src/**/*.ts",
     "test/**/*.ts"
   ]
 }

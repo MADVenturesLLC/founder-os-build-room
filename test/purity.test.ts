@@ -17,9 +17,20 @@ import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+/**
+ * The packages that must stay pure, named explicitly rather than globbed.
+ *
+ * Explicit is the point: `packages/control-plane` arrived in Phase 2 and is
+ * impure by design — it holds the pool, the HTTP surface and the boot
+ * sequence. A glob over `packages/*​/src` would either fail on it or force an
+ * exclusion list, and neither states which packages carry the guarantee.
+ * `packages/cost-meter` is on this list because it is pure by design: it takes
+ * time, usage and rates as arguments and reads no clock and no table.
+ */
 const PACKAGE_SOURCES = [
   join(REPO_ROOT, 'packages', 'contracts', 'src'),
   join(REPO_ROOT, 'packages', 'ledger', 'src'),
+  join(REPO_ROOT, 'packages', 'cost-meter', 'src'),
 ];
 
 /** Named explicitly by AC#5, plus the sibling forms of the same capabilities. */
