@@ -1,0 +1,305 @@
+/**
+ * The durable ledger store — the control plane's single writer.
+ *
+ * The pure reducer in `@build-room/ledger` decides; this module is the only
+ * thing that persists what it decided. The division is the point: every guard,
+ * invariant and rejection code lives in the pure package and is exercised by
+ * its own test suite, and nothing here re-implements a rule or relaxes one.
+ *
+ * Three properties, and how each is obtained:
+ *
+ * - **Single writer per room.** Every append takes `SELECT ... FOR UPDATE` on
+ *   the room row, so two concurrent appends to one room serialize. Different
+ *   rooms do not block each other.
+ * - **State is a projection.** Nothing caches `LedgerState`. Each append
+ *   rebuilds it by replaying the room's log through the reducer, which is what
+ *   makes a restart lossless (`DEC-20260815-17` Phase 2 run condition 3) — a
+ *   fresh process replays the same log and reaches the same state.
+ * - **Rejections are visible.** A rejected event is written to
+ *   `build_room_rejections` in the same transaction that declined it, so a
+ *   refusal leaves a record rather than a silence (architecture §3.8).
+ */
+
+import type { Pool, PoolClient } from 'pg';
+import {
+  apply,
+  applyAll,
+  initialLedger,
+  type ApplyResult,
+  type LedgerEntry,
+  type LedgerState,
+  type LifecycleEvent,
+  type RejectionCode,
+} from '../../ledger/src/index.js';
+
+export type AppendOutcome = 'transition' | 'conjunction_pending' | 'replay' | 'rejected';
+
+export type AppendResult =
+  | {
+      readonly ok: true;
+      readonly outcome: 'transition';
+      readonly seq: number;
+      readonly entry: LedgerEntry;
+      readonly state: LedgerState;
+    }
+  | {
+      readonly ok: true;
+      readonly outcome: 'conjunction_pending';
+      readonly seq: number;
+      readonly awaiting: readonly string[];
+      readonly state: LedgerState;
+    }
+  | {
+      readonly ok: true;
+      readonly outcome: 'replay';
+      readonly entry: LedgerEntry | null;
+      readonly state: LedgerState;
+    }
+  | {
+      readonly ok: false;
+      readonly outcome: 'rejected';
+      readonly code: RejectionCode;
+      readonly reason: string;
+      readonly state: LedgerState;
+    };
+
+export interface RoomView {
+  readonly roomId: string;
+  readonly exists: boolean;
+  readonly state: LedgerState;
+  /** Number of committed log positions, which is not the entry count. */
+  readonly logLength: number;
+}
+
+export class RoomNotFoundError extends Error {
+  override readonly name = 'RoomNotFoundError';
+  constructor(roomId: string) {
+    super(`room ${roomId} does not exist`);
+  }
+}
+
+interface EventRow {
+  readonly seq: string;
+  readonly payload: LifecycleEvent;
+}
+
+export class PostgresLedgerStore {
+  constructor(private readonly pool: Pool) {}
+
+  /**
+   * Create a room. Idempotent: creating an existing room reports
+   * `created: false` rather than failing, so a retried request is safe.
+   */
+  async createRoom(roomId: string): Promise<{ readonly created: boolean }> {
+    const { rowCount } = await this.pool.query(
+      'INSERT INTO build_room_rooms (room_id) VALUES ($1) ON CONFLICT (room_id) DO NOTHING',
+      [roomId],
+    );
+    return { created: rowCount === 1 };
+  }
+
+  /** Replay a room's log into current state. Read-only. */
+  async loadRoom(roomId: string): Promise<RoomView> {
+    const client = await this.pool.connect();
+    try {
+      const exists = await roomExists(client, roomId);
+      if (!exists) {
+        return { roomId, exists: false, state: initialLedger(), logLength: 0 };
+      }
+      const { state, logLength } = await replay(client, roomId);
+      return { roomId, exists: true, state, logLength };
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Offer one event to the room's ledger and persist whatever the reducer
+   * decided. The reducer's verdict is final — this method never overrides an
+   * acceptance or a rejection, only records it.
+   */
+  async append(roomId: string, event: LifecycleEvent): Promise<AppendResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Serializes writers for this room. Also proves the room exists.
+      const locked = await client.query('SELECT room_id FROM build_room_rooms WHERE room_id = $1 FOR UPDATE', [
+        roomId,
+      ]);
+      if (locked.rowCount === 0) {
+        await client.query('ROLLBACK');
+        throw new RoomNotFoundError(roomId);
+      }
+
+      const { state: current, logLength } = await replay(client, roomId);
+      const result: ApplyResult = apply(current, event);
+
+      if (!result.ok) {
+        await recordRejection(client, roomId, event, result.code, result.reason);
+        await client.query('COMMIT');
+        return { ok: false, outcome: 'rejected', code: result.code, reason: result.reason, state: current };
+      }
+
+      if (result.kind === 'replay') {
+        // INV-4. Nothing is written; the log already holds this event.
+        await client.query('COMMIT');
+        return { ok: true, outcome: 'replay', entry: result.entry, state: result.state };
+      }
+
+      const seq = logLength + 1;
+
+      if (result.kind === 'conjunction_pending') {
+        await insertEvent(client, {
+          roomId,
+          seq,
+          event,
+          outcome: 'conjunction_pending',
+          entry: null,
+          state: result.state,
+        });
+        await client.query('COMMIT');
+        return {
+          ok: true,
+          outcome: 'conjunction_pending',
+          seq,
+          awaiting: result.awaiting,
+          state: result.state,
+        };
+      }
+
+      await insertEvent(client, {
+        roomId,
+        seq,
+        event,
+        outcome: 'transition',
+        entry: result.entry,
+        state: result.state,
+      });
+      await client.query('COMMIT');
+      return { ok: true, outcome: 'transition', seq, entry: result.entry, state: result.state };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Every committed row for a room, oldest first, as stored. This is the
+   * export path for `DEC-20260815-17` exit criterion 5 (evidence retained and
+   * exportable) — it returns rows, not a rendered report.
+   */
+  async exportRoom(roomId: string): Promise<{
+    readonly events: readonly Record<string, unknown>[];
+    readonly rejections: readonly Record<string, unknown>[];
+  }> {
+    const events = await this.pool.query<Record<string, unknown>>(
+      `SELECT seq, event_id, event, outcome, entry_seq, transition_id, guard_id,
+              from_state, resulting_state, actor, attribution, scope, evidence,
+              overlays, round, occurred_at, payload, committed_at
+         FROM build_room_events WHERE room_id = $1 ORDER BY seq ASC`,
+      [roomId],
+    );
+    const rejections = await this.pool.query<Record<string, unknown>>(
+      `SELECT rejection_id, event_id, event, code, reason, actor, attempted_at, recorded_at
+         FROM build_room_rejections WHERE room_id = $1 ORDER BY rejection_id ASC`,
+      [roomId],
+    );
+    return { events: events.rows, rejections: rejections.rows };
+  }
+}
+
+async function roomExists(client: PoolClient, roomId: string): Promise<boolean> {
+  const { rowCount } = await client.query('SELECT 1 FROM build_room_rooms WHERE room_id = $1', [roomId]);
+  return rowCount === 1;
+}
+
+/**
+ * Rebuild state from the log.
+ *
+ * The log holds only events the reducer already accepted, so a replay that
+ * rejects one means the stored history and the current code disagree — a
+ * corruption or an incompatible schema change, not an ordinary refusal. It is
+ * raised rather than skipped: continuing would serve a state that no sequence
+ * of events produces.
+ */
+async function replay(
+  client: PoolClient,
+  roomId: string,
+): Promise<{ readonly state: LedgerState; readonly logLength: number }> {
+  const { rows } = await client.query<EventRow>(
+    'SELECT seq, payload FROM build_room_events WHERE room_id = $1 ORDER BY seq ASC',
+    [roomId],
+  );
+  const events = rows.map((row) => row.payload);
+  const { state, results } = applyAll(initialLedger(), events);
+
+  const failed = results.findIndex((r) => !r.ok);
+  if (failed !== -1) {
+    const result = results[failed];
+    const reason = result && !result.ok ? `${result.code}: ${result.reason}` : 'unknown';
+    throw new Error(
+      `ledger replay failed for room ${roomId} at log position ${failed + 1} — ${reason}. ` +
+        `The stored log holds only previously accepted events, so this is a ` +
+        `corruption or an incompatible change, not a refusal.`,
+    );
+  }
+
+  return { state, logLength: rows.length };
+}
+
+interface InsertArgs {
+  readonly roomId: string;
+  readonly seq: number;
+  readonly event: LifecycleEvent;
+  readonly outcome: 'transition' | 'conjunction_pending';
+  readonly entry: LedgerEntry | null;
+  readonly state: LedgerState;
+}
+
+async function insertEvent(client: PoolClient, args: InsertArgs): Promise<void> {
+  const { roomId, seq, event, outcome, entry, state } = args;
+  await client.query(
+    `INSERT INTO build_room_events (
+       room_id, seq, event_id, event, outcome, entry_seq, transition_id, guard_id,
+       from_state, resulting_state, actor, attribution, scope, evidence,
+       overlays, round, occurred_at, payload
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+    [
+      roomId,
+      seq,
+      event.eventId,
+      event.event,
+      outcome,
+      entry?.seq ?? null,
+      entry?.transition ?? null,
+      entry?.guard ?? null,
+      entry?.fromState ?? null,
+      entry?.resultingState ?? null,
+      JSON.stringify(event.actor),
+      JSON.stringify(event.attribution),
+      JSON.stringify(event.scope),
+      JSON.stringify(event.evidence),
+      JSON.stringify(entry?.overlays ?? state.overlays),
+      entry?.round ?? state.round,
+      event.occurredAt,
+      JSON.stringify(event),
+    ],
+  );
+}
+
+async function recordRejection(
+  client: PoolClient,
+  roomId: string,
+  event: LifecycleEvent,
+  code: RejectionCode,
+  reason: string,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO build_room_rejections (room_id, event_id, event, code, reason, actor, attempted_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [roomId, event.eventId, String(event.event), code, reason, JSON.stringify(event.actor), event.occurredAt],
+  );
+}

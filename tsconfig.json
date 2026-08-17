@@ -3,10 +3,17 @@
   "compilerOptions": {
     "rootDir": ".",
     "outDir": "dist",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "composite": false,
     "declaration": false,
     "declarationMap": false
   },
-  "include": ["packages/contracts/src/**/*.ts", "packages/ledger/src/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "packages/contracts/src/**/*.ts",
+    "packages/ledger/src/**/*.ts",
+    "packages/control-plane/src/**/*.ts",
+    "test/**/*.ts"
+  ]
 }
