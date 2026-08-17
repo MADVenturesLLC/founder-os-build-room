@@ -281,7 +281,7 @@ function asyncRoute(handler: (req: Request, res: Response) => Promise<void>) {
 }
 
 const RFC3339 =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
 /**
  * A strict RFC3339 date-time with an offset.
@@ -300,7 +300,7 @@ function isRfc3339(value: string): boolean {
   const match = RFC3339.exec(value);
   if (match === null) return false;
 
-  const [, year, month, day, hour, minute, second] = match;
+  const [, year, month, day, hour, minute, second, offsetHour, offsetMinute] = match;
   const monthNumber = Number(month);
   const dayNumber = Number(day);
   if (monthNumber < 1 || monthNumber > 12) return false;
@@ -312,6 +312,18 @@ function isRfc3339(value: string): boolean {
   if (hourNumber > 23 || minuteNumber > 59 || secondNumber > 60) return false;
   // Second 60 is a leap second, which occurs only at the end of a UTC day.
   if (secondNumber === 60 && (hourNumber !== 23 || minuteNumber !== 59)) return false;
+
+  /*
+   * The OFFSET is bounded too. RFC3339's `time-numoffset` is
+   * `("+" / "-") time-hour ":" time-minute`, with the same 00–23 and 00–59
+   * ranges as the time itself — so `+24:00` and `+00:60` are not offsets, and
+   * a regex of `[+-]\d{2}:\d{2}` alone waves them through. The groups are
+   * undefined for a `Z` instant, which carries no offset to check. Raised by
+   * CodeRabbit on PR #2.
+   */
+  if (offsetHour !== undefined && offsetMinute !== undefined) {
+    if (Number(offsetHour) > 23 || Number(offsetMinute) > 59) return false;
+  }
 
   return true;
 }

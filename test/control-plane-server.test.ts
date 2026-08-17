@@ -270,6 +270,12 @@ describe('control plane — occurredAt is a real RFC3339 instant', () => {
     ['2026-13-01T12:00:00Z', 'month 13'],
     ['2026-08-17T25:00:00Z', 'hour 25'],
     ['2026-08-17T12:00:60Z', 'leap second away from the end of a day'],
+    // RFC3339's time-numoffset uses the same 00-23 / 00-59 ranges as the time
+    // itself, so these are not offsets. A bare `[+-]\d{2}:\d{2}` waved them
+    // through. Raised by CodeRabbit on PR #2.
+    ['2026-08-17T12:00:00+24:00', 'offset hour 24'],
+    ['2026-08-17T12:00:00+00:60', 'offset minute 60'],
+    ['2026-08-17T12:00:00-24:00', 'negative offset hour 24'],
   ];
 
   for (const [value, why] of refused) {
@@ -285,6 +291,7 @@ describe('control plane — occurredAt is a real RFC3339 instant', () => {
     assert.equal(await post('2026-08-17T12:00:00Z'), 500);
     assert.equal(await post('2026-08-17T12:00:00.123Z'), 500);
     assert.equal(await post('2026-08-17T12:00:00+05:30'), 500);
+    assert.equal(await post('2026-08-17T12:00:00-23:59'), 500, 'the offset bounds themselves');
     assert.equal(await post('2026-06-30T23:59:60Z'), 500, 'a real leap second');
   });
 });

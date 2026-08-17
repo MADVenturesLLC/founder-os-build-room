@@ -461,6 +461,27 @@ describe('cost meter — infrastructure recognition', () => {
     );
   });
 
+  it('refuses a well-shaped date that is not a real calendar day', () => {
+    // `2026-02-30` is correctly zero-padded and sorts perfectly well, and is
+    // not a date — so a commitment boundary that never existed would decide
+    // which months a cost is recognized in. Raised by CodeRabbit on PR #2.
+    const impossible: InfrastructureCommitment = { ...NEON, effectiveFrom: '2026-02-30' };
+    assert.throws(
+      () => recognizeInfrastructure([impossible], accountingInstant(2026, 8, 17)),
+      PeriodError,
+    );
+
+    const monthThirteen: InfrastructureCommitment = { ...NEON, effectiveFrom: '2026-13-01' };
+    assert.throws(
+      () => recognizeInfrastructure([monthThirteen], accountingInstant(2026, 8, 17)),
+      PeriodError,
+    );
+
+    // The leap rule applies to commitment dates too, not just to timestamps.
+    const leap: InfrastructureCommitment = { ...NEON, effectiveFrom: '2028-02-29' };
+    assert.doesNotThrow(() => recognizeInfrastructure([leap], accountingInstant(2028, 3, 1)));
+  });
+
   it('recognizes nothing for a commitment that has not started yet', () => {
     const future: InfrastructureCommitment = { ...NEON, effectiveFrom: '2026-08-20' };
     assert.equal(recognizeInfrastructure([future], accountingInstant(2026, 8, 17)).micros, 0);

@@ -126,7 +126,7 @@ function servedThisMonth(commitment: InfrastructureCommitment, asOf: AccountingI
   return true;
 }
 
-const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /**
  * A commitment date, in the strict `YYYY-MM-DD` form the comparisons require.
@@ -145,13 +145,34 @@ const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
  * boundary, and throws. Raised by CodeRabbit on PR #2.
  */
 function requireDateKey(value: string, field: string, commitment: InfrastructureCommitment): string {
-  if (!DATE_KEY.test(value)) {
+  const match = DATE_KEY.exec(value);
+  const refuse = (why: string): never => {
     throw new PeriodError(
-      `${commitment.provider}: ${field} must be YYYY-MM-DD; got ${JSON.stringify(value)}. ` +
-        `These dates are compared as strings, so a malformed one can drop a served ` +
-        `commitment and understate the month.`,
+      `${commitment.provider}: ${field} must be a real YYYY-MM-DD date; got ` +
+        `${JSON.stringify(value)} — ${why}. These dates are compared as strings, so a ` +
+        `malformed one can drop a served commitment and understate the month.`,
     );
+  };
+
+  if (match === null) refuse('wrong shape');
+
+  /*
+   * The CALENDAR is checked, not only the shape. `2026-02-30` is correctly
+   * zero-padded and sorts perfectly well, and is not a date — so a commitment
+   * boundary that never existed would silently decide which months a cost is
+   * recognized in. Shape-only validation would have accepted it. Raised by
+   * CodeRabbit on PR #2.
+   */
+  const [, year, month, day] = match as RegExpExecArray;
+  const monthNumber = Number(month);
+  if (monthNumber < 1 || monthNumber > 12) refuse(`month ${month} is out of range`);
+
+  const dayNumber = Number(day);
+  const limit = daysInMonth(Number(year), monthNumber);
+  if (dayNumber < 1 || dayNumber > limit) {
+    refuse(`${year}-${month} has ${limit} days`);
   }
+
   return value;
 }
 
