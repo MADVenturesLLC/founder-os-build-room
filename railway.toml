@@ -14,9 +14,24 @@ builder = "NIXPACKS"
 
 # `--include=dev` is deliberate and load-bearing. TypeScript is a
 # devDependency, and Railway sets NODE_ENV=production, under which npm omits
-# dev dependencies — so a plain `npm ci` would install no compiler and the
-# build would fail on `tsc: not found`.
-buildCommand = "npm ci --include=dev && npm run build"
+# dev dependencies — so without it the build installs no compiler and fails on
+# `tsc: not found`.
+#
+# `npm install`, not `npm ci`, and that is a platform constraint rather than a
+# preference. Railway mounts `/app/node_modules/.cache` as a build cache;
+# `npm ci` begins by removing `node_modules` wholesale, hits that mount point,
+# and fails with `EBUSY: resource busy or locked, rmdir
+# '/app/node_modules/.cache'`. Observed on this service 2026-08-17T20:30:53Z,
+# exit code 240. A mount cannot be removed, so no flag to `npm ci` avoids it.
+#
+# What is given up, and why it is affordable: `npm ci` fails when
+# `package-lock.json` and `package.json` disagree, and `npm install` quietly
+# reconciles them. That guarantee is not lost, only relocated — CI runs
+# `npm ci` on every pull request and every push to `main`, so a lockfile out of
+# sync fails there, before anything reaches this build. With a lockfile known
+# to be in sync, `npm install` in a fresh container resolves to exactly the
+# locked versions.
+buildCommand = "npm install --include=dev && npm run build"
 
 [deploy]
 startCommand = "npm start"
