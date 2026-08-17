@@ -4,6 +4,35 @@
 directory is where it is retained. The bundles are the harness's own output,
 committed unmodified.
 
+## Read this first — both bundles below were produced by a defective harness
+
+**Neither bundle on disk is sound evidence for the `survives_restart`
+condition, and both are retained anyway.** Two defects were found in the
+harness on 2026-08-17 by CodeRabbit on PR #2, after both gates had been
+recorded as satisfied. Both were defects in the *evidence* rather than in the
+service — the runs may well have been sound; the harness could not have shown
+it either way.
+
+1. **The restart comparison ran against a stale process identity.** `/version`
+   was read at the health check, then a 30-second dwell and a write happened,
+   and only then was the restart requested. Any process change inside that
+   window satisfied the wait. This is not hypothetical: in the `21-50-57`
+   bundle, run #2's `processAfter` is `21:49:34.771Z` against a `requestedAt`
+   of `21:49:36.893Z` — **the "new" process was observed 2.1 seconds before
+   the restart that was supposed to have caused it.** That run credited the
+   tail of the previous run's restart.
+2. **The event-id comparison never happened.** `compareAfterRestart` was handed
+   the pre-restart ids as the post-restart ids, so the two arrays were equal by
+   construction and the check could not fail — while the code comments and the
+   PR body both said the ids were compared. The counts and lifecycle state were
+   genuinely compared; the ids were not.
+
+The harness is fixed and both defects carry a regression test that fails
+against the pre-fix code. **The gate must be re-run against the fixed harness
+before these bundles support anything.** These two are retained because a
+retracted claim is part of the record — deleting them would leave the fix
+looking like routine work rather than the correction of a finding.
+
 ## What is here
 
 Two bundles. Both are kept; the second supersedes the first as the description
@@ -44,7 +73,7 @@ teardown — passing only if all three conditions hold (`DEC-20260815-17`,
 |---|---|
 | deploys and stays up | 11 consecutive `/health` samples across a 30-second window, every one passing, plus `/ready` reporting Postgres reachable |
 | connects to Postgres and reads and writes correctly | a room created, a `scope.captured` event accepted by the ledger (T1 via guard G1, `ROOM_CREATED` → `SCOPED`), and the room read back |
-| survives a restart without data loss | `/version` reporting a new `startedAt` — a genuinely new process — and the room then reading back with identical log length, entry count and lifecycle state |
+| survives a restart without data loss | `/version` reporting a new `startedAt` — and the room then reading back with identical log length, entry count and lifecycle state. **Read against the defects above: "a genuinely new process" is what this was meant to establish and, for the `21-50-57` run #2, is not what it established. The event ids were not compared in either bundle.** |
 
 ## The restart chain, because "a restart happened" is the easiest thing to fake
 
@@ -70,6 +99,15 @@ run #3  21:09:25.894Z -> 21:10:21.328Z
 Four distinct processes across three runs, chained end to end. A service that
 never restarted would show one identity throughout, and a harness that only
 polled `/health` could not tell the difference.
+
+**What that chain does and does not show, restated after the finding.** The
+identities are real and the chain is genuine — four distinct processes did
+serve, in that order. What it does not show is that each run's own restart
+request caused the change it credited. The identities on the left are the ones
+read at each run's *health check*, not immediately before its *restart
+request*, and in the `21-50-57` bundle run #2 those two are not the same value.
+A chain built from stale endpoints can be perfectly consistent and still credit
+the wrong cause.
 
 ## What this does not do
 

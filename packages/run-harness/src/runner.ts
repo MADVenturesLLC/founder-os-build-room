@@ -194,10 +194,32 @@ export async function performRun(config: RunnerConfig, deps: RunnerDeps): Promis
 
   // ---- restart -----------------------------------------------------------
   const restartStep = open('restart');
+
+  /*
+   * Re-read the process identity IMMEDIATELY before requesting the restart,
+   * and compare against that — not against the identity captured at the health
+   * check.
+   *
+   * The earlier capture sat before a 30-second dwell and a write. Any process
+   * change inside that window satisfied the wait, so a restart the harness did
+   * not cause could hold the condition. That is not hypothetical: the
+   * 2026-08-17 Node 22 bundle contains a run whose new process was observed
+   * 2.1 seconds BEFORE its own restart request, because two platform restarts
+   * had been performed in quick succession and the run credited the tail of
+   * the earlier one. Caught by CodeRabbit on PR #2 and confirmed against the
+   * retained bundle.
+   */
+  const identityProbe = await client.version();
+  const identityBeforeRequest = identityProbe.version.startedAt ?? null;
+
   const restartAction: PlatformAction = await platform.restart(now);
-  const restarted = await waitForNewProcess(client, config, deps, processBefore);
+  const restarted = await waitForNewProcess(client, config, deps, identityBeforeRequest);
   if (!restarted.ok) {
-    finish(restartStep, 'failed', restarted.detail, { platformAction: restartAction });
+    finish(restartStep, 'failed', restarted.detail, {
+      platformAction: restartAction,
+      processAtHealthCheck: processBefore,
+      identityBeforeRequest,
+    });
     conditions.push({
       condition: 'survives_restart',
       held: false,
@@ -209,7 +231,11 @@ export async function performRun(config: RunnerConfig, deps: RunnerDeps): Promis
   }
   finish(restartStep, 'passed', restarted.detail, {
     platformAction: restartAction,
-    processBefore,
+    // Kept for the record: the identity at the health check, and the one the
+    // comparison actually used. They differ when something restarted the
+    // service between the two, which is exactly the case this now excludes.
+    processAtHealthCheck: processBefore,
+    processBefore: identityBeforeRequest,
     processAfter: restarted.processAfter,
   });
 
@@ -473,7 +499,22 @@ async function writeAndReadBack(
     };
   }
 
-  const fingerprint = fingerprintOf(read.body, [eventId]);
+  /*
+   * The pre-restart ids come from the room's own export, not from the id the
+   * harness happens to have sent. Both sides of the comparison must be
+   * OBSERVED, or the comparison is between a value and itself.
+   */
+  const exportedBefore = await client.exportRoom(roomId);
+  if (!exportedBefore.ok) {
+    return {
+      ok: false,
+      detail: `wrote the event but could not export the room ledger: ${describe(exportedBefore)}`,
+      before: EMPTY_FINGERPRINT,
+      observations: { roomId, eventId, export: exportedBefore.body },
+    };
+  }
+
+  const fingerprint = fingerprintOf(read.body, eventIdsOf(exportedBefore.body));
   if (fingerprint.logLength < 1) {
     return {
       ok: false,
@@ -514,7 +555,16 @@ async function compareAfterRestart(
     };
   }
 
-  const after = fingerprintOf(read.body, before.eventIds);
+  const exported = await client.exportRoom(roomId);
+  if (!exported.ok) {
+    return {
+      ok: false,
+      detail: `the room ledger could not be exported after the restart: ${describe(exported)}`,
+      observations: { roomId, export: exported.body },
+    };
+  }
+
+  const after = fingerprintOf(read.body, eventIdsOf(exported.body));
   const differences: string[] = [];
 
   if (after.logLength !== before.logLength) {
@@ -522,6 +572,18 @@ async function compareAfterRestart(
   }
   if (after.entryCount !== before.entryCount) {
     differences.push(`entry count ${before.entryCount} -> ${after.entryCount}`);
+  }
+  /*
+   * The ids are compared in order, and both sides are read from an export.
+   * An earlier version passed `before.eventIds` into the after-fingerprint, so
+   * the two arrays were equal by construction and this comparison could never
+   * fail — while the comments, the evidence README and the PR body all claimed
+   * the ids were checked. Caught by CodeRabbit on PR #2.
+   */
+  if (after.eventIds.join(',') !== before.eventIds.join(',')) {
+    differences.push(
+      `event ids [${before.eventIds.join(', ')}] -> [${after.eventIds.join(', ')}]`,
+    );
   }
   if (JSON.stringify(after.state) !== JSON.stringify(before.state)) {
     differences.push('lifecycle state differs');
@@ -552,6 +614,15 @@ function fingerprintOf(body: unknown, eventIds: readonly string[]): RoomFingerpr
     state: record['snapshot'] ?? null,
     eventIds,
   };
+}
+
+/** Event ids from a room export, in stored order. */
+function eventIdsOf(body: unknown): readonly string[] {
+  const events = (body as { events?: unknown } | null)?.events;
+  if (!Array.isArray(events)) return [];
+  return events
+    .map((row) => (row as Record<string, unknown>)['event_id'])
+    .filter((id): id is string => typeof id === 'string');
 }
 
 function describe(probe: Probe): string {

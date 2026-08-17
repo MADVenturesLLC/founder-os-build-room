@@ -41,15 +41,30 @@ only when it is labelled as one.
 
 ## The controls
 
-| Provider | Limb | Limit | Enforcement | Status |
+| Provider | Limb | Limit | Enforcement | Evidence class |
 |---|---|---|---|---|
-| Railway | compute | USD 15 | hard limit (per Founder) | attested 2026-08-17 |
-| Railway | Agent | USD 10 | hard limit (per Founder) | attested 2026-08-17 |
-| Railway | compute alert | USD 10 | soft, email | attested 2026-08-17 (moved down from USD 15 — see below) |
-| Railway | Agent alert | USD 5 | soft, email | attested 2026-08-17 |
-| Neon | account threshold | USD 25 | **alert only — no hard stop** | attested 2026-08-17 |
-| Neon | alert at 80% | USD 20 | soft, notification | attested 2026-08-17 |
-| Neon | alert at 100% | USD 25 | soft, notification | attested 2026-08-17 |
+| Railway | compute | USD 15 | hard limit (per Founder) | `[Founder-reported 2026-08-17]` |
+| Railway | Agent | USD 10 | hard limit (per Founder) | `[Founder-reported 2026-08-17]` |
+| Railway | compute alert | USD 10 | soft, email | `[Founder-reported 2026-08-17]` — moved down from USD 15, see below |
+| Railway | Agent alert | USD 5 | soft, email | `[Founder-reported 2026-08-17]` |
+| Neon | account threshold | USD 25 | **alert only — no hard stop** | `[Founder-reported 2026-08-17]` |
+| Neon | alert at 80% | USD 20 | soft, notification | `[Founder-reported 2026-08-17]` |
+| Neon | alert at 100% | USD 25 | soft, notification | `[Founder-reported 2026-08-17]` |
+
+**Every row is `[Founder-reported]`, and that is the weakest of the three
+evidence classes in use here.** `[Observed <date>]` means `builder` ran the
+check and read the result — the Neon compute configuration below is the one
+thing in this document that carries it. `[Founder-executed <date>, verbatim
+output relayed]` means the Founder ran a command and relayed its output
+unedited. `[Founder-reported]` is an attestation with no output behind it,
+which is what every figure in the table above is, because no surface available
+to this session can read provider billing (see the named negative check above).
+
+**Provider billing state is mutable and nothing here re-checks it.** A limit
+can be raised, lowered or removed in a provider dashboard at any time, and this
+document would not change. A future verifier must re-run the check against the
+provider rather than reading these rows as current — they are a record of what
+was attested on 2026-08-17, not a live view.
 
 **The two providers do not enforce the same way, and the totals differ
 accordingly.**
@@ -118,7 +133,7 @@ behind it on the Neon side.
 control.** The Neon project `founder-os-build-room` is fixed at 0.25 compute
 units with no autoscaling headroom (`autoscaling_limit_min_cu` and
 `autoscaling_limit_max_cu` both 0.25) and suspends after 60 seconds idle —
-observed by `builder` via the Neon API 2026-08-17T19:03Z. That bounds compute
+`[Observed 2026-08-17T19:03Z]`, `builder` via the Neon API. That bounds compute
 cost by capping the rate at which it can accrue, which is a real limit and a
 meaningful one at this size. It is **not** a spend cap: storage accrues
 independently of compute, the setting can be changed without touching billing,
@@ -166,12 +181,20 @@ would have been the same defect the 15/10 exchange avoided.
 The row is now USD 10 on the Founder's confirmation, which is an attestation
 like every other figure in the table, not a check `builder` ran.
 
-Raised with the Founder 2026-08-17. Moving the compute alert down is their call,
-it is **not** assumed here, and the table above records the alert at USD 15
-because that is what is attested. This does not fail exit criterion 2 — the
-ruling requires a cap *and* alerting on both providers, and both are present —
-but an alert with no lead time is worth naming rather than counting as
-satisfied and forgetting.
+**USD 15 is the superseded value and appears nowhere as a current alert
+figure.** A paragraph recording the pre-confirmation state — *"the table above
+records the alert at USD 15 because that is what is attested"* — was left
+standing here after the confirmation landed, leaving two current values in one
+section. It was true when written and false the moment the Founder confirmed,
+and it is removed rather than struck through because a stale operational figure
+is the kind of thing a reader acts on. Raised by CodeRabbit on PR #2. The
+history it recorded is not lost: the paragraphs above carry it, and the fact
+that the alert was raised as a finding before it was changed is stated there.
+
+None of this ever failed exit criterion 2 — the ruling requires a cap *and*
+alerting on both providers, and both were present throughout — but an alert
+with no lead time was worth naming rather than counting as satisfied and
+forgetting.
 
 ## Arithmetic against the ratified ceiling
 
