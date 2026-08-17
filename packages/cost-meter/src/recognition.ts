@@ -47,7 +47,14 @@
  */
 
 import { micros, type Usd } from './money.js';
-import { dateKey, daysInMonth, isOnOrBefore, monthKey, type AccountingInstant } from './period.js';
+import {
+  dateKey,
+  daysInMonth,
+  isOnOrBefore,
+  monthKey,
+  PeriodError,
+  type AccountingInstant,
+} from './period.js';
 
 export type RecognitionMethod = 'BOOK_FULL_MONTH_AT_START' | 'PRORATED_DAILY';
 
@@ -108,12 +115,44 @@ function servedThisMonth(commitment: InfrastructureCommitment, asOf: AccountingI
   const today = dateKey(asOf);
   const monthStart = `${monthKey(asOf)}-01`;
 
-  if (!isOnOrBefore(commitment.effectiveFrom, today)) return false;
+  const from = requireDateKey(commitment.effectiveFrom, 'effectiveFrom', commitment);
+  if (!isOnOrBefore(from, today)) return false;
 
   const until = commitment.effectiveUntil;
-  if (until !== undefined && until !== null && isOnOrBefore(until, monthStart)) return false;
+  if (until !== undefined && until !== null) {
+    if (isOnOrBefore(requireDateKey(until, 'effectiveUntil', commitment), monthStart)) return false;
+  }
 
   return true;
+}
+
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A commitment date, in the strict `YYYY-MM-DD` form the comparisons require.
+ *
+ * These dates are compared as **strings**, which is correct only because
+ * zero-padded ISO dates sort chronologically. A value that is not in that form
+ * sorts somewhere arbitrary and silently changes the answer — `'2026-8-1'`
+ * compares as greater than `'2026-08-17'`, so a commitment that served the
+ * whole month is dropped and the month is understated; `'unknown'` compares as
+ * greater than any date key, so a commitment that ended stays included.
+ *
+ * Understating is the direction this module's own header calls unacceptable,
+ * so malformed input is refused rather than absorbed. The rest of the package
+ * fails closed by returning UNKNOWN, but `recognizeInfrastructure` returns
+ * `Usd` and has no UNKNOWN to return — the check therefore happens at the
+ * boundary, and throws. Raised by CodeRabbit on PR #2.
+ */
+function requireDateKey(value: string, field: string, commitment: InfrastructureCommitment): string {
+  if (!DATE_KEY.test(value)) {
+    throw new PeriodError(
+      `${commitment.provider}: ${field} must be YYYY-MM-DD; got ${JSON.stringify(value)}. ` +
+        `These dates are compared as strings, so a malformed one can drop a served ` +
+        `commitment and understate the month.`,
+    );
+  }
+  return value;
 }
 
 function recognizeOne(

@@ -233,6 +233,62 @@ describe('control plane — the room endpoints are not public', () => {
   });
 });
 
+describe('control plane — occurredAt is a real RFC3339 instant', () => {
+  /*
+   * `Date.parse` was the check, and it is far looser than the name suggests:
+   * date-only values, offset-less values, non-RFC3339 offsets like `+0530`,
+   * and — worst — impossible dates, which it NORMALIZES rather than refuses.
+   * `2026-02-30T12:00:00Z` parsed happily as 2 March, and would have been
+   * stored verbatim in an append-only ledger as when the event occurred.
+   * Raised by CodeRabbit on PR #2.
+   */
+  let reached = false;
+  const watchfulStore = {
+    append: async () => {
+      reached = true;
+      throw new Error('a malformed timestamp reached the ledger');
+    },
+  } as unknown as PostgresLedgerStore;
+
+  const post = async (occurredAt: string) => {
+    reached = false;
+    const harness = start(reachablePool, watchfulStore);
+    const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ ...makeEvent('scope.captured'), occurredAt }),
+    });
+    await harness.close();
+    return response.status;
+  };
+
+  const refused: ReadonlyArray<readonly [string, string]> = [
+    ['2026-08-17', 'date only'],
+    ['2026-08-17T12:00:00', 'no offset'],
+    ['2026-08-17T12:00:00+0530', 'offset without a colon'],
+    ['2026-02-30T12:00:00Z', 'impossible date that Date.parse normalizes'],
+    ['2026-13-01T12:00:00Z', 'month 13'],
+    ['2026-08-17T25:00:00Z', 'hour 25'],
+    ['2026-08-17T12:00:60Z', 'leap second away from the end of a day'],
+  ];
+
+  for (const [value, why] of refused) {
+    it(`refuses ${value} — ${why}`, async () => {
+      assert.equal(await post(value), 400);
+      assert.equal(reached, false, 'the ledger must not see it');
+    });
+  }
+
+  it('accepts a Z-normalized instant and a valid numeric offset', async () => {
+    // Not 400: these are well-formed, so they reach the ledger — where this
+    // stub throws, giving 500. The point is that the shape check let them by.
+    assert.equal(await post('2026-08-17T12:00:00Z'), 500);
+    assert.equal(await post('2026-08-17T12:00:00.123Z'), 500);
+    assert.equal(await post('2026-08-17T12:00:00+05:30'), 500);
+    assert.equal(await post('2026-06-30T23:59:60Z'), 500, 'a real leap second');
+  });
+});
+
 describe('control plane — an internal failure does not describe itself to the caller', () => {
   it('returns a correlation id, not the error text', async () => {
     /*

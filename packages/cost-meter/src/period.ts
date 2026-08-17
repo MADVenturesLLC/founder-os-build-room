@@ -111,11 +111,17 @@ export function monthKeyOf(occurredAt: string): string | null {
   if (dayNumber < 1 || dayNumber > daysInMonth(Number(year), monthNumber)) return null;
 
   /*
-   * Hour 24 is refused. Second 60 is ALLOWED: RFC3339 permits it for a leap
-   * second, a recorded timestamp can genuinely carry one, and pausing the gate
-   * on a valid record is its own kind of wrong.
+   * Hour 24 is refused. Second 60 is allowed only at 23:59 — RFC3339 permits
+   * it for a leap second, and a leap second occurs at the END of a UTC day and
+   * nowhere else. Allowing it at any hour, as an earlier version did, admitted
+   * `2026-08-17T12:00:60Z` — not a timestamp, and exactly the sort of value
+   * this function exists to refuse. Raised by CodeRabbit on PR #2.
    */
-  if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 60) return null;
+  const hourNumber = Number(hour);
+  const minuteNumber = Number(minute);
+  const secondNumber = Number(second);
+  if (hourNumber > 23 || minuteNumber > 59 || secondNumber > 60) return null;
+  if (secondNumber === 60 && (hourNumber !== 23 || minuteNumber !== 59)) return null;
 
   return `${year}-${month}`;
 }

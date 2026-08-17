@@ -220,8 +220,11 @@ describe('cost meter — AND precedence', () => {
     });
 
     assert.equal(decision.permit, false);
-    assert.equal(decision.pausedBy[0]?.limb, 'token_inputs');
-    assert.match(decision.pausedBy[0]?.reason ?? '', /requestedTokens=NaN/);
+    // Located by name, not by position: a limb inserted before `token_inputs`
+    // would silently break a `pausedBy[0]` assertion.
+    const paused = decision.pausedBy.find((limb) => limb.limb === 'token_inputs');
+    assert.ok(paused, 'token_inputs must pause');
+    assert.match(paused.reason, /requestedTokens=NaN/);
   });
 
   it('pauses on a negative tokensSpent, which would otherwise buy room under the ceiling', () => {
@@ -236,7 +239,7 @@ describe('cost meter — AND precedence', () => {
     });
 
     assert.equal(decision.permit, false);
-    assert.equal(decision.pausedBy[0]?.limb, 'token_inputs');
+    assert.ok(decision.pausedBy.some((limb) => limb.limb === 'token_inputs'));
   });
 
   it('permits only when every limb permits', () => {
@@ -436,6 +439,28 @@ describe('cost meter — infrastructure recognition', () => {
     assert.equal(recognizeInfrastructure([ended], accountingInstant(2026, 8, 17)).micros, 0);
   });
 
+  it('refuses a malformed commitment date rather than comparing it as a string', () => {
+    /*
+     * These dates are compared as strings, which works only for the strict
+     * `YYYY-MM-DD` form. `'2026-8-1'` sorts ABOVE `'2026-08-17'`, so a
+     * commitment that served the whole month would be dropped and the month
+     * understated — the direction this module refuses to be wrong in.
+     * `'unknown'` sorts above any date, keeping an ended commitment included.
+     * Raised by CodeRabbit on PR #2.
+     */
+    const unpadded: InfrastructureCommitment = { ...NEON, effectiveFrom: '2026-8-1' };
+    assert.throws(
+      () => recognizeInfrastructure([unpadded], accountingInstant(2026, 8, 17)),
+      PeriodError,
+    );
+
+    const nonsense: InfrastructureCommitment = { ...NEON, effectiveUntil: 'unknown' };
+    assert.throws(
+      () => recognizeInfrastructure([nonsense], accountingInstant(2026, 8, 17)),
+      PeriodError,
+    );
+  });
+
   it('recognizes nothing for a commitment that has not started yet', () => {
     const future: InfrastructureCommitment = { ...NEON, effectiveFrom: '2026-08-20' };
     assert.equal(recognizeInfrastructure([future], accountingInstant(2026, 8, 17)).micros, 0);
@@ -532,9 +557,14 @@ describe('cost meter — the accounting period', () => {
     assert.equal(monthKeyOf('2000-02-29T12:00:00Z'), '2000-02', 'divisible by 400, leap year');
   });
 
-  it('accepts second 60, because RFC3339 permits a leap second', () => {
-    // Refusing it would pause the gate on a record that is genuinely valid.
+  it('accepts second 60 at the end of a day, and refuses it anywhere else', () => {
+    // A leap second occurs at the END of a UTC day. Refusing it outright would
+    // pause the gate on a genuinely valid record; allowing it at any hour, as
+    // an earlier version did, admits `12:00:60` — not a timestamp at all.
+    // Raised by CodeRabbit on PR #2.
     assert.equal(monthKeyOf('2026-06-30T23:59:60Z'), '2026-06');
+    assert.equal(monthKeyOf('2026-08-17T12:00:60Z'), null);
+    assert.equal(monthKeyOf('2026-08-17T23:00:60Z'), null, 'minute must be 59 too');
   });
 
   it('makes the month UNKNOWN when a run cannot be assigned to a month — fail closed', () => {

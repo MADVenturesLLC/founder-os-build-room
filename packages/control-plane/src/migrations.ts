@@ -143,6 +143,48 @@ export const MIGRATIONS: readonly Migration[] = [
          FOR EACH ROW EXECUTE FUNCTION build_room_events_immutable()`,
     ],
   },
+
+  {
+    /*
+     * A conjunction-pending row must carry NO transition fields at all.
+     *
+     * `0001`'s constraint required `transition_id` and `entry_seq` to be null
+     * for a pending outcome but said nothing about `guard_id`, `from_state` or
+     * `resulting_state` — so a writer defect could persist a row claiming a
+     * pending event had a guard and a resulting state. In an append-only
+     * ledger that row is permanent: the trigger refuses UPDATE and DELETE, so
+     * an impossible event could never be corrected, only annotated. The
+     * database is the right place to refuse it. Raised by CodeRabbit on PR #2.
+     *
+     * A NEW migration rather than an edit to `0001`, deliberately. Every
+     * environment that already recorded `0001` will never run it again —
+     * editing it would change the schema only on databases created after the
+     * edit, which is the quiet divergence migrations exist to prevent.
+     *
+     * `NOT VALID` then `VALIDATE` is the two-step form: the constraint applies
+     * to new rows immediately without taking the lock a full-table check needs,
+     * and the validation pass then confirms existing rows. On an empty or small
+     * table this is indistinguishable from a plain ADD; on a large one it is
+     * the difference between a brief lock and a long one.
+     */
+    id: '0002_pending_rows_carry_no_transition_fields',
+    statements: [
+      `ALTER TABLE build_room_events
+         DROP CONSTRAINT IF EXISTS build_room_events_pending_is_bare`,
+      `ALTER TABLE build_room_events
+         ADD CONSTRAINT build_room_events_pending_is_bare
+         CHECK (
+           outcome <> 'conjunction_pending'
+           OR (transition_id   IS NULL
+               AND guard_id        IS NULL
+               AND from_state      IS NULL
+               AND resulting_state IS NULL
+               AND entry_seq       IS NULL)
+         ) NOT VALID`,
+      `ALTER TABLE build_room_events
+         VALIDATE CONSTRAINT build_room_events_pending_is_bare`,
+    ],
+  },
 ];
 
 /** Advisory-lock key. Arbitrary but fixed — any value works if it never changes. */

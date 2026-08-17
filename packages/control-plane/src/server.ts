@@ -280,6 +280,51 @@ function asyncRoute(handler: (req: Request, res: Response) => Promise<void>) {
   };
 }
 
+const RFC3339 =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * A strict RFC3339 date-time with an offset.
+ *
+ * `Date.parse` was the check, and it is far looser than the name suggests: it
+ * accepts a date-only `2026-08-17`, accepts an offset-less `2026-08-17T12:00`,
+ * accepts non-RFC3339 offsets like `+0530`, and — worst here — *normalizes*
+ * impossible dates, so `2026-02-30T12:00:00Z` parses happily as 2 March. Each
+ * of those would have been stored verbatim in an append-only ledger as the
+ * time an event occurred. Raised by CodeRabbit on PR #2.
+ *
+ * The shape is checked here and the calendar is checked below, because a
+ * regex can express the first and not the second.
+ */
+function isRfc3339(value: string): boolean {
+  const match = RFC3339.exec(value);
+  if (match === null) return false;
+
+  const [, year, month, day, hour, minute, second] = match;
+  const monthNumber = Number(month);
+  const dayNumber = Number(day);
+  if (monthNumber < 1 || monthNumber > 12) return false;
+  if (dayNumber < 1 || dayNumber > daysInMonth(Number(year), monthNumber)) return false;
+
+  const hourNumber = Number(hour);
+  const minuteNumber = Number(minute);
+  const secondNumber = Number(second);
+  if (hourNumber > 23 || minuteNumber > 59 || secondNumber > 60) return false;
+  // Second 60 is a leap second, which occurs only at the end of a UTC day.
+  if (secondNumber === 60 && (hourNumber !== 23 || minuteNumber !== 59)) return false;
+
+  return true;
+}
+
+/** Days in a calendar month, by the proleptic Gregorian leap rule. */
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    return leap ? 29 : 28;
+  }
+  return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 0;
+}
+
 function requireUuid(value: unknown, field: string): string {
   if (typeof value !== 'string' || !UUID_RE.test(value)) {
     throw new HttpError(400, `${field} must be a UUID`);
@@ -315,8 +360,8 @@ function requireEvent(body: unknown): LifecycleEvent {
   if (candidate['evidence'] !== undefined && !Array.isArray(candidate['evidence'])) {
     throw new HttpError(400, 'evidence, when present, must be an array');
   }
-  if (Number.isNaN(Date.parse(candidate['occurredAt'] as string))) {
-    throw new HttpError(400, 'occurredAt must be an RFC3339 timestamp');
+  if (!isRfc3339(candidate['occurredAt'] as string)) {
+    throw new HttpError(400, 'occurredAt must be an RFC3339 date-time with an offset');
   }
 
   return {

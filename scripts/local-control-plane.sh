@@ -30,13 +30,27 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 #
 # The directory is created 0700 and its mode is checked, so a pre-existing
 # directory belonging to someone else is refused rather than used.
+#
+# The symlink check comes BEFORE the chmod, and creation is non-recursive.
+# `mkdir -p` follows an existing symlink, so the first version chmodded the
+# link's TARGET and only then rejected the link — meaning a local user who
+# pre-created the path as a symlink could have this script change the mode of a
+# directory they chose. Checking after the fact is checking too late. Raised by
+# CodeRabbit on PR #2.
+#
+# `mkdir -m` is also avoided: with `-p` the mode applies only to the deepest
+# component (ShellCheck SC2174), so a `umask` subshell around a plain `mkdir`
+# is the form that actually creates the directory 0700.
 STATE_DIR="${CONTROL_PLANE_STATE_DIR:-${XDG_RUNTIME_DIR:-/tmp}/build-room-$(id -u)}"
-mkdir -p -m 0700 "$STATE_DIR"
-chmod 0700 "$STATE_DIR"
-if [[ ! -O "$STATE_DIR" || -L "$STATE_DIR" ]]; then
-  echo "state directory $STATE_DIR is not owned by this user, or is a symlink" >&2
-  exit 1
+if [[ -e "$STATE_DIR" || -L "$STATE_DIR" ]]; then
+  if [[ -L "$STATE_DIR" || ! -d "$STATE_DIR" || ! -O "$STATE_DIR" ]]; then
+    echo "state directory $STATE_DIR is a symlink, not a directory, or not owned by this user" >&2
+    exit 1
+  fi
+else
+  (umask 077; mkdir "$STATE_DIR")
 fi
+chmod 0700 "$STATE_DIR"
 
 PIDFILE="${CONTROL_PLANE_PIDFILE:-$STATE_DIR/control-plane.pid}"
 LOGFILE="${CONTROL_PLANE_LOGFILE:-$STATE_DIR/control-plane.log}"
