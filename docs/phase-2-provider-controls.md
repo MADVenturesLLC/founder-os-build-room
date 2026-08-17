@@ -45,7 +45,7 @@ only when it is labelled as one.
 |---|---|---|---|---|
 | Railway | compute | USD 15 | hard limit (per Founder) | attested 2026-08-17 |
 | Railway | Agent | USD 10 | hard limit (per Founder) | attested 2026-08-17 |
-| Railway | compute alert | USD 15 | soft, email | attested 2026-08-17 — **see the threshold note below** |
+| Railway | compute alert | USD 15 | soft, email | attested 2026-08-17 — **change to USD 10 directed, not yet confirmed applied; see below** |
 | Railway | Agent alert | USD 5 | soft, email | attested 2026-08-17 |
 | Neon | account threshold | USD 25 | **alert only — no hard stop** | attested 2026-08-17 |
 | Neon | alert at 80% | USD 20 | soft, notification | attested 2026-08-17 |
@@ -152,6 +152,17 @@ Both are USD 15, so the alert fires at the moment the hard stop does — it
 notifies when action is already impossible. The alert limb exists for lead time,
 and an alert at the cap has none. The Agent limb does not have this problem:
 its alert is USD 5 against a USD 10 hard limit.
+
+**The Founder directed the change, 2026-08-17: move the compute alert to USD
+10.** The table still records USD 15, and deliberately so — the direction is on
+the record, the *applied state* is not, and this session cannot read Railway
+billing to confirm it (see the named negative check above). Recording USD 10
+before confirmation would be exactly the defect the 15/10 exchange avoided:
+writing an intended value down as a fact.
+
+**On confirmation the row becomes USD 10 and this paragraph is closed.** At USD
+10 against a USD 15 hard limit, the compute limb gains the lead time it
+currently lacks, matching the Agent limb's USD 5 against USD 10.
 
 Raised with the Founder 2026-08-17. Moving the compute alert down is their call,
 it is **not** assumed here, and the table above records the alert at USD 15
