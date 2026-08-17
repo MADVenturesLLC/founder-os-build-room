@@ -59,6 +59,29 @@ it confers no activation, no further phase, and no spend authority.
 The bundle states the same thing in its own `authorizes` field, so a reader who
 sees only the JSON is told as plainly as one who reads this file.
 
+## The bundle is bound to a runtime, and the runtime has since changed
+
+**The three runs were performed against Node v24.10.0.** `/version` reported it
+during every run and the figure is in the bundle. That was not a choice — it was
+a consequence of `engines.node` reading `>=22`, under which Nixpacks selected
+the newest satisfying version, while CI and every local verification ran on 22.
+
+The Founder ruled on 2026-08-17 that Railway is **pinned to Node 22**, recorded
+verbatim in `railway.toml`. So the deployed runtime after that change is not
+the runtime these runs exercised.
+
+**What follows, stated rather than left for a reader to notice.** This bundle
+remains true of what it describes: commit `d4dab78` on Node 24, three
+consecutive passes. It is not evidence about the pinned configuration. The
+three-run gate exists to show the skeleton is stable enough to build on, and a
+Node major version is part of that skeleton — so a gate satisfied on one
+runtime does not carry to another by itself.
+
+Re-running against the pinned build costs three restarts and a few minutes, and
+produces a bundle that describes what is actually deployed. Until that happens,
+the honest reading of this directory is: **the gate was satisfied, on a
+configuration that is no longer the deployed one.**
+
 ## Retention
 
 Bundles are committed, never edited. A later run adds a file; it does not

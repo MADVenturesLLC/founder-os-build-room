@@ -124,10 +124,26 @@ meaningful one at this size. It is **not** a spend cap: storage accrues
 independently of compute, the setting can be changed without touching billing,
 and nothing about it stops the meter running past USD 25.
 
-**This is reported, not resolved.** Whether to accept the gap, move Neon to a
-plan or mechanism that can hard-stop, or lower the exposure another way is a
-Founder decision. `builder` is not treating an alert as a cap, and is not
-treating the gap as a blocker it may waive.
+**~~This is reported, not resolved.~~ RESOLVED — the Founder accepted the gap,
+2026-08-17.** Their words, recorded verbatim and unmodified:
+
+> I accept the Neon gap $25 observed (notification-only), railway enforced.
+
+**Operative.** The gap is accepted as an informed Founder decision, not
+waived by `builder` and not closed by treating an alert as a cap. What is
+accepted is precisely what the sections above describe: **USD 25 enforced at
+Railway, USD 25 observed at Neon with no stop behind it.**
+
+This changes the gap's *status*, not the gap. Neon still cannot hard-stop,
+spend above USD 25 there is still billed, and the cost meter still cannot
+reach it. Anyone reading this later should understand the exposure as
+accepted rather than eliminated — and the acceptance is revisitable on the
+same terms as any Founder act, which is what the paragraph below preserves.
+
+**What would reopen it.** A change in what Neon costs, a change to the project's
+compute configuration, or Neon gaining a hard-stop mechanism. None of those is
+monitored automatically; the alert at USD 20 is the notice that arrives first,
+and it is a notification, not a control.
 
 ## An observation on the alert thresholds
 

@@ -12,6 +12,20 @@
 [build]
 builder = "NIXPACKS"
 
+# Node is pinned to 22 by `.nvmrc` and by `engines.node` in package.json,
+# which Nixpacks reads. Both are set rather than one, because which of them
+# Nixpacks honours is a detail of the builder and pinning in one place only
+# would leave the version depending on that detail.
+#
+# Founder ruling, 2026-08-17: "Pin Railway to Node 22. If in the future we
+# must move to 24 than thats a call for that day. We verified it works I
+# rather go with what is working over unknown and risky."
+#
+# The reason it needed a ruling: the first production deploy ran Node
+# v24.10.0, because `engines.node` then read `>=22` and Nixpacks took the
+# newest satisfying version. CI and every local verification run on 22, so
+# production was running the one runtime nothing had been tested against.
+
 # `--include=dev` is deliberate and load-bearing. TypeScript is a
 # devDependency, and Railway sets NODE_ENV=production, under which npm omits
 # dev dependencies — so without it the build installs no compiler and fails on
