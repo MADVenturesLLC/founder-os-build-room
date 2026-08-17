@@ -114,7 +114,68 @@ had already landed.
 
 ---
 
-## 4. `evidence/` holds bundles produced by a harness with known defects
+## 4. A push to the branch redeploys the service, and the gate cannot survive it
+
+**What it is.** Railway watches the PR branch, so **every `git push` replaces
+the running process**. The Founder-defined run requires the service to answer
+`/health` continuously across a 30-second dwell, and a deploy landing inside
+that window fails `deploys_and_stays_up` — correctly, since the service
+genuinely stopped answering.
+
+**Observed.** `e5f5ff8` was pushed at `23:49:03`, the gate was launched at
+`~23:49:50`, and the deploy landed at `23:50:07` — inside run #1's dwell. All
+three runs failed with `502 Application failed to respond`. The bundle records
+`deploys_and_stays_up` as failed for all three, which read literally is a claim
+about the service that is not true: the service was healthy and was being
+replaced.
+
+**The operating rule this implies.** *Never launch the gate within a few
+minutes of a push, and confirm a stable `startedAt` first.* The sequence is:
+push → wait for the deploy → confirm the same `startedAt` across at least a
+minute → then launch. Committing the evidence bundle **after** the gate rather
+than before is part of the same rule.
+
+**Why it is a limit and not a bug.** The harness is right to fail here — a
+service that stops answering has not stayed up, and a harness that excused a
+deploy would excuse a crash. Closing it properly means a deployment-aware
+platform port that can distinguish "replaced by a deploy I did not request"
+from "stopped answering", which needs the same platform-side handle §3 needs.
+Until then it is a scheduling discipline, and it is written down here because
+it was learned by burning a sequence.
+
+**Raised by** `builder`, from the 2026-08-17T23:50 bundle.
+
+---
+
+## 5. Restart cadence is timed against a clock the operator cannot see
+
+**What it is.** With `ExternalPlatform`, a human performs each restart while
+the harness waits. But the harness's restart request comes **~35 seconds into
+each run** — after the 30-second dwell and the write — and the operator has no
+view of that clock. Restart too early and it lands during the next run's dwell,
+failing `deploys_and_stays_up`; too late and the 180-second window expires,
+failing `survives_restart`. Both failure modes were hit on 2026-08-17, in that
+order.
+
+**What makes it worse than it sounds.** The service returns in ~12 seconds, so
+"wait for it to come back, then restart again" — which reads like patience —
+produces restarts roughly every 12 seconds, four times faster than the run
+cycle can absorb. Six process starts landed between `23:50:07` and `23:51:40`.
+
+**What reduces it.** A long `PHASE2_RESTART_TIMEOUT_MS` so the window cannot
+expire, plus an explicit instruction to wait a fixed wall-clock interval after
+the service returns rather than "until it returns". Neither is a mechanism.
+
+**What would close it.** `PHASE2_RESTART_COMMAND` pointed at a real platform
+restart, so the harness performs the restart itself at exactly the right moment
+and no human timing is involved. That needs Railway API access this session
+does not have — the same gap that makes the port `external` in the first place.
+
+**Raised by** `builder`, from the 2026-08-17T23:47 and T23:50 bundles.
+
+---
+
+## 6. `evidence/` holds bundles produced by a harness with known defects
 
 **What it is.** Both bundles committed under `evidence/` were produced before
 two harness defects were found and fixed: a restart comparison against a stale

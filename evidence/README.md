@@ -11,6 +11,7 @@ reasons differ:
 
 | bundle | commit | verdict |
 |---|---|---|
+| `23-50-50` | `e5f5ff8` | **gate NOT satisfied** — 0 of 3; all three failed, and the cause was `builder`'s |
 | `23-47-17` | `66ee472` | **gate NOT satisfied** — 2 of 3 consecutive; run #1 failed |
 | `21-50-57` | `19b4968` | superseded — produced by the defective harness described below |
 | `21-10-24` | `d4dab78` | superseded — defective harness, and a runtime no longer deployed |
@@ -20,6 +21,31 @@ bundle produced by the FIXED harness, and it is retained precisely because it
 failed: `DEC-20260815-17` exit criterion 4 requires a failure to be visible as
 an interruption of the sequence rather than absent from it. A directory holding
 only successes would defeat that, so this one stays.
+
+### What failed in `23-50-50` — a `builder` scheduling error, not a service fault
+
+All three runs failed at `health_check` with
+`502 Application failed to respond`, and the bundle therefore records
+`deploys_and_stays_up` as failed three times. **Read literally that is a claim
+about the service which is not true.**
+
+`e5f5ff8` was pushed at `23:49:03`. Railway watches this branch, so the push
+triggered a deploy. The gate was launched at `~23:49:50` and the new process
+came up at `23:50:07` — inside run #1's 30-second dwell. The service was not
+failing; it was being replaced, by a commit `builder` had pushed moments
+earlier.
+
+A second error compounded it. The restart instruction given to the Founder was
+"wait for it to come back, then restart again" — but the service returns in
+about twelve seconds, so that phrasing produced restarts roughly every twelve
+seconds rather than the ninety the instruction elsewhere claimed. Six process
+starts landed between `23:50:07` and `23:51:40`, each one interrupting a dwell.
+
+**The harness was right and the operator was wrong.** A service that stops
+answering has not stayed up, and a harness that excused a deploy would excuse a
+crash. The bundle is retained on the same terms as any other, and both errors
+are written into `docs/phase-2-known-limits.md` §4 and §5 so the next sequence
+does not repeat them.
 
 ### What failed in `23-47-17`, stated plainly
 

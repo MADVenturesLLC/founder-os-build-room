@@ -1,0 +1,289 @@
+{
+  "schema": "build-room/phase-2-run-evidence@1",
+  "context": {
+    "assembledAt": "2026-08-17T23:50:50.250Z",
+    "commit": "e5f5ff8cad4fb965bbd0aec29cc025dc33582c11",
+    "baseUrl": "https://rare-enjoyment-production-0869.up.railway.app",
+    "environment": "production",
+    "platformKind": "external",
+    "attribution": {
+      "roleId": "builder",
+      "actorId": "session:claude-code/wf04-phase2-cloud-skeleton",
+      "actualModel": "claude-opus-5[1m]",
+      "executionSurface": "claude-code"
+    }
+  },
+  "gate": {
+    "satisfied": false,
+    "consecutivePasses": 0,
+    "required": 3,
+    "totalRuns": 3,
+    "failedRuns": 3,
+    "satisfyingRuns": [],
+    "summary": "gate NOT satisfied — 0 of 3 consecutive passes; 3 run(s) on record, 3 failed. Sequence: #1 failed, #2 failed, #3 failed."
+  },
+  "runs": [
+    {
+      "seq": 1,
+      "runId": "bf2fb06f-7c20-45f6-8bea-4a91f4c8c903",
+      "startedAt": "2026-08-17T23:50:01.393Z",
+      "endedAt": "2026-08-17T23:50:06.259Z",
+      "commit": "e5f5ff8cad4fb965bbd0aec29cc025dc33582c11",
+      "steps": [
+        {
+          "step": "deploy",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:50:01.393Z",
+          "endedAt": "2026-08-17T23:50:01.806Z",
+          "detail": "healthy after deploy (performed_externally)",
+          "observations": {
+            "platformAction": {
+              "action": "deploy",
+              "actor": "performed_externally",
+              "requestedAt": "2026-08-17T23:50:01.393Z",
+              "detail": "deploy requested outside this process (Railway API or dashboard); the harness verifies the result, it does not perform the act"
+            }
+          }
+        },
+        {
+          "step": "health_check",
+          "outcome": "failed",
+          "startedAt": "2026-08-17T23:50:01.806Z",
+          "endedAt": "2026-08-17T23:50:06.259Z",
+          "detail": "/health stopped answering on sample 2: HTTP 502 {\"status\":\"error\",\"code\":502,\"message\":\"Application failed to respond\",\"request_id\":\"nieR8neKQiCRBKB78u2xcg\"}",
+          "observations": {
+            "dwell": {
+              "ok": false,
+              "samples": 2,
+              "detail": "/health stopped answering on sample 2: HTTP 502 {\"status\":\"error\",\"code\":502,\"message\":\"Application failed to respond\",\"request_id\":\"nieR8neKQiCRBKB78u2xcg\"}"
+            },
+            "ready": {
+              "ok": false,
+              "status": 502,
+              "body": {
+                "status": "error",
+                "code": 502,
+                "message": "Application failed to respond",
+                "request_id": "MphmwNCpQiaEUJLxU79b0g"
+              },
+              "latencyMs": 72
+            },
+            "commit": "e5f5ff8cad4fb965bbd0aec29cc025dc33582c11"
+          }
+        },
+        {
+          "step": "verify_write",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:06.259Z",
+          "endedAt": "2026-08-17T23:50:06.259Z",
+          "detail": "health check failed"
+        },
+        {
+          "step": "restart",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:06.259Z",
+          "endedAt": "2026-08-17T23:50:06.259Z",
+          "detail": "health check failed"
+        },
+        {
+          "step": "verify_after_restart",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:06.259Z",
+          "endedAt": "2026-08-17T23:50:06.259Z",
+          "detail": "health check failed"
+        },
+        {
+          "step": "teardown",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:06.259Z",
+          "endedAt": "2026-08-17T23:50:06.259Z",
+          "detail": "health check failed"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "deploys_and_stays_up",
+          "held": false,
+          "evidence": "/health stopped answering on sample 2: HTTP 502 {\"status\":\"error\",\"code\":502,\"message\":\"Application failed to respond\",\"request_id\":\"nieR8neKQiCRBKB78u2xcg\"}"
+        }
+      ],
+      "verdict": "failed",
+      "failureReason": "condition(s) never evaluated: reads_and_writes, survives_restart"
+    },
+    {
+      "seq": 2,
+      "runId": "4713f560-d2cc-4f71-baf9-e1b77c3a0b03",
+      "startedAt": "2026-08-17T23:50:06.260Z",
+      "endedAt": "2026-08-17T23:50:19.262Z",
+      "commit": "e5f5ff8cad4fb965bbd0aec29cc025dc33582c11",
+      "steps": [
+        {
+          "step": "deploy",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:50:06.260Z",
+          "endedAt": "2026-08-17T23:50:09.401Z",
+          "detail": "healthy after deploy (performed_externally)",
+          "observations": {
+            "platformAction": {
+              "action": "deploy",
+              "actor": "performed_externally",
+              "requestedAt": "2026-08-17T23:50:06.260Z",
+              "detail": "deploy requested outside this process (Railway API or dashboard); the harness verifies the result, it does not perform the act"
+            }
+          }
+        },
+        {
+          "step": "health_check",
+          "outcome": "failed",
+          "startedAt": "2026-08-17T23:50:09.401Z",
+          "endedAt": "2026-08-17T23:50:19.262Z",
+          "detail": "/health stopped answering on sample 4: HTTP 502 {\"status\":\"error\",\"code\":502,\"message\":\"Application failed to respond\",\"request_id\":\"YR_y9zLTSeCCDi5swoOzXw\"}",
+          "observations": {
+            "dwell": {
+              "ok": false,
+              "samples": 4,
+              "detail": "/health stopped answering on sample 4: HTTP 502 {\"status\":\"error\",\"code\":502,\"message\":\"Application failed to respond\",\"request_id\":\"YR_y9zLTSeCCDi5swoOzXw\"}"
+            },
+            "ready": {
+              "ok": false,
+              "status": 502,
+              "body": {
+                "status": "error",
+                "code": 502,
+                "message": "Application failed to respond",
+                "request_id": "wi_HCU9vR7G1takUO8poTA"
+              },
+              "latencyMs": 516
+            },
+            "commit": "e5f5ff8cad4fb965bbd0aec29cc025dc33582c11"
+          }
+        },
+        {
+          "step": "verify_write",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:19.262Z",
+          "endedAt": "2026-08-17T23:50:19.262Z",
+          "detail": "health check failed"
+        },
+        {
+          "step": "restart",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:19.262Z",
+          "endedAt": "2026-08-17T23:50:19.262Z",
+          "detail": "health check failed"
+        },
+        {
+          "step": "verify_after_restart",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:19.262Z",
+          "endedAt": "2026-08-17T23:50:19.262Z",
+          "detail": "health check failed"
+        },
+        {
+          "step": "teardown",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:19.262Z",
+          "endedAt": "2026-08-17T23:50:19.262Z",
+          "detail": "health check failed"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "deploys_and_stays_up",
+          "held": false,
+          "evidence": "/health stopped answering on sample 4: HTTP 502 {\"status\":\"error\",\"code\":502,\"message\":\"Application failed to respond\",\"request_id\":\"YR_y9zLTSeCCDi5swoOzXw\"}"
+        }
+      ],
+      "verdict": "failed",
+      "failureReason": "condition(s) never evaluated: reads_and_writes, survives_restart"
+    },
+    {
+      "seq": 3,
+      "runId": "ee69ad16-29ba-4003-8be2-6397283c3460",
+      "startedAt": "2026-08-17T23:50:19.262Z",
+      "endedAt": "2026-08-17T23:50:50.250Z",
+      "commit": "e5f5ff8cad4fb965bbd0aec29cc025dc33582c11",
+      "steps": [
+        {
+          "step": "deploy",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:50:19.262Z",
+          "endedAt": "2026-08-17T23:50:22.403Z",
+          "detail": "healthy after deploy (performed_externally)",
+          "observations": {
+            "platformAction": {
+              "action": "deploy",
+              "actor": "performed_externally",
+              "requestedAt": "2026-08-17T23:50:19.262Z",
+              "detail": "deploy requested outside this process (Railway API or dashboard); the harness verifies the result, it does not perform the act"
+            }
+          }
+        },
+        {
+          "step": "health_check",
+          "outcome": "failed",
+          "startedAt": "2026-08-17T23:50:22.403Z",
+          "endedAt": "2026-08-17T23:50:50.250Z",
+          "detail": "/health stopped answering on sample 10: HTTP 502 {\"status\":\"error\",\"code\":502,\"message\":\"Application failed to respond\",\"request_id\":\"-hEY1KToRz-4JTeBozsQ6Q\"}",
+          "observations": {
+            "dwell": {
+              "ok": false,
+              "samples": 10,
+              "detail": "/health stopped answering on sample 10: HTTP 502 {\"status\":\"error\",\"code\":502,\"message\":\"Application failed to respond\",\"request_id\":\"-hEY1KToRz-4JTeBozsQ6Q\"}"
+            },
+            "ready": {
+              "ok": false,
+              "status": 502,
+              "body": {
+                "status": "error",
+                "code": 502,
+                "message": "Application failed to respond",
+                "request_id": "DfR0OdLVR0uRpvqHyCLmYg"
+              },
+              "latencyMs": 73
+            },
+            "commit": "e5f5ff8cad4fb965bbd0aec29cc025dc33582c11"
+          }
+        },
+        {
+          "step": "verify_write",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:50.250Z",
+          "endedAt": "2026-08-17T23:50:50.250Z",
+          "detail": "health check failed"
+        },
+        {
+          "step": "restart",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:50.250Z",
+          "endedAt": "2026-08-17T23:50:50.250Z",
+          "detail": "health check failed"
+        },
+        {
+          "step": "verify_after_restart",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:50.250Z",
+          "endedAt": "2026-08-17T23:50:50.250Z",
+          "detail": "health check failed"
+        },
+        {
+          "step": "teardown",
+          "outcome": "skipped",
+          "startedAt": "2026-08-17T23:50:50.250Z",
+          "endedAt": "2026-08-17T23:50:50.250Z",
+          "detail": "health check failed"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "deploys_and_stays_up",
+          "held": false,
+          "evidence": "/health stopped answering on sample 10: HTTP 502 {\"status\":\"error\",\"code\":502,\"message\":\"Application failed to respond\",\"request_id\":\"-hEY1KToRz-4JTeBozsQ6Q\"}"
+        }
+      ],
+      "verdict": "failed",
+      "failureReason": "condition(s) never evaluated: reads_and_writes, survives_restart"
+    }
+  ],
+  "authorizes": "Nothing. Architecture §3.17: \"Completing three runs authorizes nothing.\" This bundle is evidence for the Founder-confirmed Phase 2 stop gate under DEC-20260815-17 clause 2. It confers no activation, no further phase, and no spend authority."
+}
