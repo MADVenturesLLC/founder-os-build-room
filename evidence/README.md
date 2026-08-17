@@ -4,10 +4,66 @@
 directory is where it is retained. The bundles are the harness's own output,
 committed unmodified.
 
-## Read this first — both bundles below were produced by a defective harness
+## Read this first — the gate is NOT satisfied
 
-**Neither bundle on disk is sound evidence for the `survives_restart`
-condition, and both are retained anyway.** Two defects were found in the
+Three bundles are here. **None of them satisfies the three-run gate**, and the
+reasons differ:
+
+| bundle | commit | verdict |
+|---|---|---|
+| `23-47-17` | `66ee472` | **gate NOT satisfied** — 2 of 3 consecutive; run #1 failed |
+| `21-50-57` | `19b4968` | superseded — produced by the defective harness described below |
+| `21-10-24` | `d4dab78` | superseded — defective harness, and a runtime no longer deployed |
+
+**The current bundle is `23-47-17`, and it records a failure.** It is the first
+bundle produced by the FIXED harness, and it is retained precisely because it
+failed: `DEC-20260815-17` exit criterion 4 requires a failure to be visible as
+an interruption of the sequence rather than absent from it. A directory holding
+only successes would defeat that, so this one stays.
+
+### What failed in `23-47-17`, stated plainly
+
+Run #1's restart was requested at `23:42:43.870Z` and no new process appeared
+within the 180-second window. The restart was performed at `23:46:41.200Z` —
+**57 seconds after the deadline** — and run #2 picked it up instead.
+
+**The service did not misbehave.** Run #1 held `deploys_and_stays_up` and
+`reads_and_writes`; it deployed, answered all 11 health samples, wrote to the
+ledger and read back correctly. What failed was operator timing: the restart
+was requested of a human who was not at the dashboard when the clock started.
+The harness reported what it observed rather than what was intended, which is
+the behaviour wanted from it.
+
+The gate needs three **consecutive** passes. The sequence reads `FAILED,
+PASSED, PASSED`, so two consecutive is the most it can offer. A fresh sequence
+is required, and this bundle is not superseded by it — it is the record that
+the first attempt was interrupted.
+
+### What `23-47-17` does establish
+
+**The ordering defect is fixed, against the live system rather than a stub.**
+Every observed process now appears after the request that asked for it:
+
+```
+run #1  requested 23:42:43.870Z  ->  none within 180s
+run #2  requested 23:46:18.360Z  ->  23:46:41.200Z   (+22.8s)
+run #3  requested 23:47:14.165Z  ->  23:47:16.152Z   (+2.0s)
+```
+
+Compare the `21-50-57` bundle's run #2, where the new process was observed
+**2.1 seconds before** its own restart request. That inversion is gone.
+
+**But see `docs/phase-2-known-limits.md` §3 before reading run #3 as clean.**
+Its process appeared 2.0 seconds after its request while run #2's took 22.8
+seconds; a Railway restart does not complete in two seconds, so run #3 most
+likely observed the tail of the restart run #2 had already credited. Ordering
+holds; causation is not established. That limit is recorded rather than
+papered over.
+
+## The two earlier bundles were produced by a defective harness
+
+**Neither of the two earlier bundles is sound evidence for the
+`survives_restart` condition, and both are retained anyway.** Two defects were found in the
 harness on 2026-08-17 by CodeRabbit on PR #2, after both gates had been
 recorded as satisfied. Both were defects in the *evidence* rather than in the
 service — the runs may well have been sound; the harness could not have shown
@@ -33,15 +89,12 @@ before these bundles support anything.** These two are retained because a
 retracted claim is part of the record — deleting them would leave the fix
 looking like routine work rather than the correction of a finding.
 
-## What is here
+Both are kept; neither is edited.
 
-Two bundles. Both are kept; the second supersedes the first as the description
-of what is deployed, and neither is edited.
-
-**`phase2-runs-2026-08-17T21-50-57-741Z.json` — current.** Commit
+**`phase2-runs-2026-08-17T21-50-57-741Z.json` — superseded.** Commit
 `19b496899c87781257e1c8961a3c2ab6de41c728`, **Node 22 pinned**. Three
-consecutive passes, no failed runs. This is the bundle that describes the
-deployed configuration.
+consecutive passes, no failed runs — but produced by the defective harness, and
+describing a commit two changes behind the deployed one.
 
 **`phase2-runs-2026-08-17T21-10-24-425Z.json` — superseded, retained.** Commit
 `d4dab780e0790fde49ed0907b2f81f9a7bf37245` on Node v24.10.0. Three consecutive
@@ -50,7 +103,9 @@ wrong, but because the runtime it exercised is no longer the deployed one — se
 *A gate is bound to a runtime* below. Deleting it would erase the reason the
 second gate exists.
 
-Everything below describes both, except where a difference is named.
+Everything below describes those two, except where a difference is named. The
+`23-47-17` bundle shares the same stack and platform port and differs only in
+commit (`66ee472`) and outcome.
 
 - **Commit under test:** as the service itself reported it on `/version` — not
   as the harness assumed it.
@@ -120,7 +175,7 @@ it confers no activation, no further phase, and no spend authority.
 The bundle states the same thing in its own `authorizes` field, so a reader who
 sees only the JSON is told as plainly as one who reads this file.
 
-## A gate is bound to a runtime, which is why there are two bundles
+## A gate is bound to a runtime, which is why the first bundle was superseded
 
 The first gate ran against **Node v24.10.0**. That was not a choice — it
 followed from `engines.node` reading `>=22`, under which Nixpacks took the

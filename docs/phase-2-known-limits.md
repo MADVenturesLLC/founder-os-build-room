@@ -77,7 +77,44 @@ suppressed one — which is a design question, not a patch.
 
 ---
 
-## 3. `evidence/` holds bundles produced by a harness with known defects
+## 3. The restart check proves ordering, not causation
+
+**What it is.** `waitForNewProcess` now compares against the process identity
+read immediately before `platform.restart`, so a new process can only satisfy
+the condition if it appeared **after** the request. That closes the defect where
+a run credited a restart that predated its own request.
+
+It does not establish that the run's request **caused** the restart. If two
+restarts are performed in quick succession, or a platform-initiated replacement
+overlaps an operator one, a run can still credit a process change it did not
+cause — provided the change lands after its request.
+
+**Observed, not hypothetical.** In the 2026-08-17T23:47 bundle, run #2's new
+process appeared **22.8 seconds** after its request and run #3's appeared
+**2.0 seconds** after its own. A Railway restart does not complete in two
+seconds, so run #3 most likely observed the tail of the same restart action
+that run #2 had already credited. Both runs pass the ordering test; only one of
+them plausibly caused what it counted.
+
+**Why it is not closed here.** Distinguishing "the restart I asked for" from
+"a restart" needs a platform-side handle the harness does not have — a
+deployment or restart id returned by the provider and echoed back by the
+service, or an API-driven restart whose response identifies the action.
+`ExternalPlatform` exists precisely because this session has no Railway API
+access, and inventing a causation claim on top of a timing observation would
+repeat the original mistake in a subtler form.
+
+**What reduces it in practice.** Spacing restarts so each run's request is the
+only outstanding one — which is an operating discipline, not a mechanism, and
+is stated here as such. A run whose new process appears implausibly fast after
+its request deserves the same suspicion as one that appears before it.
+
+**Raised by** `builder` while reading the 23:47 bundle, after the ordering fix
+had already landed.
+
+---
+
+## 4. `evidence/` holds bundles produced by a harness with known defects
 
 **What it is.** Both bundles committed under `evidence/` were produced before
 two harness defects were found and fixed: a restart comparison against a stale
