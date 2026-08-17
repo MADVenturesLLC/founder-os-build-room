@@ -1,0 +1,14 @@
+{
+  "name": "@build-room/run-harness",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build Room Phase 2 run harness — deploy → health check → verify → teardown, three consecutive times, with retained evidence (DEC-20260815-17 exit criteria 4 and 5).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@build-room/contracts": "*",
+    "@build-room/ledger": "*"
+  }
+}

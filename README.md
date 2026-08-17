@@ -8,18 +8,28 @@ Standalone product repository created under `DEC-20260815-01` (ratified `active`
 
 Monorepo. Present today:
 
-- `packages/contracts` — the lifecycle as types and data: 17 states, 29 events, the T1–T22 transition table, the G1–G22 guards. Pure, zero I/O.
-- `packages/ledger` — the pure reducer that enforces that lifecycle and its four core invariants. Pure, zero I/O.
+**Pure — zero I/O, zero credentials, enforced by a static test:**
 
-Not yet created: the application packages for the control plane, gateway, and web surfaces (`DEC-20260815-08`). `DEC-20260815-01` clause 2 fixes the repository identity, not the internal layout, and defers the exact package boundaries to later Step 2 decisions.
+- `packages/contracts` — the lifecycle as types and data: 17 states, 29 events, the T1–T22 transition table, the G1–G22 guards.
+- `packages/ledger` — the reducer that enforces that lifecycle and its four core invariants.
+- `packages/cost-meter` — the ratified spend rule as a function. Carries no rate data; the canonical price table lives in `founder-os-console` (`DEC-20260722-01`).
+
+**Impure by design:**
+
+- `packages/control-plane` — the single writer to the durable ledger: Postgres storage, the HTTP surface, the boot sequence.
+- `packages/run-harness` — performs the Phase 2 run cycle, judges it against the Founder's three conditions, and emits the evidence bundle.
+
+Not yet created: the gateway and web surfaces (`DEC-20260815-08`), both deferred out of Phase 2. `DEC-20260815-01` clause 2 fixes the repository identity, not the internal layout, and defers the exact package boundaries to later Step 2 decisions.
 
 ## Status
 
-**WF-04 Step 3, Slice 1 (contracts/ledger core) — implemented.**
+**Phase 1 (pure protocol/ledger) — complete.** Founder-confirmed 2026-08-16 at `main@4155761` under `DEC-20260815-17` clause 2.
 
-Authorized by the Founder on 2026-08-16 as pure TypeScript packages with zero I/O, zero credentials, and zero infrastructure.
+**Phase 2 (cloud skeleton) — in progress.** Authorized by the Founder 2026-08-17 as the full arc *provision → wire → run three times → return at the stop gate*, on the bound reduced stack: **Railway** control plane plus **Neon** operational Postgres. The web tier, gateway platform and Redis/queue are deferred and are not authorized.
 
-No implementation beyond that slice, and no infrastructure, credentials, provider access, deployment, or activation, is authorized. Those remain gated by later phases under `DEC-20260815-17` and separate Founder authorization. Every phase carries a stop gate that must be Founder-confirmed before the next phase begins, and no phase ships in the same PR as its predecessor.
+What is built here: the control plane, the cost meter, and the run harness. What is **not** claimed by the code alone — provisioning, deployment, three-run evidence, and the Founder-confirmed stop gate that closes the phase. Architecture §3.17: *"Completing three runs authorizes nothing."*
+
+Phases 3 through 7 are not authorized. Every phase carries a stop gate that must be Founder-confirmed before the next begins, and no phase ships in the same PR as its predecessor.
 
 ## Verifying
 
@@ -28,6 +38,20 @@ npm install
 npm test                            # build + the acceptance-criteria suite
 npm run gate:path-audit             # required check
 npm run gate:attribution-selftest   # required check, parser regression cases
+```
+
+## Running the Phase 2 gate
+
+Against a deployed control plane. The evidence bundle is written whether or
+not the gate passes — a failed sequence is exactly what exit criterion 4 wants
+retained — and the exit code follows the gate.
+
+```sh
+export CONTROL_PLANE_URL=https://…      # the deployed control plane
+export PHASE2_ACTOR_ID=…                # who is running this; never inferred
+export PHASE2_ACTUAL_MODEL=…            # the model that actually did the work
+# optional: PHASE2_RESTART_COMMAND, else the restart is recorded as external
+npm run build && npm run phase2:runs
 ```
 
 ## Ownership
