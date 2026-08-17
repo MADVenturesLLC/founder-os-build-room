@@ -1,0 +1,55 @@
+# Railway deployment configuration for the Build Room control plane.
+#
+# Config lives here rather than in the dashboard so it is versioned,
+# reviewable, and reproducible if the project is ever recreated — which it
+# already has been once.
+#
+# Credentials are NOT here and never will be. `DATABASE_URL` is set in
+# Railway's encrypted variable store (`DEC-20260815-07`; `DEC-20260815-17`
+# Phase 2 exit criterion 1: credentials held per `-07` and never in the
+# repository).
+
+[build]
+builder = "NIXPACKS"
+
+# `--include=dev` is deliberate and load-bearing. TypeScript is a
+# devDependency, and Railway sets NODE_ENV=production, under which npm omits
+# dev dependencies — so a plain `npm ci` would install no compiler and the
+# build would fail on `tsc: not found`.
+buildCommand = "npm ci --include=dev && npm run build"
+
+[deploy]
+startCommand = "npm start"
+
+# Railway holds traffic until this path answers, so a deploy that never
+# becomes healthy is reported as a failed deploy rather than a live service
+# that answers nothing.
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+
+# ON_FAILURE, not ALWAYS. A crash should be visible as a bounded restart
+# attempt in the deploy record, not masked by an indefinite restart loop that
+# makes a broken build look like a running one. The Phase 2 run condition is
+# "deploys and stays up", and ALWAYS would make staying up unfalsifiable.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# One replica, for two reasons that both bear on the Phase 2 run definition.
+#
+# The harness proves a restart happened by watching `/version` report a new
+# `startedAt`. With several replicas behind one address, consecutive requests
+# can land on different processes, and a changed `startedAt` would no longer
+# distinguish "the service restarted" from "a different replica answered".
+#
+# The control plane is also the single writer to the ledger. Correctness does
+# not depend on one process — writes serialize on the room row — but Phase 2
+# is the cloud skeleton, and adding concurrency before the thing it guards is
+# exercised is scope this phase does not have.
+numReplicas = 1
+
+# App sleeping OFF. A sleeping service cold-starts on the next request, which
+# would both break the dwell check ("stays up") and move `startedAt` without
+# any restart having occurred — corrupting the very signal the restart
+# condition is read from. This is not a cost preference; it is what makes the
+# run's evidence mean what it says.
+sleepApplication = false
