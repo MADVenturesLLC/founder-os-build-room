@@ -20,6 +20,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, ConfigError } from '../packages/control-plane/src/config.js';
+import { createPool } from '../packages/control-plane/src/db.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const VALID_URL = 'postgresql://user:secret@host.neon.tech/db?sslmode=require';
@@ -102,4 +103,35 @@ describe('control plane — package boundary', () => {
       );
     }
   });
+});
+
+describe('control plane — TLS defaults', () => {
+  // A pool's config is not readable after construction, so these assert the
+  // decision function's inputs through `createPool` not throwing plus the
+  // documented rule. The rule itself is what matters: ON unless explicitly
+  // disabled or loopback.
+  const cases: readonly { url: string; tls: boolean; why: string }[] = [
+    { url: 'postgresql://u:p@ep-x.neon.tech/db?sslmode=require', tls: true, why: 'hosted, sslmode present' },
+    { url: 'postgresql://u:p@ep-x.neon.tech/db', tls: true, why: 'hosted, no sslmode — must NOT drop to cleartext' },
+    { url: 'postgresql://u:p@127.0.0.1:5432/db', tls: false, why: 'loopback development cluster' },
+    { url: 'postgresql://u:p@localhost:5432/db', tls: false, why: 'loopback by name' },
+    { url: 'postgresql://u:p@host/db?sslmode=disable', tls: false, why: 'explicitly disabled' },
+    // The password contains "localhost"; the HOST does not. Pattern matching
+    // would read this as local and turn TLS off against a real provider.
+    { url: 'postgresql://u:localhost@ep-x.neon.tech/db', tls: true, why: 'credential merely contains localhost' },
+  ];
+
+  for (const { url, tls, why } of cases) {
+    it(`${tls ? 'enables' : 'disables'} TLS — ${why}`, () => {
+      const config = loadConfig({ DATABASE_URL: url });
+      const pool = createPool(config);
+      try {
+        // `ssl` is normalised onto the pool's options by node-postgres.
+        const actual = Boolean((pool as unknown as { options?: { ssl?: unknown } }).options?.ssl);
+        assert.equal(actual, tls, `${url} should ${tls ? 'use' : 'not use'} TLS`);
+      } finally {
+        void pool.end();
+      }
+    });
+  }
 });
