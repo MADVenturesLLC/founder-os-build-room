@@ -63,9 +63,14 @@ export interface RunnerDeps {
   readonly log?: (message: string) => void;
 }
 
-export function defaultDeps(config: RunnerConfig, platform: Platform): RunnerDeps {
+export function defaultDeps(
+  config: RunnerConfig,
+  platform: Platform,
+  /** Shared secret for the room endpoints; `null` sends no credential. */
+  token: string | null = null,
+): RunnerDeps {
   return {
-    client: new ControlPlaneClient(config.baseUrl, config.requestTimeoutMs),
+    client: new ControlPlaneClient(config.baseUrl, config.requestTimeoutMs, token),
     platform,
     now: () => new Date().toISOString(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

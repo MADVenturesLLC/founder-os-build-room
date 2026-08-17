@@ -39,6 +39,7 @@ import {
   usd,
   ZERO,
   type Amount,
+  type Usd,
 } from './money.js';
 import { monthKey, monthKeyOf, type AccountingInstant } from './period.js';
 import { priceRuns, type PriceTable, type RunUsageRecord } from './pricing.js';
@@ -61,7 +62,7 @@ export const INTERIM_PROVIDER_CAP_COMBINED = usd(50);
 export type LimbVerdict = 'permit' | 'pause';
 
 export interface LimbResult {
-  readonly limb: 'monthly_spend' | 'per_room_tokens' | 'per_run_cap';
+  readonly limb: 'monthly_spend' | 'token_inputs' | 'per_room_tokens' | 'per_run_cap';
   readonly verdict: LimbVerdict;
   readonly reason: string;
 }
@@ -119,6 +120,7 @@ export function evaluateDispatch(request: DispatchRequest): DispatchDecision {
   const monthSpend = monthlySpend(ledger, asOf, priceTable, method);
   const limbs: LimbResult[] = [
     monthlyLimb(monthSpend),
+    tokenInputLimb(budget, requestedTokens),
     perRoomTokenLimb(budget, requestedTokens),
     perRunCapLimb(budget, requestedTokens),
   ];
@@ -213,6 +215,50 @@ function monthlyLimb(monthSpend: Amount): LimbResult {
   };
 }
 
+/**
+ * The token limbs are comparisons, and a comparison against a value that is
+ * not a number does not fail — it is simply false.
+ *
+ * `NaN >= ceiling` is false and `NaN > perRunTokenCap` is false, so a `NaN`
+ * `requestedTokens` sailed through both token limbs and the dispatch was
+ * permitted. A negative `tokensSpent` was worse than useless: it *reduced* the
+ * committed total, buying room under a ceiling that had already been reached.
+ * Neither is exotic — both are what a missing or mis-parsed provider field
+ * looks like by the time it reaches here.
+ *
+ * So the inputs are checked before the limbs are read, and failure pauses. A
+ * guard that cannot evaluate its own condition has not established anything,
+ * and the architecture's posture is fail-closed (§3.15). Raised by CodeRabbit
+ * on PR #2.
+ */
+function tokenInputLimb(budget: RoomBudget, requestedTokens: number): LimbResult {
+  const named: ReadonlyArray<readonly [string, number]> = [
+    ['requestedTokens', requestedTokens],
+    ['tokenCeiling', budget.tokenCeiling],
+    ['tokensSpent', budget.tokensSpent],
+    ['tokensReserved', budget.tokensReserved],
+    ['perRunTokenCap', budget.perRunTokenCap],
+  ];
+  const bad = named.filter(([, value]) => !Number.isSafeInteger(value) || value < 0);
+
+  if (bad.length > 0) {
+    return {
+      limb: 'token_inputs',
+      verdict: 'pause',
+      reason:
+        `room ${budget.roomId}: token values must be non-negative safe integers, and ` +
+        `${bad.map(([name, value]) => `${name}=${value}`).join(', ')} ${bad.length === 1 ? 'is' : 'are'} not — ` +
+        `the token limbs cannot be evaluated, so dispatch pauses rather than proceeding`,
+    };
+  }
+
+  return {
+    limb: 'token_inputs',
+    verdict: 'permit',
+    reason: `room ${budget.roomId}: every token value is a non-negative safe integer`,
+  };
+}
+
 function perRoomTokenLimb(budget: RoomBudget, requestedTokens: number): LimbResult {
   const committed = budget.tokensSpent + budget.tokensReserved + requestedTokens;
 
@@ -268,11 +314,46 @@ function perRunCapLimb(budget: RoomBudget, requestedTokens: number): LimbResult 
  * reportable rather than a footnote.
  */
 export function maximumOvershoot(budget: RoomBudget, priceTable: PriceTable, exemplar: RunUsageRecord): Amount {
-  const oneRun = priceRuns(
-    [{ ...exemplar, usage: { inputTokens: budget.perRunTokenCap, outputTokens: 0 } }],
-    priceTable,
+  /*
+   * The cap is priced as the MOST EXPENSIVE permitted token class, not as
+   * input.
+   *
+   * This priced every capped token as input, which understates the bound
+   * wherever output costs more than input — and output routinely does; the
+   * suite's own table prices it at twice the input rate. A "maximum" that a
+   * single ordinary output-heavy run exceeds is not a bound at all, and this
+   * function exists precisely so the overshoot is reportable rather than a
+   * footnote. Raised by CodeRabbit on PR #2.
+   *
+   * The reasoning is that a run's cost is `i·rᵢ + o·rₒ` with `i + o` bounded
+   * by the cap, and that is maximized by spending the whole cap in the class
+   * with the largest rate. So each class is priced at the full cap and the
+   * largest result wins. Cached input is included when the table carries a
+   * rate for it — it is normally cheaper, and assuming so would be an
+   * assumption about a table this package deliberately does not own
+   * (`DEC-20260722-01` clause 1).
+   */
+  const cap = budget.perRunTokenCap;
+  if (!Number.isSafeInteger(cap) || cap < 0) {
+    return unknown(`overshoot bound is UNKNOWN: perRunTokenCap ${cap} is not a non-negative safe integer`);
+  }
+
+  const byClass: readonly Amount[] = [
+    priceRuns([{ ...exemplar, usage: { inputTokens: cap, outputTokens: 0 } }], priceTable),
+    priceRuns([{ ...exemplar, usage: { inputTokens: 0, outputTokens: cap } }], priceTable),
+    priceRuns(
+      [{ ...exemplar, usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: cap } }],
+      priceTable,
+    ),
+  ];
+
+  const unknowns = byClass.filter(isUnknown);
+  if (unknowns.length > 0) {
+    return unknown(`overshoot bound is UNKNOWN: ${unknowns[0]?.reason ?? 'unpriceable'}`);
+  }
+
+  const worst = byClass.reduce((highest, candidate) =>
+    (candidate as Usd).micros > (highest as Usd).micros ? candidate : highest,
   );
-  return isUnknown(oneRun)
-    ? unknown(`overshoot bound is UNKNOWN: ${oneRun.reason}`)
-    : sum([ZERO, oneRun]);
+  return sum([ZERO, worst]);
 }

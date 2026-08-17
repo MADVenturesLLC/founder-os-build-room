@@ -24,10 +24,13 @@ import { createPool } from '../packages/control-plane/src/db.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const VALID_URL = 'postgresql://user:secret@host.neon.tech/db?sslmode=require';
+// A shared secret of the minimum accepted length. The value is meaningless;
+// what matters is that config now refuses to load without one.
+const VALID_TOKEN = 'x'.repeat(32);
 
 describe('control plane — configuration', () => {
   it('accepts a well-formed environment and defaults the optional values', () => {
-    const config = loadConfig({ DATABASE_URL: VALID_URL });
+    const config = loadConfig({ DATABASE_URL: VALID_URL, CONTROL_PLANE_TOKEN: VALID_TOKEN });
 
     assert.equal(config.databaseUrl, VALID_URL);
     assert.equal(config.port, 8080);
@@ -38,19 +41,19 @@ describe('control plane — configuration', () => {
 
   it('refuses to boot without DATABASE_URL', () => {
     assert.throws(() => loadConfig({}), ConfigError);
-    assert.throws(() => loadConfig({ DATABASE_URL: '   ' }), ConfigError);
+    assert.throws(() => loadConfig({ DATABASE_URL: '   ', CONTROL_PLANE_TOKEN: VALID_TOKEN }), ConfigError);
   });
 
   it('refuses a DATABASE_URL that is not a postgres connection string', () => {
-    assert.throws(() => loadConfig({ DATABASE_URL: 'mysql://host/db' }), ConfigError);
-    assert.throws(() => loadConfig({ DATABASE_URL: 'not-a-url' }), ConfigError);
+    assert.throws(() => loadConfig({ DATABASE_URL: 'mysql://host/db', CONTROL_PLANE_TOKEN: VALID_TOKEN }), ConfigError);
+    assert.throws(() => loadConfig({ DATABASE_URL: 'not-a-url', CONTROL_PLANE_TOKEN: VALID_TOKEN }), ConfigError);
   });
 
   it('does not echo the connection string in the error it raises for a bad one', () => {
     // The URL carries a password. An error message that quotes it puts a live
     // credential into logs, which is exactly where credentials must not be.
     try {
-      loadConfig({ DATABASE_URL: 'mysql://user:hunter2@host/db' });
+      loadConfig({ DATABASE_URL: 'mysql://user:hunter2@host/db', CONTROL_PLANE_TOKEN: VALID_TOKEN });
       assert.fail('expected a ConfigError');
     } catch (error) {
       assert.ok(error instanceof ConfigError);
@@ -59,20 +62,20 @@ describe('control plane — configuration', () => {
   });
 
   it('rejects non-positive or non-integer numeric settings rather than coercing them', () => {
-    assert.throws(() => loadConfig({ DATABASE_URL: VALID_URL, PORT: '0' }), ConfigError);
-    assert.throws(() => loadConfig({ DATABASE_URL: VALID_URL, PORT: '-1' }), ConfigError);
-    assert.throws(() => loadConfig({ DATABASE_URL: VALID_URL, PORT: 'eighty' }), ConfigError);
-    assert.throws(() => loadConfig({ DATABASE_URL: VALID_URL, PG_POOL_MAX: '1.5' }), ConfigError);
+    assert.throws(() => loadConfig({ CONTROL_PLANE_TOKEN: VALID_TOKEN, DATABASE_URL: VALID_URL, PORT: '0' }), ConfigError);
+    assert.throws(() => loadConfig({ CONTROL_PLANE_TOKEN: VALID_TOKEN, DATABASE_URL: VALID_URL, PORT: '-1' }), ConfigError);
+    assert.throws(() => loadConfig({ CONTROL_PLANE_TOKEN: VALID_TOKEN, DATABASE_URL: VALID_URL, PORT: 'eighty' }), ConfigError);
+    assert.throws(() => loadConfig({ CONTROL_PLANE_TOKEN: VALID_TOKEN, DATABASE_URL: VALID_URL, PG_POOL_MAX: '1.5' }), ConfigError);
   });
 
   it('prefers the platform-supplied commit SHA and reports `unknown` rather than guessing', () => {
-    const fromPlatform = loadConfig({ DATABASE_URL: VALID_URL, RAILWAY_GIT_COMMIT_SHA: 'abc123' });
+    const fromPlatform = loadConfig({ CONTROL_PLANE_TOKEN: VALID_TOKEN, DATABASE_URL: VALID_URL, RAILWAY_GIT_COMMIT_SHA: 'abc123' });
     assert.equal(fromPlatform.commitSha, 'abc123');
 
-    const fromFallback = loadConfig({ DATABASE_URL: VALID_URL, COMMIT_SHA: 'def456' });
+    const fromFallback = loadConfig({ CONTROL_PLANE_TOKEN: VALID_TOKEN, DATABASE_URL: VALID_URL, COMMIT_SHA: 'def456' });
     assert.equal(fromFallback.commitSha, 'def456');
 
-    assert.equal(loadConfig({ DATABASE_URL: VALID_URL }).commitSha, 'unknown');
+    assert.equal(loadConfig({ DATABASE_URL: VALID_URL, CONTROL_PLANE_TOKEN: VALID_TOKEN }).commitSha, 'unknown');
   });
 });
 
@@ -123,7 +126,7 @@ describe('control plane — TLS defaults', () => {
 
   for (const { url, tls, why } of cases) {
     it(`${tls ? 'enables' : 'disables'} TLS — ${why}`, () => {
-      const config = loadConfig({ DATABASE_URL: url });
+      const config = loadConfig({ DATABASE_URL: url, CONTROL_PLANE_TOKEN: VALID_TOKEN });
       const pool = createPool(config);
       try {
         // `ssl` is normalised onto the pool's options by node-postgres.

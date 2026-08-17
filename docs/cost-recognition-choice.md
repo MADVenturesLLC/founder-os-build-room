@@ -18,6 +18,21 @@ a Founder ruling and is not presented as one.**
 no accounting period. Only the intra-month spend curve, which the two methods
 were always agreed to differ on while producing an identical monthly total.
 
+**That identical-total claim holds for a full month and not for a partial
+one.** It is exact when a commitment is in force for every day of the month —
+the ordinary case, and the case it was written about. It is **not** exact when
+a commitment starts or ends mid-month: `BOOK_FULL_MONTH_AT_START` books the
+whole monthly figure for any month containing a served day, while
+`PRORATED_DAILY` books only the days actually served. A plan running 1–9 August
+books its full month under the selected method and about 9/31 of it under the
+alternative.
+
+That gap is the selected method's conservatism working as intended, not a
+defect — it overstates a partial month, which is the direction the USD 85
+ceiling wants to be wrong in. It is qualified here because the unqualified
+sentence above would otherwise read as a guarantee it does not make. Raised by
+CodeRabbit on PR #2.
+
 **How to revisit it.** `PRORATED_DAILY` is implemented alongside it and is
 reachable by passing `recognitionMethod` — so changing method is a
 configuration change plus a recorded decision, not a rewrite. If the Founder

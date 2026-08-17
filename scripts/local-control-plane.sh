@@ -13,57 +13,141 @@
 # is not the platform port used against Railway — there, the restart is
 # performed on the platform and the harness records it as external.
 #
-# Requires DATABASE_URL in the environment. Nothing here reads a credential
-# from a file or writes one anywhere.
+# Requires DATABASE_URL and CONTROL_PLANE_TOKEN in the environment. Nothing
+# here reads a credential from a file or writes one anywhere.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PIDFILE="${CONTROL_PLANE_PIDFILE:-/tmp/build-room-control-plane.pid}"
-LOGFILE="${CONTROL_PLANE_LOGFILE:-/tmp/build-room-control-plane.log}"
+
+# State lives in a per-user 0700 directory, not in shared /tmp.
+#
+# The pidfile was `/tmp/build-room-control-plane.pid` — a predictable path in a
+# world-writable directory, whose contents were passed straight to `kill`. On a
+# shared machine another local user could pre-create that file, or a symlink to
+# somewhere else, and choose what this script signals; a value of `-1` signals
+# every process the caller may signal. Raised by CodeRabbit on PR #2.
+#
+# The directory is created 0700 and its mode is checked, so a pre-existing
+# directory belonging to someone else is refused rather than used.
+STATE_DIR="${CONTROL_PLANE_STATE_DIR:-${XDG_RUNTIME_DIR:-/tmp}/build-room-$(id -u)}"
+mkdir -p -m 0700 "$STATE_DIR"
+chmod 0700 "$STATE_DIR"
+if [[ ! -O "$STATE_DIR" || -L "$STATE_DIR" ]]; then
+  echo "state directory $STATE_DIR is not owned by this user, or is a symlink" >&2
+  exit 1
+fi
+
+PIDFILE="${CONTROL_PLANE_PIDFILE:-$STATE_DIR/control-plane.pid}"
+LOGFILE="${CONTROL_PLANE_LOGFILE:-$STATE_DIR/control-plane.log}"
+LOCKFILE="$STATE_DIR/control-plane.lock"
 ENTRY="$ROOT/dist/packages/control-plane/src/main.js"
 
+# start and stop are serialized against each other, so a `restart` racing a
+# concurrent `start` cannot leave two processes running or signal a pid the
+# other command has already reaped and replaced.
+#
+# The lock is taken with a TIMEOUT, and the started server is spawned with fd 9
+# CLOSED (`9>&-`). Both matter, and the second one bit: a background child
+# inherits every open descriptor, so the long-lived `node` process held the
+# lock file open after this script exited, and the next invocation blocked
+# forever waiting for a lock nothing would ever release. Caught by smoke-testing
+# the script rather than by reading it — `start` succeeded and the following
+# `status` hung.
+exec 9>"$LOCKFILE"
+if command -v flock >/dev/null 2>&1; then
+  if ! flock -w 30 9; then
+    echo "another start/stop is holding $LOCKFILE after 30s" >&2
+    exit 1
+  fi
+fi
+
+# The pid is read through this, never used raw.
+#
+# Requires a positive decimal integer — which alone excludes `-1` and every
+# other negative value, since a negative argument to `kill` names a process
+# GROUP rather than a process. Empty, whitespace, or anything non-numeric is
+# refused the same way.
+read_pid() {
+  local raw
+  [[ -f "$PIDFILE" ]] || return 1
+  raw="$(cat "$PIDFILE" 2>/dev/null || true)"
+  [[ "$raw" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s' "$raw"
+}
+
+# True when the pidfile names a live process that is THIS entry point.
+#
+# The pid alone is not enough: pids are reused, so a stale pidfile can name a
+# process that is very much alive and has nothing to do with the control plane.
+# Signalling that would be the same mistake as trusting the file's contents.
+owns_entry() {
+  local pid="$1" cmdline
+  if [[ -r "/proc/$pid/cmdline" ]]; then
+    cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+  else
+    cmdline="$(ps -o args= -p "$pid" 2>/dev/null || true)"
+  fi
+  [[ "$cmdline" == *"$ENTRY"* ]]
+}
+
 running() {
-  [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+  local pid
+  pid="$(read_pid)" || return 1
+  kill -0 -- "$pid" 2>/dev/null && owns_entry "$pid"
 }
 
 start() {
   if running; then
-    echo "control plane already running (pid $(cat "$PIDFILE"))"
+    echo "control plane already running (pid $(read_pid))"
     return 0
   fi
+  # A pidfile that failed the checks above is stale or hostile; either way it
+  # is not something to signal, and it must not block a fresh start.
+  rm -f "$PIDFILE"
+
   if [[ ! -f "$ENTRY" ]]; then
     echo "not built — run 'npm run build' first" >&2
     return 1
   fi
 
-  node "$ENTRY" >>"$LOGFILE" 2>&1 &
-  echo $! >"$PIDFILE"
-  echo "control plane started (pid $(cat "$PIDFILE")), logging to $LOGFILE"
+  # `9>&-` closes the inherited lock descriptor in the child. Without it the
+  # server holds the lock for its whole lifetime and the next invocation of
+  # this script waits on it forever.
+  node "$ENTRY" >>"$LOGFILE" 2>&1 9>&- &
+  local pid=$!
+  # Written with a restrictive mode, in a directory only this user can enter.
+  (umask 077; echo "$pid" >"$PIDFILE")
+  echo "control plane started (pid $pid), logging to $LOGFILE"
 }
 
 stop() {
-  if ! running; then
+  local pid
+  if ! pid="$(read_pid)" || ! kill -0 -- "$pid" 2>/dev/null || ! owns_entry "$pid"; then
     rm -f "$PIDFILE"
     echo "control plane not running"
     return 0
   fi
 
-  local pid
-  pid="$(cat "$PIDFILE")"
-
   # SIGTERM, not SIGKILL: the drained shutdown path is the one a platform
   # restart takes, so a dry run should exercise it rather than route around it.
-  kill -TERM "$pid" 2>/dev/null || true
+  #
+  # `--` before the pid in every `kill`, so a value that somehow reached here
+  # cannot be read as an option.
+  kill -TERM -- "$pid" 2>/dev/null || true
 
   for _ in $(seq 1 50); do
-    kill -0 "$pid" 2>/dev/null || break
+    kill -0 -- "$pid" 2>/dev/null || break
     sleep 0.1
   done
 
-  if kill -0 "$pid" 2>/dev/null; then
+  if kill -0 -- "$pid" 2>/dev/null; then
     echo "did not exit on SIGTERM within 5s; sending SIGKILL" >&2
-    kill -KILL "$pid" 2>/dev/null || true
+    # Re-checked: between the SIGTERM and here the pid could have exited and
+    # been reused, and SIGKILL to the wrong process is not recoverable.
+    if owns_entry "$pid"; then
+      kill -KILL -- "$pid" 2>/dev/null || true
+    fi
   fi
 
   rm -f "$PIDFILE"
@@ -78,7 +162,7 @@ case "${1:-}" in
     start
     ;;
   status)
-    if running; then echo "running (pid $(cat "$PIDFILE"))"; else echo "not running"; fi
+    if running; then echo "running (pid $(read_pid))"; else echo "not running"; fi
     ;;
   *)
     echo "usage: $0 {start|stop|restart|status}" >&2

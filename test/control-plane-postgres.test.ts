@@ -1,13 +1,24 @@
 /**
  * Phase 2 — the control plane against a real Postgres.
  *
- * Runs only when `DATABASE_URL` is set, and **says so when it skips** rather
- * than passing silently. A suite that quietly proves less than it appears to
- * is worse than one that admits what it did not run.
+ * Runs only when `TEST_DATABASE_URL` is set, and **says so when it skips**
+ * rather than passing silently. A suite that quietly proves less than it
+ * appears to is worse than one that admits what it did not run.
  *
  * ```sh
- * DATABASE_URL=postgresql://postgres@127.0.0.1:55432/buildroom_test npm test
+ * TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:55432/buildroom_test npm test
  * ```
+ *
+ * **`TEST_DATABASE_URL`, deliberately not `DATABASE_URL`.** The latter is the
+ * variable the deployed service itself reads. Run `npm test` in any shell that
+ * carries the production value — a `.env` sourced by habit, a Railway CLI
+ * session, a CI job that exports it for something else — and this suite
+ * migrates the production database, writes rooms and events into the live
+ * ledger, and fires UPDATE and DELETE at `build_room_events`. The append-only
+ * triggers refuse the mutations so history survives, but the test rows do not
+ * vanish: they stay in the production ledger and turn up in the next evidence
+ * export. A separate variable makes pointing tests at production a deliberate
+ * act rather than an ambient one. Raised by CodeRabbit on PR #2.
  *
  * What this covers that the stubbed tests cannot: the schema actually applies,
  * the migrator is genuinely idempotent, append-only is enforced by the
@@ -28,9 +39,13 @@ import { PostgresLedgerStore, RoomNotFoundError } from '../packages/control-plan
 import { snapshot } from '../packages/ledger/src/index.js';
 import { makeEvent } from './helpers.js';
 
-const DATABASE_URL = process.env['DATABASE_URL'];
+const DATABASE_URL = process.env['TEST_DATABASE_URL'];
+// Config requires a shared secret. This suite exercises the store directly
+// rather than through the HTTP surface, so the value is never presented — it
+// only has to satisfy the loader.
+const TEST_TOKEN = 'integration-suite-token-long-enough';
 const skip = DATABASE_URL === undefined || DATABASE_URL.trim() === '';
-const skipReason = 'DATABASE_URL is not set — the Postgres integration suite did not run';
+const skipReason = 'TEST_DATABASE_URL is not set — the Postgres integration suite did not run';
 
 let pool: Pool | undefined;
 let store: PostgresLedgerStore | undefined;
@@ -51,7 +66,7 @@ function nextRoomId(): string {
 
 before(async () => {
   if (skip) return;
-  const config = loadConfig({ DATABASE_URL });
+  const config = loadConfig({ DATABASE_URL, CONTROL_PLANE_TOKEN: TEST_TOKEN });
   pool = createPool(config);
   await migrate(pool);
   store = new PostgresLedgerStore(pool);
@@ -193,7 +208,7 @@ describe('control plane — survives a restart without data loss', { skip: skip 
      * proved at the storage layer — the deployed run proves it end to end,
      * against a process the platform actually restarted.
      */
-    const freshPool = createPool(loadConfig({ DATABASE_URL }));
+    const freshPool = createPool(loadConfig({ DATABASE_URL, CONTROL_PLANE_TOKEN: TEST_TOKEN }));
     try {
       const freshStore = new PostgresLedgerStore(freshPool);
       const after = await freshStore.loadRoom(roomId);

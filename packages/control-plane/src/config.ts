@@ -14,6 +14,24 @@
 export interface Config {
   /** Postgres connection string. Required — no default, no fallback. */
   readonly databaseUrl: string;
+  /**
+   * Shared secret every room endpoint requires. Required — no default, and
+   * deliberately no "unauthenticated when unset" mode.
+   *
+   * The Phase 2 surface was written unauthenticated on the reasoning that it
+   * is the smallest thing that lets a run be judged. That reasoning was wrong
+   * about one fact: the service has a public Railway URL, so "smallest
+   * surface" and "publicly writable ledger" were the same thing. Any caller
+   * who found the URL could create rooms, append events, and export a room's
+   * full ledger — actor identities, attribution and evidence payloads
+   * included. Raised by CodeRabbit on PR #2.
+   *
+   * Required rather than optional because an optional guard is off wherever
+   * someone forgot to turn it on, and the place it would be forgotten is
+   * production. A missing token is a boot failure, on the same footing as a
+   * missing `DATABASE_URL`.
+   */
+  readonly apiToken: string;
   /** TCP port for the HTTP surface. */
   readonly port: number;
   /**
@@ -30,7 +48,12 @@ export interface Config {
   readonly statementTimeoutMs: number;
   /** Maximum pooled connections. Neon's free/launch computes are small. */
   readonly poolMax: number;
-  /** Seconds before an idle pooled connection is released. */
+  /**
+   * Milliseconds before an idle pooled connection is released — it maps to
+   * `pg`'s `idleTimeoutMillis` and defaults to 30_000. The doc comment here
+   * once read "Seconds", which a reader would have acted on by setting the
+   * value a thousand times too small. Caught by CodeRabbit on PR #2.
+   */
   readonly poolIdleTimeoutMs: number;
 }
 
@@ -78,8 +101,22 @@ export function loadConfig(env: Env): Config {
     );
   }
 
+  /*
+   * Length is checked, and the value is never echoed. A short shared secret is
+   * a guessable one, and the error must not become the disclosure it is meant
+   * to prevent.
+   */
+  const apiToken = required(env, 'CONTROL_PLANE_TOKEN');
+  if (apiToken.length < 32) {
+    throw new ConfigError(
+      'CONTROL_PLANE_TOKEN must be at least 32 characters. The value is not ' +
+        'echoed here because it is a credential.',
+    );
+  }
+
   return {
     databaseUrl,
+    apiToken,
     port: integer(env, 'PORT', 8080),
     commitSha: (env['RAILWAY_GIT_COMMIT_SHA'] ?? env['COMMIT_SHA'] ?? 'unknown').trim() || 'unknown',
     environment: (env['RAILWAY_ENVIRONMENT_NAME'] ?? env['NODE_ENV'] ?? 'unknown').trim() || 'unknown',

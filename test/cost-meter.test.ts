@@ -22,6 +22,8 @@ import {
   format,
   isUnknown,
   INTERIM_PROVIDER_CAP_COMBINED,
+  maximumOvershoot,
+  micros,
   MONTHLY_CEILING,
   monthKeyOf,
   monthlySpend,
@@ -189,8 +191,52 @@ describe('cost meter — AND precedence', () => {
     });
 
     assert.equal(decision.permit, false);
-    assert.equal(decision.limbs.length, 3);
-    assert.equal(decision.pausedBy.length, 3, 'all three limbs should report their own verdict');
+    // Four limbs since `token_inputs` joined them: monthly spend, token-input
+    // validity, per-room tokens, per-run cap. Only three of them pause here —
+    // the token values in this case are all valid, so `token_inputs` permits
+    // while the other three refuse. That is the point of reporting every limb.
+    assert.equal(decision.limbs.length, 4);
+    assert.equal(decision.pausedBy.length, 3, 'the three spend/token limbs should each refuse');
+    assert.equal(
+      decision.limbs.find((limb) => limb.limb === 'token_inputs')?.verdict,
+      'permit',
+      'valid token values must not be reported as a validation failure',
+    );
+  });
+
+  it('pauses on a token value that is not a number, rather than reading a false comparison', () => {
+    /*
+     * `NaN >= ceiling` is false and `NaN > perRunTokenCap` is false, so a NaN
+     * request satisfied both token limbs and the dispatch was permitted. This
+     * is what a missing or mis-parsed provider field looks like by the time it
+     * reaches the meter. Raised by CodeRabbit on PR #2.
+     */
+    const decision = evaluateDispatch({
+      asOf: accountingInstant(2026, 8, 17),
+      ledger: { infrastructure: [], runs: [] },
+      budget: budget({ tokenCeiling: 1_000_000, perRunTokenCap: 1_000_000 }),
+      requestedTokens: Number.NaN,
+      priceTable: TABLE,
+    });
+
+    assert.equal(decision.permit, false);
+    assert.equal(decision.pausedBy[0]?.limb, 'token_inputs');
+    assert.match(decision.pausedBy[0]?.reason ?? '', /requestedTokens=NaN/);
+  });
+
+  it('pauses on a negative tokensSpent, which would otherwise buy room under the ceiling', () => {
+    // A negative spent value REDUCES the committed total, so a room already at
+    // its ceiling would be permitted to dispatch again.
+    const decision = evaluateDispatch({
+      asOf: accountingInstant(2026, 8, 17),
+      ledger: { infrastructure: [], runs: [] },
+      budget: budget({ tokenCeiling: 1_000, tokensSpent: -5_000, tokensReserved: 0 }),
+      requestedTokens: 900,
+      priceTable: TABLE,
+    });
+
+    assert.equal(decision.permit, false);
+    assert.equal(decision.pausedBy[0]?.limb, 'token_inputs');
   });
 
   it('permits only when every limb permits', () => {
@@ -226,6 +272,44 @@ describe('cost meter — UNKNOWN is never a zero and never passes', () => {
     assert.match(amount.reason, /carries no rate/);
   });
 
+  it('prices a negative token count as UNKNOWN rather than as negative spend', () => {
+    /*
+     * `Number.isFinite` accepted this, and negative spend SUBTRACTS from the
+     * monthly total — so a corrupted usage record could buy room under the
+     * ceiling for a dispatch that should have paused. Raised by CodeRabbit on
+     * PR #2.
+     */
+    const amount = priceRun(run({ usage: { inputTokens: -1_000_000, outputTokens: 0 } }), TABLE);
+    assert.ok(isUnknown(amount));
+    assert.match(amount.reason, /non-negative safe integers/);
+  });
+
+  it('prices a fractional token count as UNKNOWN rather than rounding it away', () => {
+    const amount = priceRun(run({ usage: { inputTokens: 1.5, outputTokens: 0 } }), TABLE);
+    assert.ok(isUnknown(amount));
+  });
+
+  it('prices an unsafe token count as UNKNOWN rather than losing precision', () => {
+    const amount = priceRun(
+      run({ usage: { inputTokens: Number.MAX_SAFE_INTEGER + 2, outputTokens: 0 } }),
+      TABLE,
+    );
+    assert.ok(isUnknown(amount));
+  });
+
+  it('returns UNKNOWN for an unusable rate rather than throwing at the caller', () => {
+    // The contract is UNKNOWN, so a bad table entry must not surface as an
+    // exception the caller has no way to treat as a pricing gap.
+    const brokenTable: PriceTable = {
+      hasVersion: (version) => version === VERSION,
+      rateFor: () => ({ inputMicrosPerMTok: Number.NaN, outputMicrosPerMTok: 2_000_000 }),
+    };
+
+    const amount = priceRun(run(), brokenTable);
+    assert.ok(isUnknown(amount));
+    assert.match(amount.reason, /unusable rate/);
+  });
+
   it('makes the month total UNKNOWN when any run is unknown', () => {
     const total = monthlySpend(
       { infrastructure: [NEON], runs: [run(), run({ runId: 'run-2', priceTableVersion: null })] },
@@ -250,6 +334,62 @@ describe('cost meter — UNKNOWN is never a zero and never passes', () => {
   });
 });
 
+describe('cost meter — the overshoot bound is a bound', () => {
+  /*
+   * `maximumOvershoot` priced every capped token as INPUT. The table here
+   * prices output at twice input — which is ordinary — so an output-heavy run
+   * cost double the "maximum". A bound a single ordinary run exceeds is not a
+   * bound, and this function exists precisely so `DEC-20260815-16` clause 3's
+   * overshoot is reportable rather than a footnote. Raised by CodeRabbit on
+   * PR #2.
+   */
+  it('prices the cap at the most expensive token class, not at the input rate', () => {
+    const bound = maximumOvershoot(budget({ perRunTokenCap: 1_000_000 }), TABLE, run());
+    assert.ok(!isUnknown(bound));
+
+    // 1M tokens at the OUTPUT rate of 2_000_000 µUSD/MTok = USD 2.00.
+    // Priced as input it would have been USD 1.00 — half the true bound.
+    assert.equal(bound.micros, usd(2).micros);
+  });
+
+  it('is at least what a run entirely of the dearest class would cost', () => {
+    const cap = 500_000;
+    const bound = maximumOvershoot(budget({ perRunTokenCap: cap }), TABLE, run());
+    const outputOnly = priceRun(run({ usage: { inputTokens: 0, outputTokens: cap } }), TABLE);
+
+    assert.ok(!isUnknown(bound) && !isUnknown(outputOnly));
+    assert.ok(bound.micros >= outputOnly.micros, 'the bound must not be under a real run');
+  });
+
+  it('is UNKNOWN when any class cannot be priced, rather than quietly using the rest', () => {
+    const bound = maximumOvershoot(budget(), TABLE, run({ priceTableVersion: null }));
+    assert.ok(isUnknown(bound));
+    assert.match(bound.reason, /overshoot bound is UNKNOWN/);
+  });
+});
+
+describe('cost meter — money stays exact', () => {
+  it('refuses a micro-USD value past the safe-integer range', () => {
+    /*
+     * `Number.isInteger` accepted these. Past MAX_SAFE_INTEGER doubles no
+     * longer represent consecutive integers, so sums are silently wrong and
+     * distinct values can compare equal — and this type is what the ceiling
+     * decision is made from. Raised by CodeRabbit on PR #2.
+     */
+    assert.throws(() => micros(Number.MAX_SAFE_INTEGER + 2), RangeError);
+    assert.throws(() => micros(Number.NaN), RangeError);
+    assert.throws(() => micros(Number.POSITIVE_INFINITY), RangeError);
+  });
+
+  it('accepts the boundary itself, so the check is a bound and not an off-by-one', () => {
+    assert.equal(micros(Number.MAX_SAFE_INTEGER).micros, Number.MAX_SAFE_INTEGER);
+  });
+
+  it('applies the same bound to a dollar amount, not only to raw micro-USD', () => {
+    assert.throws(() => usd(Number.MAX_SAFE_INTEGER), RangeError);
+  });
+});
+
 describe('cost meter — infrastructure recognition', () => {
   it('books the full month at the start under the selected method', () => {
     const onTheFirst = recognizeInfrastructure([NEON], accountingInstant(2026, 8, 1));
@@ -270,9 +410,60 @@ describe('cost meter — infrastructure recognition', () => {
     assert.equal(recognizeInfrastructure([future], accountingInstant(2026, 8, 17)).micros, 0);
   });
 
-  it('recognizes nothing for a commitment already ended', () => {
+  it('still recognizes a commitment that ended earlier in the same month', () => {
+    /*
+     * This test previously asserted zero, and it was wrong in the same way the
+     * code was: a plan that ran 1–9 August was dropped from August entirely
+     * once the 10th passed, so nine days of paid service vanished from the
+     * month's total. That understates the month, which is the one direction a
+     * fail-closed spend meter must not fail in — the ceiling comparison then
+     * permits a dispatch the true figure would have paused. Raised by
+     * CodeRabbit on PR #2.
+     */
     const ended: InfrastructureCommitment = { ...NEON, effectiveUntil: '2026-08-10' };
+    const recognized = recognizeInfrastructure([ended], accountingInstant(2026, 8, 17));
+
+    // Under BOOK_FULL_MONTH_AT_START a month containing any served day books
+    // the full monthly figure — the conservative direction this method was
+    // selected for.
+    assert.equal(recognized.micros, NEON.monthlyMicros);
+  });
+
+  it('recognizes nothing for a commitment that ended before this month began', () => {
+    // `effectiveUntil` is the day AFTER the last day in force, so ending on
+    // the 1st means it served no day of August.
+    const ended: InfrastructureCommitment = { ...NEON, effectiveUntil: '2026-08-01' };
     assert.equal(recognizeInfrastructure([ended], accountingInstant(2026, 8, 17)).micros, 0);
+  });
+
+  it('recognizes nothing for a commitment that has not started yet', () => {
+    const future: InfrastructureCommitment = { ...NEON, effectiveFrom: '2026-08-20' };
+    assert.equal(recognizeInfrastructure([future], accountingInstant(2026, 8, 17)).micros, 0);
+  });
+
+  it('prorates by days SERVED, not days elapsed, when a commitment ended mid-month', () => {
+    // 1–9 August inclusive is 9 days of a 31-day month, evaluated on the 17th.
+    // Days-elapsed would have said 17/31 — charging for service that ended.
+    const ended: InfrastructureCommitment = { ...NEON, effectiveUntil: '2026-08-10' };
+    const recognized = recognizeInfrastructure(
+      [ended],
+      accountingInstant(2026, 8, 17),
+      'PRORATED_DAILY',
+    );
+
+    assert.equal(recognized.micros, Math.round((NEON.monthlyMicros * 9) / 31));
+  });
+
+  it('prorates from the start day when a commitment began mid-month', () => {
+    // 5–17 August inclusive is 13 days.
+    const started: InfrastructureCommitment = { ...NEON, effectiveFrom: '2026-08-05' };
+    const recognized = recognizeInfrastructure(
+      [started],
+      accountingInstant(2026, 8, 17),
+      'PRORATED_DAILY',
+    );
+
+    assert.equal(recognized.micros, Math.round((NEON.monthlyMicros * 13) / 31));
   });
 
   it('counts only usage in the calendar month containing the evaluation instant', () => {
@@ -315,6 +506,35 @@ describe('cost meter — the accounting period', () => {
     // its own prefix. Reading the prefix would put July's spend in August.
     assert.equal(monthKeyOf('2026-08-01T09:00:00+10:00'), null);
     assert.equal(monthKeyOf('not a timestamp'), null);
+  });
+
+  it('refuses an impossible date or time rather than reading the month out of it', () => {
+    /*
+     * The shape and the month were checked and the rest was not, so
+     * `2026-09-31T25:99:99Z` returned `2026-09` — a real month key extracted
+     * from an instant that does not exist. The malformed record then landed
+     * INSIDE the evaluated month and its spend counted as sound, which is the
+     * opposite of what returning null is for. Raised by CodeRabbit on PR #2.
+     */
+    assert.equal(monthKeyOf('2026-09-31T25:99:99Z'), null, 'day 31 of a 30-day month');
+    assert.equal(monthKeyOf('2026-09-31T12:00:00Z'), null, 'day alone is out of range');
+    assert.equal(monthKeyOf('2026-08-17T25:00:00Z'), null, 'hour 25');
+    assert.equal(monthKeyOf('2026-08-17T12:99:00Z'), null, 'minute 99');
+    assert.equal(monthKeyOf('2026-08-17T12:00:99Z'), null, 'second 99');
+    assert.equal(monthKeyOf('2026-08-00T12:00:00Z'), null, 'day zero');
+    assert.equal(monthKeyOf('2026-13-01T12:00:00Z'), null, 'month 13');
+  });
+
+  it('applies the leap rule to the day bound rather than a fixed 31', () => {
+    assert.equal(monthKeyOf('2026-02-29T12:00:00Z'), null, '2026 is not a leap year');
+    assert.equal(monthKeyOf('2028-02-29T12:00:00Z'), '2028-02', '2028 is');
+    assert.equal(monthKeyOf('2100-02-29T12:00:00Z'), null, 'century, not a leap year');
+    assert.equal(monthKeyOf('2000-02-29T12:00:00Z'), '2000-02', 'divisible by 400, leap year');
+  });
+
+  it('accepts second 60, because RFC3339 permits a leap second', () => {
+    // Refusing it would pause the gate on a record that is genuinely valid.
+    assert.equal(monthKeyOf('2026-06-30T23:59:60Z'), '2026-06');
   });
 
   it('makes the month UNKNOWN when a run cannot be assigned to a month — fail closed', () => {

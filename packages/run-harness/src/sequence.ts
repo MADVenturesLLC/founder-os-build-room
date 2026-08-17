@@ -52,6 +52,19 @@ export interface RunDraft {
  * than accepted from the caller, so a run cannot be recorded as passing
  * against conditions that say otherwise.
  */
+/**
+ * The sequence is IN-MEMORY, and the gate counts within one invocation.
+ *
+ * `seq` comes from the current sequence's length, and the CLI starts from
+ * `emptySequence()` each time it runs. So an invocation that recorded a
+ * failure could be followed by a fresh one recording three passes, and the
+ * second bundle read alone would show a satisfied gate. What actually prevents
+ * that is the retention rule — bundles are committed, never edited, and a
+ * missing one is visible in a diff — which is an audit control rather than a
+ * mechanical one. Recorded as a known limit in
+ * `docs/phase-2-known-limits.md` §2 rather than papered over. Raised by
+ * CodeRabbit on PR #2.
+ */
 export function appendRun(sequence: RunSequence, draft: RunDraft): {
   readonly sequence: RunSequence;
   readonly run: RunRecord;

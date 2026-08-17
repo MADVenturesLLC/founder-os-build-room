@@ -89,9 +89,35 @@ export function priceRun(record: RunUsageRecord, table: PriceTable): Amount {
     );
   }
 
+  /*
+   * Every token count and every rate must be a non-negative safe integer, and
+   * anything else prices as UNKNOWN rather than as a number.
+   *
+   * `Number.isFinite` was the check, and it let three things through that all
+   * end in a wrong ceiling decision rather than a paused gate:
+   *
+   *   - a NEGATIVE count produces negative spend, which subtracts from the
+   *     monthly total and can make the limb permit a dispatch it should pause;
+   *   - a FRACTIONAL count violates the integer-token contract silently, since
+   *     `perMillion` rounds it away;
+   *   - an unsafe or non-integer RATE makes `micros` throw, so the caller gets
+   *     an exception where the contract promises UNKNOWN.
+   *
+   * `cachedInputTokens` is checked on the same terms, because it is added to
+   * the same total. Raised by CodeRabbit on PR #2.
+   */
   const { inputTokens, outputTokens, cachedInputTokens } = record.usage;
-  if (!Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) {
-    return unknown(`run ${record.runId}: provider reported no usable token counts`);
+  if (!isTokenCount(inputTokens) || !isTokenCount(outputTokens)) {
+    return unknown(
+      `run ${record.runId}: token counts must be non-negative safe integers; ` +
+        `got input=${inputTokens}, output=${outputTokens}`,
+    );
+  }
+  if (!isRate(rate.inputMicrosPerMTok) || !isRate(rate.outputMicrosPerMTok)) {
+    return unknown(
+      `run ${record.runId}: price-table version ${record.priceTableVersion} carries an ` +
+        `unusable rate for ${record.providerId}/${record.modelId}`,
+    );
   }
 
   const parts: Amount[] = [
@@ -101,10 +127,25 @@ export function priceRun(record: RunUsageRecord, table: PriceTable): Amount {
 
   // Input-gated: computed only when the runtime supplied the input.
   if (cachedInputTokens !== undefined && rate.cachedInputMicrosPerMTok !== undefined) {
+    if (!isTokenCount(cachedInputTokens) || !isRate(rate.cachedInputMicrosPerMTok)) {
+      return unknown(
+        `run ${record.runId}: cached-input count or rate is not a non-negative safe integer`,
+      );
+    }
     parts.push(micros(perMillion(cachedInputTokens, rate.cachedInputMicrosPerMTok)));
   }
 
   return sum(parts);
+}
+
+/** A reported token count: a non-negative safe integer, and nothing else. */
+function isTokenCount(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+/** A micro-USD-per-million-tokens rate, on the same terms as a token count. */
+function isRate(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
 }
 
 /** Total for a set of runs. Unknown in any run makes the total unknown. */

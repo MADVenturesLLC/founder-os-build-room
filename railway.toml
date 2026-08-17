@@ -4,10 +4,18 @@
 # reviewable, and reproducible if the project is ever recreated — which it
 # already has been once.
 #
-# Credentials are NOT here and never will be. `DATABASE_URL` is set in
-# Railway's encrypted variable store (`DEC-20260815-07`; `DEC-20260815-17`
-# Phase 2 exit criterion 1: credentials held per `-07` and never in the
-# repository).
+# Credentials are NOT here and never will be. `DATABASE_URL` and
+# `CONTROL_PLANE_TOKEN` are set in Railway's encrypted variable store
+# (`DEC-20260815-07`; `DEC-20260815-17` Phase 2 exit criterion 1: credentials
+# held per `-07` and never in the repository).
+#
+# BOTH are required and the service refuses to boot without either. The token
+# is new as of the PR #2 review: the room endpoints were unauthenticated on a
+# public URL, so anyone who found it could write to and export the ledger. A
+# deploy of this commit fails at boot until `CONTROL_PLANE_TOKEN` is set —
+# which is the intended behaviour, not a regression. At least 32 characters;
+# `openssl rand -hex 24` produces a suitable value. The run harness must be
+# given the same value or every room request answers 401.
 
 [build]
 builder = "NIXPACKS"

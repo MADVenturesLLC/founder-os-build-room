@@ -5,6 +5,8 @@
  * conservative rather than convenient:
  *
  *   CONTROL_PLANE_URL      required — the deployed control plane
+ *   CONTROL_PLANE_TOKEN    required — the shared secret the room endpoints
+ *                          demand; the same value the service is deployed with
  *   PHASE2_RUNS            how many runs to attempt (default 3)
  *   PHASE2_DWELL_MS        how long /health must keep answering (default 30000)
  *   PHASE2_RESTART_COMMAND a command that restarts the service; when absent,
@@ -35,6 +37,22 @@ function required(name: string): string {
   return value.trim();
 }
 
+/**
+ * An environment value, falling back when it is unset OR blank.
+ *
+ * `process.env[name]?.trim() ?? fallback` looks equivalent and is not: it
+ * falls back only when the variable is *unset*. Set to `''` or to whitespace,
+ * `?.trim()` yields `''`, which is not nullish, so the empty string wins. That
+ * put `mkdir('')` on the evidence path — a run that completes and then writes
+ * nothing — and empty `environment`, `roleId` and `executionSurface` values
+ * into the bundle. Raised by CodeRabbit on PR #2.
+ */
+function text(name: string, fallback: string): string {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  return raw.trim();
+}
+
 function integer(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === '') return fallback;
@@ -47,8 +65,27 @@ function integer(name: string, fallback: number): number {
 
 export async function main(): Promise<number> {
   const baseUrl = required('CONTROL_PLANE_URL');
+  const token = required('CONTROL_PLANE_TOKEN');
   const attempts = integer('PHASE2_RUNS', 3);
-  const evidencePath = process.env['PHASE2_EVIDENCE_PATH']?.trim() ?? 'evidence';
+  const evidencePath = text('PHASE2_EVIDENCE_PATH', 'evidence');
+
+  /*
+   * Every required value is read HERE, before a single run executes.
+   *
+   * These two were previously read down in the bundle-building call, after the
+   * run loop. An unset `PHASE2_ACTOR_ID` therefore threw only once all three
+   * runs had been performed against the deployed control plane — and the throw
+   * skipped `writeFile`, so every completed run was lost. That directly
+   * contradicts this file's own header: "The evidence is written either way."
+   * Raised by CodeRabbit on PR #2.
+   */
+  const attribution = {
+    roleId: text('PHASE2_ROLE_ID', 'builder'),
+    actorId: required('PHASE2_ACTOR_ID'),
+    actualModel: required('PHASE2_ACTUAL_MODEL'),
+    executionSurface: text('PHASE2_EXECUTION_SURFACE', 'claude-code'),
+  };
+  const environment = text('PHASE2_ENVIRONMENT', 'unknown');
 
   const config: RunnerConfig = {
     ...DEFAULT_RUNNER_CONFIG,
@@ -59,18 +96,17 @@ export async function main(): Promise<number> {
     deployTimeoutMs: integer('PHASE2_DEPLOY_TIMEOUT_MS', DEFAULT_RUNNER_CONFIG.deployTimeoutMs),
   };
 
-  const restartCommand = process.env['PHASE2_RESTART_COMMAND']?.trim();
+  const restartCommand = text('PHASE2_RESTART_COMMAND', '');
+  const deployCommand = text('PHASE2_DEPLOY_COMMAND', '');
   const platform: Platform =
-    restartCommand === undefined || restartCommand === ''
+    restartCommand === ''
       ? new ExternalPlatform('requested outside this process (Railway API or dashboard)')
       : new CommandPlatform({
           restartCommand,
-          ...(process.env['PHASE2_DEPLOY_COMMAND']?.trim()
-            ? { deployCommand: process.env['PHASE2_DEPLOY_COMMAND']!.trim() }
-            : {}),
+          ...(deployCommand === '' ? {} : { deployCommand }),
         });
 
-  const deps = defaultDeps(config, platform);
+  const deps = defaultDeps(config, platform, token);
 
   let sequence: RunSequence = emptySequence();
   let commit = 'unknown';
@@ -88,14 +124,9 @@ export async function main(): Promise<number> {
     assembledAt: new Date().toISOString(),
     commit,
     baseUrl,
-    environment: process.env['PHASE2_ENVIRONMENT']?.trim() ?? 'unknown',
+    environment,
     platformKind: platform.kind,
-    attribution: {
-      roleId: process.env['PHASE2_ROLE_ID']?.trim() ?? 'builder',
-      actorId: required('PHASE2_ACTOR_ID'),
-      actualModel: required('PHASE2_ACTUAL_MODEL'),
-      executionSurface: process.env['PHASE2_EXECUTION_SURFACE']?.trim() ?? 'claude-code',
-    },
+    attribution,
   });
 
   await mkdir(evidencePath, { recursive: true });

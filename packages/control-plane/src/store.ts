@@ -132,6 +132,15 @@ export class PostgresLedgerStore {
         throw new RoomNotFoundError(roomId);
       }
 
+      /*
+       * Replay is UNBOUNDED, and that is a known Phase 2 limit rather than an
+       * oversight — see `docs/phase-2-known-limits.md` §1. Every append reads
+       * the whole log and re-reduces it, so N appends cost O(N²) in total, and
+       * a long enough log eventually exceeds `statement_timeout` and fails the
+       * write outright. Harmless at Phase 2 scale (one event, fresh room);
+       * not harmless once a room holds a real build's worth of events. Raised
+       * by CodeRabbit on PR #2.
+       */
       const { state: current, logLength } = await replay(client, roomId);
       const result: ApplyResult = apply(current, event);
 

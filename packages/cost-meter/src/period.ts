@@ -73,12 +73,50 @@ export function dateKey(instant: AccountingInstant): string {
  * spend in the wrong month.
  */
 export function monthKeyOf(occurredAt: string): string | null {
-  const match = /^(\d{4})-(\d{2})-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.exec(occurredAt);
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/.exec(occurredAt);
   if (match === null) return null;
-  const [, year, month] = match;
-  if (year === undefined || month === undefined) return null;
+  const [, year, month, day, hour, minute, second] = match;
+  if (
+    year === undefined ||
+    month === undefined ||
+    day === undefined ||
+    hour === undefined ||
+    minute === undefined ||
+    second === undefined
+  ) {
+    return null;
+  }
+
   const monthNumber = Number(month);
   if (monthNumber < 1 || monthNumber > 12) return null;
+
+  /*
+   * The whole timestamp is validated, not only the part the answer is read
+   * from. An earlier version checked the shape and the month and returned
+   * `${year}-${month}`, so `2026-09-31T25:99:99Z` yielded `2026-09` — a real
+   * month key extracted from an impossible instant.
+   *
+   * That is worse than useless in a fail-closed meter. A malformed record then
+   * lands INSIDE the evaluated month and its spend is counted as if it were
+   * sound, when the entire purpose of returning null is to send it down the
+   * UNKNOWN path and pause the gate. Refusing input it cannot vouch for is the
+   * job; extracting the plausible-looking prefix is not. Raised by CodeRabbit
+   * on PR #2.
+   *
+   * The day bound comes from `daysInMonth`, so the leap rule applies —
+   * 2026-02-29 is refused and 2028-02-29 is accepted, where a fixed 31-day
+   * bound would pass both.
+   */
+  const dayNumber = Number(day);
+  if (dayNumber < 1 || dayNumber > daysInMonth(Number(year), monthNumber)) return null;
+
+  /*
+   * Hour 24 is refused. Second 60 is ALLOWED: RFC3339 permits it for a leap
+   * second, a recorded timestamp can genuinely carry one, and pausing the gate
+   * on a valid record is its own kind of wrong.
+   */
+  if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 60) return null;
+
   return `${year}-${month}`;
 }
 

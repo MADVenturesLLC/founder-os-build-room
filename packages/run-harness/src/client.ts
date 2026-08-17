@@ -29,6 +29,16 @@ export class ControlPlaneClient {
   constructor(
     private readonly baseUrl: string,
     private readonly timeoutMs: number = 10_000,
+    /**
+     * Shared secret for the room endpoints. `null` sends no credential, which
+     * is right for `/health`, `/ready` and `/version` and wrong for everything
+     * else — the room routes answer 401 without it.
+     *
+     * Held here rather than threaded through every call so it cannot end up in
+     * a URL, and it is never written into a probe: the evidence bundle records
+     * every request this client makes.
+     */
+    private readonly token: string | null = null,
   ) {}
 
   health(): Promise<Probe> {
@@ -70,12 +80,15 @@ export class ControlPlaneClient {
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
+      const headers: Record<string, string> = {};
+      if (this.token !== null) headers['authorization'] = `Bearer ${this.token}`;
+      if (body !== undefined) headers['content-type'] = 'application/json';
+
       const response = await fetch(`${this.baseUrl}${path}`, {
         method,
         signal: controller.signal,
-        ...(body === undefined
-          ? {}
-          : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+        headers,
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
 
       const text = await response.text();

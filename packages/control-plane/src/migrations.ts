@@ -158,12 +158,54 @@ export interface MigrationResult {
  * Returns which ran and which were already present, so a boot log can say
  * plainly what it did rather than "migrations ok".
  */
+/**
+ * Single-quote a value for a `SET` statement.
+ *
+ * `SET` takes no bind parameters, so the value has to be interpolated. This
+ * one comes from `SHOW` — the server's own rendering — so it is not attacker
+ * input, but interpolating anything into SQL without quoting it is a habit
+ * worth not having.
+ */
+function quoteLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 export async function migrate(pool: Pool): Promise<MigrationResult> {
   const client: PoolClient = await pool.connect();
   const applied: string[] = [];
   const alreadyApplied: string[] = [];
+  /*
+   * Read rather than assumed. `RESET` would restore the server's default,
+   * which is not the pool's — the pool sets the value as a startup option and
+   * the two need not agree. Restoring the observed value is unambiguous
+   * whatever the connection was configured with.
+   */
+  let priorStatementTimeout: string | null = null;
 
   try {
+    /*
+     * The pool sets `statement_timeout` on every connection (10s by default)
+     * to bound a wedged query. That bound is wrong for this session, in two
+     * ways that both turn a survivable wait into a failed boot:
+     *
+     *   - `pg_advisory_lock` BLOCKS while another replica migrates. Postgres
+     *     counts that wait against `statement_timeout` and cancels it, so a
+     *     concurrent redeploy exits non-zero instead of waiting its turn —
+     *     precisely the case the lock exists to handle.
+     *   - A DDL statement slower than the timeout is cancelled mid-migration.
+     *     The transaction rolls back so no partial schema is recorded, but the
+     *     boot still fails, and an index build on a real table can easily take
+     *     longer than ten seconds.
+     *
+     * So the timeout is lifted for the migration session only, and reset in
+     * the `finally` below before the connection returns to the pool — leaving
+     * it lifted would silently unbound every later query on that connection.
+     * Raised by CodeRabbit on PR #2.
+     */
+    const shown = await client.query<{ statement_timeout: string }>('SHOW statement_timeout');
+    priorStatementTimeout = shown.rows[0]?.statement_timeout ?? null;
+    await client.query('SET statement_timeout = 0');
+
     await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
 
     // Bootstrap: the migration table cannot record its own precondition.
@@ -199,6 +241,12 @@ export async function migrate(pool: Pool): Promise<MigrationResult> {
     return { applied, alreadyApplied };
   } finally {
     await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]).catch(() => undefined);
+    // Back to the bound this connection carried, before it is reused.
+    if (priorStatementTimeout !== null) {
+      await client
+        .query(`SET statement_timeout = ${quoteLiteral(priorStatementTimeout)}`)
+        .catch(() => undefined);
+    }
     client.release();
   }
 }

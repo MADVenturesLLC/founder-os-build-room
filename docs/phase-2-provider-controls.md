@@ -220,14 +220,31 @@ for it — `DEC-20260815-09`'s ruling says so in terms. The meter is built in
 `packages/cost-meter`, and deliberately does not gate on the USD 50: a test pins
 that it does not.
 
-## Sequencing
+## Sequencing — and what is not established about it
 
-The ruling requires the caps and alerts **before** provisioning. As of this
-record: Neon billing is attested configured (Founder, 2026-08-17) and the Neon
-project `founder-os-build-room` exists, created via the Neon console 2026-08-17
-at 16:55:19Z — observed by `builder` 2026-08-17T19:03Z. The Railway project
-created earlier the same day was deleted by the Founder before any deployment
-existed, so **no Railway compute has run**.
+The ruling requires the caps and alerts **before** provisioning.
+
+What is on record: Neon billing is attested configured (Founder, 2026-08-17)
+and the Neon project `founder-os-build-room` exists, created via the Neon
+console 2026-08-17 at 16:55:19Z — `[Observed 2026-08-17T19:03Z]` by `builder`.
+The Railway project created earlier the same day was deleted by the Founder
+before any deployment existed, so **no Railway compute ran under it**.
+
+**The ordering itself is not independently verified, and this record does not
+claim it is.** Every figure in the table is a Founder attestation carrying a
+date but not a time, so nothing here establishes that the billing configuration
+existed *before* 16:55:19Z rather than after it. The one timestamped check this
+session ran — the 19:03Z tool-surface enumeration — establishes that no billing
+operation is reachable from here, which is a statement about tooling and says
+nothing about when a limit was set. It also ran nearly two and a half hours
+*after* the Neon project was created, so it could not have witnessed the
+ordering even in principle.
+
+So the pre-provisioning exit check is **attested, not verified**. Closing it
+would take either a timestamped Founder record of when each limit was applied,
+or provider audit-log evidence — neither of which exists as of this writing.
+Raised by CodeRabbit on PR #2, which correctly noted that a date-only
+attestation cannot establish an ordering within a day.
 
 ## Related
 

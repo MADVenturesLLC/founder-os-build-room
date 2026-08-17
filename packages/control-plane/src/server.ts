@@ -20,6 +20,7 @@
  * Founder-confirmed stop gate.
  */
 
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import type { Pool } from 'pg';
 import { snapshot, type LifecycleEvent } from '../../ledger/src/index.js';
@@ -75,7 +76,19 @@ export function createServer(deps: ServerDeps): Express {
   app.get('/ready', async (_req: Request, res: Response) => {
     const result = await probe(pool, config.readyProbeTimeoutMs);
     if (!result.ok) {
-      res.status(503).json({ status: 'unavailable', database: 'unreachable', ...result });
+      /*
+       * The probe result is NOT spread into the response. It carries the
+       * driver's own error string, which names roles, hosts and sometimes the
+       * connection target — turning a readiness failure into a disclosure on a
+       * public URL. The reason goes to the log with a correlation id; the
+       * caller gets the id and the fact that the database is unreachable,
+       * which is all a readiness probe needs. Raised by CodeRabbit on PR #2.
+       */
+      const incidentId = randomUUID();
+      console.error(
+        JSON.stringify({ level: 'error', at: 'ready', incidentId, detail: result.error ?? null }),
+      );
+      res.status(503).json({ status: 'unavailable', database: 'unreachable', incidentId });
       return;
     }
     res.status(200).json({ status: 'ready', database: 'reachable', latencyMs: result.latencyMs });
@@ -97,8 +110,23 @@ export function createServer(deps: ServerDeps): Express {
     });
   });
 
+  /*
+   * Everything below this line requires the shared secret. Everything above it
+   * — `/health`, `/ready`, `/version` — does not, and that is deliberate:
+   * Railway's own health check calls `/health` with no credential and would
+   * fail the deploy if it were guarded, and the harness reads `/version` to
+   * prove a restart happened. None of the three touches the ledger or reveals
+   * anything beyond process liveness and the deployed commit.
+   *
+   * The room endpoints are a different matter. They write to the ledger and
+   * export its full contents, on a public URL. See `Config.apiToken` for why
+   * this is required rather than optional.
+   */
+  const requireToken = tokenGuard(config.apiToken);
+
   app.post(
     '/rooms',
+    requireToken,
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.body?.roomId, 'roomId');
       const { created } = await store.createRoom(roomId);
@@ -108,6 +136,7 @@ export function createServer(deps: ServerDeps): Express {
 
   app.get(
     '/rooms/:roomId',
+    requireToken,
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.params.roomId, 'roomId');
       const view = await store.loadRoom(roomId);
@@ -123,6 +152,7 @@ export function createServer(deps: ServerDeps): Express {
 
   app.post(
     '/rooms/:roomId/events',
+    requireToken,
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.params.roomId, 'roomId');
       const event = requireEvent(req.body);
@@ -158,6 +188,7 @@ export function createServer(deps: ServerDeps): Express {
 
   app.get(
     '/rooms/:roomId/export',
+    requireToken,
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.params.roomId, 'roomId');
       const view = await store.loadRoom(roomId);
@@ -186,12 +217,61 @@ export function createServer(deps: ServerDeps): Express {
       res.status(404).json({ error: 'not_found', message: error.message });
       return;
     }
+    /*
+     * An unhandled error's message is logged, never returned. Postgres errors
+     * carry role names, host names, table names and SQL fragments, so echoing
+     * `message` turns any failing query into an information-disclosure
+     * response on a public URL. The client gets a stable code and a
+     * correlation id; the operator reads the detail from the log by that id.
+     *
+     * `HttpError` and `RoomNotFoundError` above keep their text, because those
+     * strings are author-written and say only what the caller did wrong.
+     * Raised by CodeRabbit on PR #2.
+     */
     const message = error instanceof Error ? error.message : String(error);
-    console.error(JSON.stringify({ level: 'error', at: 'request', message }));
-    res.status(500).json({ error: 'internal_error', message });
+    const incidentId = randomUUID();
+    console.error(JSON.stringify({ level: 'error', at: 'request', incidentId, message }));
+    res.status(500).json({ error: 'internal_error', incidentId });
   });
 
   return app;
+}
+
+/**
+ * Middleware requiring the shared secret on `Authorization: Bearer <token>`.
+ *
+ * Compared with `timingSafeEqual` rather than `===`. The timing signal from a
+ * string comparison is small and awkward to exploit over a network, but the
+ * constant-time form costs nothing and removes the question.
+ *
+ * The failure response says `unauthorized` and nothing else — not whether the
+ * header was missing, malformed, or simply wrong. Each of those distinctions
+ * is a free hint to someone guessing.
+ */
+function tokenGuard(expected: string) {
+  const expectedBytes = Buffer.from(expected, 'utf8');
+
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const header = req.get('authorization') ?? '';
+    const match = /^Bearer (.+)$/i.exec(header.trim());
+    const presented = match?.[1] === undefined ? null : Buffer.from(match[1], 'utf8');
+
+    /*
+     * The length check is separate because `timingSafeEqual` throws on
+     * differing lengths rather than returning false. It leaks the token's
+     * length, which is not a secret — the value is.
+     */
+    const authorized =
+      presented !== null &&
+      presented.length === expectedBytes.length &&
+      timingSafeEqual(presented, expectedBytes);
+
+    if (!authorized) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    next();
+  };
 }
 
 function asyncRoute(handler: (req: Request, res: Response) => Promise<void>) {

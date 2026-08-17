@@ -8,7 +8,7 @@
  * as the reducer's own code and reason rather than as a server error.
  *
  * The store and pool are stubs. What talks to a real Postgres is covered by
- * `control-plane-postgres.test.ts`, which runs only when `DATABASE_URL` is
+ * `control-plane-postgres.test.ts`, which runs only when `TEST_DATABASE_URL` is
  * set — so the suite is honest about which claims it has actually exercised
  * rather than quietly proving less than it appears to.
  */
@@ -24,8 +24,13 @@ import { loadConfig } from '../packages/control-plane/src/config.js';
 import { initialLedger } from '../packages/ledger/src/index.js';
 import { makeEvent } from './helpers.js';
 
+// The room endpoints now require this on `Authorization: Bearer`. Declared
+// before CONFIG because CONFIG reads it.
+const TOKEN = 'test-token-that-is-long-enough-to-pass';
+
 const CONFIG = loadConfig({
   DATABASE_URL: 'postgresql://user:secret@host.neon.tech/db?sslmode=require',
+  CONTROL_PLANE_TOKEN: TOKEN,
   COMMIT_SHA: 'deadbeef',
   READY_PROBE_TIMEOUT_MS: '500',
 });
@@ -108,14 +113,24 @@ describe('control plane — health, readiness and version', () => {
     await harness.close();
   });
 
-  it('/ready reports 503 and says why when the database does not answer', async () => {
+  it('/ready reports 503 without leaking the driver error to the caller', async () => {
+    /*
+     * The response used to spread the probe result, which carries the driver's
+     * own message — role names, host names, sometimes the connection target —
+     * onto a public URL. Now the detail goes to the log under a correlation id
+     * and the caller gets the id. Raised by CodeRabbit on PR #2.
+     */
     const harness = start(unreachablePool, emptyStore);
     const response = await fetch(`${harness.url}/ready`);
     const body = await json(response);
 
     assert.equal(response.status, 503);
     assert.equal(body.database, 'unreachable');
-    assert.match(String(body.error), /connection refused/);
+    assert.equal(typeof body.incidentId, 'string', 'the caller needs a handle for the log entry');
+    assert.ok(
+      !JSON.stringify(body).includes('connection refused'),
+      'the driver error must not reach the client',
+    );
     await harness.close();
   });
 
@@ -129,12 +144,142 @@ describe('control plane — health, readiness and version', () => {
   });
 });
 
+describe('control plane — the room endpoints are not public', () => {
+  /*
+   * Every route was unauthenticated, on a service with a public Railway URL —
+   * so any caller who found it could create rooms, append ledger events, and
+   * export a room's whole ledger, actor identities, attribution and evidence
+   * payloads included. Raised by CodeRabbit on PR #2.
+   *
+   * The store below THROWS on any call, so these tests fail if a request gets
+   * past the guard even in a case where the status alone would look right.
+   */
+  const explodingStore = {
+    createRoom: async () => {
+      throw new Error('the guard let an unauthenticated request through');
+    },
+    loadRoom: async () => {
+      throw new Error('the guard let an unauthenticated request through');
+    },
+    append: async () => {
+      throw new Error('the guard let an unauthenticated request through');
+    },
+    exportRoom: async () => {
+      throw new Error('the guard let an unauthenticated request through');
+    },
+  } as unknown as PostgresLedgerStore;
+
+  const guarded: ReadonlyArray<readonly [string, string]> = [
+    ['POST', '/rooms'],
+    ['GET', `/rooms/${ROOM}`],
+    ['POST', `/rooms/${ROOM}/events`],
+    ['GET', `/rooms/${ROOM}/export`],
+  ];
+
+  for (const [method, path] of guarded) {
+    it(`answers 401 on ${method} ${path} with no credential`, async () => {
+      const harness = start(reachablePool, explodingStore);
+      const response = await fetch(`${harness.url}${path}`, {
+        method,
+        ...(method === 'POST'
+          ? { headers: { 'content-type': 'application/json' }, body: '{}' }
+          : {}),
+      });
+
+      assert.equal(response.status, 401);
+      assert.equal((await json(response)).error, 'unauthorized');
+      await harness.close();
+    });
+  }
+
+  it('answers 401 for a wrong token, and says nothing beyond "unauthorized"', async () => {
+    const harness = start(reachablePool, explodingStore);
+    const response = await fetch(`${harness.url}/rooms/${ROOM}`, {
+      headers: { authorization: `Bearer ${'w'.repeat(TOKEN.length)}` },
+    });
+    const body = await json(response);
+
+    assert.equal(response.status, 401);
+    // Not "wrong token" versus "missing token" versus "malformed header" —
+    // each of those distinctions is a free hint to someone guessing.
+    assert.deepEqual(body, { error: 'unauthorized' });
+    await harness.close();
+  });
+
+  it('answers 401 for a token of the right length but the wrong value', async () => {
+    // The constant-time comparison only runs when the lengths match, so this
+    // is the case that exercises it rather than the length check in front.
+    const wrong = `${TOKEN.slice(0, -1)}${TOKEN.endsWith('x') ? 'y' : 'x'}`;
+    assert.equal(wrong.length, TOKEN.length, 'the fixture must be the same length');
+
+    const harness = start(reachablePool, explodingStore);
+    const response = await fetch(`${harness.url}/rooms/${ROOM}`, {
+      headers: { authorization: `Bearer ${wrong}` },
+    });
+
+    assert.equal(response.status, 401);
+    await harness.close();
+  });
+
+  it('leaves /health, /ready and /version reachable without a credential', async () => {
+    // Railway's health check presents no credential and would fail the deploy
+    // if these were guarded; the harness reads /version to prove a restart.
+    const harness = start(reachablePool, explodingStore);
+
+    for (const path of ['/health', '/ready', '/version']) {
+      assert.equal((await fetch(`${harness.url}${path}`)).status, 200, `${path} must stay open`);
+    }
+    await harness.close();
+  });
+});
+
+describe('control plane — an internal failure does not describe itself to the caller', () => {
+  it('returns a correlation id, not the error text', async () => {
+    /*
+     * Postgres errors carry role names, host names, table names and SQL
+     * fragments, so echoing `message` turned any failing query into an
+     * information-disclosure response. Raised by CodeRabbit on PR #2.
+     */
+    const store = {
+      loadRoom: async () => {
+        throw new Error('relation "build_room_rooms" does not exist for role "neondb_owner"');
+      },
+    } as unknown as PostgresLedgerStore;
+
+    const harness = start(reachablePool, store);
+    const response = await fetch(`${harness.url}/rooms/${ROOM}`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    const body = await json(response);
+
+    assert.equal(response.status, 500);
+    assert.equal(body.error, 'internal_error');
+    assert.equal(typeof body.incidentId, 'string');
+    assert.ok(!JSON.stringify(body).includes('neondb_owner'), 'the role name must not reach the client');
+    assert.ok(!JSON.stringify(body).includes('build_room_rooms'), 'the table name must not reach the client');
+    await harness.close();
+  });
+
+  it('still returns author-written messages for client mistakes', async () => {
+    // `HttpError` text says only what the caller did wrong, so it stays.
+    const harness = start(reachablePool, emptyStore);
+    const response = await fetch(`${harness.url}/rooms/not-a-uuid`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    const body = await json(response);
+
+    assert.equal(response.status, 400);
+    assert.match(String(body.message), /must be a UUID/);
+    await harness.close();
+  });
+});
+
 describe('control plane — room surface', () => {
   it('rejects a room id that is not a UUID', async () => {
     const harness = start(reachablePool, emptyStore);
     const response = await fetch(`${harness.url}/rooms`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify({ roomId: 'room-1' }),
     });
 
@@ -156,7 +301,7 @@ describe('control plane — room surface', () => {
     const harness = start(reachablePool, store);
     const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify(makeEvent('plan.approved')),
     });
     const body = await json(response);
@@ -180,7 +325,7 @@ describe('control plane — room surface', () => {
     const harness = start(reachablePool, store);
     const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify({ event: 'plan.approved' }),
     });
 
@@ -210,7 +355,7 @@ describe('control plane — room surface', () => {
     const harness = start(reachablePool, store);
     const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify({ ...makeEvent('plan.approved'), event: 'made.up' }),
     });
 

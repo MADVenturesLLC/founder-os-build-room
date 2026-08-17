@@ -47,7 +47,7 @@
  */
 
 import { micros, type Usd } from './money.js';
-import { dateKey, daysInMonth, isOnOrBefore, type AccountingInstant } from './period.js';
+import { dateKey, daysInMonth, isOnOrBefore, monthKey, type AccountingInstant } from './period.js';
 
 export type RecognitionMethod = 'BOOK_FULL_MONTH_AT_START' | 'PRORATED_DAILY';
 
@@ -79,16 +79,40 @@ export function recognizeInfrastructure(
   method: RecognitionMethod = SELECTED_RECOGNITION_METHOD,
 ): Usd {
   const total = commitments
-    .filter((commitment) => inForce(commitment, asOf))
+    .filter((commitment) => servedThisMonth(commitment, asOf))
     .reduce((running, commitment) => running + recognizeOne(commitment, asOf, method), 0);
   return micros(total);
 }
 
-function inForce(commitment: InfrastructureCommitment, asOf: AccountingInstant): boolean {
+/**
+ * Did this commitment serve any part of the evaluated month, up to `asOf`?
+ *
+ * The filter was `inForce(commitment, asOf)` — in force *on the day itself* —
+ * which silently dropped a commitment that ended earlier in the same month. A
+ * plan running 1–9 August, evaluated on 17 August, contributed nothing to
+ * August, when it had in fact been paid for nine days of it. That understates
+ * the month, and understating is the one direction a fail-closed spend meter
+ * must not fail in: the ceiling comparison then permits a dispatch that the
+ * true figure would have paused. Raised by CodeRabbit on PR #2.
+ *
+ * The test is overlap with the window `[the 1st, asOf]`, not membership at a
+ * point:
+ *
+ *   - it began on or before `asOf` — a commitment starting later in the month
+ *     has not been incurred yet, and `-09` recognizes cost when incurred;
+ *   - and it had not already ended before the month began. `effectiveUntil` is
+ *     the day AFTER the last day in force, so ending exactly on the 1st means
+ *     it served no day of this month.
+ */
+function servedThisMonth(commitment: InfrastructureCommitment, asOf: AccountingInstant): boolean {
   const today = dateKey(asOf);
+  const monthStart = `${monthKey(asOf)}-01`;
+
   if (!isOnOrBefore(commitment.effectiveFrom, today)) return false;
+
   const until = commitment.effectiveUntil;
-  if (until !== undefined && until !== null && isOnOrBefore(until, today)) return false;
+  if (until !== undefined && until !== null && isOnOrBefore(until, monthStart)) return false;
+
   return true;
 }
 
@@ -107,8 +131,43 @@ function recognizeOne(
     return commitment.monthlyMicros;
   }
 
+  /*
+   * PRORATED_DAILY counts the days this commitment actually SERVED inside the
+   * month up to `asOf`, not the days that have elapsed. For a commitment that
+   * ran the whole window those are the same number; for one that started on
+   * the 5th or ended on the 9th they are not, and using elapsed days would
+   * charge a month for service it did not have — or, worse in this direction,
+   * charge nothing at all for a commitment that ended mid-month.
+   */
   const days = daysInMonth(asOf.year, asOf.month);
-  return Math.round((commitment.monthlyMicros * asOf.dayOfMonth) / days);
+  const served = daysServedThisMonth(commitment, asOf);
+  return Math.round((commitment.monthlyMicros * served) / days);
+}
+
+/**
+ * Days of the evaluated month, up to and including `asOf`, on which the
+ * commitment was in force.
+ *
+ * Day arithmetic only, and only within one month, so no date construction is
+ * needed — the whole package deliberately builds no `Date`.
+ */
+function daysServedThisMonth(commitment: InfrastructureCommitment, asOf: AccountingInstant): number {
+  const month = monthKey(asOf);
+
+  // Starts on the 1st unless it began inside this month.
+  const firstServed = commitment.effectiveFrom.startsWith(`${month}-`)
+    ? Number(commitment.effectiveFrom.slice(-2))
+    : 1;
+
+  // Ends at `asOf` unless it stopped inside this month; `effectiveUntil` is
+  // the day after the last day in force, so the last served day is one before.
+  const until = commitment.effectiveUntil;
+  const lastServed =
+    until !== undefined && until !== null && until.startsWith(`${month}-`)
+      ? Math.min(asOf.dayOfMonth, Number(until.slice(-2)) - 1)
+      : asOf.dayOfMonth;
+
+  return Math.max(0, lastServed - firstServed + 1);
 }
 
 /** What the month will cost in full, under either method. For reporting. */
@@ -118,7 +177,7 @@ export function monthlyCommitmentTotal(
 ): Usd {
   return micros(
     commitments
-      .filter((commitment) => inForce(commitment, asOf))
+      .filter((commitment) => servedThisMonth(commitment, asOf))
       .reduce((running, commitment) => running + commitment.monthlyMicros, 0),
   );
 }

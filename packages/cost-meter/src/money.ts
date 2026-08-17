@@ -37,12 +37,33 @@ export function usd(dollars: number): Usd {
   if (!Number.isFinite(dollars)) {
     throw new RangeError(`not a finite dollar amount: ${dollars}`);
   }
-  return { kind: 'usd', micros: Math.round(dollars * MICROS_PER_USD) };
+  // Through `micros`, so the safe-integer bound applies here too rather than
+  // only to values that happen to arrive already in micro-USD.
+  return micros(Math.round(dollars * MICROS_PER_USD));
 }
 
+/**
+ * A micro-USD amount. Safe integers only.
+ *
+ * The check here was `Number.isInteger`, which accepts values beyond
+ * `Number.MAX_SAFE_INTEGER` — the range where doubles no longer represent
+ * consecutive integers, so `a + b` can be silently wrong and two distinct
+ * values can compare equal. This type is what the ceiling decision is made
+ * from, and a comparison against a corrupted total is precisely the failure a
+ * fail-closed meter must not have. Raised by CodeRabbit on PR #2.
+ *
+ * A throw rather than an UNKNOWN, deliberately. Reaching this range means
+ * arithmetic has already gone wrong upstream — `MAX_SAFE_INTEGER` micro-USD is
+ * about USD 9 billion — and returning UNKNOWN would present a bug as a pricing
+ * gap, which is a category error the caller cannot recover from correctly.
+ */
 export function micros(value: number): Usd {
-  if (!Number.isInteger(value)) {
-    throw new RangeError(`micro-USD must be an integer; got ${value}`);
+  if (!Number.isSafeInteger(value)) {
+    throw new RangeError(
+      `micro-USD must be a safe integer; got ${value}. Past Number.MAX_SAFE_INTEGER ` +
+        `sums and comparisons stop being exact, so a ceiling decision made from one ` +
+        `cannot be trusted.`,
+    );
   }
   return { kind: 'usd', micros: value };
 }
