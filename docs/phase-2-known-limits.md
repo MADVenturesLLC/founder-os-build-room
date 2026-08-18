@@ -187,9 +187,33 @@ process now serving is the one this call produced". A concurrent restart from
 another source could still interleave. That is a materially smaller gap than a
 human with a stopwatch, and it is stated rather than treated as closed.
 
+**The script was rewritten after the gate ran, and re-verified live rather than
+against a stand-in.** Review found it built and read JSON with string tools —
+greedy `sed` capturing the last id on a line, unescaped interpolation, and
+`--fail-with-body` blind to GraphQL errors arriving at HTTP 200 — and that
+`first:1` was being treated as "newest" when Railway documents no ordering
+guarantee. The rewrite (jq throughout, explicit `createdAt` sort) was first
+verified only against a locally written fake endpoint, which is a weaker claim
+than the version it replaced: the pre-rewrite script's live verification *was*
+the three gate runs. A fake returns the shape its author assumed, so it cannot
+falsify the assumption.
+
+Verified against the real API on 2026-08-18 under a second Founder-issued
+project token, revoked immediately afterwards:
+
+- `deployments(first:20, …)` is accepted, returns 20 nodes, and **every node
+  carries a non-null `createdAt`** — the assumption the new sort depends on,
+  and the one the fake could not test.
+- Railway does in fact return newest-first, so the old `first:1` was
+  accidentally correct; the sort no longer depends on that holding.
+- End to end: request at `02:59:27.074Z` → the script selected deployment
+  `17337d55` (the newest `SUCCESS`) → `/version` `startedAt` moved to
+  `02:59:29.804Z`, strictly after the request. `/health` and `/ready` both
+  answered afterwards, database reachable.
+
 **Raised by** `builder` while reading the 23:47 bundle, after the ordering fix
 had already landed. Narrowed once the Founder issued a scoped Railway project
-token.
+token; the rewrite re-verified live under a second one.
 
 ---
 
