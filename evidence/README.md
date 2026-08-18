@@ -4,17 +4,68 @@
 directory is where it is retained. The bundles are the harness's own output,
 committed unmodified.
 
-## Read this first — the gate is NOT satisfied
+## Read this first
 
-Three bundles are here. **None of them satisfies the three-run gate**, and the
-reasons differ:
+Four bundles. **One satisfies the gate; three do not, and all four are kept.**
 
 | bundle | commit | verdict |
 |---|---|---|
-| `23-50-50` | `e5f5ff8` | **gate NOT satisfied** — 0 of 3; all three failed, and the cause was `builder`'s |
-| `23-47-17` | `66ee472` | **gate NOT satisfied** — 2 of 3 consecutive; run #1 failed |
+| **`23-58-26`** | **`fb74dd7`** | **gate SATISFIED** — 3 consecutive passes, 0 failed |
+| `23-50-50` | `e5f5ff8` | NOT satisfied — 0 of 3; all three failed, and the cause was `builder`'s |
+| `23-47-17` | `66ee472` | NOT satisfied — 2 of 3 consecutive; run #1 failed |
 | `21-50-57` | `19b4968` | superseded — produced by the defective harness described below |
 | `21-10-24` | `d4dab78` | superseded — defective harness, and a runtime no longer deployed |
+
+**Three failed attempts precede the satisfied one, and none of them is
+deleted.** Exit criterion 4 wants a failure visible as an interruption rather
+than absent from the record; a directory holding only the successful attempt
+would tell a reader the gate was met first time, which is false.
+
+### `23-58-26` — the satisfied gate, and what it does and does not establish
+
+Commit `fb74dd7`, three consecutive passes, no failed runs. Every condition
+held in every run.
+
+**The ordering defect is closed, demonstrated against a live accident.** Run
+#1's two recorded identities differ:
+
+```
+healthCheckIdentity  23:54:27.014Z
+baselineBeforeReq    23:56:25.152Z
+requestedAt          23:56:25.689Z
+processAfter         23:56:52.445Z   (+26.8s)
+```
+
+A restart landed **between** the health check and the restart request. The
+pre-fix harness compared against the health-check identity, so it would have
+seen `23:56:25.152Z` and passed instantly — crediting a restart it had not
+requested, which is precisely the defect found on PR #2. The fixed harness
+rebaselined immediately before asking and required a *further* change. This is
+the fix preventing the real failure, not a stubbed reproduction of it.
+
+Every run's new process appears after its own request:
+
+```
+run #1  requested 23:56:25.689Z  ->  23:56:52.445Z   (+26.8s)
+run #2  requested 23:57:24.654Z  ->  23:57:50.295Z   (+25.6s)
+run #3  requested 23:58:23.120Z  ->  23:58:25.212Z   ( +2.1s)
+```
+
+**Event ids are genuinely compared now** — read from a `/rooms/:id/export` on
+each side of the restart and compared in order, rather than the pre-restart
+array being passed through as the post-restart one.
+
+**Run #3 carries the causation limit, and it is named rather than glossed.**
+Its process appeared 2.1 seconds after its request while runs #1 and #2 took
+about 26 — which is what a Railway restart actually costs. A restart does not
+complete in two seconds, so run #3 most likely observed one the Founder had
+already initiated. What run #3 establishes is that a restart occurred and the
+room read back identically across it; what it does **not** establish is that
+the harness's request caused that restart. See
+`docs/phase-2-known-limits.md` §3. Runs #1 and #2, at +26.8s and +25.6s, are
+consistent with a restart beginning at request time — but with an external
+platform port and no restart identifier, causation is never *proved* for any
+run, only made plausible.
 
 **The current bundle is `23-47-17`, and it records a failure.** It is the first
 bundle produced by the FIXED harness, and it is retained precisely because it
