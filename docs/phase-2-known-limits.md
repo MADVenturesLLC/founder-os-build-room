@@ -67,13 +67,56 @@ produced. It is an *audit* control, not a *mechanical* one.
 other than a Founder-witnessed session — an automated re-run, a scheduled job,
 or any path where nobody would notice a missing file.
 
-**What closing it takes.** An append-only run history loaded before runs are
-appended, or persisting each run before `gateStatus` is computed. Both need a
-decision about where that history lives (the ledger itself is the obvious
-candidate) and how a legitimately fresh start is distinguished from a
-suppressed one — which is a design question, not a patch.
+**What closing it takes — the design, now decided.** The two open questions
+were where the history lives and how a legitimately fresh start is
+distinguished from a suppressed one. Both resolve the same way, and the second
+dissolves rather than gets answered:
 
-**Raised by** CodeRabbit on PR #2.
+- **The history lives in Postgres**, in a `build_room_gate_runs` table beside
+  the ledger, carrying the same `build_room_events_immutable()` UPDATE/DELETE
+  triggers. The control plane assigns `seq` under a lock, exactly as it does
+  for log positions; the harness cannot choose it.
+- **It is global to the database and never reset** — not scoped per commit.
+  Scoping to a commit would make a trivial push a way to clear a failure, which
+  is the same hole one level up.
+- **There is no "fresh start" to distinguish.** A re-invocation does not begin
+  a new sequence; it appends to the existing one. An invocation that fails and
+  is re-run writes rows 1(fail), 2, 3 then 4, 5, 6 — and the gate is satisfied
+  at row 6 by a streak that is genuinely three consecutive passes, while row 1
+  remains permanently in the record and in every bundle assembled afterwards.
+  That is exactly what exit criterion 4 asks for: the failure is *an
+  interruption of the sequence rather than absent from it*. The defect was
+  never that re-running is possible — it is that the record restarted.
+- **Unreachable storage must be a hard failure, not a fallback to memory.** A
+  silent fallback restores the hole under a different name.
+
+Concretely: migration `0003_gate_runs`; `appendGateRun` / `listGateRuns` in the
+store; token-guarded `POST`/`GET /gate/runs`; the CLI loading history before the
+run loop and appending each run as it completes; `gateStatus` reading the
+persisted sequence.
+
+**Why this is not in PR #2, and the sequencing that follows.** Closing §2 means
+changing the harness, and §8 above establishes what that costs: a bundle
+produced by a superseded harness is not evidence for the harness that ships.
+§8 was closed by *re-running* — three fresh passes from the fixed code — and
+the same would be required here. The current bundle
+(`phase2-runs-2026-08-18T01-20-03-087Z.json`, commit `b731ba7`) was produced by
+the harness as it stands; a §2 fix would supersede it and re-open §8.
+
+Re-running is not available. The Railway project token that drove the restarts
+was revoked on 2026-08-18 immediately after the gate was satisfied, verified
+against the API (`projectToken` → *"Project Token not found"*). Minting another
+is a Founder act. So landing the fix here would trade a documented audit control
+for an untested mechanical one **and** leave §8 open with no path to close it —
+strictly worse than the state this PR is in.
+
+**Therefore:** §2 stays open through Phase 2, and closes in a follow-up PR
+carrying its own gate re-run, before the gate is next relied upon. Its urgency
+is set by *when gate evidence stops being Founder-witnessed* — the condition
+stated above — not by Phase 2's merge.
+
+**Raised by** CodeRabbit on PR #2. Design decided 2026-08-18; execution
+deferred with the reason recorded rather than the limit quietly carried.
 
 ---
 
