@@ -227,7 +227,7 @@ declined with this reasoning.
 
 ---
 
-## 7. The dwell now samples identity — and the retained gate predates that
+## 7. The dwell now samples identity — CLOSED, and demonstrated
 
 **What it is.** `deploys_and_stays_up` was answered by `/health` alone, so a
 process **replacement** during the 30-second dwell was invisible: every sample
@@ -243,18 +243,18 @@ distinct identity seen, and **fails** the condition if the identity changes
 mid-dwell. The passing evidence names the single process that served the whole
 window, so a reader can see it rather than assume it.
 
-**What this means for the retained bundle, stated plainly.** The `23-58-26`
-bundle was produced *before* this fix. Its `deploys_and_stays_up` for run #1 is
-therefore weaker than it reads: the condition held under a health-only dwell,
-and we now know the process was replaced inside that window. Runs #2 and #3
-have no such overlap in their recorded timings. The bundle is retained
-unedited; this entry is the correction beside it.
+**CLOSED, 2026-08-18, by re-running rather than by argument.** The Founder
+ruled for the clean route, so the gate was performed again against the fixed
+harness. `evidence/phase2-runs-2026-08-18T01-20-03-087Z.json` at commit
+`b731ba7` records exactly one process identity across all 11 dwell samples in
+each of three runs — the dwell now *shows* that one process served the window
+rather than leaving a reader to assume it.
 
-**Whether that invalidates the gate is a Founder call, not `builder`'s.** The
-run's other two conditions are unaffected, and the restart chain is unaffected.
-What is affected is one condition in one run of three. It is recorded here
-rather than silently re-run, because deciding that evidence needs redoing is
-the Founder's judgement to make with the facts in front of them.
+**What that does to `23-58-26`.** It is superseded, not deleted. Its run #1
+`deploys_and_stays_up` held under a health-only dwell while the process was in
+fact replaced ninety milliseconds before the dwell ended, so that condition was
+always weaker than it read. The bundle stays retained and unedited, and
+`evidence/README.md` says which bundle is current and why.
 
 **Raised by** CodeRabbit on PR #2, reading the satisfied bundle's own
 timestamps.

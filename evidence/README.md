@@ -6,11 +6,12 @@ committed unmodified.
 
 ## Read this first
 
-Five bundles. **One satisfies the gate; four do not, and all five are kept.**
+Six bundles. **Two satisfy the gate; four do not, and all six are kept.**
 
 | bundle | commit | verdict |
 |---|---|---|
-| **`23-58-26`** | **`fb74dd7`** | **gate SATISFIED** — 3 consecutive passes, 0 failed |
+| **`01-20-03`** | **`b731ba7`** | **gate SATISFIED, and the current evidence** — 3 consecutive passes, 0 failed, harness-driven restarts |
+| `23-58-26` | `fb74dd7` | gate satisfied, **superseded** — health-only dwell, human-driven restarts |
 | `23-50-50` | `e5f5ff8` | NOT satisfied — 0 of 3; all three failed, and the cause was `builder`'s |
 | `23-47-17` | `66ee472` | NOT satisfied — 2 of 3 consecutive; run #1 failed |
 | `21-50-57` | `19b4968` | superseded — produced by the defective harness described below |
@@ -22,7 +23,60 @@ interruption rather than absent from the record; a directory holding only the
 successful attempt would tell a reader the gate was met first time, which is
 false.
 
-### `23-58-26` — the satisfied gate, and what it does and does not establish
+### `01-20-03` — the current evidence, and why it supersedes `23-58-26`
+
+Commit `b731ba7`, three consecutive passes, no failed runs, **and no human in
+the loop**. `platformKind` is `command` rather than `external`, and every
+restart records `actor: harness` — the harness called
+`scripts/railway-restart.sh`, which restarts the service through Railway's API.
+
+Three things are stronger here than in `23-58-26`, and they are the three
+things review kept finding fault with:
+
+**The dwell proves a single process served it.** Each of the 11 samples per run
+reads `/version` as well as `/health`, and every run recorded exactly one
+identity across the whole 30-second window:
+
+```text
+run #1  dwell identities [01:16:32.804Z]   11 samples
+run #2  dwell identities [01:18:46.232Z]   11 samples
+run #3  dwell identities [01:19:23.112Z]   11 samples
+```
+
+`23-58-26` could not do this. Its run #1 dwell ended at `23:56:25.242Z` while a
+new process had started at `23:56:25.152Z` — ninety milliseconds earlier — and
+a health-only dwell had no way to see it. That is why this bundle supersedes
+it rather than merely joining it.
+
+**The restart is caused, not merely followed.** The call that requests each
+restart is the call that performs it, so a run cannot credit a restart nobody
+asked for. The latency is consistent to a tenth of a second:
+
+```text
+run #1  requested 01:18:43.728Z  ->  01:18:46.232Z   (+2.5s)
+run #2  requested 01:19:20.554Z  ->  01:19:23.112Z   (+2.6s)
+run #3  requested 01:19:57.117Z  ->  01:19:59.682Z   (+2.6s)
+```
+
+**On reading those figures against the older bundle.** `23-58-26`'s runs took
++26.8s, +25.6s and +2.1s, and the +2.1s outlier was called suspect *because*
+the other two took twenty-six seconds. That reasoning was calibrated on
+dashboard restarts. An API `deploymentRestart` genuinely completes in about two
+and a half seconds — consistently, as the three runs above show — so a short
+delta is this mechanism's normal latency rather than a warning sign. The
+earlier inference stands for the dashboard path it was about, and does not
+transfer here.
+
+**Event ids are read from an export on each side and compared in order**, as in
+`23-58-26`. Distinct per run, matching across each restart.
+
+**What is still not established.** `deploymentRestart` returns `true`, not a
+restart identifier, so the link is "this call performed a restart" rather than
+"the process now serving is the one this call produced" — a concurrent restart
+from elsewhere could still interleave. See `docs/phase-2-known-limits.md` §3,
+which is narrowed rather than closed.
+
+### `23-58-26` — superseded, and what it did and did not establish
 
 Commit `fb74dd7`, three consecutive passes, no failed runs. Every condition
 held in every run.
@@ -35,7 +89,7 @@ healthCheckIdentity  23:54:27.014Z
 baselineBeforeReq    23:56:25.152Z
 requestedAt          23:56:25.689Z
 processAfter         23:56:52.445Z   (+26.8s)
-```text
+```
 
 A restart landed **between** the health check and the restart request. The
 pre-fix harness compared against the health-check identity, so it would have
@@ -50,7 +104,7 @@ Every run's new process appears after its own request:
 run #1  requested 23:56:25.689Z  ->  23:56:52.445Z   (+26.8s)
 run #2  requested 23:57:24.654Z  ->  23:57:50.295Z   (+25.6s)
 run #3  requested 23:58:23.120Z  ->  23:58:25.212Z   ( +2.1s)
-```text
+```
 
 **Event ids are genuinely compared now** — read from a `/rooms/:id/export` on
 each side of the restart and compared in order, rather than the pre-restart
@@ -125,7 +179,7 @@ Every observed process now appears after the request that asked for it:
 run #1  requested 23:42:43.870Z  ->  none within 180s
 run #2  requested 23:46:18.360Z  ->  23:46:41.200Z   (+22.8s)
 run #3  requested 23:47:14.165Z  ->  23:47:16.152Z   (+2.0s)
-```text
+```
 
 Compare the `21-50-57` bundle's run #2, where the new process was observed
 **2.1 seconds before** its own restart request. That inversion is gone.
@@ -219,7 +273,7 @@ Node 22 gate (`21-50-57`), the current one:
 run #1  21:37:24.777Z -> 21:49:02.323Z
 run #2  21:49:02.323Z -> 21:49:34.771Z
 run #3  21:49:34.771Z -> 21:50:56.447Z
-```text
+```
 
 Node 24 gate (`21-10-24`), superseded:
 
@@ -227,7 +281,7 @@ Node 24 gate (`21-10-24`), superseded:
 run #1  21:01:13.178Z -> 21:08:40.666Z
 run #2  21:08:40.666Z -> 21:09:25.894Z
 run #3  21:09:25.894Z -> 21:10:21.328Z
-```text
+```
 
 Four distinct processes across three runs, chained end to end. A service that
 never restarted would show one identity throughout, and a harness that only
