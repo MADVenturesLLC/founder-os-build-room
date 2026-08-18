@@ -77,7 +77,7 @@ suppressed one — which is a design question, not a patch.
 
 ---
 
-## 3. The restart check proves ordering, not causation
+## 3. The restart check proves ordering, not causation — NARROWED
 
 **What it is.** `waitForNewProcess` now compares against the process identity
 read immediately before `platform.restart`, so a new process can only satisfy
@@ -109,8 +109,21 @@ only outstanding one — which is an operating discipline, not a mechanism, and
 is stated here as such. A run whose new process appears implausibly fast after
 its request deserves the same suspicion as one that appears before it.
 
+**NARROWED, 2026-08-18.** `scripts/railway-restart.sh` performs the restart
+through Railway's API, and `PHASE2_RESTART_COMMAND` points the harness at it —
+so the call that requests the restart is the call that performs it. A run can
+no longer credit a restart nobody asked for, because the asking and the doing
+are the same act.
+
+What remains: Railway's `deploymentRestart` returns `true`, not a restart
+identifier, so the link is "this call performed a restart" rather than "the
+process now serving is the one this call produced". A concurrent restart from
+another source could still interleave. That is a materially smaller gap than a
+human with a stopwatch, and it is stated rather than treated as closed.
+
 **Raised by** `builder` while reading the 23:47 bundle, after the ordering fix
-had already landed.
+had already landed. Narrowed once the Founder issued a scoped Railway project
+token.
 
 ---
 
@@ -147,7 +160,7 @@ it was learned by burning a sequence.
 
 ---
 
-## 5. Restart cadence is timed against a clock the operator cannot see
+## 5. Restart cadence is timed against a clock the operator cannot see — CLOSED
 
 **What it is.** With `ExternalPlatform`, a human performs each restart while
 the harness waits. But the harness's restart request comes **~35 seconds into
@@ -166,10 +179,18 @@ cycle can absorb. Six process starts landed between `23:50:07` and `23:51:40`.
 expire, plus an explicit instruction to wait a fixed wall-clock interval after
 the service returns rather than "until it returns". Neither is a mechanism.
 
-**What would close it.** `PHASE2_RESTART_COMMAND` pointed at a real platform
-restart, so the harness performs the restart itself at exactly the right moment
-and no human timing is involved. That needs Railway API access this session
-does not have — the same gap that makes the port `external` in the first place.
+**CLOSED, 2026-08-18.** `PHASE2_RESTART_COMMAND` now points at
+`scripts/railway-restart.sh`, so the harness performs each restart itself at
+exactly the moment it wants one. There is no human in the loop and therefore no
+human timing to get wrong. The Founder issued a Railway **project** token —
+scoped to one project and environment — held in the gate's shell environment
+only and revoked afterwards; it appears in no committed artifact
+(`DEC-20260815-07`).
+
+This also matters for the dwell. Now that a mid-dwell identity change **fails**
+`deploys_and_stays_up` (§7), a mistimed manual restart is no longer a missed
+window but an outright failure — so keeping a human in the loop had become
+riskier, not safer, exactly as the fix landed.
 
 **Raised by** `builder`, from the 2026-08-17T23:47 and T23:50 bundles.
 
