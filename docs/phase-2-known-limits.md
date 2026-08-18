@@ -175,20 +175,88 @@ does not have — the same gap that makes the port `external` in the first place
 
 ---
 
-## 6. `evidence/` holds bundles produced by a harness with known defects
+## 6. Leap seconds are checked for shape, not against the IERS schedule
 
-**What it is.** Both bundles committed under `evidence/` were produced before
+**What is fixed.** Second 60 is now validated after applying the numeric
+offset, so RFC3339 §5.7's own example — `2017-01-01T00:59:60+01:00`, the
+2016-12-31 leap second seen from +01:00 — is accepted where the previous
+local-fields check wrongly refused it.
+
+**What is deliberately NOT fixed.** `occurredAt` still accepts a second 60 at
+the end of *any* UTC day, including days on which no leap second was scheduled:
+`2026-02-28T23:59:60Z` passes, and IERS Bulletin C 71 and 72 confirm no leap
+second in 2026 at all.
+
+**Why the schedule is not embedded.** Validating against the real schedule
+means shipping the IERS leap-second table, which is amended by bulletin roughly
+every six months. A table baked into this service goes stale silently, and a
+stale table **rejects a genuinely valid future timestamp** — turning an
+over-permissive check by one second per month into a wrongly-rejected real
+event. For an `occurredAt` field the trade is not close: the residual looseness
+is a single non-existent second at a month boundary, and the alternative
+failure mode rejects real data.
+
+**What would close it.** A maintained leap-second source consulted at runtime,
+or a decision that non-Z leap seconds are simply refused. Both are choices this
+phase should not make unilaterally, since either changes what the ledger will
+accept.
+
+**Raised by** CodeRabbit on PR #2; the offset half taken, the schedule half
+declined with this reasoning.
+
+---
+
+## 7. The dwell now samples identity — and the retained gate predates that
+
+**What it is.** `deploys_and_stays_up` was answered by `/health` alone, so a
+process **replacement** during the 30-second dwell was invisible: every sample
+answered, because the replacement answered too.
+
+**Observed in the satisfied gate itself.** Run #1 of the
+`23-58-26` bundle has a dwell ending at `23:56:25.242Z` and a new process
+starting at `23:56:25.152Z` — ninety milliseconds earlier. The dwell passed
+across a replacement it could not see. Raised by CodeRabbit on PR #2.
+
+**What changed.** Each dwell sample now reads `/version` as well, records every
+distinct identity seen, and **fails** the condition if the identity changes
+mid-dwell. The passing evidence names the single process that served the whole
+window, so a reader can see it rather than assume it.
+
+**What this means for the retained bundle, stated plainly.** The `23-58-26`
+bundle was produced *before* this fix. Its `deploys_and_stays_up` for run #1 is
+therefore weaker than it reads: the condition held under a health-only dwell,
+and we now know the process was replaced inside that window. Runs #2 and #3
+have no such overlap in their recorded timings. The bundle is retained
+unedited; this entry is the correction beside it.
+
+**Whether that invalidates the gate is a Founder call, not `builder`'s.** The
+run's other two conditions are unaffected, and the restart chain is unaffected.
+What is affected is one condition in one run of three. It is recorded here
+rather than silently re-run, because deciding that evidence needs redoing is
+the Founder's judgement to make with the facts in front of them.
+
+**Raised by** CodeRabbit on PR #2, reading the satisfied bundle's own
+timestamps.
+
+---
+
+## 8. Two retained bundles were produced by a harness with known defects — CLOSED
+
+**What it is.** The two `21:xx` bundles under `evidence/` were produced before
 two harness defects were found and fixed: a restart comparison against a stale
 process identity, and an event-id comparison that could not fail. Neither
 bundle is sound evidence for the `survives_restart` condition.
 
-**Status: open until the gate is re-run.** This is not a limit being accepted —
-it is work outstanding. `evidence/README.md` opens with the full account, and
-the bundles are retained rather than deleted because a retracted claim is part
+**Status: CLOSED** by `evidence/phase2-runs-2026-08-17T23-58-26-478Z.json` at
+commit `fb74dd7` — three consecutive passes from the fixed harness, with run #1
+demonstrating the ordering fix against a real mistimed restart.
+
+The scope of this entry is the two `21:xx` bundles only. It is not a limit
+being accepted and never was; it was work outstanding, and the work is done.
+The bundles stay retained rather than deleted because a retracted claim is part
 of the record.
 
-**Raised by** CodeRabbit on PR #2, fixed in the harness, and closed only when a
-bundle produced by the fixed harness supersedes both.
+**Raised by** CodeRabbit on PR #2, fixed in the harness, closed by the re-run.
 
 ---
 
@@ -199,3 +267,4 @@ bundle produced by the fixed harness supersedes both.
 - `evidence/README.md` — what the retained bundles do and do not support
 - `packages/control-plane/src/store.ts` — where limit 1 lives
 - `packages/run-harness/src/sequence.ts` — where limit 2 lives
+- `packages/run-harness/src/runner.ts` — where limits 3 and 7 live

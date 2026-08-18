@@ -310,8 +310,27 @@ function isRfc3339(value: string): boolean {
   const minuteNumber = Number(minute);
   const secondNumber = Number(second);
   if (hourNumber > 23 || minuteNumber > 59 || secondNumber > 60) return false;
-  // Second 60 is a leap second, which occurs only at the end of a UTC day.
-  if (secondNumber === 60 && (hourNumber !== 23 || minuteNumber !== 59)) return false;
+
+  /*
+   * Second 60 is a leap second, and a leap second happens at the end of a
+   * **UTC** day — simultaneously everywhere, so in a non-Z offset it appears
+   * shifted. RFC3339 §5.7 gives exactly this example: the 2016-12-31 leap
+   * second is `2017-01-01T00:59:60+01:00` in a +01:00 offset.
+   *
+   * Checking `hour === 23 && minute === 59` against the LOCAL fields therefore
+   * rejected that valid form. The offset is applied first now, and the check
+   * runs against the resulting UTC time-of-day. Raised by CodeRabbit on PR #2.
+   */
+  if (secondNumber === 60) {
+    const sign = value.includes('+') ? -1 : 1;
+    const offsetMinutes =
+      offsetHour === undefined || offsetMinute === undefined
+        ? 0
+        : sign * (Number(offsetHour) * 60 + Number(offsetMinute));
+    const utcMinuteOfDay =
+      (((hourNumber * 60 + minuteNumber + offsetMinutes) % 1440) + 1440) % 1440;
+    if (utcMinuteOfDay !== 23 * 60 + 59) return false;
+  }
 
   /*
    * The OFFSET is bounded too. RFC3339's `time-numoffset` is

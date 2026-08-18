@@ -195,6 +195,54 @@ describe('run cycle — a service that does not stay up', () => {
   });
 });
 
+describe('run cycle — a process replaced DURING the dwell', () => {
+  /*
+   * "Deploys and stays up" was answered by /health alone, so a replacement
+   * inside the dwell window was invisible: every sample answered, because the
+   * new process answered too.
+   *
+   * This is not hypothetical. Run #1 of the satisfied 2026-08-17T23:58 gate has
+   * a dwell ending at 23:56:25.242Z and a new process starting at
+   * 23:56:25.152Z — ninety milliseconds earlier. The condition held across a
+   * replacement it could not see. Raised by CodeRabbit on PR #2, from the
+   * bundle's own timestamps.
+   *
+   * A multi-sample dwell is needed to exercise this, so these use their own
+   * config rather than the zero-length one above.
+   */
+  const DWELL_CONFIG: RunnerConfig = { ...CONFIG, dwellMs: 10, sampleIntervalMs: 0 };
+
+  it('fails deploys_and_stays_up when the identity changes mid-dwell', async () => {
+    // Call 1 is the health-check /version read. Calls 2+ are dwell samples,
+    // and the identity moves between them while /health keeps answering.
+    let versionCalls = 0;
+    const fake = fakeClient({
+      startedAt: () => {
+        versionCalls += 1;
+        return versionCalls <= 2 ? 'T1' : 'T2';
+      },
+    });
+    const draft = await performRun(DWELL_CONFIG, deps(fake.client, fake.restarted));
+
+    assert.equal(condition(draft.conditions, 'deploys_and_stays_up')?.held, false);
+    assert.match(condition(draft.conditions, 'deploys_and_stays_up')?.evidence ?? '', /REPLACED/);
+    assert.equal(condition(draft.conditions, 'reads_and_writes'), undefined, 'later conditions unreached');
+  });
+
+  it('records which process served the dwell when nothing changed', async () => {
+    // The companion: a stable identity still passes, and the evidence names
+    // the process rather than leaving the reader to assume there was only one.
+    const fake = fakeClient({ startedAt: () => 'T1' });
+    const draft = await performRun(DWELL_CONFIG, deps(fake.client));
+
+    assert.equal(condition(draft.conditions, 'deploys_and_stays_up')?.held, true);
+    assert.match(
+      condition(draft.conditions, 'deploys_and_stays_up')?.evidence ?? '',
+      /same process \(T1\)/,
+    );
+  });
+});
+
 describe('run cycle — reads and writes', () => {
   it('fails when the ledger refuses the verification event', async () => {
     const fake = fakeClient({ append: bad(409, { code: 'guard_failed' }) });

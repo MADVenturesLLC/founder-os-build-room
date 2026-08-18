@@ -276,6 +276,9 @@ describe('control plane — occurredAt is a real RFC3339 instant', () => {
     ['2026-08-17T12:00:00+24:00', 'offset hour 24'],
     ['2026-08-17T12:00:00+00:60', 'offset minute 60'],
     ['2026-08-17T12:00:00-24:00', 'negative offset hour 24'],
+    // Second 60 is judged after the offset is applied, so a leap second that is
+    // not at the end of a UTC DAY is refused however it is written.
+    ['2026-08-17T12:00:60+01:00', 'second 60 that is 11:00:60 UTC'],
   ];
 
   for (const [value, why] of refused) {
@@ -292,7 +295,15 @@ describe('control plane — occurredAt is a real RFC3339 instant', () => {
     assert.equal(await post('2026-08-17T12:00:00.123Z'), 500);
     assert.equal(await post('2026-08-17T12:00:00+05:30'), 500);
     assert.equal(await post('2026-08-17T12:00:00-23:59'), 500, 'the offset bounds themselves');
-    assert.equal(await post('2026-06-30T23:59:60Z'), 500, 'a real leap second');
+    assert.equal(await post('2026-06-30T23:59:60Z'), 500, 'a leap second at end of UTC day');
+    /*
+     * RFC3339 §5.7's own example: the 2016-12-31 leap second seen from a
+     * +01:00 offset is 2017-01-01T00:59:60. Checking hour/minute against the
+     * LOCAL fields refused this valid form; the offset is applied first now.
+     * Raised by CodeRabbit on PR #2.
+     */
+    assert.equal(await post('2017-01-01T00:59:60+01:00'), 500, 'the same instant, shifted');
+    assert.equal(await post('2016-12-31T22:59:60-01:00'), 500, 'and shifted the other way');
   });
 });
 

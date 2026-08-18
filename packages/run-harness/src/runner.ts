@@ -180,7 +180,9 @@ export async function performRun(config: RunnerConfig, deps: RunnerDeps): Promis
     held: true,
     evidence:
       `deployed and answered every one of ${dwell.samples} /health samples across a ` +
-      `${config.dwellMs}ms window; /ready reported the database reachable`,
+      `${config.dwellMs}ms window, all served by the same process ` +
+      `(${dwell.identityAtStart ?? 'identity unavailable'}); /ready reported the database ` +
+      `reachable`,
   });
 
   // ---- verify: write and read back ---------------------------------------
@@ -306,15 +308,46 @@ interface DwellResult {
   readonly ok: boolean;
   readonly samples: number;
   readonly detail: string;
+  /** Process identity at the first dwell sample. */
+  readonly identityAtStart: string | null;
+  /** Process identity at the last dwell sample. */
+  readonly identityAtEnd: string | null;
+  /** Every distinct identity seen across the dwell, in order. */
+  readonly identities: readonly string[];
 }
 
+/**
+ * "Deploys and stays up" — answered by `/health` AND by process identity.
+ *
+ * `/health` alone is not enough, and the 2026-08-17T23:58 bundle proves it.
+ * Run #1's dwell ended at `23:56:25.242Z` while a new process had come up at
+ * `23:56:25.152Z` — ninety milliseconds earlier. Every health sample answered,
+ * so the dwell passed, and the service had in fact been **replaced** during the
+ * window the condition exists to watch. A replacement fast enough to fall
+ * between two samples, or to complete inside one sample interval, is invisible
+ * to a health-only dwell. Raised by CodeRabbit on PR #2.
+ *
+ * So each sample now reads `/version` as well and the identities are recorded.
+ * A change during the dwell **fails** the condition: a process that was
+ * replaced did not stay up, whatever `/health` said on either side of the
+ * replacement.
+ *
+ * The identities are reported even on success, so a reader can see the dwell
+ * observed one process rather than having to trust that it did.
+ */
 async function dwellHealthy(
   client: ControlPlaneClient,
   config: RunnerConfig,
   deps: RunnerDeps,
 ): Promise<DwellResult> {
   const deadline = Date.now() + config.dwellMs;
+  const identities: string[] = [];
   let samples = 0;
+
+  const note = (identity: string | undefined): void => {
+    if (identity === undefined) return;
+    if (identities[identities.length - 1] !== identity) identities.push(identity);
+  };
 
   for (;;) {
     const probe = await client.health();
@@ -324,13 +357,43 @@ async function dwellHealthy(
         ok: false,
         samples,
         detail: `/health stopped answering on sample ${samples}: ${describe(probe)}`,
+        identityAtStart: identities[0] ?? null,
+        identityAtEnd: identities[identities.length - 1] ?? null,
+        identities,
       };
     }
+
+    const version = await client.version();
+    note(version.version.startedAt);
+
+    if (identities.length > 1) {
+      return {
+        ok: false,
+        samples,
+        detail:
+          `the process was REPLACED during the dwell — /version startedAt went ` +
+          `${identities.join(' -> ')} by sample ${samples}. Every /health sample answered, ` +
+          `which is exactly why health alone cannot establish that the service stayed up`,
+        identityAtStart: identities[0] ?? null,
+        identityAtEnd: identities[identities.length - 1] ?? null,
+        identities,
+      };
+    }
+
     if (Date.now() >= deadline) break;
     await deps.sleep(Math.min(config.sampleIntervalMs, Math.max(0, deadline - Date.now())));
   }
 
-  return { ok: true, samples, detail: `${samples} consecutive healthy samples` };
+  return {
+    ok: true,
+    samples,
+    detail:
+      `${samples} consecutive healthy samples, all served by one process ` +
+      `(${identities[0] ?? 'identity unavailable'})`,
+    identityAtStart: identities[0] ?? null,
+    identityAtEnd: identities[identities.length - 1] ?? null,
+    identities,
+  };
 }
 
 async function waitForHealthy(

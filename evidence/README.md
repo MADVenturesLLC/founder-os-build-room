@@ -6,7 +6,7 @@ committed unmodified.
 
 ## Read this first
 
-Four bundles. **One satisfies the gate; three do not, and all four are kept.**
+Five bundles. **One satisfies the gate; four do not, and all five are kept.**
 
 | bundle | commit | verdict |
 |---|---|---|
@@ -16,25 +16,26 @@ Four bundles. **One satisfies the gate; three do not, and all four are kept.**
 | `21-50-57` | `19b4968` | superseded — produced by the defective harness described below |
 | `21-10-24` | `d4dab78` | superseded — defective harness, and a runtime no longer deployed |
 
-**Three failed attempts precede the satisfied one, and none of them is
-deleted.** Exit criterion 4 wants a failure visible as an interruption rather
-than absent from the record; a directory holding only the successful attempt
-would tell a reader the gate was met first time, which is false.
+**Two failed attempts and two superseded bundles precede the satisfied one, and
+none of them is deleted.** Exit criterion 4 wants a failure visible as an
+interruption rather than absent from the record; a directory holding only the
+successful attempt would tell a reader the gate was met first time, which is
+false.
 
 ### `23-58-26` — the satisfied gate, and what it does and does not establish
 
 Commit `fb74dd7`, three consecutive passes, no failed runs. Every condition
 held in every run.
 
-**The ordering defect is closed, demonstrated against a live accident.** Run
-#1's two recorded identities differ:
+**The ordering defect is closed, demonstrated against a live accident.** The
+two recorded identities of run `#1` differ:
 
-```
+```text
 healthCheckIdentity  23:54:27.014Z
 baselineBeforeReq    23:56:25.152Z
 requestedAt          23:56:25.689Z
 processAfter         23:56:52.445Z   (+26.8s)
-```
+```text
 
 A restart landed **between** the health check and the restart request. The
 pre-fix harness compared against the health-check identity, so it would have
@@ -45,11 +46,11 @@ the fix preventing the real failure, not a stubbed reproduction of it.
 
 Every run's new process appears after its own request:
 
-```
+```text
 run #1  requested 23:56:25.689Z  ->  23:56:52.445Z   (+26.8s)
 run #2  requested 23:57:24.654Z  ->  23:57:50.295Z   (+25.6s)
 run #3  requested 23:58:23.120Z  ->  23:58:25.212Z   ( +2.1s)
-```
+```text
 
 **Event ids are genuinely compared now** — read from a `/rooms/:id/export` on
 each side of the restart and compared in order, rather than the pre-restart
@@ -67,9 +68,8 @@ consistent with a restart beginning at request time — but with an external
 platform port and no restart identifier, causation is never *proved* for any
 run, only made plausible.
 
-**The current bundle is `23-47-17`, and it records a failure.** It is the first
-bundle produced by the FIXED harness, and it is retained precisely because it
-failed: `DEC-20260815-17` exit criterion 4 requires a failure to be visible as
+**`23-47-17` was the first bundle produced by the FIXED harness, and it records
+a failure.** It is retained precisely because it failed: `DEC-20260815-17` exit criterion 4 requires a failure to be visible as
 an interruption of the sequence rather than absent from it. A directory holding
 only successes would defeat that, so this one stays.
 
@@ -121,11 +121,11 @@ the first attempt was interrupted.
 **The ordering defect is fixed, against the live system rather than a stub.**
 Every observed process now appears after the request that asked for it:
 
-```
+```text
 run #1  requested 23:42:43.870Z  ->  none within 180s
 run #2  requested 23:46:18.360Z  ->  23:46:41.200Z   (+22.8s)
 run #3  requested 23:47:14.165Z  ->  23:47:16.152Z   (+2.0s)
-```
+```text
 
 Compare the `21-50-57` bundle's run #2, where the new process was observed
 **2.1 seconds before** its own restart request. That inversion is gone.
@@ -181,8 +181,9 @@ wrong, but because the runtime it exercised is no longer the deployed one — se
 second gate exists.
 
 Everything below describes those two, except where a difference is named. The
-`23-47-17` bundle shares the same stack and platform port and differs only in
-commit (`66ee472`) and outcome.
+`23-47-17`, `23-50-50` and `23-58-26` bundles share the same stack and platform
+port — same `baseUrl`, same `platformKind: external` — and differ only in
+commit (`66ee472`, `e5f5ff8`, `fb74dd7`) and outcome.
 
 - **Commit under test:** as the service itself reported it on `/version` — not
   as the harness assumed it.
@@ -214,19 +215,19 @@ identity after it:
 
 Node 22 gate (`21-50-57`), the current one:
 
-```
+```text
 run #1  21:37:24.777Z -> 21:49:02.323Z
 run #2  21:49:02.323Z -> 21:49:34.771Z
 run #3  21:49:34.771Z -> 21:50:56.447Z
-```
+```text
 
 Node 24 gate (`21-10-24`), superseded:
 
-```
+```text
 run #1  21:01:13.178Z -> 21:08:40.666Z
 run #2  21:08:40.666Z -> 21:09:25.894Z
 run #3  21:09:25.894Z -> 21:10:21.328Z
-```
+```text
 
 Four distinct processes across three runs, chained end to end. A service that
 never restarted would show one identity throughout, and a harness that only

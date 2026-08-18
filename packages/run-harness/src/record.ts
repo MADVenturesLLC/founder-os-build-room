@@ -95,19 +95,30 @@ export function verdictFor(conditions: readonly ConditionRecord[]): {
   const missing = REQUIRED_CONDITIONS.filter(
     (required) => !conditions.some((condition) => condition.condition === required),
   );
+  const broken = conditions.filter((condition) => !condition.held);
+
+  /*
+   * What FAILED is named before what was never reached, and both appear when
+   * both apply.
+   *
+   * The missing-condition branch used to return first and alone, so a run that
+   * failed its health check reported only `condition(s) never evaluated:
+   * reads_and_writes, survives_restart` — listing the consequences and omitting
+   * the cause. The 2026-08-17T23:50 bundle reads exactly that way: three runs
+   * whose actual failure was a 502 during the dwell, described only by what
+   * they did not get to. A reader has to open the steps to find out what
+   * happened. Raised by CodeRabbit on PR #2.
+   */
+  const parts: string[] = [];
+  if (broken.length > 0) {
+    parts.push(broken.map((c) => `${c.condition}: ${c.evidence}`).join('; '));
+  }
   if (missing.length > 0) {
-    return {
-      verdict: 'failed',
-      failureReason: `condition(s) never evaluated: ${missing.join(', ')}`,
-    };
+    parts.push(`condition(s) never evaluated: ${missing.join(', ')}`);
   }
 
-  const broken = conditions.filter((condition) => !condition.held);
-  if (broken.length > 0) {
-    return {
-      verdict: 'failed',
-      failureReason: broken.map((c) => `${c.condition}: ${c.evidence}`).join('; '),
-    };
+  if (parts.length > 0) {
+    return { verdict: 'failed', failureReason: parts.join(' — ') };
   }
 
   return { verdict: 'passed' };
