@@ -1,0 +1,92 @@
+# Railway deployment configuration for the Build Room control plane.
+#
+# Config lives here rather than in the dashboard so it is versioned,
+# reviewable, and reproducible if the project is ever recreated — which it
+# already has been once.
+#
+# Credentials are NOT here and never will be. `DATABASE_URL` and
+# `CONTROL_PLANE_TOKEN` are set in Railway's encrypted variable store
+# (`DEC-20260815-07`; `DEC-20260815-17` Phase 2 exit criterion 1: credentials
+# held per `-07` and never in the repository).
+#
+# BOTH are required and the service refuses to boot without either. The token
+# is new as of the PR #2 review: the room endpoints were unauthenticated on a
+# public URL, so anyone who found it could write to and export the ledger. A
+# deploy of this commit fails at boot until `CONTROL_PLANE_TOKEN` is set —
+# which is the intended behaviour, not a regression. At least 32 characters;
+# `openssl rand -hex 24` produces a suitable value. The run harness must be
+# given the same value or every room request answers 401.
+
+[build]
+builder = "NIXPACKS"
+
+# Node is pinned to 22 by `.nvmrc` and by `engines.node` in package.json,
+# which Nixpacks reads. Both are set rather than one, because which of them
+# Nixpacks honours is a detail of the builder and pinning in one place only
+# would leave the version depending on that detail.
+#
+# Founder ruling, 2026-08-17: "Pin Railway to Node 22. If in the future we
+# must move to 24 than thats a call for that day. We verified it works I
+# rather go with what is working over unknown and risky."
+#
+# The reason it needed a ruling: the first production deploy ran Node
+# v24.10.0, because `engines.node` then read `>=22` and Nixpacks took the
+# newest satisfying version. CI and every local verification run on 22, so
+# production was running the one runtime nothing had been tested against.
+
+# `--include=dev` is deliberate and load-bearing. TypeScript is a
+# devDependency, and Railway sets NODE_ENV=production, under which npm omits
+# dev dependencies — so without it the build installs no compiler and fails on
+# `tsc: not found`.
+#
+# `npm install`, not `npm ci`, and that is a platform constraint rather than a
+# preference. Railway mounts `/app/node_modules/.cache` as a build cache;
+# `npm ci` begins by removing `node_modules` wholesale, hits that mount point,
+# and fails with `EBUSY: resource busy or locked, rmdir
+# '/app/node_modules/.cache'`. Observed on this service 2026-08-17T20:30:53Z,
+# exit code 240. A mount cannot be removed, so no flag to `npm ci` avoids it.
+#
+# What is given up, and why it is affordable: `npm ci` fails when
+# `package-lock.json` and `package.json` disagree, and `npm install` quietly
+# reconciles them. That guarantee is not lost, only relocated — CI runs
+# `npm ci` on every pull request and every push to `main`, so a lockfile out of
+# sync fails there, before anything reaches this build. With a lockfile known
+# to be in sync, `npm install` in a fresh container resolves to exactly the
+# locked versions.
+buildCommand = "npm install --include=dev && npm run build"
+
+[deploy]
+startCommand = "npm start"
+
+# Railway holds traffic until this path answers, so a deploy that never
+# becomes healthy is reported as a failed deploy rather than a live service
+# that answers nothing.
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+
+# ON_FAILURE, not ALWAYS. A crash should be visible as a bounded restart
+# attempt in the deploy record, not masked by an indefinite restart loop that
+# makes a broken build look like a running one. The Phase 2 run condition is
+# "deploys and stays up", and ALWAYS would make staying up unfalsifiable.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# One replica, for two reasons that both bear on the Phase 2 run definition.
+#
+# The harness proves a restart happened by watching `/version` report a new
+# `startedAt`. With several replicas behind one address, consecutive requests
+# can land on different processes, and a changed `startedAt` would no longer
+# distinguish "the service restarted" from "a different replica answered".
+#
+# The control plane is also the single writer to the ledger. Correctness does
+# not depend on one process — writes serialize on the room row — but Phase 2
+# is the cloud skeleton, and adding concurrency before the thing it guards is
+# exercised is scope this phase does not have.
+numReplicas = 1
+
+# App sleeping OFF. A sleeping service cold-starts on the next request, which
+# would both break the dwell check ("stays up") and move `startedAt` without
+# any restart having occurred — corrupting the very signal the restart
+# condition is read from. This is not a cost preference; it is what makes the
+# run's evidence mean what it says.
+sleepApplication = false

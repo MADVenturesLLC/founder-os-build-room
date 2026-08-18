@@ -1,0 +1,731 @@
+{
+  "schema": "build-room/phase-2-run-evidence@1",
+  "context": {
+    "assembledAt": "2026-08-17T23:58:26.478Z",
+    "commit": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+    "baseUrl": "https://rare-enjoyment-production-0869.up.railway.app",
+    "environment": "production",
+    "platformKind": "external",
+    "attribution": {
+      "roleId": "builder",
+      "actorId": "session:claude-code/wf04-phase2-cloud-skeleton",
+      "actualModel": "claude-opus-5[1m]",
+      "executionSurface": "claude-code"
+    }
+  },
+  "gate": {
+    "satisfied": true,
+    "consecutivePasses": 3,
+    "required": 3,
+    "totalRuns": 3,
+    "failedRuns": 0,
+    "satisfyingRuns": [
+      1,
+      2,
+      3
+    ],
+    "summary": "gate SATISFIED — 3 consecutive passes; 3 run(s) on record, 0 failed. Sequence: #1 passed, #2 passed, #3 passed."
+  },
+  "runs": [
+    {
+      "seq": 1,
+      "runId": "9e78cdd8-21e5-46bd-b8d0-11340e5065ab",
+      "startedAt": "2026-08-17T23:55:53.274Z",
+      "endedAt": "2026-08-17T23:56:53.645Z",
+      "commit": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+      "steps": [
+        {
+          "step": "deploy",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:55:53.274Z",
+          "endedAt": "2026-08-17T23:55:53.818Z",
+          "detail": "healthy after deploy (performed_externally)",
+          "observations": {
+            "platformAction": {
+              "action": "deploy",
+              "actor": "performed_externally",
+              "requestedAt": "2026-08-17T23:55:53.274Z",
+              "detail": "deploy requested outside this process (Railway API or dashboard); the harness verifies the result, it does not perform the act"
+            }
+          }
+        },
+        {
+          "step": "health_check",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:55:53.818Z",
+          "endedAt": "2026-08-17T23:56:25.242Z",
+          "detail": "answered 11 health samples over 30000ms and reported ready",
+          "observations": {
+            "commit": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+            "processBefore": "2026-08-17T23:54:27.014Z",
+            "dwell": {
+              "ok": true,
+              "samples": 11,
+              "detail": "11 consecutive healthy samples"
+            },
+            "ready": {
+              "ok": true,
+              "status": 200,
+              "body": {
+                "status": "ready",
+                "database": "reachable",
+                "latencyMs": 4
+              },
+              "latencyMs": 1259
+            }
+          }
+        },
+        {
+          "step": "verify_write",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:56:25.242Z",
+          "endedAt": "2026-08-17T23:56:25.625Z",
+          "detail": "created the room, the ledger accepted a scope.captured event, and the room read back with 1 log position(s) and 1 entry/entries",
+          "observations": {
+            "roomId": "744b1eb0-794e-4a84-86e1-fa5091a52f90",
+            "eventId": "770b7ed1-d40f-4ae3-aa12-c64f5f536f1a",
+            "read": {
+              "roomId": "744b1eb0-794e-4a84-86e1-fa5091a52f90",
+              "logLength": 1,
+              "entryCount": 1,
+              "snapshot": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              }
+            }
+          }
+        },
+        {
+          "step": "restart",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:56:25.625Z",
+          "endedAt": "2026-08-17T23:56:53.359Z",
+          "detail": "new process observed — /version startedAt moved from 2026-08-17T23:56:25.152Z to 2026-08-17T23:56:52.445Z",
+          "observations": {
+            "platformAction": {
+              "action": "restart",
+              "actor": "performed_externally",
+              "requestedAt": "2026-08-17T23:56:25.689Z",
+              "detail": "restart requested outside this process (Railway API or dashboard); the harness confirms a new process by watching /version startedAt"
+            },
+            "processAtHealthCheck": "2026-08-17T23:54:27.014Z",
+            "processBefore": "2026-08-17T23:56:25.152Z",
+            "processAfter": "2026-08-17T23:56:52.445Z"
+          }
+        },
+        {
+          "step": "verify_after_restart",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:56:53.359Z",
+          "endedAt": "2026-08-17T23:56:53.570Z",
+          "detail": "the room read back identically after the restart — 1 log position(s), 1 entry/entries, same lifecycle state",
+          "observations": {
+            "roomId": "744b1eb0-794e-4a84-86e1-fa5091a52f90",
+            "before": {
+              "logLength": 1,
+              "entryCount": 1,
+              "state": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              },
+              "eventIds": [
+                "770b7ed1-d40f-4ae3-aa12-c64f5f536f1a"
+              ]
+            },
+            "after": {
+              "logLength": 1,
+              "entryCount": 1,
+              "state": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              },
+              "eventIds": [
+                "770b7ed1-d40f-4ae3-aa12-c64f5f536f1a"
+              ]
+            }
+          }
+        },
+        {
+          "step": "teardown",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:56:53.571Z",
+          "endedAt": "2026-08-17T23:56:53.645Z",
+          "detail": "exported the room ledger; the room is retained, not deleted — the ledger is append-only evidence",
+          "observations": {
+            "roomId": "744b1eb0-794e-4a84-86e1-fa5091a52f90",
+            "export": {
+              "roomId": "744b1eb0-794e-4a84-86e1-fa5091a52f90",
+              "exportedAt": "2026-08-17T23:56:53.853Z",
+              "commit": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+              "snapshot": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              },
+              "events": [
+                {
+                  "seq": "1",
+                  "event_id": "770b7ed1-d40f-4ae3-aa12-c64f5f536f1a",
+                  "event": "scope.captured",
+                  "outcome": "transition",
+                  "entry_seq": 1,
+                  "transition_id": "T1",
+                  "guard_id": "G1",
+                  "from_state": "ROOM_CREATED",
+                  "resulting_state": "SCOPED",
+                  "actor": "founder",
+                  "attribution": {
+                    "roleId": null,
+                    "actorId": "founder",
+                    "actualModel": "n/a — harness-generated verification event",
+                    "executionSurface": "claude-code"
+                  },
+                  "scope": {
+                    "repo": "MADVenturesLLC/founder-os-build-room",
+                    "paths": [],
+                    "roomId": "744b1eb0-794e-4a84-86e1-fa5091a52f90"
+                  },
+                  "evidence": [],
+                  "overlays": [],
+                  "round": 0,
+                  "occurred_at": "2026-08-17T23:56:25.359Z",
+                  "payload": {
+                    "actor": "founder",
+                    "event": "scope.captured",
+                    "facts": {
+                      "baseSha": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+                      "remoteHeadSha": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+                      "rolesAssigned": true,
+                      "repoInAllowlist": true,
+                      "scopePathsCanonical": true
+                    },
+                    "scope": {
+                      "repo": "MADVenturesLLC/founder-os-build-room",
+                      "paths": [],
+                      "roomId": "744b1eb0-794e-4a84-86e1-fa5091a52f90"
+                    },
+                    "eventId": "770b7ed1-d40f-4ae3-aa12-c64f5f536f1a",
+                    "evidence": [],
+                    "occurredAt": "2026-08-17T23:56:25.359Z",
+                    "attribution": {
+                      "roleId": null,
+                      "actorId": "founder",
+                      "actualModel": "n/a — harness-generated verification event",
+                      "executionSurface": "claude-code"
+                    }
+                  },
+                  "committed_at": "2026-08-17T23:56:25.632Z"
+                }
+              ],
+              "rejections": []
+            }
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "deploys_and_stays_up",
+          "held": true,
+          "evidence": "deployed and answered every one of 11 /health samples across a 30000ms window; /ready reported the database reachable"
+        },
+        {
+          "condition": "reads_and_writes",
+          "held": true,
+          "evidence": "created the room, the ledger accepted a scope.captured event, and the room read back with 1 log position(s) and 1 entry/entries"
+        },
+        {
+          "condition": "survives_restart",
+          "held": true,
+          "evidence": "the room read back identically after the restart — 1 log position(s), 1 entry/entries, same lifecycle state"
+        }
+      ],
+      "verdict": "passed"
+    },
+    {
+      "seq": 2,
+      "runId": "123b1b28-4baa-4026-a407-36965c4ff16e",
+      "startedAt": "2026-08-17T23:56:53.646Z",
+      "endedAt": "2026-08-17T23:57:51.684Z",
+      "commit": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+      "steps": [
+        {
+          "step": "deploy",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:56:53.646Z",
+          "endedAt": "2026-08-17T23:56:53.709Z",
+          "detail": "healthy after deploy (performed_externally)",
+          "observations": {
+            "platformAction": {
+              "action": "deploy",
+              "actor": "performed_externally",
+              "requestedAt": "2026-08-17T23:56:53.646Z",
+              "detail": "deploy requested outside this process (Railway API or dashboard); the harness verifies the result, it does not perform the act"
+            }
+          }
+        },
+        {
+          "step": "health_check",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:56:53.709Z",
+          "endedAt": "2026-08-17T23:57:24.134Z",
+          "detail": "answered 11 health samples over 30000ms and reported ready",
+          "observations": {
+            "commit": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+            "processBefore": "2026-08-17T23:56:52.445Z",
+            "dwell": {
+              "ok": true,
+              "samples": 11,
+              "detail": "11 consecutive healthy samples"
+            },
+            "ready": {
+              "ok": true,
+              "status": 200,
+              "body": {
+                "status": "ready",
+                "database": "reachable",
+                "latencyMs": 27
+              },
+              "latencyMs": 292
+            }
+          }
+        },
+        {
+          "step": "verify_write",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:57:24.134Z",
+          "endedAt": "2026-08-17T23:57:24.592Z",
+          "detail": "created the room, the ledger accepted a scope.captured event, and the room read back with 1 log position(s) and 1 entry/entries",
+          "observations": {
+            "roomId": "2bb610d9-a938-45ae-bbb4-d1cd9ba0eb32",
+            "eventId": "5774f10d-fbd2-4a71-8ccc-dff91d3e6ae6",
+            "read": {
+              "roomId": "2bb610d9-a938-45ae-bbb4-d1cd9ba0eb32",
+              "logLength": 1,
+              "entryCount": 1,
+              "snapshot": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              }
+            }
+          }
+        },
+        {
+          "step": "restart",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:57:24.592Z",
+          "endedAt": "2026-08-17T23:57:50.639Z",
+          "detail": "new process observed — /version startedAt moved from 2026-08-17T23:56:52.445Z to 2026-08-17T23:57:50.295Z",
+          "observations": {
+            "platformAction": {
+              "action": "restart",
+              "actor": "performed_externally",
+              "requestedAt": "2026-08-17T23:57:24.654Z",
+              "detail": "restart requested outside this process (Railway API or dashboard); the harness confirms a new process by watching /version startedAt"
+            },
+            "processAtHealthCheck": "2026-08-17T23:56:52.445Z",
+            "processBefore": "2026-08-17T23:56:52.445Z",
+            "processAfter": "2026-08-17T23:57:50.295Z"
+          }
+        },
+        {
+          "step": "verify_after_restart",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:57:50.639Z",
+          "endedAt": "2026-08-17T23:57:51.610Z",
+          "detail": "the room read back identically after the restart — 1 log position(s), 1 entry/entries, same lifecycle state",
+          "observations": {
+            "roomId": "2bb610d9-a938-45ae-bbb4-d1cd9ba0eb32",
+            "before": {
+              "logLength": 1,
+              "entryCount": 1,
+              "state": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              },
+              "eventIds": [
+                "5774f10d-fbd2-4a71-8ccc-dff91d3e6ae6"
+              ]
+            },
+            "after": {
+              "logLength": 1,
+              "entryCount": 1,
+              "state": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              },
+              "eventIds": [
+                "5774f10d-fbd2-4a71-8ccc-dff91d3e6ae6"
+              ]
+            }
+          }
+        },
+        {
+          "step": "teardown",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:57:51.610Z",
+          "endedAt": "2026-08-17T23:57:51.684Z",
+          "detail": "exported the room ledger; the room is retained, not deleted — the ledger is append-only evidence",
+          "observations": {
+            "roomId": "2bb610d9-a938-45ae-bbb4-d1cd9ba0eb32",
+            "export": {
+              "roomId": "2bb610d9-a938-45ae-bbb4-d1cd9ba0eb32",
+              "exportedAt": "2026-08-17T23:57:51.898Z",
+              "commit": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+              "snapshot": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              },
+              "events": [
+                {
+                  "seq": "1",
+                  "event_id": "5774f10d-fbd2-4a71-8ccc-dff91d3e6ae6",
+                  "event": "scope.captured",
+                  "outcome": "transition",
+                  "entry_seq": 1,
+                  "transition_id": "T1",
+                  "guard_id": "G1",
+                  "from_state": "ROOM_CREATED",
+                  "resulting_state": "SCOPED",
+                  "actor": "founder",
+                  "attribution": {
+                    "roleId": null,
+                    "actorId": "founder",
+                    "actualModel": "n/a — harness-generated verification event",
+                    "executionSurface": "claude-code"
+                  },
+                  "scope": {
+                    "repo": "MADVenturesLLC/founder-os-build-room",
+                    "paths": [],
+                    "roomId": "2bb610d9-a938-45ae-bbb4-d1cd9ba0eb32"
+                  },
+                  "evidence": [],
+                  "overlays": [],
+                  "round": 0,
+                  "occurred_at": "2026-08-17T23:57:24.208Z",
+                  "payload": {
+                    "actor": "founder",
+                    "event": "scope.captured",
+                    "facts": {
+                      "baseSha": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+                      "remoteHeadSha": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+                      "rolesAssigned": true,
+                      "repoInAllowlist": true,
+                      "scopePathsCanonical": true
+                    },
+                    "scope": {
+                      "repo": "MADVenturesLLC/founder-os-build-room",
+                      "paths": [],
+                      "roomId": "2bb610d9-a938-45ae-bbb4-d1cd9ba0eb32"
+                    },
+                    "eventId": "5774f10d-fbd2-4a71-8ccc-dff91d3e6ae6",
+                    "evidence": [],
+                    "occurredAt": "2026-08-17T23:57:24.208Z",
+                    "attribution": {
+                      "roleId": null,
+                      "actorId": "founder",
+                      "actualModel": "n/a — harness-generated verification event",
+                      "executionSurface": "claude-code"
+                    }
+                  },
+                  "committed_at": "2026-08-17T23:57:24.486Z"
+                }
+              ],
+              "rejections": []
+            }
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "deploys_and_stays_up",
+          "held": true,
+          "evidence": "deployed and answered every one of 11 /health samples across a 30000ms window; /ready reported the database reachable"
+        },
+        {
+          "condition": "reads_and_writes",
+          "held": true,
+          "evidence": "created the room, the ledger accepted a scope.captured event, and the room read back with 1 log position(s) and 1 entry/entries"
+        },
+        {
+          "condition": "survives_restart",
+          "held": true,
+          "evidence": "the room read back identically after the restart — 1 log position(s), 1 entry/entries, same lifecycle state"
+        }
+      ],
+      "verdict": "passed"
+    },
+    {
+      "seq": 3,
+      "runId": "3bda5a27-6975-45b4-83f0-dc788571bfb4",
+      "startedAt": "2026-08-17T23:57:51.684Z",
+      "endedAt": "2026-08-17T23:58:26.478Z",
+      "commit": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+      "steps": [
+        {
+          "step": "deploy",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:57:51.684Z",
+          "endedAt": "2026-08-17T23:57:51.748Z",
+          "detail": "healthy after deploy (performed_externally)",
+          "observations": {
+            "platformAction": {
+              "action": "deploy",
+              "actor": "performed_externally",
+              "requestedAt": "2026-08-17T23:57:51.684Z",
+              "detail": "deploy requested outside this process (Railway API or dashboard); the harness verifies the result, it does not perform the act"
+            }
+          }
+        },
+        {
+          "step": "health_check",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:57:51.748Z",
+          "endedAt": "2026-08-17T23:58:22.746Z",
+          "detail": "answered 11 health samples over 30000ms and reported ready",
+          "observations": {
+            "commit": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+            "processBefore": "2026-08-17T23:57:50.295Z",
+            "dwell": {
+              "ok": true,
+              "samples": 11,
+              "detail": "11 consecutive healthy samples"
+            },
+            "ready": {
+              "ok": true,
+              "status": 200,
+              "body": {
+                "status": "ready",
+                "database": "reachable",
+                "latencyMs": 28
+              },
+              "latencyMs": 410
+            }
+          }
+        },
+        {
+          "step": "verify_write",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:58:22.746Z",
+          "endedAt": "2026-08-17T23:58:23.057Z",
+          "detail": "created the room, the ledger accepted a scope.captured event, and the room read back with 1 log position(s) and 1 entry/entries",
+          "observations": {
+            "roomId": "a7cafdbe-d0f7-459d-9921-56501de73ac8",
+            "eventId": "aa10de4d-27fa-4595-9ce1-c902de138df2",
+            "read": {
+              "roomId": "a7cafdbe-d0f7-459d-9921-56501de73ac8",
+              "logLength": 1,
+              "entryCount": 1,
+              "snapshot": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              }
+            }
+          }
+        },
+        {
+          "step": "restart",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:58:23.057Z",
+          "endedAt": "2026-08-17T23:58:26.253Z",
+          "detail": "new process observed — /version startedAt moved from 2026-08-17T23:57:50.295Z to 2026-08-17T23:58:25.212Z",
+          "observations": {
+            "platformAction": {
+              "action": "restart",
+              "actor": "performed_externally",
+              "requestedAt": "2026-08-17T23:58:23.120Z",
+              "detail": "restart requested outside this process (Railway API or dashboard); the harness confirms a new process by watching /version startedAt"
+            },
+            "processAtHealthCheck": "2026-08-17T23:57:50.295Z",
+            "processBefore": "2026-08-17T23:57:50.295Z",
+            "processAfter": "2026-08-17T23:58:25.212Z"
+          }
+        },
+        {
+          "step": "verify_after_restart",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:58:26.253Z",
+          "endedAt": "2026-08-17T23:58:26.404Z",
+          "detail": "the room read back identically after the restart — 1 log position(s), 1 entry/entries, same lifecycle state",
+          "observations": {
+            "roomId": "a7cafdbe-d0f7-459d-9921-56501de73ac8",
+            "before": {
+              "logLength": 1,
+              "entryCount": 1,
+              "state": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              },
+              "eventIds": [
+                "aa10de4d-27fa-4595-9ce1-c902de138df2"
+              ]
+            },
+            "after": {
+              "logLength": 1,
+              "entryCount": 1,
+              "state": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              },
+              "eventIds": [
+                "aa10de4d-27fa-4595-9ce1-c902de138df2"
+              ]
+            }
+          }
+        },
+        {
+          "step": "teardown",
+          "outcome": "passed",
+          "startedAt": "2026-08-17T23:58:26.405Z",
+          "endedAt": "2026-08-17T23:58:26.478Z",
+          "detail": "exported the room ledger; the room is retained, not deleted — the ledger is append-only evidence",
+          "observations": {
+            "roomId": "a7cafdbe-d0f7-459d-9921-56501de73ac8",
+            "export": {
+              "roomId": "a7cafdbe-d0f7-459d-9921-56501de73ac8",
+              "exportedAt": "2026-08-17T23:58:26.696Z",
+              "commit": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+              "snapshot": {
+                "state": "SCOPED",
+                "overlays": [],
+                "priorState": null,
+                "round": 0,
+                "authorization": null,
+                "reviewedSha": null,
+                "headSha": null
+              },
+              "events": [
+                {
+                  "seq": "1",
+                  "event_id": "aa10de4d-27fa-4595-9ce1-c902de138df2",
+                  "event": "scope.captured",
+                  "outcome": "transition",
+                  "entry_seq": 1,
+                  "transition_id": "T1",
+                  "guard_id": "G1",
+                  "from_state": "ROOM_CREATED",
+                  "resulting_state": "SCOPED",
+                  "actor": "founder",
+                  "attribution": {
+                    "roleId": null,
+                    "actorId": "founder",
+                    "actualModel": "n/a — harness-generated verification event",
+                    "executionSurface": "claude-code"
+                  },
+                  "scope": {
+                    "repo": "MADVenturesLLC/founder-os-build-room",
+                    "paths": [],
+                    "roomId": "a7cafdbe-d0f7-459d-9921-56501de73ac8"
+                  },
+                  "evidence": [],
+                  "overlays": [],
+                  "round": 0,
+                  "occurred_at": "2026-08-17T23:58:22.820Z",
+                  "payload": {
+                    "actor": "founder",
+                    "event": "scope.captured",
+                    "facts": {
+                      "baseSha": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+                      "remoteHeadSha": "fb74dd7a0907b2d6ff0b4a53f0b9f1f202262ba5",
+                      "rolesAssigned": true,
+                      "repoInAllowlist": true,
+                      "scopePathsCanonical": true
+                    },
+                    "scope": {
+                      "repo": "MADVenturesLLC/founder-os-build-room",
+                      "paths": [],
+                      "roomId": "a7cafdbe-d0f7-459d-9921-56501de73ac8"
+                    },
+                    "eventId": "aa10de4d-27fa-4595-9ce1-c902de138df2",
+                    "evidence": [],
+                    "occurredAt": "2026-08-17T23:58:22.820Z",
+                    "attribution": {
+                      "roleId": null,
+                      "actorId": "founder",
+                      "actualModel": "n/a — harness-generated verification event",
+                      "executionSurface": "claude-code"
+                    }
+                  },
+                  "committed_at": "2026-08-17T23:58:23.102Z"
+                }
+              ],
+              "rejections": []
+            }
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "deploys_and_stays_up",
+          "held": true,
+          "evidence": "deployed and answered every one of 11 /health samples across a 30000ms window; /ready reported the database reachable"
+        },
+        {
+          "condition": "reads_and_writes",
+          "held": true,
+          "evidence": "created the room, the ledger accepted a scope.captured event, and the room read back with 1 log position(s) and 1 entry/entries"
+        },
+        {
+          "condition": "survives_restart",
+          "held": true,
+          "evidence": "the room read back identically after the restart — 1 log position(s), 1 entry/entries, same lifecycle state"
+        }
+      ],
+      "verdict": "passed"
+    }
+  ],
+  "authorizes": "Nothing. Architecture §3.17: \"Completing three runs authorizes nothing.\" This bundle is evidence for the Founder-confirmed Phase 2 stop gate under DEC-20260815-17 clause 2. It confers no activation, no further phase, and no spend authority."
+}

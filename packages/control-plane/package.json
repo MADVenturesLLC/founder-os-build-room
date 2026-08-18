@@ -1,0 +1,16 @@
+{
+  "name": "@build-room/control-plane",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build Room control plane — the single writer to the durable ledger. Phase 2 cloud skeleton (DEC-20260815-17).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@build-room/contracts": "*",
+    "@build-room/ledger": "*",
+    "express": "5.1.0",
+    "pg": "8.13.1"
+  }
+}

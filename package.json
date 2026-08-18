@@ -3,10 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "MAD Ventures OS Build Room — agent orchestration runtime",
+  "description": "MAD Ventures OS Build Room \u2014 agent orchestration runtime",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=22"
+    "node": "22.x"
   },
   "workspaces": [
     "packages/*"
@@ -17,10 +17,14 @@
     "typecheck": "tsc --build tsconfig.json --force",
     "test": "npm run build && node --test dist/test/*.test.js",
     "gate:path-audit": "bash scripts/path-audit.sh",
-    "gate:attribution-selftest": "bash scripts/attribution-shape-check.sh selftest"
+    "gate:attribution-selftest": "bash scripts/attribution-shape-check.sh selftest",
+    "start": "node dist/packages/control-plane/src/main.js",
+    "phase2:runs": "node dist/packages/run-harness/src/cli.js"
   },
   "devDependencies": {
+    "@types/express": "5.0.0",
     "@types/node": "^22.10.2",
+    "@types/pg": "8.11.10",
     "typescript": "^5.7.2"
   }
 }

@@ -1,0 +1,11 @@
+{
+  "name": "@build-room/cost-meter",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build Room cost meter — the ratified enforcement rule as a pure function. Carries no rates (DEC-20260722-01). Pure, zero I/O.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {}
+}
