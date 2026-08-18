@@ -96,12 +96,10 @@ run loop and appending each run as it completes; `gateStatus` reading the
 persisted sequence.
 
 **Why this is not in PR #2, and the sequencing that follows.** Closing §2 means
-changing the harness, and §8 above establishes what that costs: a bundle
-produced by a superseded harness is not evidence for the harness that ships.
-§8 was closed by *re-running* — three fresh passes from the fixed code — and
-the same would be required here. The current bundle
-(`phase2-runs-2026-08-18T01-20-03-087Z.json`, commit `b731ba7`) was produced by
-the harness as it stands; a §2 fix would supersede it and re-open §8.
+changing the harness *in a way that changes what a run must show to pass*, and
+§8 below establishes what that costs: a bundle produced by a superseded harness
+is not evidence for the harness that ships. §8 was closed by *re-running* —
+three fresh passes from the fixed code — and the same would be required here.
 
 Re-running is not available. The Railway project token that drove the restarts
 was revoked on 2026-08-18 immediately after the gate was satisfied, verified
@@ -109,6 +107,31 @@ against the API (`projectToken` → *"Project Token not found"*). Minting anothe
 is a Founder act. So landing the fix here would trade a documented audit control
 for an untested mechanical one **and** leave §8 open with no path to close it —
 strictly worse than the state this PR is in.
+
+**The rule that does the work here is narrower than "the harness changed", and
+an earlier draft of this section got it wrong.** That draft said no source under
+`packages/` had changed since `b731ba7`, and rested the argument on that. It is
+no longer true: the dwell's identity check was hardened after review found that
+a failed or `startedAt`-less `/version` recorded nothing and let the dwell pass
+reporting *"identity unavailable"* (see §7). The bundle is nevertheless **not**
+superseded, and the reason is the general one:
+
+> A harness change supersedes prior evidence when the recorded observations no
+> longer demonstrate the condition. When the recorded observations already
+> satisfy the stricter rule — and the bundle carries the data to show it — the
+> evidence stands and the change is hardening.
+
+Checked, not assumed: all three runs of
+`phase2-runs-2026-08-18T01-20-03-087Z.json` record exactly one identity across
+11 dwell samples each, so every sample returned a usable `startedAt` and the
+stricter rule would have passed those runs unchanged. §8's case was the other
+kind — the defective harness produced a demonstrably false pass (a `processAfter`
+2.1s *before* its own `requestedAt`), which no re-reading of the bundle could
+repair.
+
+§2 is the first kind, which is why it still cannot land here: a persisted run
+history changes what the gate counts, so the recorded runs would no longer be
+the whole record the verdict was computed from.
 
 **Therefore:** §2 stays open through Phase 2, and closes in a follow-up PR
 carrying its own gate re-run, before the gate is next relied upon. Its urgency
@@ -299,8 +322,27 @@ fact replaced ninety milliseconds before the dwell ended, so that condition was
 always weaker than it read. The bundle stays retained and unedited, and
 `evidence/README.md` says which bundle is current and why.
 
-**Raised by** CodeRabbit on PR #2, reading the satisfied bundle's own
-timestamps.
+**The fix itself had a hole, found by review of the fix.** `note()` ignored an
+undefined identity, so a `/version` that failed — or answered without
+`startedAt` — recorded nothing at all. `identities` stayed empty, the
+"changed mid-dwell" comparison never fired, and the dwell returned **passing**
+with the detail *"identity unavailable"*: the same verdict as a dwell that
+positively established one process served it. That is the original §7 defect
+surviving inside its own remedy, reachable whenever `/version` is unhealthy
+while `/health` is not.
+
+The dwell now **fails** when a sample yields no usable identity, distinguishing
+a dead `/version` from a live one whose answer carries no `startedAt`, with a
+regression test for each — both verified to fail against the pre-fix code, so
+neither passes vacuously.
+
+**This did not supersede the bundle**, and that was checked rather than
+asserted: all three recorded runs return exactly one identity across 11 samples
+each, so every sample already yielded a usable `startedAt` and the stricter rule
+passes them unchanged. See §2 for the general rule this is an instance of.
+
+**Raised by** CodeRabbit on PR #2 — the original defect from reading the
+satisfied bundle's own timestamps, and the hole in the fix from reading the fix.
 
 ---
 

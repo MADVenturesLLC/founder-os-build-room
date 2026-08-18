@@ -47,6 +47,15 @@ interface Script {
   health?: (call: number) => Probe;
   /** Called per /version probe, 1-indexed. */
   startedAt?: (call: number) => string;
+  /** Called per /version probe, 1-indexed; true makes that probe fail outright. */
+  versionFails?: (call: number) => boolean;
+  /**
+   * Called per /version probe, 1-indexed; true makes that probe answer 200 with
+   * no `startedAt` field. Distinct from `versionFails` because the two reach the
+   * dwell differently — one is a dead endpoint, the other a live one whose
+   * answer carries no identity — and both must fail the dwell.
+   */
+  omitsStartedAt?: (call: number) => boolean;
   ready?: Probe;
   createRoom?: Probe;
   append?: Probe;
@@ -81,6 +90,13 @@ function fakeClient(script: Script): { client: ControlPlaneClient; restarted: ()
     ready: async () => script.ready ?? ok({ status: 'ready' }),
     version: async () => {
       versionCalls += 1;
+      if (script.versionFails?.(versionCalls) === true) {
+        return { ...bad(503, { error: 'unavailable' }), version: {} };
+      }
+      if (script.omitsStartedAt?.(versionCalls) === true) {
+        const version = { commit: 'abc1234' };
+        return { ...ok(version), version };
+      }
       const startedAt = script.startedAt?.(versionCalls) ?? (afterRestart ? 'T2' : 'T1');
       const version = { commit: 'abc1234', startedAt };
       return { ...ok(version), version };
@@ -227,6 +243,43 @@ describe('run cycle — a process replaced DURING the dwell', () => {
     assert.equal(condition(draft.conditions, 'deploys_and_stays_up')?.held, false);
     assert.match(condition(draft.conditions, 'deploys_and_stays_up')?.evidence ?? '', /REPLACED/);
     assert.equal(condition(draft.conditions, 'reads_and_writes'), undefined, 'later conditions unreached');
+  });
+
+  /*
+   * The §7 fix had a hole in it: `note()` ignores an undefined identity, so a
+   * `/version` that failed — or answered without `startedAt` — recorded
+   * nothing, `identities` stayed empty, the "changed mid-dwell" check never
+   * fired, and the dwell passed reporting "identity unavailable". A dwell that
+   * cannot name the process it watched must not pass. Raised by CodeRabbit on
+   * PR #2, against the fix rather than the original defect.
+   *
+   * Call 1 is the health-check /version read, so the dwell samples start at 2.
+   */
+  it('fails deploys_and_stays_up when /version stops answering during the dwell', async () => {
+    const fake = fakeClient({ versionFails: (call) => call >= 2 });
+    const draft = await performRun(DWELL_CONFIG, deps(fake.client, fake.restarted));
+
+    assert.equal(condition(draft.conditions, 'deploys_and_stays_up')?.held, false);
+    assert.match(
+      condition(draft.conditions, 'deploys_and_stays_up')?.evidence ?? '',
+      /no usable process identity/,
+    );
+    assert.equal(
+      condition(draft.conditions, 'reads_and_writes'),
+      undefined,
+      'later conditions unreached',
+    );
+  });
+
+  it('fails deploys_and_stays_up when /version answers without a startedAt', async () => {
+    const fake = fakeClient({ omitsStartedAt: (call) => call >= 2 });
+    const draft = await performRun(DWELL_CONFIG, deps(fake.client, fake.restarted));
+
+    assert.equal(condition(draft.conditions, 'deploys_and_stays_up')?.held, false);
+    assert.match(
+      condition(draft.conditions, 'deploys_and_stays_up')?.evidence ?? '',
+      /answered without a startedAt field/,
+    );
   });
 
   it('records which process served the dwell when nothing changed', async () => {

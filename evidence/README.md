@@ -17,8 +17,8 @@ Six bundles. **Two satisfy the gate; four do not, and all six are kept.**
 | `21-50-57` | `19b4968` | superseded — produced by the defective harness described below |
 | `21-10-24` | `d4dab78` | superseded — defective harness, and a runtime no longer deployed |
 
-**Two failed attempts and two superseded bundles precede the satisfied one, and
-none of them is deleted.** Exit criterion 4 wants a failure visible as an
+**Two failed attempts and three superseded bundles precede the satisfied one,
+and none of them is deleted.** Exit criterion 4 wants a failure visible as an
 interruption rather than absent from the record; a directory holding only the
 successful attempt would tell a reader the gate was met first time, which is
 false.
@@ -267,7 +267,7 @@ teardown — passing only if all three conditions hold (`DEC-20260815-17`,
 Each run's process identity before the restart equals the previous run's
 identity after it:
 
-Node 22 gate (`21-50-57`), the current one:
+Node 22 gate (`21-50-57`), superseded:
 
 ```text
 run #1  21:37:24.777Z -> 21:49:02.323Z

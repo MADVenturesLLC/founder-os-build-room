@@ -38,14 +38,33 @@ need() {
   fi
 }
 
+need_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "$1 is required and is not on PATH" >&2
+    exit 1
+  fi
+}
+
 need RAILWAY_API_TOKEN
 need RAILWAY_PROJECT_ID
 need RAILWAY_SERVICE_ID
 need RAILWAY_ENVIRONMENT_ID
 
+# `need jq` would check an ENVIRONMENT VARIABLE named jq — `need` indirects
+# through `${!name}`. The command check is a different check and needs its own
+# helper; conflating them made this script exit "jq is required and was not set"
+# on a machine where jq was installed and working.
+need_command jq
+need_command curl
+
 # `--fail-with-body` so an HTTP error is an error here rather than a success
 # carrying an error document. A restart that did not happen must not look like
 # one that did — the whole condition depends on this call being honest.
+#
+# It is NOT sufficient alone: GraphQL reports errors with HTTP 200, so a failed
+# query arrives as a success carrying an `errors` array. `graphql()` checks for
+# that explicitly rather than trusting the status code. Raised by CodeRabbit on
+# PR #2.
 call() {
   curl -sS --fail-with-body -m 30 "$API" \
     -H "Project-Access-Token: $RAILWAY_API_TOKEN" \
@@ -53,20 +72,62 @@ call() {
     -d "$1"
 }
 
+graphql() {
+  local response
+  response=$(call "$1")
+  if printf '%s' "$response" | jq -e 'has("errors")' >/dev/null 2>&1; then
+    echo "GraphQL error from Railway: $response" >&2
+    exit 1
+  fi
+  printf '%s' "$response"
+}
+
 # The ACTIVE deployment is looked up rather than remembered. A push redeploys
 # the service and mints a new deployment id, so a hardcoded one would restart
 # something that is no longer serving — or nothing at all.
-deployments=$(call "$(cat <<JSON
-{"query":"query(\$p:String!,\$s:String!,\$e:String!){ deployments(first:1, input:{projectId:\$p, serviceId:\$s, environmentId:\$e}){ edges { node { id status } } } }",
- "variables":{"p":"$RAILWAY_PROJECT_ID","s":"$RAILWAY_SERVICE_ID","e":"$RAILWAY_ENVIRONMENT_ID"}}
-JSON
-)")
+#
+# `first:1` is not "the newest". Railway documents no ordering guarantee for
+# `deployments`, and its own CLI sorts client-side — so this pulls a page and
+# picks the newest by `createdAt` here rather than trusting the server to have
+# meant what we assumed. Raised by CodeRabbit on PR #2.
+read -r -d '' QUERY <<'GQL' || true
+query($p:String!,$s:String!,$e:String!){
+  deployments(first:20, input:{projectId:$p, serviceId:$s, environmentId:$e}){
+    edges { node { id status createdAt } }
+  }
+}
+GQL
 
-deployment_id=$(printf '%s' "$deployments" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
-status=$(printf '%s' "$deployments" | sed -n 's/.*"status":"\([^"]*\)".*/\1/p' | head -1)
+# The request body is built by `jq`, never by interpolating into a JSON string.
+# The ids are UUIDs today, so hand-built JSON happened to be valid — but a value
+# carrying a quote or backslash would produce a malformed or altered request,
+# and "happens to be safe" is a poor property for the one call that performs the
+# restart. Raised by CodeRabbit on PR #2.
+deployments=$(graphql "$(jq -nc \
+  --arg q "$QUERY" \
+  --arg p "$RAILWAY_PROJECT_ID" \
+  --arg s "$RAILWAY_SERVICE_ID" \
+  --arg e "$RAILWAY_ENVIRONMENT_ID" \
+  '{query:$q, variables:{p:$p, s:$s, e:$e}}')")
+
+# Responses are parsed by `jq` too. The previous
+# `sed -n 's/.*"id":"\([^"]*\)".*/\1/p'` was greedy: the leading `.*` runs as far
+# as it can, so it captured the LAST id on the line rather than the first, and
+# `head -1` only deduplicated lines. One id in the response made that harmless;
+# any added id-bearing field would have restarted something else.
+newest=$(printf '%s' "$deployments" \
+  | jq -c '[.data.deployments.edges[]?.node] | sort_by(.createdAt) | last // empty')
+
+if [[ -z "$newest" || "$newest" == "null" ]]; then
+  echo "no deployment found for the service; response: $deployments" >&2
+  exit 1
+fi
+
+deployment_id=$(printf '%s' "$newest" | jq -r '.id // empty')
+status=$(printf '%s' "$newest" | jq -r '.status // empty')
 
 if [[ -z "$deployment_id" ]]; then
-  echo "no deployment found for the service; response: $deployments" >&2
+  echo "newest deployment carries no id; node: $newest" >&2
   exit 1
 fi
 
@@ -74,16 +135,18 @@ fi
 # nothing, which is precisely the kind of hollow pass this harness exists to
 # refuse.
 if [[ "$status" != "SUCCESS" ]]; then
-  echo "latest deployment $deployment_id is $status, not SUCCESS — refusing to restart it" >&2
+  echo "newest deployment $deployment_id is $status, not SUCCESS — refusing to restart it" >&2
   exit 1
 fi
 
-result=$(call "$(cat <<JSON
-{"query":"mutation(\$id:String!){ deploymentRestart(id:\$id) }","variables":{"id":"$deployment_id"}}
-JSON
-)")
+result=$(graphql "$(jq -nc \
+  --arg q 'mutation($id:String!){ deploymentRestart(id:$id) }' \
+  --arg id "$deployment_id" \
+  '{query:$q, variables:{id:$id}}')")
 
-if [[ "$result" != *'"deploymentRestart":true'* ]]; then
+# Checked as a parsed value, not a substring. `*'"deploymentRestart":true'*`
+# would also match that text appearing anywhere else in the document.
+if [[ "$(printf '%s' "$result" | jq -r '.data.deploymentRestart // empty')" != "true" ]]; then
   echo "restart was not accepted; response: $result" >&2
   exit 1
 fi

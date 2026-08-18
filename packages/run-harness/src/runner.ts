@@ -363,8 +363,40 @@ async function dwellHealthy(
       };
     }
 
+    /*
+     * A dwell with NO identity is not a dwell that proves anything.
+     *
+     * `note()` ignores an undefined identity, which was the whole hole: if
+     * `/version` failed, or answered without `startedAt`, nothing was recorded
+     * and the loop carried on. `/health` kept answering, `identities` stayed
+     * empty, `identities.length > 1` was never true, and the dwell returned
+     * `ok: true` with the detail string "identity unavailable" — the same
+     * verdict as a dwell that positively established one process served it.
+     * That is precisely the defect §7 was opened to close, surviving inside
+     * the fix for it. Raised by CodeRabbit on PR #2.
+     *
+     * Verified against the retained evidence before changing this: all three
+     * runs of `phase2-runs-2026-08-18T01-20-03-087Z.json` recorded exactly one
+     * identity across 11 samples each, so those runs satisfy this stricter
+     * rule as recorded. The bundle is not superseded by this change.
+     */
     const version = await client.version();
-    note(version.version.startedAt);
+    const identity = version.ok ? version.version.startedAt : undefined;
+    if (identity === undefined) {
+      return {
+        ok: false,
+        samples,
+        detail:
+          `/version gave no usable process identity on sample ${samples}: ` +
+          `${version.ok ? 'answered without a startedAt field' : describe(version)}. ` +
+          `The dwell fails rather than passing on /health alone — health without ` +
+          `identity cannot establish that one process served the window`,
+        identityAtStart: identities[0] ?? null,
+        identityAtEnd: identities[identities.length - 1] ?? null,
+        identities,
+      };
+    }
+    note(identity);
 
     if (identities.length > 1) {
       return {
