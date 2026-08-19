@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, ConfigError } from '../packages/control-plane/src/config.js';
+import { loadConfig, ConfigError, challengeFreshnessDeadlineMs } from '../packages/control-plane/src/config.js';
 import { createPool } from '../packages/control-plane/src/db.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -137,4 +137,218 @@ describe('control plane — TLS defaults', () => {
       }
     });
   }
+});
+
+/**
+ * §6 — the gateway configuration bounds and cross-field relations
+ * (corrections T4 and T4-extended).
+ *
+ * Every boundary is asserted at equality and on both sides of it. An off-by-one
+ * in a bound is not a style issue here: `challengeRotationMs + 2 x
+ * leaderHeartbeatMs` is what an overdue challenge is judged against, so a bound
+ * that is loose by one tick is a replay window that is loose by one tick.
+ */
+
+const GATEWAY_BASE = { DATABASE_URL: VALID_URL, CONTROL_PLANE_TOKEN: VALID_TOKEN };
+
+function loadGateway(overrides: Record<string, string> = {}) {
+  return loadConfig({ ...GATEWAY_BASE, ...overrides });
+}
+
+describe('§6 — gateway defaults satisfy every bound', () => {
+  it('loads the documented defaults', () => {
+    const config = loadGateway();
+
+    assert.equal(config.gatewayCodeTtlMs, 600_000);
+    assert.equal(config.gatewayHeartbeatCadenceMs, 10_000);
+    assert.equal(config.gatewayStalenessMs, 30_000);
+    assert.equal(config.gatewayTimestampWindowMs, 120_000);
+    assert.equal(config.gatewayAwaitingApprovalTtlMs, 3_600_000);
+    assert.equal(config.leaderHeartbeatMs, 10_000);
+    assert.equal(config.leaderLeaseTtlMs, 30_000);
+    assert.equal(config.leaderSafetyDeadlineMs, 20_000);
+    assert.equal(config.challengeRotationMs, 60_000);
+    assert.equal(config.sessionNonceCapacity, 10_000);
+    assert.equal(config.clockBackwardToleranceMs, 1_000);
+    assert.equal(config.clockDivergenceToleranceMs, 2_000);
+    assert.equal(config.clockStabilityMs, 30_000);
+    assert.equal(config.sweepIntervalMs, 86_400_000);
+  });
+
+  it('defaults trustProxyHops to 0 — off until the edge has been observed', () => {
+    assert.equal(loadGateway().trustProxyHops, 0);
+    assert.equal(loadGateway({ TRUST_PROXY_HOPS: '1' }).trustProxyHops, 1);
+    assert.throws(() => loadGateway({ TRUST_PROXY_HOPS: '-1' }), ConfigError);
+    assert.throws(() => loadGateway({ TRUST_PROXY_HOPS: '1.5' }), ConfigError);
+  });
+
+  it('derives a challenge-freshness deadline of 80 s inside the 120 s window', () => {
+    const config = loadGateway();
+    assert.equal(challengeFreshnessDeadlineMs(config), 80_000);
+    assert.ok(challengeFreshnessDeadlineMs(config) <= config.gatewayTimestampWindowMs);
+  });
+});
+
+describe('control-plane-config · challenge-rotation-vs-window compound', () => {
+  /*
+   * The compound rule at equality and on both sides. `leaderHeartbeatMs` is
+   * held at 10 000 so the deadline is `rotation + 20 000`, and the window is
+   * held at 120 000, which puts the boundary at a rotation of exactly 100 000.
+   */
+  it('accepts a deadline strictly inside the window', () => {
+    assert.equal(loadGateway({ CHALLENGE_ROTATION_MS: '99000' }).challengeRotationMs, 99_000);
+  });
+
+  it('accepts a deadline exactly equal to the window', () => {
+    const config = loadGateway({ CHALLENGE_ROTATION_MS: '100000' });
+    assert.equal(challengeFreshnessDeadlineMs(config), config.gatewayTimestampWindowMs);
+  });
+
+  it('refuses a deadline one millisecond beyond the window', () => {
+    assert.throws(() => loadGateway({ CHALLENGE_ROTATION_MS: '100001' }), ConfigError);
+  });
+
+  it('refuses when a large heartbeat interval pushes the deadline past the window', () => {
+    // This is the case the standalone "rotation below window" rule missed: the
+    // rotation alone is well inside the window, and the deadline is not.
+    assert.throws(
+      () => loadGateway({ CHALLENGE_ROTATION_MS: '60000', LEADER_HEARTBEAT_MS: '40000', LEADER_SAFETY_DEADLINE_MS: '50000', LEADER_LEASE_TTL_MS: '60000' }),
+      ConfigError,
+    );
+  });
+
+  it('refuses a non-positive rotation interval', () => {
+    assert.throws(() => loadGateway({ CHALLENGE_ROTATION_MS: '0' }), ConfigError);
+    assert.throws(() => loadGateway({ CHALLENGE_ROTATION_MS: '-1' }), ConfigError);
+  });
+
+  it('refuses a non-positive heartbeat interval', () => {
+    assert.throws(() => loadGateway({ LEADER_HEARTBEAT_MS: '0' }), ConfigError);
+    assert.throws(() => loadGateway({ LEADER_HEARTBEAT_MS: '-1' }), ConfigError);
+  });
+});
+
+describe('control-plane-config · heartbeat-vs-safety-deadline and safety-vs-ttl chain', () => {
+  it('accepts a strictly increasing chain', () => {
+    const config = loadGateway({
+      LEADER_HEARTBEAT_MS: '5000',
+      LEADER_SAFETY_DEADLINE_MS: '6000',
+      LEADER_LEASE_TTL_MS: '7000',
+    });
+    assert.ok(config.leaderHeartbeatMs < config.leaderSafetyDeadlineMs);
+    assert.ok(config.leaderSafetyDeadlineMs < config.leaderLeaseTtlMs);
+  });
+
+  it('refuses heartbeat equal to the safety deadline', () => {
+    assert.throws(
+      () => loadGateway({ LEADER_HEARTBEAT_MS: '20000', LEADER_SAFETY_DEADLINE_MS: '20000' }),
+      ConfigError,
+    );
+  });
+
+  it('refuses heartbeat above the safety deadline', () => {
+    assert.throws(
+      () => loadGateway({ LEADER_HEARTBEAT_MS: '20001', LEADER_SAFETY_DEADLINE_MS: '20000' }),
+      ConfigError,
+    );
+  });
+
+  it('refuses the safety deadline equal to the lease TTL', () => {
+    assert.throws(
+      () => loadGateway({ LEADER_SAFETY_DEADLINE_MS: '30000', LEADER_LEASE_TTL_MS: '30000' }),
+      ConfigError,
+    );
+  });
+
+  it('refuses the safety deadline above the lease TTL', () => {
+    assert.throws(
+      () => loadGateway({ LEADER_SAFETY_DEADLINE_MS: '30001', LEADER_LEASE_TTL_MS: '30000' }),
+      ConfigError,
+    );
+  });
+});
+
+describe('control-plane-config · unsafe-integer and overflow inputs', () => {
+  const UNSAFE = String(Number.MAX_SAFE_INTEGER + 2);
+
+  it('refuses an unsafe integer for any deadline input', () => {
+    for (const key of ['CHALLENGE_ROTATION_MS', 'LEADER_HEARTBEAT_MS', 'LEADER_SAFETY_DEADLINE_MS', 'LEADER_LEASE_TTL_MS', 'GATEWAY_TIMESTAMP_WINDOW_MS']) {
+      assert.throws(() => loadGateway({ [key]: UNSAFE }), ConfigError, key);
+    }
+  });
+
+  it('refuses values that would overflow the derived deadline expression', () => {
+    // 2^52 doubled leaves the safe range; the sum must never be computed and
+    // then compared as if it meant something.
+    assert.throws(
+      () =>
+        loadGateway({
+          LEADER_HEARTBEAT_MS: String(2 ** 52),
+          LEADER_SAFETY_DEADLINE_MS: String(2 ** 52 + 1),
+          LEADER_LEASE_TTL_MS: String(2 ** 52 + 2),
+          CHALLENGE_ROTATION_MS: String(2 ** 52),
+        }),
+      ConfigError,
+    );
+  });
+
+  it('refuses non-numeric and fractional inputs', () => {
+    assert.throws(() => loadGateway({ CHALLENGE_ROTATION_MS: 'soon' }), ConfigError);
+    assert.throws(() => loadGateway({ CHALLENGE_ROTATION_MS: '1.5' }), ConfigError);
+    assert.throws(() => loadGateway({ SESSION_NONCE_CAPACITY: '0' }), ConfigError);
+  });
+});
+
+describe('control-plane-config · staleness-vs-cadence, code TTL, window, clock tolerances', () => {
+  it('accepts staleness at exactly twice and exactly six times the cadence', () => {
+    assert.equal(loadGateway({ GATEWAY_STALENESS_MS: '20000' }).gatewayStalenessMs, 20_000);
+    assert.equal(loadGateway({ GATEWAY_STALENESS_MS: '60000' }).gatewayStalenessMs, 60_000);
+  });
+
+  it('refuses staleness below twice and above six times the cadence', () => {
+    assert.throws(() => loadGateway({ GATEWAY_STALENESS_MS: '19999' }), ConfigError);
+    assert.throws(() => loadGateway({ GATEWAY_STALENESS_MS: '60001' }), ConfigError);
+  });
+
+  it('refuses staleness above the absolute 300 s ceiling', () => {
+    // Cadence 60 000 would permit 360 000 by the multiple rule alone; the
+    // absolute ceiling still refuses it.
+    assert.throws(
+      () => loadGateway({ GATEWAY_HEARTBEAT_CADENCE_MS: '60000', GATEWAY_STALENESS_MS: '360000' }),
+      ConfigError,
+    );
+  });
+
+  it('bounds the heartbeat cadence at both ends, inclusive', () => {
+    assert.equal(loadGateway({ GATEWAY_HEARTBEAT_CADENCE_MS: '5000', GATEWAY_STALENESS_MS: '10000' }).gatewayHeartbeatCadenceMs, 5_000);
+    assert.equal(loadGateway({ GATEWAY_HEARTBEAT_CADENCE_MS: '60000', GATEWAY_STALENESS_MS: '120000' }).gatewayHeartbeatCadenceMs, 60_000);
+    assert.throws(() => loadGateway({ GATEWAY_HEARTBEAT_CADENCE_MS: '4999' }), ConfigError);
+    assert.throws(() => loadGateway({ GATEWAY_HEARTBEAT_CADENCE_MS: '60001' }), ConfigError);
+  });
+
+  it('caps the code TTL at clause 8 exactly', () => {
+    assert.equal(loadGateway({ GATEWAY_CODE_TTL_MS: '900000' }).gatewayCodeTtlMs, 900_000);
+    assert.throws(() => loadGateway({ GATEWAY_CODE_TTL_MS: '900001' }), ConfigError);
+  });
+
+  it('caps the timestamp window at 300 s exactly', () => {
+    assert.equal(
+      loadGateway({ GATEWAY_TIMESTAMP_WINDOW_MS: '300000' }).gatewayTimestampWindowMs,
+      300_000,
+    );
+    assert.throws(() => loadGateway({ GATEWAY_TIMESTAMP_WINDOW_MS: '300001' }), ConfigError);
+  });
+
+  it('carries the clock tolerances and the nonce capacity through', () => {
+    const config = loadGateway({
+      CLOCK_BACKWARD_TOLERANCE_MS: '250',
+      CLOCK_DIVERGENCE_TOLERANCE_MS: '500',
+      CLOCK_STABILITY_MS: '1000',
+      SESSION_NONCE_CAPACITY: '25',
+    });
+    assert.equal(config.clockBackwardToleranceMs, 250);
+    assert.equal(config.clockDivergenceToleranceMs, 500);
+    assert.equal(config.clockStabilityMs, 1_000);
+    assert.equal(config.sessionNonceCapacity, 25);
+  });
 });

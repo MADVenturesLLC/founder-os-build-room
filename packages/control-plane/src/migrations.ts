@@ -185,10 +185,253 @@ export const MIGRATIONS: readonly Migration[] = [
          VALIDATE CONSTRAINT build_room_events_pending_is_bare`,
     ],
   },
+
+  {
+    /*
+     * The gateway registry — EIGHT tables (contract §5). The count is eight
+     * here, in the PR body, and in every comment that names it; a schema whose
+     * size is described differently in two places is a schema nobody can review.
+     *
+     * Seven of the eight are registry content. The eighth,
+     * `control_plane_lease`, is leadership and fencing infrastructure rather
+     * than registry content, and lives in this migration because the fence it
+     * carries is what every leader-dependent transaction in §7 opens with.
+     *
+     * Retention classes are split deliberately (§18). `gateway_registry_events`,
+     * `gateway_enrollment_refusals` and `gateway_pairing_codes` are the >=7-year
+     * class and are never swept. Availability history and message rejections are
+     * the 90-day class. Idempotency rows are swept only well beyond the daemon's
+     * retry horizon, so the one replayable successful result outlives every
+     * legitimate retry.
+     */
+    id: '0003_gateway_registry',
+    statements: [
+      /*
+       * 1. Append-only lifecycle log. `seq` is the deterministic total order;
+       * `recorded_at` is metadata and is NOT the ordering key — two rows written
+       * in one transaction share a transaction-stable `recorded_at`, so ordering
+       * by it would be ordering by a tie.
+       *
+       * `gateway_id` is nullable because `minted` precedes any gateway identity:
+       * a code exists before the machine that will redeem it does.
+       */
+      `CREATE TABLE IF NOT EXISTS gateway_registry_events (
+         seq             bigserial   PRIMARY KEY,
+         event_id        uuid        NOT NULL UNIQUE,
+         event_type      text        NOT NULL
+           CHECK (event_type IN ('minted','key_received','enrolled','denied','revoked','expired')),
+         gateway_id      uuid,
+         key_id          text,
+         pubkey          bytea,
+         host_descriptor jsonb,
+         pairing_id      uuid,
+         code_hash       text,
+         actor           jsonb       NOT NULL,
+         attribution     jsonb       NOT NULL,
+         occurred_at     timestamptz NOT NULL,
+         recorded_at     timestamptz NOT NULL DEFAULT now(),
+         payload         jsonb       NOT NULL
+       )`,
+
+      `CREATE INDEX IF NOT EXISTS gateway_registry_events_gateway_seq_idx
+         ON gateway_registry_events (gateway_id, seq)`,
+      `CREATE INDEX IF NOT EXISTS gateway_registry_events_key_idx
+         ON gateway_registry_events (key_id) WHERE key_id IS NOT NULL`,
+      `CREATE INDEX IF NOT EXISTS gateway_registry_events_pairing_idx
+         ON gateway_registry_events (pairing_id) WHERE pairing_id IS NOT NULL`,
+
+      /*
+       * Same pattern as `build_room_events`: RAISE, not `DO INSTEAD NOTHING`. A
+       * rule that swallowed the write would make history editable and silent
+       * about it, which is the one failure an append-only log cannot survive.
+       */
+      `CREATE OR REPLACE FUNCTION gateway_registry_events_immutable()
+         RETURNS trigger AS $$
+       BEGIN
+         RAISE EXCEPTION 'gateway_registry_events is append-only: % rejected', TG_OP
+           USING ERRCODE = 'restrict_violation';
+       END;
+       $$ LANGUAGE plpgsql`,
+
+      `DROP TRIGGER IF EXISTS gateway_registry_events_no_update ON gateway_registry_events`,
+      `CREATE TRIGGER gateway_registry_events_no_update
+         BEFORE UPDATE ON gateway_registry_events
+         FOR EACH ROW EXECUTE FUNCTION gateway_registry_events_immutable()`,
+
+      `DROP TRIGGER IF EXISTS gateway_registry_events_no_delete ON gateway_registry_events`,
+      `CREATE TRIGGER gateway_registry_events_no_delete
+         BEFORE DELETE ON gateway_registry_events
+         FOR EACH ROW EXECUTE FUNCTION gateway_registry_events_immutable()`,
+
+      /*
+       * 2. The mutable deterministic projection. A read model only: every
+       * mutation happens in the same transaction as its event, under the
+       * registry advisory lock, and `test/gateway-projection.storage.test.ts`
+       * proves a replay of the log through the pure reducer reproduces this
+       * table exactly.
+       *
+       * The CHECK keeps `is_currently_enrolled` from ever disagreeing with
+       * `state`, because the partial unique index below is built on the boolean
+       * and an invariant enforced through a column that could lie is not an
+       * invariant.
+       */
+      `CREATE TABLE IF NOT EXISTS gateway_current_state (
+         gateway_id                   uuid        PRIMARY KEY,
+         state                        text        NOT NULL
+           CHECK (state IN ('awaiting_approval','enrolled','denied','revoked','expired')),
+         key_id                       text,
+         pubkey                       bytea,
+         host_descriptor              jsonb,
+         state_since                  timestamptz NOT NULL,
+         last_event_seq               bigint      NOT NULL REFERENCES gateway_registry_events(seq),
+         awaiting_approval_expires_at timestamptz,
+         is_currently_enrolled        boolean     NOT NULL DEFAULT false,
+         CONSTRAINT gateway_current_state_enrolled_flag_agrees
+           CHECK ((state = 'enrolled') = is_currently_enrolled)
+       )`,
+
+      /*
+       * Clause 5's at-most-one-enrolled invariant, enforced by the database
+       * rather than by sequencing. This is what refuses a successor's
+       * confirmation while an incumbent is still enrolled — and therefore what
+       * enforces the required ordering: revoke the incumbent first, confirm the
+       * successor second.
+       */
+      `CREATE UNIQUE INDEX IF NOT EXISTS gateway_current_state_only_one_enrolled
+         ON gateway_current_state (is_currently_enrolled) WHERE is_currently_enrolled`,
+
+      /*
+       * 3. Minted pairing codes. Only `sha256(code)` is stored — the plaintext
+       * appears exactly once, in the mint response, and is never logged. Never
+       * swept: manual Founder mints are few, and the >=7-year event log carries
+       * the acts regardless.
+       */
+      `CREATE TABLE IF NOT EXISTS gateway_pairing_codes (
+         pairing_id             uuid        PRIMARY KEY,
+         code_hash              text        NOT NULL UNIQUE,
+         code_hash_algo         text        NOT NULL DEFAULT 'sha256',
+         minted_by              jsonb       NOT NULL,
+         minted_at              timestamptz NOT NULL DEFAULT now(),
+         expires_at             timestamptz NOT NULL,
+         consumed_at            timestamptz,
+         consumed_by_gateway_id uuid,
+         CONSTRAINT gateway_pairing_codes_consumption_is_complete
+           CHECK ((consumed_at IS NULL AND consumed_by_gateway_id IS NULL)
+               OR (consumed_at IS NOT NULL AND consumed_by_gateway_id IS NOT NULL))
+       )`,
+
+      /*
+       * 4. Durable, restart-safe redeem idempotency. Durable rather than
+       * in-memory because the retry it protects can outlive the process: the
+       * daemon retries a redeem for up to 24 h, and a control-plane redeploy in
+       * that window must not turn a retry into a second consumption.
+       */
+      `CREATE TABLE IF NOT EXISTS gateway_redeem_idempotency (
+         idempotency_key text        PRIMARY KEY,
+         pairing_id      uuid        NOT NULL,
+         code_hash       text        NOT NULL,
+         response_json   jsonb       NOT NULL,
+         status_code     integer     NOT NULL,
+         recorded_at     timestamptz NOT NULL DEFAULT now()
+       )`,
+
+      /*
+       * 5. Pairing-flow refusals, >=7-year class, never swept. No immutability
+       * trigger, following the `build_room_rejections` precedent.
+       *
+       * `resolved_code_hash` is stored ONLY when the presented code hash matches
+       * a minted code. An unresolvable presentation is recorded by kind alone,
+       * so no untrusted string an attacker chose becomes durable content in a
+       * table nothing ever deletes from.
+       */
+      `CREATE TABLE IF NOT EXISTS gateway_enrollment_refusals (
+         refusal_id         bigserial   PRIMARY KEY,
+         kind               text        NOT NULL
+           CHECK (kind IN ('unknown_code','code_expired','code_consumed','idempotency_key_mismatch',
+                           'malformed_pubkey','invalid_request','fingerprint_mismatch',
+                           'not_awaiting_approval','another_gateway_enrolled')),
+         gateway_id         uuid,
+         pairing_id         uuid,
+         resolved_code_hash text,
+         idempotency_key    text,
+         detail             jsonb       NOT NULL,
+         source_ip          text,
+         recorded_at        timestamptz NOT NULL DEFAULT now()
+       )`,
+
+      /*
+       * 6. Signed-message failures, 90-day class, AGGREGATED rather than one row
+       * per attempt.
+       *
+       * The durable identity is the presented `keyId` only when it resolves to a
+       * known registry key; every unresolved, absent, malformed or random
+       * presentation counts under the literal `unknown`. That is what bounds
+       * per-minute cardinality at (registry keys + 1) x sources x error codes: a
+       * flood of distinct invented key ids from one source produces one counting
+       * row, not one row per attempt.
+       */
+      `CREATE TABLE IF NOT EXISTS gateway_message_rejections (
+         resolved_key_id text        NOT NULL,
+         source_ip       text        NOT NULL,
+         error_code      text        NOT NULL,
+         minute_bucket   timestamptz NOT NULL,
+         count           integer     NOT NULL DEFAULT 1,
+         first_seen_at   timestamptz NOT NULL DEFAULT now(),
+         last_seen_at    timestamptz NOT NULL DEFAULT now(),
+         PRIMARY KEY (resolved_key_id, source_ip, error_code, minute_bucket)
+       )`,
+
+      /*
+       * 7. Availability transition history, 90-day class, no immutability
+       * trigger because the sweep must be able to delete from it.
+       *
+       * `seq` is the durable insertion order and matters: a stale-liveness beat
+       * writes an overdue `went_offline` and the new `went_online` in ONE
+       * transaction, so both rows share a transaction-stable `recorded_at` and
+       * only `seq` says which came first.
+       */
+      `CREATE TABLE IF NOT EXISTS gateway_availability_events (
+         seq               bigserial   PRIMARY KEY,
+         event_id          uuid        NOT NULL UNIQUE,
+         gateway_id        uuid        NOT NULL,
+         transition        text        NOT NULL CHECK (transition IN ('went_online','went_offline')),
+         occurred_at       timestamptz NOT NULL,
+         last_heartbeat_at timestamptz,
+         recorded_at       timestamptz NOT NULL DEFAULT now()
+       )`,
+
+      /*
+       * 8. Leadership and fencing infrastructure. One row, forever, enforced by
+       * the CHECK on the primary key — the fence's `SELECT ... FOR UPDATE`
+       * targets a single known row, and a second row would silently give two
+       * leaders two fences.
+       */
+      `CREATE TABLE IF NOT EXISTS control_plane_lease (
+         id                     smallint    PRIMARY KEY CHECK (id = 1),
+         owner_id               uuid,
+         generation             bigint      NOT NULL DEFAULT 0,
+         heartbeat_at           timestamptz,
+         challenge              text,
+         challenge_published_at timestamptz
+       )`,
+
+      `INSERT INTO control_plane_lease (id) VALUES (1) ON CONFLICT DO NOTHING`,
+    ],
+  },
 ];
 
 /** Advisory-lock key. Arbitrary but fixed — any value works if it never changes. */
 const MIGRATION_LOCK_KEY = 8_150_817;
+
+/**
+ * The registry advisory lock (contract §5, §13 L2).
+ *
+ * Distinct from `MIGRATION_LOCK_KEY` and deliberately so: a migration and a
+ * registry write must be able to block each other only through the schema, not
+ * through a shared lock key that would serialize two unrelated concerns and
+ * make a slow migration look like a wedged gateway.
+ */
+export const GATEWAY_REGISTRY_LOCK_KEY = 8_180_818;
 
 export interface MigrationResult {
   readonly applied: readonly string[];

@@ -27,6 +27,12 @@ import { snapshot, type LifecycleEvent } from '../../ledger/src/index.js';
 import type { Config } from './config.js';
 import { probe } from './db.js';
 import { PostgresLedgerStore, RoomNotFoundError } from './store.js';
+import {
+  ROOM_BODY_LIMIT,
+  founderRouter,
+  gatewayRouter,
+  type GatewaySurface,
+} from './gateway/index.js';
 
 export interface ServerDeps {
   readonly config: Config;
@@ -34,6 +40,15 @@ export interface ServerDeps {
   readonly store: PostgresLedgerStore;
   /** Set once the boot sequence has migrated and is serving. */
   readonly startedAt: number;
+  /**
+   * The gateway subsystem. REQUIRED, not optional.
+   *
+   * The room-append route gains a leader pre-filter and a transaction fence
+   * from it (contract §10, §11). Making it optional would mean a server could
+   * be constructed that mounts that route without the fence, which is the one
+   * shape this surface must not be able to take.
+   */
+  readonly gateway: GatewaySurface;
 }
 
 /** Errors that carry an HTTP status the client should see. */
@@ -53,7 +68,25 @@ export function createServer(deps: ServerDeps): Express {
   const app = express();
 
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '256kb' }));
+
+  /*
+   * `trust proxy` is config-driven and defaults to 0 — OFF (contract §20).
+   * With it off the service is safe and rate-limit buckets merely coarsen
+   * behind an edge; with it on against an unverified topology, `req.ip` is
+   * whatever a caller put in a header. The enablement procedure is a
+   * deployment act: observe the live edge's `X-Forwarded-For` behaviour first,
+   * then set `TRUST_PROXY_HOPS`.
+   */
+  if (config.trustProxyHops > 0) {
+    app.set('trust proxy', config.trustProxyHops);
+  }
+
+  /*
+   * NO global body parser. Each route mounts its own as its first middleware,
+   * so a per-route limit describes a check that actually happens on that route
+   * rather than one a broader parser already made irrelevant (contract §11).
+   */
+  const roomJson = express.json({ limit: ROOM_BODY_LIMIT });
 
   /**
    * Liveness. Answers "is this process serving?" and nothing else — no
@@ -126,6 +159,7 @@ export function createServer(deps: ServerDeps): Express {
 
   app.post(
     '/rooms',
+    roomJson,
     requireToken,
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.body?.roomId, 'roomId');
@@ -150,9 +184,16 @@ export function createServer(deps: ServerDeps): Express {
     }),
   );
 
+  /*
+   * The one existing route this contract changes. It gains the leader
+   * pre-filter, the transaction fence (inside the store), and the derived
+   * `gatewayOnline` overlay. Room-lifecycle semantics are untouched.
+   */
   app.post(
     '/rooms/:roomId/events',
+    roomJson,
     requireToken,
+    deps.gateway.leadership.requireLeader(),
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.params.roomId, 'roomId');
       const event = requireEvent(req.body);
@@ -164,6 +205,16 @@ export function createServer(deps: ServerDeps): Express {
        * body carries the reducer's own code and reason rather than a
        * paraphrase.
        */
+      if (!result.ok && result.outcome === 'not_leader') {
+        /*
+         * A post-COMMIT demotion leaves the durable append standing and still
+         * answers 503. No pipeline may return accepted after detecting a
+         * demotion, whatever its durable result (contract §7).
+         */
+        res.status(503).json({ error: 'not_leader' });
+        return;
+      }
+
       if (!result.ok) {
         res.status(409).json({
           roomId,
@@ -204,11 +255,53 @@ export function createServer(deps: ServerDeps): Express {
     }),
   );
 
+  /*
+   * The gateway surface. Mounted after the room routes and before the
+   * catch-alls, with each of its routes carrying its own 16 KB parser.
+   */
+  const routeDeps = {
+    service: deps.gateway.service,
+    store: deps.gateway.store,
+    leadership: deps.gateway.leadership,
+    limiter: deps.gateway.limiter,
+    requireToken,
+  };
+  app.use(gatewayRouter(routeDeps));
+  app.use(founderRouter(routeDeps));
+
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: 'not_found' });
   });
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    /*
+     * Body-limit and parser failures are translated here, centrally, so every
+     * body-bearing route — gateway, Founder, and room alike — answers with the
+     * same structured code and no raw parser text leaks (contract §11, §14).
+     *
+     * A size failure and a syntax failure are NOT the same thing and are not
+     * reported as the same thing: an oversized body is `413 payload_too_large`,
+     * and a body the parser could not read is `400 invalid_request`. Both are
+     * members of the closed response vocabulary; conflating them would tell a
+     * client to shrink a request whose only problem was that it was malformed.
+     */
+    const parserError = error as { type?: unknown; status?: unknown; statusCode?: unknown } | null;
+    if (parserError !== null && typeof parserError === 'object' && 'type' in parserError) {
+      if (parserError.type === 'entity.too.large') {
+        res.status(413).json({ error: 'payload_too_large' });
+        return;
+      }
+      const status = Number(parserError.status ?? parserError.statusCode ?? 0);
+      if (status === 413) {
+        res.status(413).json({ error: 'payload_too_large' });
+        return;
+      }
+      if (status >= 400 && status < 500) {
+        res.status(400).json({ error: 'invalid_request' });
+        return;
+      }
+    }
+
     if (error instanceof HttpError) {
       res.status(error.status).json({ error: 'bad_request', message: error.message });
       return;

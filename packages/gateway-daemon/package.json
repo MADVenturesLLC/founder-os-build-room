@@ -1,0 +1,14 @@
+{
+  "name": "@build-room/gateway-daemon",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build Room gateway daemon — Keychain custody, two identity lanes, timers, IPC. Impure by design (DEC-20260818-01).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "bin": { "buildroom-gateway": "../../dist/packages/gateway-daemon/src/main.js" },
+  "dependencies": {
+    "@build-room/gateway-protocol": "*"
+  }
+}
