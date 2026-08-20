@@ -99,3 +99,37 @@ describe('gateway-cli-entrypoint', () => {
     }
   });
 });
+
+describe('gateway-cli · the control-plane URL is validated before it is used (correction 5, #3)', () => {
+  /** Run `node <entry> <verb>` under a throwaway HOME with extra env. */
+  function runVerb(entry: string, verb: string, env: Record<string, string>): Promise<Ran> {
+    const home = mkdtempSync(join(tmpdir(), 'buildroom-bin-verb-'));
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, [entry, verb], {
+        env: { ...process.env, HOME: home, ...env },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8');
+      });
+      child.on('close', (code) => {
+        rmSync(home, { recursive: true, force: true });
+        resolve({ code, stderr });
+      });
+    });
+  }
+
+  it('refuses a plain-http control-plane URL that is not loopback, before any request', async () => {
+    const ran = await runVerb(BIN, 'providers', { BUILDROOM_CONTROL_PLANE_URL: 'http://192.0.2.10:8080' });
+    assert.equal(ran.code, 1, 'a refused configuration exits 1');
+    assert.match(ran.stderr, /BUILDROOM_CONTROL_PLANE_URL/, 'the refusal names the variable so it can be fixed');
+  });
+
+  it('still accepts a loopback plain-http URL, and the verb reports its own failure', async () => {
+    const ran = await runVerb(BIN, 'providers', { BUILDROOM_CONTROL_PLANE_URL: 'http://127.0.0.1:1' });
+    assert.notEqual(ran.code, 0);
+    assert.doesNotMatch(ran.stderr, /BUILDROOM_CONTROL_PLANE_URL/, 'a legal URL is never refused by the validator');
+    assert.match(ran.stderr, /providers/);
+  });
+});

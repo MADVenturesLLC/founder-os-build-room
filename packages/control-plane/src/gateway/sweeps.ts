@@ -50,6 +50,8 @@ export interface SweepDeps {
   readonly leadership: GatewayLeadership;
   readonly store: GatewayRegistryStore;
   readonly service: GatewaySessionService;
+  /** Optional so existing constructions stay valid; sweep containment uses it. */
+  readonly log?: (level: 'warn' | 'error', at: string, fields: Record<string, unknown>) => void;
 }
 
 export interface StalenessResult {
@@ -105,9 +107,37 @@ export class GatewaySweeps {
 
   /** One cadence iteration. Exposed so tests drive it deterministically. */
   async tick(): Promise<void> {
-    await this.deps.service.retryDeferredReconciliation();
-    if (this.deps.leadership.canServe()) await this.sweepStaleness();
-    await this.sweepExpiry();
+    /*
+     * (correction 5, finding #2; correction 6, finding 1) One sweep failing
+     * must not starve the others. Correction 5 contained only the deferred
+     * reconciliation; a rejection from the staleness sweep still exited tick()
+     * before the expiry sweep could run, and an expiry rejection escaped into
+     * the interval wrapper's silent catch. Each step is therefore isolated on
+     * its own and reported at its own line — the interval wrapper swallows
+     * the rejection, so the log is the only place a contained failure becomes
+     * visible. Contained is never silent.
+     */
+    try {
+      await this.deps.service.retryDeferredReconciliation();
+    } catch (error) {
+      this.deps.log?.('warn', 'gateway.sweeps.deferred_reconciliation_failed', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    try {
+      if (this.deps.leadership.canServe()) await this.sweepStaleness();
+    } catch (error) {
+      this.deps.log?.('error', 'gateway.sweeps.staleness_failed', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    try {
+      await this.sweepExpiry();
+    } catch (error) {
+      this.deps.log?.('error', 'gateway.sweeps.expiry_failed', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /* ---- staleness: leader-only, fenced, L0 -> L1 -> L2 ------------------ */
@@ -136,8 +166,14 @@ export class GatewaySweeps {
      * the fact this result has to be able to state.
      */
     const written: string[] = [];
+    /*
+     * (correction 5, M13) Only edges the transaction actually inserted — a
+     * candidate the alternation invariant SKIPPED is not a transition written,
+     * and reporting it as one overstated the sweep's durable effect.
+     */
+    const inserted: string[] = [];
 
-    const outcome = await leadership.runFenced<{ written: string[] }>(
+    const outcome = await leadership.runFenced<{ written: string[]; inserted: string[] }>(
       {
         pipeline: 'stalenessSweep',
         takeL0: true,
@@ -165,7 +201,7 @@ export class GatewaySweeps {
           stale.push(gatewayId);
         }
         if (stale.length === 0) {
-          return { value: { written }, commit: false };
+          return { value: { written, inserted }, commit: false };
         }
 
         for (const gatewayId of stale) {
@@ -183,10 +219,11 @@ export class GatewaySweeps {
             occurredAt: new Date(liveness.wallMs + config.gatewayStalenessMs),
             lastHeartbeatAt: new Date(liveness.wallMs),
           });
+          inserted.push(gatewayId);
           written.push(gatewayId);
         }
         return {
-          value: { written },
+          value: { written, inserted },
           commit: true,
           /*
            * The liveness-null is applied here, under L0, after COMMIT and the
@@ -202,7 +239,7 @@ export class GatewaySweeps {
 
     if (outcome.status === 'published') {
       return {
-        transitionsWritten: outcome.value.written.length,
+        transitionsWritten: outcome.value.inserted.length,
         livenessCleared: outcome.value.written.length,
         published: true,
         committed: true,
@@ -210,7 +247,7 @@ export class GatewaySweeps {
     }
     const committed = outcome.status === 'not_leader' && outcome.committed;
     return {
-      transitionsWritten: committed ? written.length : 0,
+      transitionsWritten: committed ? inserted.length : 0,
       livenessCleared: 0,
       published: false,
       committed,

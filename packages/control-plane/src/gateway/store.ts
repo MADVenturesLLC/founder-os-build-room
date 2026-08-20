@@ -305,7 +305,15 @@ export class GatewayRegistryStore {
       return { ok: true as const, gatewayId, state: 'enrolled' as const };
     }).catch(async (error: unknown) => {
       if (error instanceof AnotherGatewayEnrolled) {
-        await this.recordRefusalOutOfBand('another_gateway_enrolled', gatewayId, sourceIp);
+        /*
+         * (correction 5, M11) The ruled refusal answers regardless of whether
+         * its out-of-band evidence write succeeded — the client must hear
+         * `another_gateway_enrolled`, not a 500, because a recorder hiccup
+         * outranked the ruling.
+         */
+        await this.recordRefusalOutOfBand('another_gateway_enrolled', gatewayId, sourceIp).catch(
+          () => undefined,
+        );
         return refuse('another_gateway_enrolled');
       }
       throw error;

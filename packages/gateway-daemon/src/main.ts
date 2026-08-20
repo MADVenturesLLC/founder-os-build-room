@@ -24,7 +24,7 @@
  */
 
 import { GatewayDaemon } from './daemon.js';
-import { ControlPlaneClient } from './client.js';
+import { ControlPlaneClient, validateControlPlaneUrl } from './client.js';
 import { Custody, SecurityCommandRunner } from './custody.js';
 import { createDaemonClock } from './clock.js';
 import { gatewayPaths } from './paths.js';
@@ -37,13 +37,27 @@ function describe(error: unknown): string {
 }
 
 async function main(): Promise<number> {
+  /*
+   * (correction 5, finding #3 / M2) The daemon refuses hostile plane
+   * configuration at entry exactly as the CLI does: plain HTTP is accepted
+   * only to loopback; anything else must say https. A daemon that heartbeats
+   * to a plain-http non-loopback host would put signed lane traffic on the
+   * wire for whoever pointed the variable there — refusing to start is the
+   * fail-closed answer.
+   */
+  const urlVerdict = validateControlPlaneUrl(
+    process.env['BUILDROOM_CONTROL_PLANE_URL'] ?? 'http://127.0.0.1:8080',
+  );
+  if (!urlVerdict.ok) {
+    process.stderr.write(`BUILDROOM_CONTROL_PLANE_URL refused: ${urlVerdict.reason}\n`);
+    return 1;
+  }
+
   const daemon = new GatewayDaemon({
     paths: gatewayPaths(),
     clock: createDaemonClock(),
     custody: new Custody(new SecurityCommandRunner()),
-    client: new ControlPlaneClient(
-      process.env['BUILDROOM_CONTROL_PLANE_URL'] ?? 'http://127.0.0.1:8080',
-    ),
+    client: new ControlPlaneClient(urlVerdict.url),
     heartbeatCadenceMs: HEARTBEAT_CADENCE_MS,
   });
 

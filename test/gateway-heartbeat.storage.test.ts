@@ -591,7 +591,7 @@ describe('gateway-heartbeat · availability:no-consecutive-went-online', { skip:
 });
 
 describe('gateway-heartbeat · random-keyid-flood-single-unknown-row', { skip: STORAGE_SKIP }, () => {
-  it('mints one counting row for many invented key identifiers from one source', async () => {
+  it('mints at most one counting row per minute for many invented key identifiers from one source', async () => {
     const node = await makeSessionNode(harness!);
     await promoteNode(node);
     const sourceIp = '198.51.100.77';
@@ -601,6 +601,20 @@ describe('gateway-heartbeat · random-keyid-flood-single-unknown-row', { skip: S
         WHERE source_ip = $1 AND resolved_key_id = 'unknown'`,
       [sourceIp],
     );
+    /*
+     * (correction 7, finding B) The rejection rows are bucketed by
+     * date_trunc('minute', now()) — the ruled per-minute cardinality bound —
+     * but the assertion below used to allow the flood exactly ONE new row for
+     * the whole run, which silently assumed the flood fits inside a single
+     * minute. When the forty sequential writes straddle a minute boundary they
+     * legitimately mint one row per minute touched, and the tester's second
+     * storage run failed 167/168 exactly there. The bound is now derived from
+     * the wall-clock window the flood actually occupied, read from the same
+     * clock that buckets the rows (the database's now()), so the assertion
+     * states the real invariant — at most one new row per minute touched —
+     * instead of an assumption about wall-clock luck.
+     */
+    const windowStart = await harness!.pool.query<{ t: string }>(`SELECT now() AS t`);
 
     // Forty distinct presented key ids, none of which resolves.
     for (let i = 0; i < 40; i += 1) {
@@ -617,6 +631,13 @@ describe('gateway-heartbeat · random-keyid-flood-single-unknown-row', { skip: S
       assert.equal(result.body['error'], 'unknown_key');
     }
 
+    const windowEnd = await harness!.pool.query<{ t: string }>(`SELECT now() AS t`);
+    const minutesTouched = await harness!.pool.query<{ minutes: string }>(
+      `SELECT (EXTRACT(EPOCH FROM date_trunc('minute', $2::timestamptz))
+             - EXTRACT(EPOCH FROM date_trunc('minute', $1::timestamptz))) / 60 + 1 AS minutes`,
+      [windowStart.rows[0]!.t, windowEnd.rows[0]!.t],
+    );
+
     const after = await harness!.pool.query<{ count: string; total: string }>(
       `SELECT count(*) AS count, COALESCE(sum(count), 0) AS total
          FROM gateway_message_rejections
@@ -625,8 +646,9 @@ describe('gateway-heartbeat · random-keyid-flood-single-unknown-row', { skip: S
     );
 
     assert.ok(
-      Number(after.rows[0]?.count ?? '0') <= Number(before.rows[0]?.count ?? '0') + 1,
-      'forty invented identifiers must not mint forty rows',
+      Number(after.rows[0]?.count ?? '0') <=
+        Number(before.rows[0]?.count ?? '0') + Number(minutesTouched.rows[0]?.minutes ?? '1'),
+      `forty invented identifiers must not mint forty rows — at most one per minute touched (${minutesTouched.rows[0]?.minutes})`,
     );
     assert.ok(
       Number(after.rows[0]?.total ?? '0') >= 40,

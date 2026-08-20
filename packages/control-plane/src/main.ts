@@ -79,7 +79,12 @@ export async function main(): Promise<void> {
      * TTL alone is sufficient and no correctness claim rests on it — so its
      * failure is logged and never blocks the shutdown.
      */
-    void gateway
+    /*
+     * Retained, not fire-and-forget: the pool is ended only after this chain
+     * settles, so in-flight gateway teardown never loses its database
+     * mid-flight (correction 5, M14).
+     */
+    const gatewayStopped = gateway
       .stop()
       .then(() => gateway.leadership.releaseGracefully())
       .catch((error: unknown) => {
@@ -90,8 +95,8 @@ export async function main(): Promise<void> {
 
     server.close((closeError) => {
       if (closeError) log('error', 'shutdown.server_close_failed', { message: closeError.message });
-      pool
-        .end()
+      gatewayStopped
+        .then(() => pool.end())
         .then(() => {
           log('info', 'shutdown.complete', { signal });
           process.exit(0);

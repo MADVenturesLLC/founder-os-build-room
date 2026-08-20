@@ -92,18 +92,26 @@ export class PrimaryLane {
     const challenge = await this.client.challenge();
     if (challenge.transport || challenge.status !== 200) return this.transport();
 
-    const envelope = buildSessionStart(
-      this.identity!,
-      {
-        generation: challenge.body?.['generation'] as number,
-        challenge: challenge.body?.['challenge'] as string,
-      },
-      this.clock,
-    );
+    /*
+     * Read-never-coerce (correction 5, finding #13): an envelope member is
+     * used only when it arrived as its declared type. The client validates the
+     * success shape; this is the lane's own refusal to fabricate what it signs
+     * — the same principle as the redeem guard below.
+     */
+    const generation = challenge.body?.['generation'];
+    const challengeText = challenge.body?.['challenge'];
+    if (typeof generation !== 'number' || typeof challengeText !== 'string') {
+      return this.transport();
+    }
+
+    const envelope = buildSessionStart(this.identity!, { generation, challenge: challengeText }, this.clock);
     return this.apply(await this.client.sessionStart(envelope), (response) => {
-      this.epoch = response.body?.['epoch'] as string;
+      const epoch = response.body?.['epoch'];
+      if (typeof epoch !== 'string') return false;
+      this.epoch = epoch;
       this.sequence = 0;
       this.state = 'HEARTBEATING';
+      return true;
     });
   }
 
@@ -112,12 +120,13 @@ export class PrimaryLane {
     return this.apply(await this.client.heartbeat(envelope), () => {
       this.sequence += 1;
       this.state = 'HEARTBEATING';
+      return true;
     });
   }
 
   private apply(
     response: ControlPlaneResponse,
-    onSuccess: (response: ControlPlaneResponse) => void,
+    onSuccess: (response: ControlPlaneResponse) => boolean,
   ): Disposition | 'transport' | null {
     if (response.transport) return this.transport();
 
@@ -130,7 +139,9 @@ export class PrimaryLane {
     switch (verdict) {
       case 'retain_and_continue':
         this.backoffMs = 0;
-        onSuccess(response);
+        // A success the lane cannot legitimately consume is transport, not a
+        // heartbeat on fabricated members (correction 5, finding #13).
+        if (!onSuccess(response)) return this.transport();
         return verdict;
       case 'resync_session':
         // A structured resync outcome, not a protocol-integrity failure: drop
@@ -337,14 +348,14 @@ export class StagingLane {
     const challenge = await this.client.challenge();
     if (challenge.transport || challenge.status !== 200) return this.transportOutcome();
 
-    const envelope = buildSessionStart(
-      this.identity,
-      {
-        generation: challenge.body?.['generation'] as number,
-        challenge: challenge.body?.['challenge'] as string,
-      },
-      this.clock,
-    );
+    // Read-never-coerce (correction 5, finding #13), on the probe path too.
+    const generation = challenge.body?.['generation'];
+    const challengeText = challenge.body?.['challenge'];
+    if (typeof generation !== 'number' || typeof challengeText !== 'string') {
+      return this.transportOutcome();
+    }
+
+    const envelope = buildSessionStart(this.identity, { generation, challenge: challengeText }, this.clock);
     const response = await this.client.sessionStart(envelope);
     if (response.transport) return this.transportOutcome();
 

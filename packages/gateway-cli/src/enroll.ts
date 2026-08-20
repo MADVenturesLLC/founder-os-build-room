@@ -137,7 +137,13 @@ export async function runEnroll(deps: EnrollDeps): Promise<EnrollResult> {
         lane: 'PENDING_REDEEM',
         idempotencyKey,
         redeemStartedAt: new Date(deps.clock.wallNow()).toISOString(),
-        identity: { gatewayId: null, keyId: keypair.keyId, fingerprint: keypair.keyId },
+        /*
+         * The fingerprint is the Founder-confirmed value, and nothing in this
+         * process can know it yet — filling it with the key id fabricated a
+         * confirmation that was never given (correction 5, finding #5). It is
+         * minted only by the confirm verb's response, later.
+         */
+        identity: { gatewayId: null, keyId: keypair.keyId, fingerprint: null },
       },
     }));
 

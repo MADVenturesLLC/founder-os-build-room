@@ -80,15 +80,12 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorReport> {
     controlPlane: { reachable: !challenge.transport, status: controlPlaneStatus },
     lanes: { primary: state.primary.lane, staging: state.staging.lane },
     lastRejection: state.lastRejection,
-    stagingLock: await diagnoseStagingLock(deps.paths, state.staging.lane),
+    stagingLock: await diagnoseStagingLock(deps.paths),
     stagingInventory: { keychainItem: custodyState.staging, persistedState: state.staging.lane },
   };
 }
 
-async function diagnoseStagingLock(
-  paths: GatewayPaths,
-  stagingLane: string,
-): Promise<StagingLockDiagnosis> {
+async function diagnoseStagingLock(paths: GatewayPaths): Promise<StagingLockDiagnosis> {
   if (!(await stagingLockExists(paths.stagingLockPath))) {
     return { present: false, metadata: null, recordedPidLive: null, stopCondition: false, guidance: null };
   }
@@ -118,7 +115,6 @@ async function diagnoseStagingLock(
      */
     stopCondition: !live,
     guidance: live ? `a live process (pid ${metadata.pid}) holds the lock; wait for it` : STOP_CONDITION_GUIDANCE,
-    ...(stagingLane === '' ? {} : {}),
   };
 }
 

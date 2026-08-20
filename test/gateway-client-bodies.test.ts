@@ -179,3 +179,20 @@ describe('gateway-client · heartbeat success bodies', () => {
     assert.equal(response.error, 'session_required');
   });
 });
+
+describe('gateway-client · an empty success body is not a success (correction 5, #7)', () => {
+  const emptyBody: FetchLike = async () =>
+    new Response('', { status: 200, headers: { 'content-type': 'application/json' } });
+
+  it('classifies a 200 challenge with an empty body as transport', async () => {
+    const response = await client(emptyBody).challenge();
+    assert.equal(response.transport, true, 'an empty body does not satisfy the declared success shape');
+    assert.match(String(response.detail), /invalid success body/);
+  });
+
+  it('classifies a 200 session-start with an empty body as transport', async () => {
+    const response = await client(emptyBody).sessionStart({});
+    assert.equal(response.transport, true, 'an empty body does not satisfy the declared success shape');
+    assert.match(String(response.detail), /invalid success body/);
+  });
+});

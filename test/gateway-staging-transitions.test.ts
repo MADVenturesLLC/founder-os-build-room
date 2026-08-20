@@ -225,7 +225,12 @@ describe('gateway-cli · a redeem retry is executable where the code is', () => 
         advance(Math.max(ms, 3_600_000)); // each wait jumps an hour: the horizon arrives fast
       });
 
-      assert.equal(result.ok, false);
+      assert.equal(result.ok, false, 'the horizon must end the enrolment');
+      // (correction 5, M6) `assert.equal` proves the failed arm but does not
+      // narrow the union; this guard does, and cannot pass silently — it fails
+      // outright on the arm the assertion above already excluded.
+      if (result.ok) assert.fail('unreachable: the ok arm was excluded above');
+
       assert.equal(result.code, 'redeem_horizon_elapsed');
       assert.ok(
         !result.message.includes('daemon will retry'),
@@ -256,10 +261,35 @@ describe('gateway-cli · a redeem retry is executable where the code is', () => 
         advance(ms);
       });
 
-      assert.equal(result.ok, false);
+      assert.equal(result.ok, false, 'a structured refusal is terminal');
+      // (correction 5, M6) Same narrowing guard as the horizon case above.
+      if (result.ok) assert.fail('unreachable: the ok arm was excluded above');
+
       assert.equal(result.code, 'redeem_refused');
       assert.equal(await f.custody.read('staging'), null, 'a terminal refusal deletes staging custody');
       assert.equal((await f.state.read()).staging.lane, 'INACTIVE');
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  it('redeem:pending-redeem-metadata-never-fabricates-a-fingerprint', async () => {
+    const f = cliFixture();
+    const { clock, advance } = scriptClock();
+    const fetch = scriptedFetch(down); // the network never comes up
+    try {
+      const result = await enrollWith(f, fetch, clock, async (ms) => {
+        advance(Math.max(ms, 3_600_000)); // each wait jumps an hour: the horizon arrives fast
+      });
+      assert.equal(result.ok, false);
+
+      const state = await f.state.read();
+      assert.equal(
+        state.staging.identity.fingerprint,
+        null,
+        'the fingerprint is derived by the server at redemption; no local stand-in exists',
+      );
+      assert.ok(state.staging.identity.keyId !== null, 'the local key id is still recorded');
     } finally {
       f.cleanup();
     }

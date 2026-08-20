@@ -19,8 +19,6 @@ import { ClockGate, ScriptedClock } from '../packages/control-plane/src/gateway/
 import { GatewayRegistryStore } from '../packages/control-plane/src/gateway/store.js';
 import { UNRESOLVED_KEY_ID } from '../packages/control-plane/src/gateway/records.js';
 import {
-  bearer,
-  body,
   closeAllSurfaces,
   startSurface,
   stubPool,
@@ -195,27 +193,39 @@ describe('gateway-rate-limits · 429-before-verify', () => {
     /*
      * A 429 is the cheap refusal. Making it write a row would hand a flood a
      * write amplifier, which is the opposite of what a limiter is for.
+     *
+     * (correction 5, inline finding #17) The previous shape exercised the
+     * limiter in isolation and never issued a query — the store it "watched"
+     * was constructed and discarded, so the empty log proved nothing. The
+     * flood here crosses the real route table and the real limiter to a real
+     * 429, and the recording pool proves no rejection row was written on the
+     * way.
      */
     const writes: string[] = [];
-    const pool = stubPool();
+    const base = stubPool();
     const recording = {
-      ...pool,
+      ...base,
       query: (sql: string, params?: unknown[]) => {
         if (/gateway_message_rejections/.test(sql)) writes.push(sql);
-        return (pool as unknown as { query: (s: string, p?: unknown[]) => Promise<unknown> }).query(
+        return (base as unknown as { query: (s: string, p?: unknown[]) => Promise<unknown> }).query(
           sql,
           params,
         );
       },
-    } as unknown as typeof pool;
+    } as unknown as typeof base;
 
-    const store = new GatewayRegistryStore(recording, surfaceConfig());
-    // The limiter itself never touches the store; proven by the store seeing no
-    // write when only the limiter has run.
-    const { limiter: rl } = limiter();
-    for (let i = 0; i < 12; i += 1) rl.take('enroll:203.0.113.1', 10);
-    assert.deepEqual(writes, []);
-    void store;
+    const surface = await startSurface({}, recording);
+    try {
+      let refused = 0;
+      for (let i = 0; i < RATE_LIMITS.sessionChallenge + 3; i += 1) {
+        const response = await fetch(`${surface.url}/gateway/session-challenge`);
+        if (response.status === 429) refused += 1;
+      }
+      assert.ok(refused >= 3, 'the flood must actually reach the 429 for this to mean anything');
+      assert.deepEqual(writes, [], 'a refused flood writes no rejection row');
+    } finally {
+      await surface.close();
+    }
   });
 });
 
@@ -244,9 +254,12 @@ describe('gateway-rate-limits · random-keyid-flood-single-unknown-row', () => {
     /*
      * The durable identity is the RESOLVED registry key id, or the literal
      * `unknown`. This asserts the choice directly, at the boundary where it is
-     * made: forty distinct invented identifiers, forty upserts, one identity.
-     * The database-side consequence — one counting row rather than forty — is
-     * asserted against a real Postgres in the heartbeat storage suite.
+     * made (correction 5, M7): the store receives the RESOLUTION, not the
+     * presentation, so an unresolvable presentation — any invented identifier
+     * — arrives here as `null`. Forty null resolutions, forty upserts, one
+     * identity. The database-side consequence — one counting row rather than
+     * forty — is asserted against a real Postgres in the heartbeat storage
+     * suite.
      */
     const identities: string[] = [];
     const pool = stubPool();
@@ -309,12 +322,15 @@ describe('gateway-rate-limits · random-keyid-flood-single-unknown-row', () => {
     assert.notEqual(key.keyId, UNRESOLVED_KEY_ID);
   });
 
-  it('bounds per-minute cardinality by (registry keys + 1) x sources x error codes', () => {
-    // Stated as an assertion about the identity space rather than a simulation:
-    // the only values that can appear are resolved registry key ids and the one
-    // literal, so the product is the bound.
+  it('counts every unresolved presentation under the one literal, so cardinality is registry keys + 1 per source and code', () => {
+    /*
+     * (correction 5, M8) The name now says what this asserts. The bound is a
+     * fact about the identity space, not a simulation: the only values the
+     * rejection table's aggregation key can hold are resolved registry key
+     * ids and this one literal, so per source IP and error code the
+     * per-minute cardinality is (registry keys + 1). The literal is pinned so
+     * the aggregation key cannot silently change shape.
+     */
     assert.equal(UNRESOLVED_KEY_ID, 'unknown');
-    void body;
-    void bearer;
   });
 });

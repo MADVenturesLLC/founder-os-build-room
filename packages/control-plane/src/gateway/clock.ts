@@ -83,10 +83,11 @@ export class ClockGate {
    * Availability derivation reads monotonic stamps recorded alongside accepted
    * heartbeats, and a wall-clock problem does not make those stamps wrong. The
    * anomalies that DO implicate the monotonic source — a regression, an
-   * unavailable source, a non-finite reading — make derivation fail closed to
-   * offline, which pauses dispatch (§4, §10). A backward wall jump or an
-   * out-of-range wall reading does not: it stops signed traffic, which is
-   * checked separately, and leaves elapsed time meaningful.
+   * unavailable source, a non-finite reading, or a divergence between the two
+   * sources — make derivation fail closed to offline, which pauses dispatch
+   * (§4, §10). A backward wall jump or an out-of-range wall reading does not:
+   * it stops signed traffic, which is checked separately, and leaves elapsed
+   * time meaningful.
    */
   get monotonicTrustworthy(): boolean {
     const status = this.monitor.status;

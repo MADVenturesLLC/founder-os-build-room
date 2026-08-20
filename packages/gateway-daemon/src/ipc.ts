@@ -25,6 +25,13 @@ export interface IpcHandlers {
 
 export type IpcRequest = { readonly op: 'status' } | { readonly op: 'tail'; readonly limit?: number };
 
+/**
+ * §16 — the socket is untrusted input. A peer that writes past this bound
+ * without a newline is refused before its bytes are ever parsed; the handler's
+ * memory cannot grow without limit because a peer simply wrote at it.
+ */
+const MAX_REQUEST_BYTES = 64 * 1024;
+
 export class IpcServer {
   private server: Server | null = null;
 
@@ -62,6 +69,10 @@ export class IpcServer {
     let buffered = '';
     socket.on('data', (chunk: Buffer) => {
       buffered += chunk.toString('utf8');
+      if (buffered.length > MAX_REQUEST_BYTES) {
+        socket.destroy();
+        return;
+      }
       let newline = buffered.indexOf('\n');
       while (newline !== -1) {
         const line = buffered.slice(0, newline);
@@ -74,18 +85,46 @@ export class IpcServer {
   }
 
   private answer(line: string): Record<string, unknown> {
-    let request: IpcRequest;
+    let request: unknown;
     try {
-      request = JSON.parse(line) as IpcRequest;
+      request = JSON.parse(line);
     } catch {
       return { error: 'invalid_request' };
     }
 
-    if (request.op === 'status') return { ok: true, ...this.handlers.status() };
-    if (request.op === 'tail') {
-      return { ok: true, entries: this.handlers.ring().recent(request.limit ?? 50) };
+    /*
+     * (correction 5, finding #12) Anything that is not a request object — a
+     * JSON null, an array, a bare string — is `invalid_request`, never a
+     * dereference and never an `unknown_op` verdict handed to a shape the
+     * protocol never declared.
+     */
+    if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+      return { error: 'invalid_request' };
+    }
+    const record = request as Record<string, unknown>;
+    if (record['op'] === 'status') {
+      return this.guarded(() => ({ ok: true, ...this.handlers.status() }));
+    }
+    if (record['op'] === 'tail') {
+      const limit = record['limit'];
+      if (limit !== undefined && !(typeof limit === 'number' && Number.isInteger(limit) && limit >= 1)) {
+        return { error: 'invalid_request' };
+      }
+      return this.guarded(() => ({
+        ok: true,
+        entries: this.handlers.ring().recent((limit as number | undefined) ?? 50),
+      }));
     }
     return { error: 'unknown_op' };
+  }
+
+  /** (correction 5, finding #11) A handler that throws is answered, not propagated. */
+  private guarded(answer: () => Record<string, unknown>): Record<string, unknown> {
+    try {
+      return answer();
+    } catch {
+      return { error: 'internal_error' };
+    }
   }
 }
 

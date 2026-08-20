@@ -26,7 +26,11 @@ export class RingBuffer {
   }
 
   recent(limit = 50): readonly RingEntry[] {
-    return this.entries.slice(-limit);
+    // A limit that is not a positive integer is a caller's bug, not a slice
+    // instruction — `slice(-0)` and `slice(-NaN)` would both return the whole
+    // buffer, so the default stands in instead.
+    const sane = Number.isInteger(limit) && limit >= 1 ? Math.min(limit, this.capacity) : 50;
+    return this.entries.slice(-sane);
   }
 
   get size(): number {

@@ -694,14 +694,28 @@ export class GatewayLeadership {
   private maybeRotate(): void {
     if (this.rotationInFlight !== null) return;
     if (this.clock.monotonicNow() - this.lastRotationAt < this.config.challengeRotationMs) return;
-    this.lastRotationAt = this.clock.monotonicNow();
+    /*
+     * (correction 5, finding #1) The interval is consumed only by a rotation
+     * that PUBLISHED. The derived challenge-freshness deadline
+     * (`challengeRotationMs + 2 × leaderHeartbeatMs`) budgets failed rotations
+     * to be retried within a couple of supervisor heartbeats — stamping
+     * `lastRotationAt` at dispatch made a failed COMMIT hold the challenge
+     * stale for a full interval, past the deadline, where readers fail closed
+     * on `challenge_overdue`. A failure leaves the old stamp in place, so the
+     * next tick dispatches again; re-acquisition resets the stamp regardless.
+     */
+    const dispatchedAt = this.clock.monotonicNow();
     const run = this.rotateChallenge().finally(() => {
       this.rotationInFlight = null;
     });
     this.rotationInFlight = run;
-    void run.catch((error: unknown) => {
-      this.logFn('error', 'gateway.leadership.rotation_failed', { message: describe(error) });
-    });
+    void run
+      .then((outcome: FencedResult<RotationOutcome>) => {
+        if (outcome.status === 'published') this.lastRotationAt = dispatchedAt;
+      })
+      .catch((error: unknown) => {
+        this.logFn('error', 'gateway.leadership.rotation_failed', { message: describe(error) });
+      });
   }
 
   /**

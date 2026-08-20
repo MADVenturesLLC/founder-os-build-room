@@ -74,7 +74,13 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
   service = new GatewaySessionService({ pool, config, clock, session, leadership, store });
 
   const roomAppendFence = new GatewayRoomAppendFence({ config, clock, session, leadership });
-  const sweeps = new GatewaySweeps({ pool, config, clock, session, leadership, store, service });
+  /*
+   * `log` is passed through (correction 5, finding #2): the containment of a
+   * failed deferred reconciliation must be VISIBLE, not merely non-fatal —
+   * an operator reading the log is the mechanism that turns "contained" into
+   * "investigated".
+   */
+  const sweeps = new GatewaySweeps({ pool, config, clock, session, leadership, store, service, log: deps.log });
 
   return {
     leadership,

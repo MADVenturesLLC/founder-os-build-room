@@ -95,6 +95,14 @@ export class SecurityCommandRunner implements KeychainRunner {
         resolve({ code: code ?? -1, stdout, stderr });
       });
 
+      /*
+       * (correction 5, finding #8) The no-`-U` create is the live case: when
+       * the item already exists the tool exits fast without draining stdin,
+       * and the pending write surfaces as EPIPE. The exit code and the
+       * read-back verification decide the outcome — the stream's own lifetime
+       * never outranks that verdict.
+       */
+      child.stdin.on('error', () => undefined);
       if (stdin !== undefined) child.stdin.write(stdin);
       child.stdin.end();
     });

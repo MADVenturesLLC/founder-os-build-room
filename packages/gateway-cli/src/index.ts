@@ -27,6 +27,8 @@ export {
   DAEMON_ENTRY,
   offerDaemonStart,
   spawnDaemonDetached,
+  type DetachedDaemonChild,
   type OfferDeps,
+  type SpawnVerdict,
 } from './offer.js';
 export { main } from './bin.js';

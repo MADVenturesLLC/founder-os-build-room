@@ -107,9 +107,11 @@ export interface Surface {
 
 const openServers: Server[] = [];
 
-export async function startSurface(overrides: Record<string, string> = {}): Promise<Surface> {
+export async function startSurface(
+  overrides: Record<string, string> = {},
+  pool: Pool = stubPool(),
+): Promise<Surface> {
   const config = surfaceConfig(overrides);
-  const pool = stubPool();
 
   const clock = new ScriptedClock(FIXED_WALL_MS, 1_000_000);
   const gateway = createGatewaySurface({ pool, config, clock, log: () => undefined });

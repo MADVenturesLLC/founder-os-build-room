@@ -14,7 +14,7 @@
 
 import type { Clock } from '../../gateway-protocol/src/index.js';
 import type { Custody } from './custody.js';
-import { acquireStagingLock, type StagingOperation } from './staging-lock.js';
+import { StagingLockBusy, acquireStagingLock, type StagingOperation } from './staging-lock.js';
 import type { ControlPlaneClient } from './client.js';
 import { PrimaryLane, StagingLane, type StagingOutcome } from './lanes.js';
 import type { GatewayPaths } from './paths.js';
@@ -61,14 +61,14 @@ export class GatewayDaemon {
 
     const primarySecret = await this.custodyReadQuietly('primary');
     if (primarySecret !== null && persisted.primary.identity.gatewayId !== null) {
-      this.primary.adopt(identityFromSecret(persisted.primary.identity.gatewayId, primarySecret));
+      this.adoptRecoverably('primary', persisted.primary.identity.gatewayId, primarySecret);
     }
 
     if (persisted.staging.lane !== 'INACTIVE') {
       this.staging.resume(persisted.staging.lane, persisted.staging.idempotencyKey);
       const stagingSecret = await this.custodyReadQuietly('staging');
       if (stagingSecret !== null && persisted.staging.identity.gatewayId !== null) {
-        this.staging.adopt(identityFromSecret(persisted.staging.identity.gatewayId, stagingSecret));
+        this.adoptRecoverably('staging', persisted.staging.identity.gatewayId, stagingSecret);
       }
     }
 
@@ -120,26 +120,56 @@ export class GatewayDaemon {
     const stagingOutcome = await this.staging.probe();
     if (stagingOutcome.disposition !== null) {
       this.log('info', 'staging.step', { verdict: stagingOutcome.disposition });
-      await this.persistStagingOutcome(stagingOutcome);
+      await this.applyStagingOutcome(stagingOutcome);
     }
+  }
 
-    if (stagingOutcome.deleteStaging) {
-      /*
-       * Two-phase, in the ruled order (correction B5): the REFUSED verdict is
-       * already on disk (persistStagingOutcome ran above), so an interruption
-       * between here and the completion write leaves a boundary a boot can
-       * finish, instead of an `AWAITING` state file over a deleted key.
-       */
-      await this.underStagingLock('staging-delete', async () => {
-        await this.deps.custody.delete('staging');
-        await this.clearStagingState();
+  /**
+   * Apply a disposition-bearing probe outcome under the §14 staging lock
+   * (correction 5, finding #15).
+   *
+   * §14 rules the lock over "session-probe state transitions … and every
+   * staging-related `state.json` write": the durable marker and any custody
+   * mutation the verdict orders are ONE critical section, in the ruled order —
+   * verdict first, custody second, completion third (correction B5's recoverable
+   * boundaries, unchanged). The network exchange stays outside the lock; only
+   * the writes are inside. A busy lock means another process owns staging right
+   * now: the disposition is withheld, the in-memory lane is re-derived from the
+   * persisted state, and the next tick retries — nothing is lost, nothing is
+   * fabricated.
+   */
+  private async applyStagingOutcome(outcome: StagingOutcome): Promise<void> {
+    const operation: StagingOperation = outcome.deleteStaging
+      ? 'staging-delete'
+      : outcome.promote
+        ? 'promotion'
+        : 'staging-probe';
+    try {
+      await this.underStagingLock(operation, async () => {
+        await this.persistStagingOutcome(outcome);
+        if (outcome.deleteStaging) {
+          await this.deps.custody.delete('staging');
+          await this.clearStagingState();
+        } else if (outcome.promote) {
+          await this.promoteLocked();
+        }
       });
-      this.staging.completePromotion();
-      this.log('warn', 'staging.terminal_refusal', { lane: stagingOutcome.state });
+    } catch (error) {
+      if (!(error instanceof StagingLockBusy)) throw error;
+      this.log('warn', 'staging.lock_busy_outcome_withheld', { operation });
+      const persisted = await this.state.read();
+      this.staging.resume(persisted.staging.lane, persisted.staging.idempotencyKey);
       return;
     }
-
-    if (stagingOutcome.promote) await this.promote();
+    if (outcome.deleteStaging) {
+      this.staging.completePromotion();
+      this.log('warn', 'staging.terminal_refusal', { lane: outcome.state });
+      return;
+    }
+    if (outcome.promote) {
+      this.staging.completePromotion();
+      this.log('info', 'staging.promoted', {});
+    }
   }
 
   /**
@@ -151,36 +181,41 @@ export class GatewayDaemon {
    */
   private async promote(): Promise<void> {
     await this.underStagingLock('promotion', async () => {
-      const promotedSecret = await this.deps.custody.read('staging');
-      await this.deps.custody.promoteStagingToPrimary();
-
-      const persisted = await this.state.read();
-      const gatewayId = persisted.staging.identity.gatewayId;
-      if (promotedSecret !== null && gatewayId !== null) {
-        this.primary.adopt(identityFromSecret(gatewayId, promotedSecret));
-      }
-
-      await this.state.write({
-        ...persisted,
-        primary: {
-          lane: 'IDLE',
-          identity: persisted.staging.identity,
-          lastServerState: 'enrolled',
-          lastObservedAt: new Date(this.deps.clock.wallNow()).toISOString(),
-        },
-        staging: {
-          lane: 'INACTIVE',
-          identity: { gatewayId: null, keyId: null, fingerprint: null },
-          idempotencyKey: null,
-          redeemStartedAt: null,
-          lastServerState: null,
-          lastObservedAt: null,
-        },
-      });
+      await this.promoteLocked();
     });
 
     this.staging.completePromotion();
     this.log('info', 'staging.promoted', {});
+  }
+
+  /** The custody promotion and durable publication; the caller holds the lock. */
+  private async promoteLocked(): Promise<void> {
+    const promotedSecret = await this.deps.custody.read('staging');
+    await this.deps.custody.promoteStagingToPrimary();
+
+    const persisted = await this.state.read();
+    const gatewayId = persisted.staging.identity.gatewayId;
+    if (promotedSecret !== null && gatewayId !== null) {
+      this.primary.adopt(identityFromSecret(gatewayId, promotedSecret));
+    }
+
+    await this.state.write({
+      ...persisted,
+      primary: {
+        lane: 'IDLE',
+        identity: persisted.staging.identity,
+        lastServerState: 'enrolled',
+        lastObservedAt: new Date(this.deps.clock.wallNow()).toISOString(),
+      },
+      staging: {
+        lane: 'INACTIVE',
+        identity: { gatewayId: null, keyId: null, fingerprint: null },
+        idempotencyKey: null,
+        redeemStartedAt: null,
+        lastServerState: null,
+        lastObservedAt: null,
+      },
+    });
   }
 
   async stop(): Promise<void> {
@@ -189,6 +224,12 @@ export class GatewayDaemon {
       clearInterval(this.cadence);
       this.cadence = null;
     }
+    /*
+     * (correction 5, finding #10) stop() settles only after a tick it overlapped
+     * has settled — otherwise the caller tears down the very paths a tick that
+     * is still running is about to write to.
+     */
+    await this.tickInFlight?.catch(() => undefined);
     await this.ipc.stop();
     this.log('info', 'daemon.stopped', {});
   }
@@ -311,24 +352,38 @@ export class GatewayDaemon {
     }
     if (members.keyId !== stagingKeyId) return; // No evidence of an interrupted promotion.
 
-    this.primary.adopt(identityFromSecret(gatewayId, primarySecret));
-    await this.state.write({
-      ...persisted,
-      primary: {
-        lane: 'IDLE',
-        identity: persisted.staging.identity,
-        lastServerState: 'enrolled',
-        lastObservedAt: new Date(this.deps.clock.wallNow()).toISOString(),
-      },
-      staging: {
-        lane: 'INACTIVE',
-        identity: { gatewayId: null, keyId: null, fingerprint: null },
-        idempotencyKey: null,
-        redeemStartedAt: null,
-        lastServerState: null,
-        lastObservedAt: null,
-      },
-    });
+    /*
+     * (correction 5, finding #15) This is a staging-related `state.json` write,
+     * so it happens under the §14 lock like every other one. A busy lock defers
+     * the completion to the next boot rather than racing the process that owns
+     * staging right now.
+     */
+    try {
+      await this.underStagingLock('promotion-recovery', async () => {
+        this.primary.adopt(identityFromSecret(gatewayId, primarySecret));
+        await this.state.write({
+          ...persisted,
+          primary: {
+            lane: 'IDLE',
+            identity: persisted.staging.identity,
+            lastServerState: 'enrolled',
+            lastObservedAt: new Date(this.deps.clock.wallNow()).toISOString(),
+          },
+          staging: {
+            lane: 'INACTIVE',
+            identity: { gatewayId: null, keyId: null, fingerprint: null },
+            idempotencyKey: null,
+            redeemStartedAt: null,
+            lastServerState: null,
+            lastObservedAt: null,
+          },
+        });
+      });
+    } catch (error) {
+      if (!(error instanceof StagingLockBusy)) throw error;
+      this.log('warn', 'staging.lock_busy_recovery_deferred', {});
+      return;
+    }
     this.staging.completePromotion();
     this.log('info', 'staging.promotion_completed_at_boot', {});
   }
@@ -339,6 +394,23 @@ export class GatewayDaemon {
     } catch (error) {
       this.log('error', 'custody.unavailable', { account, message: describe(error) });
       return null;
+    }
+  }
+
+  /**
+   * (correction 5, finding #9) An unparsable custody secret is a custody
+   * problem `doctor` reports — not a reason the daemon cannot run. The lane
+   * stays without an identity, IPC serves, ticks continue, and every enrolment
+   * and promotion boundary is untouched. Same recoverable-unparsable class as
+   * the read in `completePromotionAfterCustodyWrite`.
+   */
+  private adoptRecoverably(lane: 'primary' | 'staging', gatewayId: string, secret: string): void {
+    try {
+      const identity = identityFromSecret(gatewayId, secret);
+      if (lane === 'primary') this.primary.adopt(identity);
+      else this.staging.adopt(identity);
+    } catch (error) {
+      this.log('error', 'custody.secret_unparsable', { lane, message: describe(error) });
     }
   }
 

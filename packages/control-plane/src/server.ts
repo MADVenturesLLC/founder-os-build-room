@@ -82,9 +82,10 @@ export function createServer(deps: ServerDeps): Express {
   }
 
   /*
-   * NO global body parser. Each route mounts its own as its first middleware,
-   * so a per-route limit describes a check that actually happens on that route
-   * rather than one a broader parser already made irrelevant (contract §11).
+   * NO global body parser. Each route mounts its own — after the token guard,
+   * so an unauthenticated request's body is never even parsed — so a per-route
+   * limit describes a check that actually happens on that route rather than
+   * one a broader parser already made irrelevant (contract §11).
    */
   const roomJson = express.json({ limit: ROOM_BODY_LIMIT });
 
@@ -159,8 +160,8 @@ export function createServer(deps: ServerDeps): Express {
 
   app.post(
     '/rooms',
-    roomJson,
     requireToken,
+    roomJson,
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.body?.roomId, 'roomId');
       const { created } = await store.createRoom(roomId);
@@ -191,8 +192,8 @@ export function createServer(deps: ServerDeps): Express {
    */
   app.post(
     '/rooms/:roomId/events',
-    roomJson,
     requireToken,
+    roomJson,
     deps.gateway.leadership.requireLeader(),
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.params.roomId, 'roomId');

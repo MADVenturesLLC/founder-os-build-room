@@ -1,11 +1,12 @@
 /**
  * The gateway HTTP surface (contract §11, §12).
  *
- * Four guard groups, mounted so that each route's parser is that route's FIRST
- * middleware and the only parser its requests encounter. There is no global
- * `express.json`, which is what makes "16 KB on gateway routes" a fact rather
- * than an intention — with a global parser mounted first, a per-route limit
- * describes a check that already happened.
+ * Four guard groups, mounted so that each route's parser is the only parser its
+ * requests encounter — on the token-guarded Founder routes it sits AFTER the
+ * guard, so an unauthenticated request's body is never even parsed (correction
+ * 5, M12). There is no global `express.json`, which is what makes "16 KB on
+ * gateway routes" a fact rather than an intention — with a global parser
+ * mounted first, a per-route limit describes a check that already happened.
  *
  * Guard order on the signed routes is fixed and load-bearing:
  *   body limit -> rate limit -> leader pre-filter -> clock -> parse -> resolve
@@ -176,8 +177,8 @@ export function founderRouter(deps: GatewayRoutesDeps): Router {
 
   router.post(
     '/control-plane/pairing-codes',
-    json,
     requireToken,
+    json,
     asyncRoute(async (_req, res) => {
       const minted = await store.mintPairingCode();
       /*
@@ -210,8 +211,8 @@ export function founderRouter(deps: GatewayRoutesDeps): Router {
 
   router.post(
     '/control-plane/enrollments/:gatewayId/confirm',
-    json,
     requireToken,
+    json,
     asyncRoute(async (req, res) => {
       const gatewayId = req.params['gatewayId'];
       if (typeof gatewayId !== 'string' || !isCanonicalUuid(gatewayId.toLowerCase())) {
@@ -237,8 +238,8 @@ export function founderRouter(deps: GatewayRoutesDeps): Router {
 
   router.post(
     '/control-plane/enrollments/:gatewayId/deny',
-    json,
     requireToken,
+    json,
     asyncRoute(async (req, res) => {
       await founderTransition(req, res, (gatewayId) => store.denyEnrollment(gatewayId, sourceIpOf(req)));
     }),
@@ -246,8 +247,8 @@ export function founderRouter(deps: GatewayRoutesDeps): Router {
 
   router.post(
     '/control-plane/gateways/:gatewayId/revoke',
-    json,
     requireToken,
+    json,
     asyncRoute(async (req, res) => {
       await founderTransition(req, res, (gatewayId) => store.revokeGateway(gatewayId, sourceIpOf(req)));
     }),

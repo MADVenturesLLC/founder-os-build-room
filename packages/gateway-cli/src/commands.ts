@@ -90,9 +90,19 @@ export async function runTail(deps: TailDeps): Promise<TailResult> {
     return { exitCode: 1, rendered: `tail: ${response.reason}`, entries: [] };
   }
 
-  const entries = (response.body['entries'] as Record<string, unknown>[] | undefined) ?? [];
+  /*
+   * The daemon owns the entries' shape, but this side does not blindly cast
+   * it: a non-array (or a non-object member) renders as nothing rather than
+   * throwing mid-render (correction 5, M3).
+   */
+  const rawEntries: unknown = response.body['entries'];
+  const entries = Array.isArray(rawEntries)
+    ? rawEntries.filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null)
+    : [];
+  // `[ts] level event` — bracketed so the timestamp and the event name, two
+  // adjacent string columns, stay visually distinct.
   const rendered = entries
-    .map((entry) => `${String(entry['at'])} ${String(entry['level'])} ${String(entry['at_'])} ${JSON.stringify(entry['fields'])}`)
+    .map((entry) => `[${String(entry['at'])}] ${String(entry['level'])} ${String(entry['at_'])} ${JSON.stringify(entry['fields'])}`)
     .join('\n');
   return { exitCode: 0, rendered: rendered === '' ? 'tail: no entries yet' : rendered, entries };
 }

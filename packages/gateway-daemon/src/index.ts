@@ -64,7 +64,12 @@ export {
   type LaneTable,
 } from './disposition.js';
 
-export { ControlPlaneClient, type ControlPlaneResponse, type FetchLike } from './client.js';
+export {
+  ControlPlaneClient,
+  validateControlPlaneUrl,
+  type ControlPlaneResponse,
+  type FetchLike,
+} from './client.js';
 
 export {
   buildHeartbeat,

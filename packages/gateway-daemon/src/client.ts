@@ -192,8 +192,15 @@ export class ControlPlaneClient {
      * the closed vocabulary — the same category as an unparseable payload, for
      * the same reason: the client cannot turn it into a trustworthy fact.
      */
-    if (success !== undefined && response.status === success.status && parsed !== null) {
-      if (!success.validate(parsed)) {
+    if (success !== undefined && response.status === success.status) {
+      /*
+       * An EMPTY body is not a success either (correction 5, finding #7): a
+       * null `parsed` used to skip the shape check entirely, so a 200 with no
+       * payload flowed downstream as a success whose members were all
+       * undefined. The declared shape is the bar, with no exemption for
+       * emptiness.
+       */
+      if (parsed === null || !success.validate(parsed)) {
         return {
           status: response.status,
           error: null,
@@ -207,4 +214,35 @@ export class ControlPlaneClient {
     const error = typeof parsed?.['error'] === 'string' ? (parsed['error'] as string) : null;
     return { status: response.status, error, body: parsed, transport: false };
   }
+}
+
+/**
+ * §16 (correction 5, findings #3 and M2) — the control-plane URL is an
+ * authenticator, so the entry points that read it from the environment
+ * validate it BEFORE any request is signed toward it. HTTPS anywhere; plain
+ * HTTP only on loopback, which is the local-development carve-out. This lives
+ * with the client (the one module both entry points already share) and is
+ * applied at the entries, not in the client's constructor — the client is also
+ * a test seam whose injected fetch deliberately points at unreachable hosts.
+ */
+export function validateControlPlaneUrl(
+  raw: string,
+): { readonly ok: true; readonly url: string } | { readonly ok: false; readonly reason: string } {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { ok: false, reason: 'not a valid URL' };
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return { ok: false, reason: `unsupported protocol "${parsed.protocol}"` };
+  }
+  if (parsed.protocol === 'http:') {
+    const hostname = parsed.hostname.toLowerCase();
+    const loopback = hostname === '127.0.0.1' || hostname === '[::1]' || hostname === 'localhost';
+    if (!loopback) {
+      return { ok: false, reason: 'plain "http://" is allowed only on loopback; use "https://"' };
+    }
+  }
+  return { ok: true, url: parsed.toString() };
 }

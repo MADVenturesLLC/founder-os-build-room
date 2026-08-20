@@ -163,30 +163,29 @@ describe('gateway-leadership · contention, expiry, and generation', { skip: STO
   });
 
   it('renewal-failure-demotion — a query error is treated exactly as a lost lease', async () => {
-    const node = makeNode(harness!);
-    await promote(node);
-
-    // A pool that has been ended throws on the next query. Any error at all
-    // must demote: the one thing a leader may not do is assume it still leads.
-    const failing = makeNode(harness!);
-    await failing.leadership.tick();
-
+    /*
+     * (correction 5, inline finding #16) The previous shape never led against
+     * the failing pool: it demoted the doomed node during setup and then
+     * ticked a process that already believed nothing, which proves nothing
+     * about a failed renewal. This node is REALLY the leader first, on its
+     * own pool; the pool is then ended under it and the next tick's renewal
+     * must throw and demote — the one thing a leader may not do is assume it
+     * still leads.
+     */
     const { createPool } = await import('../packages/control-plane/src/db.js');
-    const deadPool = createPool(harness!.config);
-    await deadPool.end();
+    const ownPool = createPool(harness!.config);
+    const node = makeNode({ ...harness!, pool: ownPool });
 
-    const doomed = makeNode({ ...harness!, pool: deadPool });
-    // Force it into a believed-leader state, then renew against the dead pool.
-    doomed.leadership.demote('setup');
-    await doomed.leadership.phase2Run;
-    assert.equal(doomed.leadership.isLeader, false);
+    await promote(node);
+    assert.equal(node.leadership.isLeader, true, 'the node must genuinely lead for this to mean anything');
 
-    await assert.doesNotReject(() => doomed.leadership.tick());
-    assert.equal(doomed.leadership.isLeader, false, 'a failed renewal never leaves a process leading');
+    // A pool that has been ended throws on the next query.
+    await ownPool.end();
+
+    await assert.doesNotReject(() => node.leadership.tick());
+    assert.equal(node.leadership.isLeader, false, 'a failed renewal never leaves a process leading');
 
     await quiesce(node);
-    await quiesce(failing);
-    await quiesce(doomed);
   });
 
   it('challenge-via-follower-replica — a follower serves the leader row values verbatim', async () => {
@@ -725,9 +724,19 @@ describe(
         () => !once,
         'the acquisition SQL to return and the successor to take the lease',
       );
+      /*
+       * (correction 5, disclosed deviation) The predicate waited for "some
+       * owner", which the node's OWN first acquisition satisfies before the
+       * hook's successor UPDATE lands — a scheduling race that fired once in
+       * this correction's verification and reproduces on the unmodified PR
+       * head (1 in 5 full-suite runs). Waiting for the successor specifically
+       * is what the case's premise already claims, and it makes the assertion
+       * deterministic: once the successor owns the row, the stale release's
+       * owner-and-generation predicate can never match.
+       */
       await waitFor(
-        async () => (await readLeaseRaw(harness!)).ownerId !== null,
-        'the stale release attempt to complete without effect',
+        async () => (await readLeaseRaw(harness!)).ownerId === successorOwner,
+        'the successor to own the lease, making the stale release provably effect-free',
       );
 
       const lease = await readLeaseRaw(harness!);
@@ -1267,3 +1276,50 @@ describe('gateway-leadership · a failed adoption or reconciliation is retried, 
     assert.equal(node.leadership.canServe(), true);
   });
 });
+
+describe(
+  'gateway-leadership · a rotation that failed to publish is retried, not scheduled away',
+  { skip: STORAGE_SKIP },
+  () => {
+    beforeEach(resetLease);
+
+    it('rotation:a-commit-failure-does-not-consume-the-rotation-interval', async () => {
+      let dispatches = 0;
+      const node = makeNode(harness!, {
+        configOverrides: {
+          challengeRotationMs: 30_000,
+          leaderSafetyDeadlineMs: 300_000,
+        },
+        hooks: {
+          rotation: {
+            beforeTransaction: () => {
+              dispatches += 1;
+            },
+            commitFault: () => {
+              throw new Error('injected: the COMMIT did not land');
+            },
+          },
+        },
+      });
+      try {
+        await promote(node);
+
+        node.clock.advance(30_000); // the rotation is due
+        await node.leadership.tick();
+        await quiesce(node);
+        assert.equal(dispatches, 1, 'the rotation was dispatched and its COMMIT failed');
+
+        node.clock.advance(10_000); // one heartbeat — inside the rotation interval
+        await node.leadership.tick();
+        await quiesce(node);
+        assert.equal(
+          dispatches,
+          2,
+          'a rotation whose COMMIT failed is retried on the next tick, not a full interval later',
+        );
+      } finally {
+        await node.leadership.stop().catch(() => undefined);
+      }
+    });
+  },
+);

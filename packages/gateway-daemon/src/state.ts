@@ -96,15 +96,96 @@ export function hasUnresolvedStaging(state: GatewayState): boolean {
   return state.staging.lane !== 'INACTIVE';
 }
 
+/*
+ * (correction 5, findings #4 and #14) The state file is untrusted input: a
+ * half-written crash or a hand edit can leave any member wrong, and the old
+ * shallow merge let the wrong member through to the first dereference —
+ * `doctor` crashed on `state.primary.lane` the moment `primary` was null.
+ * Repair is member-wise: valid members are kept exactly, invalid ones fall
+ * back to their defaults, so `read()` always returns a state that is safe to
+ * dereference and `doctor` reports the repaired lanes instead of dying.
+ */
+const PRIMARY_LANES: readonly PrimaryLaneState[] = [
+  'IDLE',
+  'SESSION_STARTING',
+  'HEARTBEATING',
+  'TRANSPORT_RETRY',
+  'REVOKED',
+  'HALTED',
+];
+const STAGING_LANES: readonly StagingLaneState[] = [
+  'INACTIVE',
+  'PENDING_REDEEM',
+  'AWAITING',
+  'PROMOTED',
+  'REFUSED',
+  'TRANSPORT_RETRY',
+  'HALTED',
+];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function repairIdentity(raw: unknown): LaneIdentity {
+  if (!isRecord(raw)) return { gatewayId: null, keyId: null, fingerprint: null };
+  return {
+    gatewayId: stringOrNull(raw['gatewayId']),
+    keyId: stringOrNull(raw['keyId']),
+    fingerprint: stringOrNull(raw['fingerprint']),
+  };
+}
+
+function repairRejection(raw: unknown): GatewayState['lastRejection'] {
+  if (!isRecord(raw)) return null;
+  const code = stringOrNull(raw['code']);
+  const at = stringOrNull(raw['at']);
+  return code !== null && at !== null ? { code, at } : null;
+}
+
+function repairState(raw: Record<string, unknown>): GatewayState {
+  const base = emptyState();
+  const primary = isRecord(raw['primary']) ? raw['primary'] : {};
+  const staging = isRecord(raw['staging']) ? raw['staging'] : {};
+  const primaryLane = primary['lane'];
+  const stagingLane = staging['lane'];
+  return {
+    version: 1,
+    primary: {
+      lane: PRIMARY_LANES.includes(primaryLane as PrimaryLaneState)
+        ? (primaryLane as PrimaryLaneState)
+        : base.primary.lane,
+      identity: repairIdentity(primary['identity']),
+      lastServerState: stringOrNull(primary['lastServerState']),
+      lastObservedAt: stringOrNull(primary['lastObservedAt']),
+    },
+    staging: {
+      lane: STAGING_LANES.includes(stagingLane as StagingLaneState)
+        ? (stagingLane as StagingLaneState)
+        : base.staging.lane,
+      identity: repairIdentity(staging['identity']),
+      idempotencyKey: stringOrNull(staging['idempotencyKey']),
+      redeemStartedAt: stringOrNull(staging['redeemStartedAt']),
+      lastServerState: stringOrNull(staging['lastServerState']),
+      lastObservedAt: stringOrNull(staging['lastObservedAt']),
+    },
+    lastRejection: repairRejection(raw['lastRejection']),
+  };
+}
+
 export class GatewayStateStore {
   constructor(private readonly paths: GatewayPaths) {}
 
   async read(): Promise<GatewayState> {
     try {
       const raw = await readFile(this.paths.statePath, 'utf8');
-      const parsed = JSON.parse(raw) as GatewayState;
-      if (parsed.version !== 1) return emptyState();
-      return { ...emptyState(), ...parsed };
+      const parsed: unknown = JSON.parse(raw);
+      if (!isRecord(parsed) || parsed['version'] !== 1) return emptyState();
+      return repairState(parsed);
     } catch {
       // A missing or unreadable state file is an empty state, not a failure:
       // the first boot has no state, and a corrupt one must not wedge the

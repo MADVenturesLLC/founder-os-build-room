@@ -117,3 +117,32 @@ describe('custody-macos · refusal-vs-transport-classification', { skip: SKIP },
     assert.deepEqual(await custody.inventory(), { primary: false, staging: false });
   });
 });
+
+describe('custody-macos · existing-item-with-large-stdin', { skip: SKIP }, () => {
+  it('classifies the refusal without the stdin write crashing on the dead child (correction 5, #8)', async () => {
+    /*
+     * The no-`-U` staging create is stdin-fed, and a refusal exits early —
+     * before draining stdin. With a payload far beyond the pipe buffer, that
+     * write is exactly the EPIPE that escaped as an uncaughtException before
+     * correction 5 and killed the enrolment process. Here it meets the REAL
+     * binary: the refusal must still be the classified `write_unverified`,
+     * never a crash.
+     */
+    await custody.createStaging(SYNTHETIC_VALUE);
+    try {
+      const large = 'x'.repeat(2 * 1024 * 1024); // synthetic, and visibly not a key
+      await assert.rejects(
+        () => custody.createStaging(large),
+        (error: unknown) => {
+          assert.ok(error instanceof CustodyError, 'a classified custody error');
+          assert.equal(error.code, 'write_unverified');
+          return true;
+        },
+        'the existing-item refusal must reject, never crash the process',
+      );
+      assert.equal(await custody.read('staging'), SYNTHETIC_VALUE, 'the original survives');
+    } finally {
+      await custody.delete('staging');
+    }
+  });
+});
