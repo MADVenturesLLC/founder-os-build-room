@@ -279,7 +279,10 @@ describe('gateway-rate-limits · random-keyid-flood-single-unknown-row', () => {
     const store = new GatewayRegistryStore(recording, surfaceConfig());
     for (let i = 0; i < 40; i += 1) {
       await store.recordMessageRejection({
-        // An invented identifier, different every time. It resolves to nothing.
+        // The same null resolution on every call: the invented presenters
+        // differ, but they are erased before this boundary — the heartbeat
+        // storage suite is where forty genuinely distinct presenters are
+        // driven end to end.
         resolvedKeyId: null,
         sourceIp: '198.51.100.1',
         errorCode: 'unknown_key',

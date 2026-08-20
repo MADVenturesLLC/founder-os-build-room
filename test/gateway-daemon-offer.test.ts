@@ -11,10 +11,22 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DAEMON_ENTRY, offerDaemonStart, spawnDaemonDetached } from '../packages/gateway-cli/src/index.js';
+
+/*
+ * (correction 8, tester finding) Every spawn test works inside its own private
+ * scratch directory, created fresh for the test and removed whole in its
+ * finally — never a fixed filename under the shared tmpdir, which residue from
+ * a crashed run or a concurrent run of this same suite could occupy or delete
+ * mid-test. Every other suite in this tree already works this way; this file
+ * was the outlier.
+ */
+function scratchDirectory(): string {
+  return mkdtempSync(join(tmpdir(), 'buildroom-offer-'));
+}
 
 describe('gateway-cli · the §16 post-enrolment start offer', () => {
   it('offer:an-explicit-yes-spawns-the-daemon-entry', async () => {
@@ -86,9 +98,15 @@ describe('gateway-cli · the §16 post-enrolment start offer', () => {
 
 describe('gateway-cli · the spawn reports a missing entry honestly (correction 5, #6)', () => {
   it('spawn:a-nonexistent-daemon-entry-is-a-failure-not-a-silent-ok', async () => {
-    const result = await spawnDaemonDetached(join(tmpdir(), 'buildroom-no-such-daemon-entry.js'));
-    assert.equal(result.ok, false, 'a missing entry must be reported, not spawned and forgotten');
-    assert.ok(typeof result.reason === 'string' && result.reason.length > 0, 'the failure says why');
+    const directory = scratchDirectory();
+    try {
+      // A fresh private directory guarantees the entry does not exist.
+      const result = await spawnDaemonDetached(join(directory, 'entry.js'));
+      assert.equal(result.ok, false, 'a missing entry must be reported, not spawned and forgotten');
+      assert.ok(typeof result.reason === 'string' && result.reason.length > 0, 'the failure says why');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
 
@@ -143,7 +161,8 @@ class ScriptedChild {
 
 describe('gateway-cli · success means the spawn signal, not the absence of an error (correction 7, finding A)', () => {
   it('spawn:a-late-error-with-no-spawn-signal-is-a-failure-not-a-misread-success', async () => {
-    const entry = join(tmpdir(), 'buildroom-c7-existing-entry.js');
+    const directory = scratchDirectory();
+    const entry = join(directory, 'entry.js');
     writeFileSync(entry, 'process.exit(0);\n');
     const child = new ScriptedChild();
     try {
@@ -163,12 +182,13 @@ describe('gateway-cli · success means the spawn signal, not the absence of an e
       assert.ok(!result.reason!.includes('\n'), 'the reason carries no stack trace');
       assert.equal(child.unrefCalls, 0, 'a child that never spawned is never unrefed');
     } finally {
-      unlinkSync(entry);
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 
   it('spawn:success-is-reported-on-the-spawn-signal-and-unrefs-exactly-once', async () => {
-    const entry = join(tmpdir(), 'buildroom-c7-harmless-entry.js');
+    const directory = scratchDirectory();
+    const entry = join(directory, 'entry.js');
     writeFileSync(entry, 'process.exit(0);\n');
     const child = new ScriptedChild();
     try {
@@ -178,12 +198,13 @@ describe('gateway-cli · success means the spawn signal, not the absence of an e
       assert.equal(result.reason, undefined, 'success carries no reason');
       assert.equal(child.unrefCalls, 1, 'detachment happens exactly once, after the signal');
     } finally {
-      unlinkSync(entry);
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 
   it('spawn:an-error-after-a-confirmed-spawn-is-contained-not-unhandled', async () => {
-    const entry = join(tmpdir(), 'buildroom-c7-late-error-entry.js');
+    const directory = scratchDirectory();
+    const entry = join(directory, 'entry.js');
     writeFileSync(entry, 'process.exit(0);\n');
     const child = new ScriptedChild();
     try {
@@ -197,15 +218,16 @@ describe('gateway-cli · success means the spawn signal, not the absence of an e
       assert.ok(child.delivered() >= 2, 'the late error was delivered to a listener, not unhandled');
       assert.equal(child.unrefCalls, 1);
     } finally {
-      unlinkSync(entry);
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 
   it('spawn:an-unspawnable-executable-with-an-existing-entry-is-a-real-os-failure', async () => {
-    const entry = join(tmpdir(), 'buildroom-c7-real-entry.js');
+    const directory = scratchDirectory();
+    const entry = join(directory, 'entry.js');
     writeFileSync(entry, 'process.exit(0);\n');
     const realExecPath = process.execPath;
-    process.execPath = join(tmpdir(), 'buildroom-c7-no-such-executable');
+    process.execPath = join(directory, 'no-such-executable');
     try {
       const result = await spawnDaemonDetached(entry);
       assert.equal(result.ok, false, 'the real OS verdict: the executable could not be spawned');
@@ -215,19 +237,20 @@ describe('gateway-cli · success means the spawn signal, not the absence of an e
       );
     } finally {
       process.execPath = realExecPath;
-      unlinkSync(entry);
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 
   it('spawn:a-genuinely-spawned-real-child-is-a-success', async () => {
-    const entry = join(tmpdir(), 'buildroom-c7-real-ok-entry.js');
+    const directory = scratchDirectory();
+    const entry = join(directory, 'entry.js');
     writeFileSync(entry, 'process.exit(0);\n');
     try {
       const result = await spawnDaemonDetached(entry);
       assert.equal(result.ok, true, 'a real child that emitted its spawn signal is ok');
       assert.equal(result.reason, undefined, 'success carries no reason');
     } finally {
-      unlinkSync(entry);
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 });
