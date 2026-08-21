@@ -141,6 +141,54 @@ describe('railway restart — the deployment page is either complete or refused'
     }
   });
 
+  it('compares instants, not timestamp strings, when offsets differ', () => {
+    // `2026-08-21T00:00:00-01:00` IS `01:00Z` — later than `00:30:00Z`. A
+    // lexicographic sort puts the `Z` form last and picks the older one, which
+    // would restart the wrong deployment. Raised by CodeRabbit on PR #6.
+    const cases: Array<{ older: string; newer: string }> = [
+      { older: '2026-08-21T00:30:00Z', newer: '2026-08-21T00:00:00-01:00' },
+      { older: '2026-08-21T02:00:00+01:00', newer: '2026-08-21T01:30:00Z' },
+      { older: '2026-08-20T23:00:00-05:00', newer: '2026-08-21T04:30:00Z' },
+    ];
+
+    for (const { older, newer } of cases) {
+      const body = JSON.stringify({
+        data: {
+          deployments: {
+            edges: [
+              { node: { id: 'older', status: 'SUCCESS', createdAt: older } },
+              { node: { id: 'newer', status: 'SUCCESS', createdAt: newer } },
+            ],
+          },
+        },
+      });
+
+      const result = select(body);
+      assert.equal(result.status, 0, `${older} vs ${newer}: ${result.stderr}`);
+      assert.equal(
+        (JSON.parse(result.stdout) as { id: string }).id,
+        'newer',
+        `${newer} is the later instant than ${older}`,
+      );
+    }
+  });
+
+  it('breaks a same-second tie on fractional seconds', () => {
+    const body = JSON.stringify({
+      data: {
+        deployments: {
+          edges: [
+            { node: { id: 'late', status: 'SUCCESS', createdAt: '2026-08-21T00:00:00.900Z' } },
+            { node: { id: 'early', status: 'SUCCESS', createdAt: '2026-08-21T00:00:00.100Z' } },
+            { node: { id: 'bare', status: 'SUCCESS', createdAt: '2026-08-21T00:00:00Z' } },
+          ],
+        },
+      },
+    });
+
+    assert.equal((JSON.parse(select(body).stdout) as { id: string }).id, 'late');
+  });
+
   it('fails rather than returning nothing when the service has no deployments', () => {
     const result = select(JSON.stringify({ data: { deployments: { edges: [] } } }));
 

@@ -69,8 +69,25 @@ if [[ -n "$invalid" ]]; then
   exit 3
 fi
 
-newest=$(printf '%s' "$response" \
-  | jq -c '[.data.deployments.edges[]?.node] | sort_by(.createdAt) | last // empty')
+# Sort by the INSTANT, not the string. The pattern above accepts numeric
+# offsets, and `sort_by(.createdAt)` compares those lexicographically: with
+# "2026-08-21T00:00:00-01:00" (which is 01:00Z) and "2026-08-21T00:30:00Z",
+# a string sort puts the Z form last and picks the OLDER deployment. jq's
+# `fromdateiso8601` will not parse either an offset or fractional seconds, so
+# the offset is applied by hand. Fractional seconds are the tiebreak within a
+# second rather than being discarded. Raised by CodeRabbit on PR #6.
+newest=$(printf '%s' "$response" | jq -c '
+  def rfc3339_epoch:
+    capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?<frac>[.][0-9]+)?(?<off>Z|[+-][0-9]{2}:[0-9]{2})$")
+    | [ (.base + "Z" | fromdateiso8601)
+        - (if .off == "Z" then 0
+           else (if .off[0:1] == "-" then -1 else 1 end)
+                * ((.off[1:3] | tonumber) * 3600 + (.off[4:6] | tonumber) * 60)
+           end),
+        (.frac // ".0" | tonumber) ];
+  [.data.deployments.edges[]?.node]
+  | sort_by(.createdAt | rfc3339_epoch)
+  | last // empty')
 
 if [[ -z "$newest" || "$newest" == "null" ]]; then
   echo "no deployment found for the service; response: $response" >&2
