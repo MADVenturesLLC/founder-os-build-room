@@ -18,6 +18,13 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 V="$ROOT/scripts/verify-check.sh"
 
+# Per-run unique temp directory — never a predictable /tmp path. EXIT trap
+# guarantees cleanup on any return path (success, failure, or interrupt),
+# so a local attacker cannot pre-create the directory or hijack the
+# diagnostic files inside it (CWE-377 insecure temporary file).
+TMPDIR_HARNESS="$(mktemp -d -t vcs-XXXXXX)"
+trap 'rm -rf "$TMPDIR_HARNESS"' EXIT
+
 assert() {
   local desc="$1" expected_rc="$2" expected_text="$3"
   shift 3
@@ -41,57 +48,55 @@ fails=0
 
 # Case PASS — two trivial checks that both pass.
 VERIFY_CHECKS='a:true|b:true' \
-  bash "$V" >/tmp/vcs-pass.out 2>&1
-if [[ $? -eq 0 ]] && grep -qF 'PASS — every check ran and passed' /tmp/vcs-pass.out; then
+  bash "$V" >"$TMPDIR_HARNESS/pass.out" 2>&1
+if [[ $? -eq 0 ]] && grep -qF 'PASS — every check ran and passed' "$TMPDIR_HARNESS/pass.out"; then
   echo "PASS: all-pass -> exit 0"
 else
-  echo "FAIL: all-pass -> expected exit 0 + PASS line" >&2; cat /tmp/vcs-pass.out >&2; fails=$((fails+1))
+  echo "FAIL: all-pass -> expected exit 0 + PASS line" >&2; cat "$TMPDIR_HARNESS/pass.out" >&2; fails=$((fails+1))
 fi
 
 # Case 2 — one check fails (exit 1).
 VERIFY_CHECKS='a:true|b:false' \
-  bash "$V" "" >/tmp/vcs-fail.out 2>&1
-if [[ $? -eq 1 ]] && grep -qF 'FAILED — gate exit 1' /tmp/vcs-fail.out; then
+  bash "$V" "" >"$TMPDIR_HARNESS/fail.out" 2>&1
+if [[ $? -eq 1 ]] && grep -qF 'FAILED — gate exit 1' "$TMPDIR_HARNESS/fail.out"; then
   echo "PASS: failing check -> exit 1"
 else
-  echo "FAIL: failing check -> expected exit 1" >&2; cat /tmp/vcs-fail.out >&2; fails=$((fails+1))
+  echo "FAIL: failing check -> expected exit 1" >&2; cat "$TMPDIR_HARNESS/fail.out" >&2; fails=$((fails+1))
 fi
 
 # Case 3 — tool missing from PATH (exit 2).
 VERIFY_CHECKS='a:definitely-no-such-tool-xyz --flag' \
-  bash "$V" "" >/tmp/vcs-unv.out 2>&1
-if [[ $? -eq 2 ]] && grep -qF 'UNVERIFIED — a check could not run' /tmp/vcs-unv.out; then
+  bash "$V" "" >"$TMPDIR_HARNESS/unv.out" 2>&1
+if [[ $? -eq 2 ]] && grep -qF 'UNVERIFIED — a check could not run' "$TMPDIR_HARNESS/unv.out"; then
   echo "PASS: missing tool -> exit 2"
 else
-  echo "FAIL: missing tool -> expected exit 2" >&2; cat /tmp/vcs-unv.out >&2; fails=$((fails+1))
+  echo "FAIL: missing tool -> expected exit 2" >&2; cat "$TMPDIR_HARNESS/unv.out" >&2; fails=$((fails+1))
 fi
 
 # Case 4: tool path that does not exist (exit 2).
 VERIFY_CHECKS='a:/no/such/script.sh' \
-  bash "$V" "" >/tmp/vcs-unv2.out 2>&1
-if [[ $? -eq 2 ]] && grep -qF '/no/such/script.sh' /tmp/vcs-unv2.out; then
+  bash "$V" "" >"$TMPDIR_HARNESS/unv2.out" 2>&1
+if [[ $? -eq 2 ]] && grep -qF '/no/such/script.sh' "$TMPDIR_HARNESS/unv2.out"; then
   echo "PASS: missing path tool -> exit 2"
 else
-  echo "FAIL: missing path tool -> expected exit 2" >&2; cat /tmp/vcs-unv2.out >&2; fails=$((fails+1))
+  echo "FAIL: missing path tool -> expected exit 2" >&2; cat "$TMPDIR_HARNESS/unv2.out" >&2; fails=$((fails+1))
 fi
 
 # Case 5: no checks declared (exit 2).
-VERIFY_CHECKS='' bash "$V" >/tmp/vcs-empty.out 2>&1
-if [[ $? -eq 2 ]] && grep -qF 'no checks were declared' /tmp/vcs-empty.out; then
+VERIFY_CHECKS='' bash "$V" >"$TMPDIR_HARNESS/empty.out" 2>&1
+if [[ $? -eq 2 ]] && grep -qF 'no checks were declared' "$TMPDIR_HARNESS/empty.out"; then
   echo "PASS: empty checks -> exit 2"
 else
-  echo "FAIL: empty checks -> expected exit 2" >&2; cat /tmp/vcs-empty.out >&2; fails=$((fails+1))
+  echo "FAIL: empty checks -> expected exit 2" >&2; cat "$TMPDIR_HARNESS/empty.out" >&2; fails=$((fails+1))
 fi
 
 # Case 6: check script behind an interpreter is missing (exit 2, not 1).
-VERIFY_CHECKS='a:bash scripts/does-not-exist-for-tester.sh' bash "$V" >/tmp/vcs-missingscript.out 2>&1
-if [[ $? -eq 2 ]] && grep -qF 'check script' /tmp/vcs-missingscript.out; then
+VERIFY_CHECKS='a:bash scripts/does-not-exist-for-tester.sh' bash "$V" >"$TMPDIR_HARNESS/missingscript.out" 2>&1
+if [[ $? -eq 2 ]] && grep -qF 'check script' "$TMPDIR_HARNESS/missingscript.out"; then
   echo "PASS: missing check script -> exit 2"
 else
-  echo "FAIL: missing check script -> expected exit 2" >&2; cat /tmp/vcs-missingscript.out >&2; fails=$((fails+1))
+  echo "FAIL: missing check script -> expected exit 2" >&2; cat "$TMPDIR_HARNESS/missingscript.out" >&2; fails=$((fails+1))
 fi
-
-rm -f /tmp/vcs-pass.out /tmp/vcs-fail.out /tmp/vcs-unv.out /tmp/vcs-unv2.out /tmp/vcs-empty.out /tmp/vcs-missingscript.out
 
 echo
 echo "verify-check-self-test: $((6 - fails))/6 cases passed"

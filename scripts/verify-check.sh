@@ -23,7 +23,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
+cd "$ROOT" || exit 2
 
 # name:command — the command is run through the shell. The first token is the
 # tool; if that token is a path (contains '/') it must exist and be readable.
@@ -50,14 +50,29 @@ if [[ ${#CHECKS[@]} -eq 0 ]]; then
 fi
 
 pass=0
-unverified=0
 declare -a FAILED=()
 declare -a UNVERIFIED=()
 
 for entry in "${CHECKS[@]}"; do
   name="${entry%%:*}"
   cmd="${entry#*:}"
-  tool="${cmd%% *}"
+  # Split $cmd into tokens WITHOUT re-parsing via the shell (avoids CWE-78
+  # command injection — $cmd is from the hardcoded default array or the
+  # VERIFY_CHECKS env var, but the pattern still applies for defense in depth
+  # and to fix SC2206 word-splitting on quoted paths). We deliberately do NOT
+  # honour shell quoting, because $cmd is a plain command string, not shell
+  # syntax — tokens are separated by IFS whitespace only.
+  declare -a cmd_tokens=()
+  # shellcheck disable=SC2206  # intentional split on IFS whitespace, not quote-aware
+  IFS=$' \t\n' read -r -d '' -a cmd_tokens < <(printf '%s\0' "$cmd") || true
+  # If read returned 0 tokens (empty cmd), leave the array empty so the
+  # downstream "no tool" path triggers correctly.
+  if [[ ${#cmd_tokens[@]} -eq 0 ]]; then
+    echo "UNVERIFIED: ${name} — empty command"
+    UNVERIFIED+=("$name")
+    continue
+  fi
+  tool="${cmd_tokens[0]}"
 
   # Tool existence. For a bare command name, PATH lookup; for a path, the
   # file itself must exist and be readable.
@@ -84,9 +99,8 @@ for entry in "${CHECKS[@]}"; do
   # is the interpreter (always present); the SECOND token, when it is a path,
   # is the check script itself. A missing script is an unverified check, not
   # a failed one — exit 2, never "clean".
-  rest=($cmd)
-  if [[ ${#rest[@]} -ge 2 && "${rest[1]}" == */* && "${rest[1]}" != -* ]]; then
-    script="${rest[1]}"
+  if [[ ${#cmd_tokens[@]} -ge 2 && "${cmd_tokens[1]}" == */* && "${cmd_tokens[1]}" != -* ]]; then
+    script="${cmd_tokens[1]}"
     if [[ ! -e "$script" ]]; then
       echo "UNVERIFIED: ${name} — check script '${script}' does not exist"
       UNVERIFIED+=("$name")
@@ -100,7 +114,11 @@ for entry in "${CHECKS[@]}"; do
   fi
 
   out="$(mktemp)"
-  if ! bash -c "$cmd" >"$out" 2>&1; then
+  # Run the command via direct exec on the token array — never re-parse via
+  # the shell (avoids CWE-78 command injection; cf. ast-grep
+  # bash-c-variable-injection-bash). Each token is passed as a separate argv
+  # entry, preserving internal whitespace as a literal boundary.
+  if ! "${cmd_tokens[@]}" >"$out" 2>&1; then
     echo "FAILED: ${name} — ${cmd}"
     tail -n 6 "$out" | sed 's/^/    /'
     FAILED+=("$name")
