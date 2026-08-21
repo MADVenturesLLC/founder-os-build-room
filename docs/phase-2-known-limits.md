@@ -90,10 +90,16 @@ dissolves rather than gets answered:
 - **Unreachable storage must be a hard failure, not a fallback to memory.** A
   silent fallback restores the hole under a different name.
 
-Concretely: migration `0003_gate_runs`; `appendGateRun` / `listGateRuns` in the
+Concretely: migration `0005_gate_runs`; `appendGateRun` / `listGateRuns` in the
 store; token-guarded `POST`/`GET /gate/runs`; the CLI loading history before the
 run loop and appending each run as it completes; `gateStatus` reading the
 persisted sequence.
+
+(The number moved. This plan was written when `0003` was free; the gateway
+registry took it, and `0004_validate_pending_is_bare` took the next. `0005` is
+the first free id as of 2026-08-21 — check `MIGRATIONS` again before writing
+it rather than trusting this line, since the same drift is what made the
+original wrong.)
 
 **Why this is not in PR #2, and the sequencing that follows.** Closing §2 means
 changing the harness *in a way that changes what a run must show to pass*, and
