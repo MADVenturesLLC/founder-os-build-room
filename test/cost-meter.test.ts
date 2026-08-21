@@ -393,6 +393,103 @@ describe('cost meter — money stays exact', () => {
   });
 });
 
+describe('cost meter — the token x rate product stays exact past MAX_SAFE_INTEGER', () => {
+  /*
+   * `perMillion` multiplies two validated safe integers, and their PRODUCT is
+   * not bounded by that validation. Past `Number.MAX_SAFE_INTEGER` the double
+   * multiply lands on a neighbouring representable value; dividing by a
+   * million shrinks the error a millionfold, so it usually vanishes under
+   * rounding — which is precisely what made this easy to miss.
+   *
+   * It survives when the true quotient sits within that error of a half-micro
+   * rounding boundary. These are the smallest such inputs a search over the
+   * legal domain produced. They are not realistic run sizes and are not
+   * meant to be: what they pin is that a value which clears the boundary is
+   * priced EXACTLY rather than being handed back one micro wrong, in safe
+   * range, with nothing thrown.
+   */
+  const EXACT_VERSION = '2026-08-17-exactness';
+
+  function tableWithInputRate(inputMicrosPerMTok: number): PriceTable {
+    return {
+      hasVersion: (version) => version === EXACT_VERSION,
+      rateFor: (version, provider, model) =>
+        version === EXACT_VERSION && provider === 'test-provider' && model === 'test-model'
+          ? { inputMicrosPerMTok, outputMicrosPerMTok: 0 }
+          : null,
+    };
+  }
+
+  it('prices the smallest product past MAX_SAFE_INTEGER exactly, not one micro high', () => {
+    const inputTokens = 191_642_537_393_617;
+    const rate = 47;
+
+    // The premise: this pair is legal input (both safe integers) whose product
+    // is past the safe range. If either stops being true the case is no longer
+    // testing what it claims to.
+    assert.ok(Number.isSafeInteger(inputTokens) && Number.isSafeInteger(rate));
+    assert.equal(BigInt(inputTokens) * BigInt(rate), 9_007_199_257_499_999n);
+    assert.ok(9_007_199_257_499_999n > BigInt(Number.MAX_SAFE_INTEGER));
+
+    const amount = priceRun(
+      run({ priceTableVersion: EXACT_VERSION, usage: { inputTokens, outputTokens: 0 } }),
+      tableWithInputRate(rate),
+    );
+
+    assert.ok(!isUnknown(amount));
+    // Exact: floor((9_007_199_257_499_999 + 500_000) / 1_000_000).
+    assert.equal(amount.micros, 9_007_199_257);
+    // And the value the old double path produced, named so a regression is
+    // recognisable rather than just "some other number".
+    assert.notEqual(amount.micros, 9_007_199_258);
+    assert.equal(Math.round((inputTokens * rate) / 1_000_000), 9_007_199_258);
+  });
+
+  it('prices a large product exactly in both rounding directions', () => {
+    // At this magnitude the double error exceeds half a micro outright, so the
+    // failure is systematic rather than boundary-adjacent. One case rounds the
+    // wrong way up, the other the wrong way down.
+    const rate = 9_000_000;
+    const cases: { inputTokens: number; exact: number; doublePath: number }[] = [
+      { inputTokens: 533_333_342_333_360, exact: 4_800_000_081_000_240, doublePath: 4_800_000_081_000_241 },
+      { inputTokens: 533_333_347_333_375, exact: 4_800_000_126_000_375, doublePath: 4_800_000_126_000_374 },
+    ];
+
+    for (const { inputTokens, exact, doublePath } of cases) {
+      const amount = priceRun(
+        run({ priceTableVersion: EXACT_VERSION, usage: { inputTokens, outputTokens: 0 } }),
+        tableWithInputRate(rate),
+      );
+
+      assert.ok(!isUnknown(amount));
+      assert.equal(amount.micros, exact);
+      assert.equal(Math.round((inputTokens * rate) / 1_000_000), doublePath);
+    }
+  });
+
+  it('still throws when the priced result itself is past the safe range', () => {
+    /*
+     * The fix removes the SILENT wrong answer; it does not silence the loud
+     * one. A product whose quotient genuinely exceeds MAX_SAFE_INTEGER is
+     * handed to `micros()` unchanged, and money.ts documents a throw there.
+     */
+    assert.throws(
+      () =>
+        priceRun(
+          run({
+            priceTableVersion: EXACT_VERSION,
+            usage: { inputTokens: 9_007_199_254_740_991, outputTokens: 0 },
+          }),
+          // At 1_000_000 micros/MTok the quotient is MAX_SAFE_INTEGER itself,
+          // which `micros()` accepts as a bound rather than an overflow.
+          // Doubling the rate doubles the quotient and clears it.
+          tableWithInputRate(2_000_000),
+        ),
+      RangeError,
+    );
+  });
+});
+
 describe('cost meter — infrastructure recognition', () => {
   it('books the full month at the start under the selected method', () => {
     const onTheFirst = recognizeInfrastructure([NEON], accountingInstant(2026, 8, 1));
