@@ -24,13 +24,11 @@
 # Fewer than `page_size` edges means the page is the complete set, and the sort
 # is then exact regardless of what order the server returned them in.
 #
-# THIS IS A BOUND, NOT THE FIX. Raising `PAGE_SIZE` moves the failure point; it
-# does not remove it (Founder ruling, 2026-08-21). The fix is cursor pagination
-# to exhaustion, or a server-side sort, and both need Railway's connection
-# contract confirmed against the live API first — whether `pageInfo`/`after`
-# exist on this connection and what an ordering argument would be. That needs a
-# Founder-issued project token, so it is not something a session can settle on
-# its own. See `docs/phase-2-known-limits.md` §3.
+# RAISING `PAGE_SIZE` IS NOT A FIX. It moves the failure point without removing
+# it — at no value can the script prove it holds the newest deployment (Founder
+# ruling, 2026-08-21). The fixes are verified cursor pagination to exhaustion or
+# a confirmed server-side ordering contract; both need Railway's connection
+# schema established against the live API. See `docs/phase-2-known-limits.md` §3.
 
 set -euo pipefail
 
@@ -47,6 +45,21 @@ if [[ "$edge_count" -ge "$page_size" ]]; then
   echo "script cannot prove is the current one. Raise PAGE_SIZE in railway-restart.sh," >&2
   echo "or implement cursor pagination once the connection contract is confirmed." >&2
   exit 2
+fi
+
+# jq sorts a null or absent key first, so one malformed `createdAt` silently
+# changes which node is "newest". Refuse instead of sorting around it.
+RFC3339='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}'
+invalid=$(printf '%s' "$response" | jq -r --arg re "$RFC3339" '
+  .data.deployments.edges[]?.node
+  | select((.id // "") == "" or (.status // "") == "" or ((.createdAt // "") | test($re) | not))
+  | tojson')
+
+if [[ -n "$invalid" ]]; then
+  echo "deployment nodes with a missing or malformed id/status/createdAt:" >&2
+  printf '  %s\n' "$invalid" >&2
+  echo "cannot establish the newest deployment from these — refusing" >&2
+  exit 3
 fi
 
 newest=$(printf '%s' "$response" \

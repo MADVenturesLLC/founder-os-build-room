@@ -112,6 +112,33 @@ describe('railway restart — the deployment page is either complete or refused'
     assert.equal((JSON.parse(result.stdout) as { id: string }).id, 'deployment-9');
   });
 
+  it('refuses a node with a missing or malformed createdAt rather than sorting around it', () => {
+    // jq sorts an absent or unparseable key first, so one bad node silently
+    // changes which deployment is selected.
+    for (const bad of [undefined, '', 'yesterday', '2026-08-21']) {
+      const body = JSON.stringify({
+        data: { deployments: { edges: [
+          { node: { id: 'good', status: 'SUCCESS', createdAt: '2026-08-21T00:01:00.000Z' } },
+          { node: { id: 'bad', status: 'SUCCESS', ...(bad === undefined ? {} : { createdAt: bad }) } },
+        ] } },
+      });
+      const result = select(body);
+      assert.equal(result.status, 3, `createdAt=${String(bad)} should refuse`);
+      assert.equal(result.stdout, '');
+      assert.match(result.stderr, /missing or malformed/);
+    }
+  });
+
+  it('refuses a node with a missing id or status', () => {
+    for (const node of [
+      { status: 'SUCCESS', createdAt: '2026-08-21T00:01:00.000Z' },
+      { id: 'x', createdAt: '2026-08-21T00:01:00.000Z' },
+    ]) {
+      const body = JSON.stringify({ data: { deployments: { edges: [{ node }] } } });
+      assert.equal(select(body).status, 3);
+    }
+  });
+
   it('fails rather than returning nothing when the service has no deployments', () => {
     const result = select(JSON.stringify({ data: { deployments: { edges: [] } } }));
 

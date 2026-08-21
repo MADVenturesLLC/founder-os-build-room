@@ -157,6 +157,27 @@ function integer(env: Env, key: string, fallback: number): number {
 }
 
 /**
+ * A positive integer small enough to be a real timer delay.
+ *
+ * Node stores timer delays in a signed 32-bit int and silently rewrites
+ * anything larger as **1 ms**. A too-large timeout therefore becomes the
+ * shortest possible one and fails every connection — the opposite of what was
+ * configured. Raised by CodeRabbit on PR #6.
+ */
+const MAX_TIMER_MS = 2_147_483_647;
+
+function timerMs(env: Env, key: string, fallback: number): number {
+  const value = integer(env, key, fallback);
+  if (value > MAX_TIMER_MS) {
+    throw new ConfigError(
+      `${key} must be at most ${MAX_TIMER_MS} ms; got ${value}. Node rewrites a ` +
+        `larger timer delay as 1 ms, so this would connect-timeout immediately.`,
+    );
+  }
+  return value;
+}
+
+/**
  * A non-negative integer, where zero is a meaningful value rather than a
  * mistake. `integer` above refuses zero — right for a pool size or a port, and
  * wrong for `TRUST_PROXY_HOPS`, whose safe default IS zero.
@@ -341,7 +362,7 @@ export function loadConfig(env: Env): Config {
     statementTimeoutMs: integer(env, 'STATEMENT_TIMEOUT_MS', 10_000),
     poolMax: integer(env, 'PG_POOL_MAX', 4),
     poolIdleTimeoutMs: integer(env, 'PG_POOL_IDLE_TIMEOUT_MS', 30_000),
-    poolConnectionTimeoutMs: integer(env, 'PG_CONNECTION_TIMEOUT_MS', 10_000),
+    poolConnectionTimeoutMs: timerMs(env, 'PG_CONNECTION_TIMEOUT_MS', 10_000),
 
     gatewayCodeTtlMs,
     gatewayHeartbeatCadenceMs,

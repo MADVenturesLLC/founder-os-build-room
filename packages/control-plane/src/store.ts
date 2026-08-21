@@ -332,12 +332,34 @@ export class PostgresLedgerStore {
    * lets the server refuse a write that should never appear here.
    */
   async exportRoom(roomId: string): Promise<{
+    readonly state: LedgerState;
+    readonly logLength: number;
     readonly events: readonly Record<string, unknown>[];
     readonly rejections: readonly Record<string, unknown>[];
   }> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+
+      /*
+       * Existence and the replayed state come from INSIDE the transaction too.
+       *
+       * The first version returned only rows, and the endpoint composed its
+       * response from a separate `loadRoom` call plus this one — two snapshots
+       * again, one level up. An append committing between them produced an
+       * export whose `snapshot` described an earlier ledger than its `events`
+       * contained, which is the exact inconsistency moving these two reads into
+       * one transaction was meant to remove. Fixing it inside the store while
+       * leaving the endpoint to stitch two calls together fixed the visible
+       * half and left the real one. Raised by CodeRabbit on PR #6.
+       *
+       * Replaying here rather than trusting a caller-supplied state also means
+       * the returned state is derived from the very rows being exported, so the
+       * two cannot disagree by construction.
+       */
+      if (!(await roomExists(client, roomId))) throw new RoomNotFoundError(roomId);
+      const { state, logLength } = await replay(client, roomId);
+
       const events = await client.query<Record<string, unknown>>(
         `SELECT seq, event_id, event, outcome, entry_seq, transition_id, guard_id,
                 from_state, resulting_state, actor, attribution, scope, evidence,
@@ -351,7 +373,7 @@ export class PostgresLedgerStore {
         [roomId],
       );
       await client.query('COMMIT');
-      return { events: events.rows, rejections: rejections.rows };
+      return { state, logLength, events: events.rows, rejections: rejections.rows };
     } catch (error) {
       // Guarded for the same reason the migration runner's is: a ROLLBACK on a
       // connection that has already died throws, and its exception would

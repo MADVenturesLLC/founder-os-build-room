@@ -132,7 +132,14 @@ deployments=$(graphql "$(jq -nc \
 # as it can, so it captured the LAST id on the line rather than the first, and
 # `head -1` only deduplicated lines. One id in the response made that harmless;
 # any added id-bearing field would have restarted something else.
-newest=$(printf '%s' "$deployments" | "$(dirname "${BASH_SOURCE[0]}")/select-newest-deployment.sh" "$PAGE_SIZE")
+# Invoked through `bash`, deliberately, not as a direct executable. The tests
+# call it the same way, so the path CI exercises is the path the live restart
+# takes. Running it directly would make the file's execute bit load-bearing on a
+# code path nothing tests: a lost mode bit (a fresh clone with a permissive
+# umask, an archive round-trip, a Windows checkout) would keep CI green and
+# break the restart that `survives_restart` evidence depends on. Raised by
+# Cursor Bugbot on PR #6.
+newest=$(printf '%s' "$deployments" | bash "$(dirname "${BASH_SOURCE[0]}")/select-newest-deployment.sh" "$PAGE_SIZE")
 
 deployment_id=$(printf '%s' "$newest" | jq -r '.id // empty')
 status=$(printf '%s' "$newest" | jq -r '.status // empty')

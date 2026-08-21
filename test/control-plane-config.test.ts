@@ -67,6 +67,16 @@ describe('control plane — configuration', () => {
     assert.equal(config.poolConnectionTimeoutMs, 20_000);
   });
 
+  it('refuses a connect timeout past the 32-bit timer limit', () => {
+    // Node rewrites a larger delay as 1 ms, so the value would silently invert.
+    assert.throws(
+      () => loadConfig({ DATABASE_URL: VALID_URL, CONTROL_PLANE_TOKEN: VALID_TOKEN, PG_CONNECTION_TIMEOUT_MS: '2147483648' }),
+      ConfigError,
+    );
+    const ok = loadConfig({ DATABASE_URL: VALID_URL, CONTROL_PLANE_TOKEN: VALID_TOKEN, PG_CONNECTION_TIMEOUT_MS: '2147483647' });
+    assert.equal(ok.poolConnectionTimeoutMs, 2_147_483_647);
+  });
+
   it('refuses to boot without DATABASE_URL', () => {
     assert.throws(() => loadConfig({}), ConfigError);
     assert.throws(() => loadConfig({ DATABASE_URL: '   ', CONTROL_PLANE_TOKEN: VALID_TOKEN }), ConfigError);
