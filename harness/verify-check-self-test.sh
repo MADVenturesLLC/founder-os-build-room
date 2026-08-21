@@ -12,7 +12,7 @@
 #   UNVERIFIED_PATH — a check's tool path does not exist    → exit 2
 #   EMPTY      — no checks declared                         → exit 2, "no checks were declared"
 #
-# Usage: bash scripts/verify-check-self-test.sh   (from repo root)
+# Usage: bash harness/verify-check-self-test.sh   (from repo root)
 
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -83,8 +83,16 @@ else
   echo "FAIL: empty checks -> expected exit 2" >&2; cat /tmp/vcs-empty.out >&2; fails=$((fails+1))
 fi
 
-rm -f /tmp/vcs-pass.out /tmp/vcs-fail.out /tmp/vcs-unv.out /tmp/vcs-unv2.out /tmp/vcs-empty.out
+# Case 6: check script behind an interpreter is missing (exit 2, not 1).
+VERIFY_CHECKS='a:bash scripts/does-not-exist-for-tester.sh' bash "$V" >/tmp/vcs-missingscript.out 2>&1
+if [[ $? -eq 2 ]] && grep -qF 'check script' /tmp/vcs-missingscript.out; then
+  echo "PASS: missing check script -> exit 2"
+else
+  echo "FAIL: missing check script -> expected exit 2" >&2; cat /tmp/vcs-missingscript.out >&2; fails=$((fails+1))
+fi
+
+rm -f /tmp/vcs-pass.out /tmp/vcs-fail.out /tmp/vcs-unv.out /tmp/vcs-unv2.out /tmp/vcs-empty.out /tmp/vcs-missingscript.out
 
 echo
-echo "verify-check-self-test: $((5 - fails))/5 cases passed"
+echo "verify-check-self-test: $((6 - fails))/6 cases passed"
 [[ $fails -eq 0 ]]

@@ -80,6 +80,25 @@ for entry in "${CHECKS[@]}"; do
     fi
   fi
 
+  # Script behind an interpreter: `bash scripts/foo.sh ...`. The first token
+  # is the interpreter (always present); the SECOND token, when it is a path,
+  # is the check script itself. A missing script is an unverified check, not
+  # a failed one — exit 2, never "clean".
+  rest=($cmd)
+  if [[ ${#rest[@]} -ge 2 && "${rest[1]}" == */* && "${rest[1]}" != -* ]]; then
+    script="${rest[1]}"
+    if [[ ! -e "$script" ]]; then
+      echo "UNVERIFIED: ${name} — check script '${script}' does not exist"
+      UNVERIFIED+=("$name")
+      continue
+    fi
+    if [[ ! -r "$script" ]]; then
+      echo "UNVERIFIED: ${name} — check script '${script}' is not readable"
+      UNVERIFIED+=("$name")
+      continue
+    fi
+  fi
+
   out="$(mktemp)"
   if ! bash -c "$cmd" >"$out" 2>&1; then
     echo "FAILED: ${name} — ${cmd}"
