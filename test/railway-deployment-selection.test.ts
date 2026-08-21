@@ -173,6 +173,52 @@ describe('railway restart — the deployment page is either complete or refused'
     }
   });
 
+  it('refuses an out-of-range UTC offset or time field', () => {
+    // `[0-9]{2}` per field accepted `+24:00` and `+00:60`, which pass a shape
+    // check and then convert into a real instant up to a day away. Out-of-range
+    // date and time fields reached jq and died with its exit 5 rather than this
+    // script's documented exit 3. Raised by CodeRabbit on PR #6.
+    for (const createdAt of [
+      '2026-08-21T00:00:00+24:00',
+      '2026-08-21T00:00:00+00:60',
+      '2026-08-21T00:00:00-99:00',
+      '2026-08-21T25:00:00Z',
+      '2026-08-21T00:70:00Z',
+      '2026-13-01T00:00:00Z',
+      '2026-00-01T00:00:00Z',
+      '2026-08-32T00:00:00Z',
+      '2026-08-00T00:00:00Z',
+    ]) {
+      const body = JSON.stringify({
+        data: { deployments: { edges: [{ node: { id: 'x', status: 'SUCCESS', createdAt } }] } },
+      });
+
+      assert.equal(select(body).status, 3, `${createdAt} should refuse with 3`);
+    }
+  });
+
+  it('still accepts every in-range RFC3339 form', () => {
+    // The tightening above must not start refusing valid timestamps. A leap
+    // second is legal RFC3339 and `fromdateiso8601` parses one.
+    for (const createdAt of [
+      '2026-08-21T00:00:00Z',
+      '2026-08-21T00:00:00.500Z',
+      '2026-08-21T00:00:00+23:59',
+      '2026-08-21T00:00:00-23:59',
+      '2026-08-21T00:00:00+00:00',
+      '2026-06-30T23:59:60Z',
+      '2026-12-31T23:59:59Z',
+    ]) {
+      const body = JSON.stringify({
+        data: { deployments: { edges: [{ node: { id: 'x', status: 'SUCCESS', createdAt } }] } },
+      });
+
+      const result = select(body);
+      assert.equal(result.status, 0, `${createdAt} should be accepted: ${result.stderr}`);
+      assert.equal((JSON.parse(result.stdout) as { id: string }).id, 'x');
+    }
+  });
+
   it('breaks a same-second tie on fractional seconds', () => {
     const body = JSON.stringify({
       data: {

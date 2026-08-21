@@ -48,11 +48,25 @@ if [[ "$edge_count" -ge "$page_size" ]]; then
 fi
 
 # jq sorts a null or absent key first, so one malformed `createdAt` silently
-# changes which node is "newest". Refuse instead of sorting around it.
-# Anchored at both ends and type-checked: a prefix match accepts
-# "2026-08-21T00:00:00 whatever", and a non-string id or status is truthy but
-# unusable. Raised by CodeRabbit on PR #6.
-RFC3339='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$'
+# changes which node is "newest". Refuse instead of sorting around it. Anchored
+# at both ends and type-checked: a prefix match accepts "2026-08-21T00:00:00
+# whatever", and a non-string id or status is truthy but unusable.
+#
+# Every field is range-checked, and the pattern is built from pieces shared with
+# the sort below so the two cannot drift. Bare `[0-9]{2}` was loose in two ways:
+# it accepted an offset of `+24:00` or `+00:60`, which passes a shape check and
+# then converts into a real instant up to a day away; and it let an out-of-range
+# date or time reach jq, which died with its own exit 5 rather than this
+# script's documented exit 3. Seconds allow 60 on purpose — RFC 3339 permits a
+# leap second and `fromdateiso8601` parses one. A well-formed but nonexistent
+# date (2026-02-30) is still accepted and normalised by strptime; catching that
+# needs a calendar, not a pattern. All raised by CodeRabbit on PR #6.
+DATE='[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])'
+TIME='([01][0-9]|2[0-3]):[0-5][0-9]:([0-5][0-9]|60)'
+FRAC='([.][0-9]+)?'
+OFFSET='(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])'
+RFC3339="^${DATE}T${TIME}${FRAC}${OFFSET}\$"
+CAPTURE="^(?<base>${DATE}T${TIME})(?<frac>${FRAC})(?<off>${OFFSET})\$"
 invalid=$(printf '%s' "$response" | jq -r --arg re "$RFC3339" '
   .data.deployments.edges[]?.node
   | select(
@@ -76,15 +90,17 @@ fi
 # `fromdateiso8601` will not parse either an offset or fractional seconds, so
 # the offset is applied by hand. Fractional seconds are the tiebreak within a
 # second rather than being discarded. Raised by CodeRabbit on PR #6.
-newest=$(printf '%s' "$response" | jq -c '
+newest=$(printf '%s' "$response" | jq -c --arg cap "$CAPTURE" '
   def rfc3339_epoch:
-    capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?<frac>[.][0-9]+)?(?<off>Z|[+-][0-9]{2}:[0-9]{2})$")
+    capture($cap)
     | [ (.base + "Z" | fromdateiso8601)
         - (if .off == "Z" then 0
            else (if .off[0:1] == "-" then -1 else 1 end)
                 * ((.off[1:3] | tonumber) * 3600 + (.off[4:6] | tonumber) * 60)
            end),
-        (.frac // ".0" | tonumber) ];
+        # An absent fraction captures as "", not null, because FRAC is wrapped
+        # in a named group — and "" is truthy in jq, so `// ".0"` never fires.
+        (if .frac == "" then 0 else (.frac | tonumber) end) ];
   [.data.deployments.edges[]?.node]
   | sort_by(.createdAt | rfc3339_epoch)
   | last // empty')
