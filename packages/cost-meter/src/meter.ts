@@ -259,16 +259,39 @@ function tokenInputLimb(budget: RoomBudget, requestedTokens: number): LimbResult
   };
 }
 
+/*
+ * FOUNDER_DECISION_REQUIRED — the comparison here does not match `-16`
+ * clause 2 as written, and relabelling it did not fix that.
+ *
+ * The clause refuses when spent + reserved ≥ ceiling. This adds
+ * `requestedTokens` on top, so the ceiling becomes exclusive: a room at 700
+ * of 1000 asking for 300 is refused, where the clause read literally permits
+ * it (700 < 1000). The reading is defensible — it asks whether GRANTING the
+ * request breaches the ceiling rather than noticing afterwards that it did,
+ * and it errs fail-closed, which is the direction §3.15 requires. It is still
+ * a different rule from the ratified one, not a stricter statement of the
+ * same rule, and only the Founder can settle which is meant.
+ *
+ * What this commit fixed is narrower, and must not be read as settling the
+ * above: the reason string called its figure "spent + reserved" while
+ * reporting spent + reserved + the request. An operator reconciling the
+ * message against the room's counters would find a number matching neither
+ * and conclude the room was further along than it was. Both figures are now
+ * named separately so the arithmetic is checkable. The behaviour is
+ * unchanged and the semantic question stays open — see
+ * `docs/phase-2-known-limits.md` §9.
+ */
 function perRoomTokenLimb(budget: RoomBudget, requestedTokens: number): LimbResult {
-  const committed = budget.tokensSpent + budget.tokensReserved + requestedTokens;
+  const alreadyCommitted = budget.tokensSpent + budget.tokensReserved;
+  const projected = alreadyCommitted + requestedTokens;
 
-  // `-16` clause 2: refuse when spent + reserved ≥ ceiling.
-  if (committed >= budget.tokenCeiling) {
+  if (projected >= budget.tokenCeiling) {
     return {
       limb: 'per_room_tokens',
       verdict: 'pause',
       reason:
-        `room ${budget.roomId}: spent + reserved (${committed}) is at or above its token ceiling ` +
+        `room ${budget.roomId}: spent + reserved (${alreadyCommitted}) plus this request ` +
+        `(${requestedTokens}) is ${projected}, at or above its token ceiling ` +
         `(${budget.tokenCeiling})`,
     };
   }
@@ -276,7 +299,9 @@ function perRoomTokenLimb(budget: RoomBudget, requestedTokens: number): LimbResu
   return {
     limb: 'per_room_tokens',
     verdict: 'permit',
-    reason: `room ${budget.roomId}: ${committed} of ${budget.tokenCeiling} tokens committed`,
+    reason:
+      `room ${budget.roomId}: spent + reserved (${alreadyCommitted}) plus this request ` +
+      `(${requestedTokens}) is ${projected} of ${budget.tokenCeiling} tokens`,
   };
 }
 

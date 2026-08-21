@@ -39,6 +39,44 @@ describe('control plane — configuration', () => {
     assert.ok(config.poolMax > 0);
   });
 
+  it('gives the pool its own connect budget, larger than the readiness probe', () => {
+    /*
+     * `connectionTimeoutMillis` was wired to `readyProbeTimeoutMs`. Two
+     * seconds is the right bound for "is this instance ready?" and the wrong
+     * one for "can this request open a connection?" — a suspended Neon
+     * compute takes roughly one to five seconds to resume, so the first
+     * request after any idle period was failed while the database was coming
+     * back. The ordering is the invariant, not the exact number: if a later
+     * edit ever collapses them again, this fails.
+     */
+    const config = loadConfig({ DATABASE_URL: VALID_URL, CONTROL_PLANE_TOKEN: VALID_TOKEN });
+
+    assert.ok(config.poolConnectionTimeoutMs > config.readyProbeTimeoutMs);
+    assert.ok(config.poolConnectionTimeoutMs >= 5_000, 'must clear the observed Neon resume range');
+  });
+
+  it('lets the connect budget be set independently of the probe budget', () => {
+    const config = loadConfig({
+      DATABASE_URL: VALID_URL,
+      CONTROL_PLANE_TOKEN: VALID_TOKEN,
+      READY_PROBE_TIMEOUT_MS: '1500',
+      PG_CONNECTION_TIMEOUT_MS: '20000',
+    });
+
+    assert.equal(config.readyProbeTimeoutMs, 1_500);
+    assert.equal(config.poolConnectionTimeoutMs, 20_000);
+  });
+
+  it('refuses a connect timeout past the 32-bit timer limit', () => {
+    // Node rewrites a larger delay as 1 ms, so the value would silently invert.
+    assert.throws(
+      () => loadConfig({ DATABASE_URL: VALID_URL, CONTROL_PLANE_TOKEN: VALID_TOKEN, PG_CONNECTION_TIMEOUT_MS: '2147483648' }),
+      ConfigError,
+    );
+    const ok = loadConfig({ DATABASE_URL: VALID_URL, CONTROL_PLANE_TOKEN: VALID_TOKEN, PG_CONNECTION_TIMEOUT_MS: '2147483647' });
+    assert.equal(ok.poolConnectionTimeoutMs, 2_147_483_647);
+  });
+
   it('refuses to boot without DATABASE_URL', () => {
     assert.throws(() => loadConfig({}), ConfigError);
     assert.throws(() => loadConfig({ DATABASE_URL: '   ', CONTROL_PLANE_TOKEN: VALID_TOKEN }), ConfigError);

@@ -243,14 +243,26 @@ export function createServer(deps: ServerDeps): Express {
     requireToken,
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.params.roomId, 'roomId');
-      const view = await store.loadRoom(roomId);
-      if (!view.exists) throw new HttpError(404, `room ${roomId} does not exist`);
-      const exported = await store.exportRoom(roomId);
+      /*
+       * ONE call, because the snapshot and the rows must come from one
+       * transaction. This used to call `loadRoom` for the state and
+       * `exportRoom` for the rows, and an append committing between them
+       * produced an export whose snapshot described an earlier ledger than its
+       * events contained — with nothing in the payload saying so.
+       * `exportRoom` now replays inside its own read-only REPEATABLE READ
+       * transaction and returns both, so they cannot disagree.
+       *
+       * The 404 also moves inside: `exportRoom` throws `RoomNotFoundError`,
+       * which the error handler already maps to 404. Checking existence in a
+       * separate connection was its own small race.
+       */
+      const { state, logLength, ...exported } = await store.exportRoom(roomId);
       res.status(200).json({
         roomId,
         exportedAt: new Date().toISOString(),
         commit: config.commitSha,
-        snapshot: snapshot(view.state),
+        snapshot: snapshot(state),
+        logLength,
         ...exported,
       });
     }),

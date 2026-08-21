@@ -45,6 +45,7 @@ same value as `CONTROL_PLANE_TOKEN`, or every room request answers 401.
 | `STATEMENT_TIMEOUT_MS` | `10000` | Postgres `statement_timeout` on pooled connections. Lifted for the migration session only — see `migrations.ts`. |
 | `PG_POOL_MAX` | `4` | Maximum pooled connections. Neon's small computes are the constraint. |
 | `PG_POOL_IDLE_TIMEOUT_MS` | `30000` | Milliseconds before an idle pooled connection is released. |
+| `PG_CONNECTION_TIMEOUT_MS` | `10000` | Milliseconds the pool may wait to open a connection. Deliberately larger than `READY_PROBE_TIMEOUT_MS`: a suspended Neon compute takes roughly one to five seconds to resume, and the probe's fast-fail budget is the wrong bound for a real request arriving after an idle period. |
 
 ## Endpoints
 

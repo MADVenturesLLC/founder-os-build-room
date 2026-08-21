@@ -26,6 +26,7 @@ import {
   micros,
   MONTHLY_CEILING,
   monthKeyOf,
+  monthlyCommitmentTotal,
   monthlySpend,
   PeriodError,
   priceRun,
@@ -164,6 +165,60 @@ describe('cost meter — the per-room token limb boundary', () => {
     });
 
     assert.equal(decision.permit, true);
+  });
+
+  it('reports the request separately from spent + reserved, so the message reconciles', () => {
+    /*
+     * The pause message named its figure "spent + reserved" while reporting
+     * spent + reserved + the request. An operator checking it against the
+     * room's counters would find a number matching neither and conclude the
+     * room was further along than it was. The arithmetic in the message has to
+     * be checkable against the inputs.
+     */
+    const decision = evaluateDispatch({
+      asOf: accountingInstant(2026, 8, 17),
+      ledger: { infrastructure: [], runs: [] },
+      budget: budget({ tokenCeiling: 1_000, tokensSpent: 600, tokensReserved: 100 }),
+      requestedTokens: 400,
+      priceTable: TABLE,
+    });
+
+    assert.equal(decision.permit, false);
+    const limb = decision.pausedBy.find((entry) => entry.limb === 'per_room_tokens');
+    assert.ok(limb, 'the per-room limb must be the one pausing');
+    // 700 already committed, 400 requested, 1100 projected against a 1000 ceiling.
+    assert.match(limb.reason, /spent \+ reserved \(700\)/);
+    assert.match(limb.reason, /this request \(400\)/);
+    assert.match(limb.reason, /1100/);
+    // And the old, wrong label must not come back: 1100 was reported AS
+    // "spent + reserved".
+    assert.doesNotMatch(limb.reason, /spent \+ reserved \(1100\)/);
+  });
+
+  it('admits on the projection, not after the fact — CURRENT BEHAVIOUR, semantics unresolved', () => {
+    /*
+     * This pins WHAT THE CODE DOES, not what the rule is. Under `-16` clause 2
+     * read literally (spent + reserved >= ceiling) this case permits: 700 is
+     * below 1000. It pauses because granting 300 would reach the ceiling,
+     * which makes the ceiling exclusive — a different rule from the ratified
+     * one, not a stricter phrasing of it.
+     *
+     * FOUNDER_DECISION_REQUIRED (`docs/phase-2-known-limits.md` §9). The test
+     * exists so the divergence is visible and cannot drift further while the
+     * question is open; a green test here is NOT a ruling that this reading is
+     * correct. If the Founder rules for the literal clause, this test changes
+     * with it.
+     */
+    const decision = evaluateDispatch({
+      asOf: accountingInstant(2026, 8, 17),
+      ledger: { infrastructure: [], runs: [] },
+      budget: budget({ tokenCeiling: 1_000, tokensSpent: 700, tokensReserved: 0 }),
+      requestedTokens: 300,
+      priceTable: TABLE,
+    });
+
+    assert.equal(decision.permit, false);
+    assert.equal(decision.pausedBy[0]?.limb, 'per_room_tokens');
   });
 
   it('pauses a dispatch above the per-run hard cap', () => {
@@ -393,6 +448,103 @@ describe('cost meter — money stays exact', () => {
   });
 });
 
+describe('cost meter — the token x rate product stays exact past MAX_SAFE_INTEGER', () => {
+  /*
+   * `perMillion` multiplies two validated safe integers, and their PRODUCT is
+   * not bounded by that validation. Past `Number.MAX_SAFE_INTEGER` the double
+   * multiply lands on a neighbouring representable value; dividing by a
+   * million shrinks the error a millionfold, so it usually vanishes under
+   * rounding — which is precisely what made this easy to miss.
+   *
+   * It survives when the true quotient sits within that error of a half-micro
+   * rounding boundary. These are the smallest such inputs a search over the
+   * legal domain produced. They are not realistic run sizes and are not
+   * meant to be: what they pin is that a value which clears the boundary is
+   * priced EXACTLY rather than being handed back one micro wrong, in safe
+   * range, with nothing thrown.
+   */
+  const EXACT_VERSION = '2026-08-17-exactness';
+
+  function tableWithInputRate(inputMicrosPerMTok: number): PriceTable {
+    return {
+      hasVersion: (version) => version === EXACT_VERSION,
+      rateFor: (version, provider, model) =>
+        version === EXACT_VERSION && provider === 'test-provider' && model === 'test-model'
+          ? { inputMicrosPerMTok, outputMicrosPerMTok: 0 }
+          : null,
+    };
+  }
+
+  it('prices the smallest product past MAX_SAFE_INTEGER exactly, not one micro high', () => {
+    const inputTokens = 191_642_537_393_617;
+    const rate = 47;
+
+    // The premise: this pair is legal input (both safe integers) whose product
+    // is past the safe range. If either stops being true the case is no longer
+    // testing what it claims to.
+    assert.ok(Number.isSafeInteger(inputTokens) && Number.isSafeInteger(rate));
+    assert.equal(BigInt(inputTokens) * BigInt(rate), 9_007_199_257_499_999n);
+    assert.ok(9_007_199_257_499_999n > BigInt(Number.MAX_SAFE_INTEGER));
+
+    const amount = priceRun(
+      run({ priceTableVersion: EXACT_VERSION, usage: { inputTokens, outputTokens: 0 } }),
+      tableWithInputRate(rate),
+    );
+
+    assert.ok(!isUnknown(amount));
+    // Exact: floor((9_007_199_257_499_999 + 500_000) / 1_000_000).
+    assert.equal(amount.micros, 9_007_199_257);
+    // And the value the old double path produced, named so a regression is
+    // recognisable rather than just "some other number".
+    assert.notEqual(amount.micros, 9_007_199_258);
+    assert.equal(Math.round((inputTokens * rate) / 1_000_000), 9_007_199_258);
+  });
+
+  it('prices a large product exactly in both rounding directions', () => {
+    // At this magnitude the double error exceeds half a micro outright, so the
+    // failure is systematic rather than boundary-adjacent. One case rounds the
+    // wrong way up, the other the wrong way down.
+    const rate = 9_000_000;
+    const cases: { inputTokens: number; exact: number; doublePath: number }[] = [
+      { inputTokens: 533_333_342_333_360, exact: 4_800_000_081_000_240, doublePath: 4_800_000_081_000_241 },
+      { inputTokens: 533_333_347_333_375, exact: 4_800_000_126_000_375, doublePath: 4_800_000_126_000_374 },
+    ];
+
+    for (const { inputTokens, exact, doublePath } of cases) {
+      const amount = priceRun(
+        run({ priceTableVersion: EXACT_VERSION, usage: { inputTokens, outputTokens: 0 } }),
+        tableWithInputRate(rate),
+      );
+
+      assert.ok(!isUnknown(amount));
+      assert.equal(amount.micros, exact);
+      assert.equal(Math.round((inputTokens * rate) / 1_000_000), doublePath);
+    }
+  });
+
+  it('still throws when the priced result itself is past the safe range', () => {
+    /*
+     * The fix removes the SILENT wrong answer; it does not silence the loud
+     * one. A product whose quotient genuinely exceeds MAX_SAFE_INTEGER is
+     * handed to `micros()` unchanged, and money.ts documents a throw there.
+     */
+    assert.throws(
+      () =>
+        priceRun(
+          run({
+            priceTableVersion: EXACT_VERSION,
+            usage: { inputTokens: 9_007_199_254_740_991, outputTokens: 0 },
+          }),
+          // At 1_000_000 micros/MTok the quotient is MAX_SAFE_INTEGER itself,
+          // which `micros()` accepts as a bound rather than an overflow.
+          // Doubling the rate doubles the quotient and clears it.
+          tableWithInputRate(2_000_000),
+        ),
+      RangeError,
+    );
+  });
+});
+
 describe('cost meter — infrastructure recognition', () => {
   it('books the full month at the start under the selected method', () => {
     const onTheFirst = recognizeInfrastructure([NEON], accountingInstant(2026, 8, 1));
@@ -525,6 +677,82 @@ describe('cost meter — infrastructure recognition', () => {
     // Only August's run, priced at 1M input tokens x USD 1 per Mtok.
     assert.equal(isUnknown(total), false);
     assert.equal(isUnknown(total) ? -1 : total.micros, 1_000_000);
+  });
+});
+
+describe('cost meter — the full-month figure counts the month, not the month so far', () => {
+  /*
+   * `monthlyCommitmentTotal` answers "what will this month cost", which is a
+   * different question from `recognizeInfrastructure`'s "what has it cost so
+   * far". It was filtering with the second question's predicate, so a
+   * commitment starting later in the same month reported nothing until the day
+   * it began and then jumped — a reporting figure that answered a question
+   * nobody asked.
+   */
+  const STARTS_LATE: InfrastructureCommitment = {
+    provider: 'railway',
+    description: 'control plane host, added mid-month',
+    monthlyMicros: usd(25).micros,
+    effectiveFrom: '2026-08-25',
+  };
+
+  it('counts a commitment that starts later in the same month', () => {
+    const total = monthlyCommitmentTotal([NEON, STARTS_LATE], accountingInstant(2026, 8, 17));
+    assert.equal(total.micros, usd(19).micros + usd(25).micros);
+  });
+
+  it('leaves the incurred-so-far figure alone — it must NOT count it yet', () => {
+    // The separation is the point. Counting an uncommenced plan as spent would
+    // overstate the month against the ceiling, which is a different failure
+    // from the one being fixed and no better.
+    const spent = recognizeInfrastructure([NEON, STARTS_LATE], accountingInstant(2026, 8, 17));
+    assert.equal(spent.micros, usd(19).micros);
+  });
+
+  it('still excludes a commitment that begins after this month ends', () => {
+    const nextMonth: InfrastructureCommitment = { ...STARTS_LATE, effectiveFrom: '2026-09-01' };
+    const total = monthlyCommitmentTotal([NEON, nextMonth], accountingInstant(2026, 8, 17));
+    assert.equal(total.micros, usd(19).micros);
+  });
+
+  it('counts a commitment that ended earlier in the month, and excludes one that ended before it', () => {
+    const endedMidMonth: InfrastructureCommitment = { ...NEON, effectiveUntil: '2026-08-10' };
+    const endedBeforeTheMonth: InfrastructureCommitment = { ...NEON, effectiveUntil: '2026-08-01' };
+
+    assert.equal(
+      monthlyCommitmentTotal([endedMidMonth], accountingInstant(2026, 8, 17)).micros,
+      usd(19).micros,
+    );
+    // `effectiveUntil` is the day AFTER the last day in force, so ending on the
+    // 1st means no day of August was served.
+    assert.equal(
+      monthlyCommitmentTotal([endedBeforeTheMonth], accountingInstant(2026, 8, 17)).micros,
+      0,
+    );
+  });
+
+  it('uses the real last day of the month, so February is not assumed to have 31', () => {
+    // A commitment beginning on the last day of a short month must count. A
+    // month-end bound computed as a fixed 31 would still include it; one
+    // computed as a fixed 28 would drop 29-31 in every long month. The leap
+    // case pins that the bound comes from the calendar.
+    const leapDayStart: InfrastructureCommitment = {
+      provider: 'railway',
+      description: 'starts on the leap day',
+      monthlyMicros: usd(25).micros,
+      effectiveFrom: '2028-02-29',
+    };
+
+    assert.equal(
+      monthlyCommitmentTotal([leapDayStart], accountingInstant(2028, 2, 1)).micros,
+      usd(25).micros,
+    );
+    // 2026 is not a leap year, so there is no 29 February to begin on and the
+    // same date is simply not a day of that month.
+    assert.equal(
+      monthlyCommitmentTotal([{ ...leapDayStart, effectiveFrom: '2026-03-01' }], accountingInstant(2026, 2, 1)).micros,
+      0,
+    );
   });
 });
 

@@ -418,6 +418,52 @@ export const MIGRATIONS: readonly Migration[] = [
       `INSERT INTO control_plane_lease (id) VALUES (1) ON CONFLICT DO NOTHING`,
     ],
   },
+
+  {
+    /*
+     * The validating scan for 0002's constraint, in its own transaction.
+     *
+     * Read the honest version first: **on any database that runs the
+     * migrations in order, this does nothing.** 0002 already carries its own
+     * `VALIDATE CONSTRAINT`, so by the time this runs the constraint is
+     * validated, and Postgres skips `VALIDATE CONSTRAINT` on an
+     * already-validated constraint rather than erroring. It is a recorded
+     * no-op, and saying otherwise would be dressing it up.
+     *
+     * Why it is here anyway. 0002 pairs `ADD CONSTRAINT ... NOT VALID` with
+     * `VALIDATE CONSTRAINT` in one statements array, and the runner wraps each
+     * migration in ONE transaction — so the ADD's ACCESS EXCLUSIVE lock is
+     * held across the validating scan, which is the cost NOT VALID exists to
+     * avoid. Written that way it reads as the careful two-phase pattern while
+     * behaving as the blocking one-phase one.
+     *
+     * The fix for that is NOT to edit 0002. A shipped migration's identity is
+     * more than the database state it produces: its checksum, its provenance,
+     * and the reproducibility of a run from the recorded history all change
+     * when its text changes, and no comment inside the file can grant itself
+     * permission to break that (Founder ruling, 2026-08-21, rejecting exactly
+     * that edit). So 0002 stands byte for byte and the correctly-transacted
+     * validation is recorded here.
+     *
+     * How much the underlying hazard actually costs, stated plainly: close to
+     * nothing. Migrations run at boot, before this process serves a request,
+     * and `build_room_events` is empty when 0002 first runs — so the scan it
+     * holds the lock across is a scan of no rows. The defect is one of form,
+     * and the correction is one of form.
+     *
+     * **The rule this sets for later migrations.** A `NOT VALID` / `VALIDATE`
+     * pair goes in TWO migrations from the start — the ADD in one, the scan in
+     * the next. Doing it in one is only cheap while the table is empty, and
+     * discovering that after the migration ships leaves no good move: editing
+     * it is refused, and a follow-up like this one cannot undo the lock the
+     * original already took.
+     */
+    id: '0004_validate_pending_is_bare',
+    statements: [
+      `ALTER TABLE build_room_events
+         VALIDATE CONSTRAINT build_room_events_pending_is_bare`,
+    ],
+  },
 ];
 
 /** Advisory-lock key. Arbitrary but fixed — any value works if it never changes. */
@@ -518,7 +564,20 @@ export async function migrate(pool: Pool): Promise<MigrationResult> {
         await client.query('COMMIT');
         applied.push(migration.id);
       } catch (error) {
-        await client.query('ROLLBACK');
+        /*
+         * Guarded, because an unguarded ROLLBACK can replace the error being
+         * reported with its own. The failures that land here include the ones
+         * that kill the connection — a cancelled statement, a server restart,
+         * a dropped socket — and on a dead connection the ROLLBACK throws
+         * too. Its exception then propagates instead of `error`, and the boot
+         * log names a rollback failure rather than the migration statement
+         * that actually broke. `store.ts` guards the identical pattern in
+         * `append`; this one did not.
+         *
+         * Swallowing it loses nothing: a failed ROLLBACK means the
+         * transaction is already gone, which is the state ROLLBACK was for.
+         */
+        await client.query('ROLLBACK').catch(() => undefined);
         throw error;
       }
     }

@@ -315,24 +315,74 @@ export class PostgresLedgerStore {
    * Every committed row for a room, oldest first, as stored. This is the
    * export path for `DEC-20260815-17` exit criterion 5 (evidence retained and
    * exportable) — it returns rows, not a rendered report.
+   *
+   * Both reads happen in ONE read-only REPEATABLE READ transaction, on ONE
+   * pooled connection. They were two bare `pool.query` calls, which is two
+   * connections and two snapshots taken at two different instants: an append
+   * committing between them lands in the second result and not the first, so
+   * an export could carry a rejection for an event it does not contain, or
+   * events with the rejections that accompanied them missing. Nothing in the
+   * output says which instant it came from, so the inconsistency is invisible
+   * to whoever reads the export — and this is the evidence path, where a
+   * record that quietly disagrees with itself is worse than no record.
+   *
+   * REPEATABLE READ rather than the default READ COMMITTED because the
+   * default takes a fresh snapshot per statement, which is the exact problem;
+   * the transaction alone would not fix it. READ ONLY states the intent and
+   * lets the server refuse a write that should never appear here.
    */
   async exportRoom(roomId: string): Promise<{
+    readonly state: LedgerState;
+    readonly logLength: number;
     readonly events: readonly Record<string, unknown>[];
     readonly rejections: readonly Record<string, unknown>[];
   }> {
-    const events = await this.pool.query<Record<string, unknown>>(
-      `SELECT seq, event_id, event, outcome, entry_seq, transition_id, guard_id,
-              from_state, resulting_state, actor, attribution, scope, evidence,
-              overlays, round, occurred_at, payload, committed_at
-         FROM build_room_events WHERE room_id = $1 ORDER BY seq ASC`,
-      [roomId],
-    );
-    const rejections = await this.pool.query<Record<string, unknown>>(
-      `SELECT rejection_id, event_id, event, code, reason, actor, attempted_at, recorded_at
-         FROM build_room_rejections WHERE room_id = $1 ORDER BY rejection_id ASC`,
-      [roomId],
-    );
-    return { events: events.rows, rejections: rejections.rows };
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+
+      /*
+       * Existence and the replayed state come from INSIDE the transaction too.
+       *
+       * The first version returned only rows, and the endpoint composed its
+       * response from a separate `loadRoom` call plus this one — two snapshots
+       * again, one level up. An append committing between them produced an
+       * export whose `snapshot` described an earlier ledger than its `events`
+       * contained, which is the exact inconsistency moving these two reads into
+       * one transaction was meant to remove. Fixing it inside the store while
+       * leaving the endpoint to stitch two calls together fixed the visible
+       * half and left the real one. Raised by CodeRabbit on PR #6.
+       *
+       * Replaying here rather than trusting a caller-supplied state also means
+       * the returned state is derived from the very rows being exported, so the
+       * two cannot disagree by construction.
+       */
+      if (!(await roomExists(client, roomId))) throw new RoomNotFoundError(roomId);
+      const { state, logLength } = await replay(client, roomId);
+
+      const events = await client.query<Record<string, unknown>>(
+        `SELECT seq, event_id, event, outcome, entry_seq, transition_id, guard_id,
+                from_state, resulting_state, actor, attribution, scope, evidence,
+                overlays, round, occurred_at, payload, committed_at
+           FROM build_room_events WHERE room_id = $1 ORDER BY seq ASC`,
+        [roomId],
+      );
+      const rejections = await client.query<Record<string, unknown>>(
+        `SELECT rejection_id, event_id, event, code, reason, actor, attempted_at, recorded_at
+           FROM build_room_rejections WHERE room_id = $1 ORDER BY rejection_id ASC`,
+        [roomId],
+      );
+      await client.query('COMMIT');
+      return { state, logLength, events: events.rows, rejections: rejections.rows };
+    } catch (error) {
+      // Guarded for the same reason the migration runner's is: a ROLLBACK on a
+      // connection that has already died throws, and its exception would
+      // replace the one worth reporting.
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 
