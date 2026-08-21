@@ -25,25 +25,6 @@ V="$ROOT/scripts/verify-check.sh"
 TMPDIR_HARNESS="$(mktemp -d -t vcs-XXXXXX)"
 trap 'rm -rf "$TMPDIR_HARNESS"' EXIT
 
-assert() {
-  local desc="$1" expected_rc="$2" expected_text="$3"
-  shift 3
-  local out rc
-  out="$("$@" 2>&1)"
-  rc=$?
-  if [[ $rc -ne "$expected_rc" ]]; then
-    echo "FAIL: $desc — expected rc=$expected_rc got rc=$rc" >&2
-    echo "$out" | tail -n 3 >&2
-    return 1
-  fi
-  if ! grep -qF "$expected_text" <<<"$out"; then
-    echo "FAIL: $desc — expected output containing '$expected_text'" >&2
-    echo "$out" | tail -n 3 >&2
-    return 1
-  fi
-  echo "PASS: $desc"
-}
-
 fails=0
 
 # Case PASS — two trivial checks that both pass.
@@ -123,9 +104,14 @@ fi
 
 # Case 9: mixed — one check fails, one check has missing tool.
 # UNVERIFIED must take precedence over FAILED: exit 2, not 1.
+# Stricter assertion: verify the aggregate summary line reports the
+# correct counts ("1 failed, 1 unverified") — not merely that exit was
+# 2 and "UNVERIFIED" appeared somewhere in the output.
 VERIFY_CHECKS='a:false|b:definitely-no-such-tool-mixed-xyz' \
   bash "$V" "" >"$TMPDIR_HARNESS/mixed.out" 2>&1
-if [[ $? -eq 2 ]] && grep -qF 'UNVERIFIED' "$TMPDIR_HARNESS/mixed.out"; then
+if [[ $? -eq 2 ]] \
+   && grep -qF 'UNVERIFIED' "$TMPDIR_HARNESS/mixed.out" \
+   && grep -qF '1 failed, 1 unverified' "$TMPDIR_HARNESS/mixed.out"; then
   echo "PASS: mixed false|missing-tool -> exit 2 (UNVERIFIED precedence)"
 else
   echo "FAIL: mixed false|missing-tool -> expected exit 2" >&2; cat "$TMPDIR_HARNESS/mixed.out" >&2; fails=$((fails+1))
