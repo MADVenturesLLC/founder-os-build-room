@@ -230,14 +230,59 @@ function daysServedThisMonth(commitment: InfrastructureCommitment, asOf: Account
   return Math.max(0, lastServed - firstServed + 1);
 }
 
-/** What the month will cost in full, under either method. For reporting. */
+/**
+ * What the month will cost in full, under either method. For reporting.
+ *
+ * Filtered by `servesMonth`, not `servedThisMonth`. The two ask different
+ * questions and only one of them is this function's: `servedThisMonth` asks
+ * what has been INCURRED so far, and is right for `recognizeInfrastructure`,
+ * which answers a spend figure the ceiling is compared against.
+ * `monthlyCommitmentTotal` answers what the whole month costs, which includes
+ * the part of it that has not happened yet.
+ *
+ * Using the incurred-so-far filter here dropped every commitment starting
+ * later in the same month — a plan beginning 25 August, asked on the 17th,
+ * reported nothing, so the month's full cost was understated for eight days
+ * and then jumped. That is a reporting figure rather than the gate, so it did
+ * not permit a dispatch it should have paused, but it is the number a Founder
+ * would read to decide whether the month fits — and it was answering a
+ * question nobody asked.
+ */
 export function monthlyCommitmentTotal(
   commitments: readonly InfrastructureCommitment[],
   asOf: AccountingInstant,
 ): Usd {
   return micros(
     commitments
-      .filter((commitment) => servedThisMonth(commitment, asOf))
+      .filter((commitment) => servesMonth(commitment, asOf))
       .reduce((running, commitment) => running + commitment.monthlyMicros, 0),
   );
+}
+
+/**
+ * Does this commitment serve any day of the evaluated month — the WHOLE month,
+ * including days still ahead of `asOf`?
+ *
+ * The same overlap test as `servedThisMonth`, against the window `[the 1st,
+ * the last day of the month]` rather than `[the 1st, asOf]`. The end bound is
+ * the only difference, and it is the whole difference: a commitment beginning
+ * after today but before the month is out belongs in what the month will cost
+ * and not in what the month has cost.
+ */
+function servesMonth(commitment: InfrastructureCommitment, asOf: AccountingInstant): boolean {
+  const month = monthKey(asOf);
+  const monthStart = `${month}-01`;
+  const monthEnd = `${month}-${String(daysInMonth(asOf.year, asOf.month)).padStart(2, '0')}`;
+
+  const from = requireDateKey(commitment.effectiveFrom, 'effectiveFrom', commitment);
+  if (!isOnOrBefore(from, monthEnd)) return false;
+
+  const until = commitment.effectiveUntil;
+  if (until !== undefined && until !== null) {
+    // `effectiveUntil` is the day AFTER the last day in force, so ending
+    // exactly on the 1st means no day of this month was served.
+    if (isOnOrBefore(requireDateKey(until, 'effectiveUntil', commitment), monthStart)) return false;
+  }
+
+  return true;
 }

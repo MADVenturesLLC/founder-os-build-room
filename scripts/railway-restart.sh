@@ -90,9 +90,26 @@ graphql() {
 # `deployments`, and its own CLI sorts client-side — so this pulls a page and
 # picks the newest by `createdAt` here rather than trusting the server to have
 # meant what we assumed. Raised by CodeRabbit on PR #2.
-read -r -d '' QUERY <<'GQL' || true
-query($p:String!,$s:String!,$e:String!){
-  deployments(first:20, input:{projectId:$p, serviceId:$s, environmentId:$e}){
+#
+# That sort is only sound if the page CONTAINS the newest deployment, and the
+# same missing ordering guarantee is what would have to promise it does. With
+# no documented order, an arbitrary page of fifty out of eighty deployments
+# need not include the most recent one — so the client-side sort did not remove
+# the assumption, it moved it one level down where it stopped being visible.
+#
+# The page size is therefore load-bearing, and the selection now proves rather
+# than hopes. That decision lives in `scripts/select-newest-deployment.sh` —
+# split out so it can be TESTED, which it could not be while inline here. See
+# `test/railway-deployment-selection.test.ts` for the 49- and 50-edge cases.
+#
+# PAGE_SIZE is a bound, not the fix: raising it moves the failure point rather
+# than removing it. The fix is verified pagination, and it needs Railway's
+# connection contract confirmed live first. `docs/phase-2-known-limits.md` §3.
+PAGE_SIZE=50
+
+read -r -d '' QUERY <<GQL || true
+query(\$p:String!,\$s:String!,\$e:String!){
+  deployments(first:${PAGE_SIZE}, input:{projectId:\$p, serviceId:\$s, environmentId:\$e}){
     edges { node { id status createdAt } }
   }
 }
@@ -115,13 +132,14 @@ deployments=$(graphql "$(jq -nc \
 # as it can, so it captured the LAST id on the line rather than the first, and
 # `head -1` only deduplicated lines. One id in the response made that harmless;
 # any added id-bearing field would have restarted something else.
-newest=$(printf '%s' "$deployments" \
-  | jq -c '[.data.deployments.edges[]?.node] | sort_by(.createdAt) | last // empty')
-
-if [[ -z "$newest" || "$newest" == "null" ]]; then
-  echo "no deployment found for the service; response: $deployments" >&2
-  exit 1
-fi
+# Invoked through `bash`, deliberately, not as a direct executable. The tests
+# call it the same way, so the path CI exercises is the path the live restart
+# takes. Running it directly would make the file's execute bit load-bearing on a
+# code path nothing tests: a lost mode bit (a fresh clone with a permissive
+# umask, an archive round-trip, a Windows checkout) would keep CI green and
+# break the restart that `survives_restart` evidence depends on. Raised by
+# Cursor Bugbot on PR #6.
+newest=$(printf '%s' "$deployments" | bash "$(dirname "${BASH_SOURCE[0]}")/select-newest-deployment.sh" "$PAGE_SIZE")
 
 deployment_id=$(printf '%s' "$newest" | jq -r '.id // empty')
 status=$(printf '%s' "$newest" | jq -r '.status // empty')

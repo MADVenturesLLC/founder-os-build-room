@@ -21,7 +21,7 @@
  *   than estimated.
  */
 
-import { isUnknown, micros, sum, unknown, ZERO, type Amount } from './money.js';
+import { micros, sum, unknown, ZERO, type Amount } from './money.js';
 
 /** Provider-reported usage for one agent run. Tokens, never dollars. */
 export interface TokenUsage {
@@ -153,9 +153,53 @@ export function priceRuns(records: readonly RunUsageRecord[], table: PriceTable)
   if (records.length === 0) return ZERO;
   const priced = records.map((record) => priceRun(record, table));
   const total = sum(priced);
-  return isUnknown(total) ? total : total;
+  // `sum` already propagates UNKNOWN: one unknown part makes the total
+  // unknown, carrying the first reason. There is nothing left to branch on
+  // here. This line was `isUnknown(total) ? total : total` — both arms
+  // identical, so it read as a deliberate unknown-preserving step while doing
+  // nothing. Removed rather than left as decoration that invites trust.
+  return total;
 }
 
+/*
+ * Exact, via BigInt, because the intermediate product is the hazard here —
+ * not the result.
+ *
+ * `tokens` and `microsPerMTok` are each validated as non-negative SAFE
+ * integers before this is called. Their PRODUCT is not bounded by that: once
+ * it passes `Number.MAX_SAFE_INTEGER`, doubles space out and the multiply
+ * lands on a neighbouring representable value.
+ *
+ * Dividing by a million then shrinks that error a millionfold, which is
+ * exactly why this is easy to miss — almost always the error disappears under
+ * `Math.round` and the double path gives the right answer. It survives only
+ * when the true quotient sits within the error of a half-micro rounding
+ * boundary. That does happen, and the smallest case a search over the legal
+ * input domain turned up is the one pinned in `test/cost-meter.test.ts`:
+ * 191_642_537_393_617 tokens at 47 micros/MTok, whose product
+ * 9_007_199_257_499_999 clears `MAX_SAFE_INTEGER` by a hair. Exact is
+ * 9_007_199_257 micro-USD; `Math.round((tokens * rate) / 1e6)` returns
+ * 9_007_199_258.
+ *
+ * One micro-USD, and no realistic single run reaches it — at a $3/MTok rate
+ * the product only clears the boundary past three billion tokens in ONE
+ * record. So this is not a live mispricing. What makes it worth removing is
+ * the shape of the failure rather than its size: the wrong value lands back
+ * inside the safe range as an ordinary integer, `micros()` accepts it, and
+ * nothing throws. A silently wrong price is the one outcome every other guard
+ * in this module exists to prevent, and BigInt buys exactness at any
+ * magnitude for the cost of two conversions.
+ *
+ * `(p + 500_000n) / 1_000_000n` is floor((p + 500000) / 1000000), which equals
+ * `Math.round` for non-negative inputs — and both inputs are non-negative by
+ * contract.
+ *
+ * A result that genuinely exceeds `MAX_SAFE_INTEGER` is returned as-is so
+ * `micros()` throws, which is the behaviour money.ts documents for that range:
+ * "arithmetic has already gone wrong upstream". This removes the silent case
+ * and leaves the loud one alone.
+ */
 function perMillion(tokens: number, microsPerMTok: number): number {
-  return Math.round((tokens * microsPerMTok) / 1_000_000);
+  const product = BigInt(tokens) * BigInt(microsPerMTok);
+  return Number((product + 500_000n) / 1_000_000n);
 }
