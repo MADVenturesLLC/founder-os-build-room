@@ -198,15 +198,21 @@ describe('railway restart — the deployment page is either complete or refused'
   });
 
   it('still accepts every in-range RFC3339 form', () => {
-    // The tightening above must not start refusing valid timestamps. A leap
-    // second is legal RFC3339 and `fromdateiso8601` parses one.
+    // The tightening above must not start refusing valid timestamps.
+    //
+    // Acceptance here is STRUCTURAL. `:60` is legal RFC3339 only at a real
+    // inserted leap second, and the selector cannot know the IERS table, so it
+    // accepts the form and this test pins that. The fixture uses a genuine
+    // leap second — 2016-12-31T23:59:60Z, IERS Bulletin C 52 — rather than an
+    // invented one; an earlier revision used 2026-06-30, where Bulletin C 71
+    // confirms no leap second was inserted. Raised by CodeRabbit on PR #6.
     for (const createdAt of [
       '2026-08-21T00:00:00Z',
       '2026-08-21T00:00:00.500Z',
       '2026-08-21T00:00:00+23:59',
       '2026-08-21T00:00:00-23:59',
       '2026-08-21T00:00:00+00:00',
-      '2026-06-30T23:59:60Z',
+      '2016-12-31T23:59:60Z',
       '2026-12-31T23:59:59Z',
     ]) {
       const body = JSON.stringify({

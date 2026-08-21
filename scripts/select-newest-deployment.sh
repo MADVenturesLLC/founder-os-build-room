@@ -58,7 +58,9 @@ fi
 # then converts into a real instant up to a day away; and it let an out-of-range
 # date or time reach jq, which died with its own exit 5 rather than this
 # script's documented exit 3. Seconds allow 60 on purpose — RFC 3339 permits a
-# leap second and `fromdateiso8601` parses one. A well-formed but nonexistent
+# leap second and `fromdateiso8601` parses one; the check is STRUCTURAL, since
+# whether a leap second was actually inserted on a given date is an IERS table
+# this script has no business carrying. A well-formed but nonexistent
 # date (2026-02-30) is still accepted and normalised by strptime; catching that
 # needs a calendar, not a pattern. All raised by CodeRabbit on PR #6.
 DATE='[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])'
