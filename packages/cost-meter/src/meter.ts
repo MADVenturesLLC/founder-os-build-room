@@ -259,16 +259,33 @@ function tokenInputLimb(budget: RoomBudget, requestedTokens: number): LimbResult
   };
 }
 
+/*
+ * `-16` clause 2 refuses when spent + reserved ≥ ceiling. The quantity
+ * compared here adds `requestedTokens` on top, which is admission control
+ * rather than a restatement of the clause: the question is whether GRANTING
+ * this request breaches the ceiling, and answering it after the fact would
+ * mean the breach has already happened. Stricter than the clause in the
+ * fail-closed direction, which is the direction this meter is required to err
+ * in (§3.15).
+ *
+ * The reason string used to call that quantity "spent + reserved", which it is
+ * not — it is spent + reserved + the request. An operator reconciling the
+ * message against the room's actual counters would find a number that matched
+ * neither, and would reasonably conclude the room was further along than it
+ * was. Both figures are now named and reported separately, so the arithmetic
+ * in the message is checkable.
+ */
 function perRoomTokenLimb(budget: RoomBudget, requestedTokens: number): LimbResult {
-  const committed = budget.tokensSpent + budget.tokensReserved + requestedTokens;
+  const alreadyCommitted = budget.tokensSpent + budget.tokensReserved;
+  const projected = alreadyCommitted + requestedTokens;
 
-  // `-16` clause 2: refuse when spent + reserved ≥ ceiling.
-  if (committed >= budget.tokenCeiling) {
+  if (projected >= budget.tokenCeiling) {
     return {
       limb: 'per_room_tokens',
       verdict: 'pause',
       reason:
-        `room ${budget.roomId}: spent + reserved (${committed}) is at or above its token ceiling ` +
+        `room ${budget.roomId}: spent + reserved (${alreadyCommitted}) plus this request ` +
+        `(${requestedTokens}) is ${projected}, at or above its token ceiling ` +
         `(${budget.tokenCeiling})`,
     };
   }
@@ -276,7 +293,9 @@ function perRoomTokenLimb(budget: RoomBudget, requestedTokens: number): LimbResu
   return {
     limb: 'per_room_tokens',
     verdict: 'permit',
-    reason: `room ${budget.roomId}: ${committed} of ${budget.tokenCeiling} tokens committed`,
+    reason:
+      `room ${budget.roomId}: spent + reserved (${alreadyCommitted}) plus this request ` +
+      `(${requestedTokens}) is ${projected} of ${budget.tokenCeiling} tokens`,
   };
 }
 

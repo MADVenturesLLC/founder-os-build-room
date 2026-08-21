@@ -90,9 +90,28 @@ graphql() {
 # `deployments`, and its own CLI sorts client-side — so this pulls a page and
 # picks the newest by `createdAt` here rather than trusting the server to have
 # meant what we assumed. Raised by CodeRabbit on PR #2.
-read -r -d '' QUERY <<'GQL' || true
-query($p:String!,$s:String!,$e:String!){
-  deployments(first:20, input:{projectId:$p, serviceId:$s, environmentId:$e}){
+#
+# That sort is only sound if the page CONTAINS the newest deployment, and the
+# same missing ordering guarantee is what would have to promise it does. With
+# no documented order, an arbitrary page of fifty out of eighty deployments
+# need not include the most recent one — so the client-side sort did not remove
+# the assumption, it moved it one level down where it stopped being visible.
+#
+# The page size is therefore load-bearing, and the script proves rather than
+# hopes: if exactly PAGE_SIZE edges come back, the set may be truncated and the
+# newest cannot be established, so this refuses instead of restarting something
+# it cannot identify. Fewer than PAGE_SIZE means the page is the complete set
+# and the sort is exact.
+#
+# Refusing is the right failure for this harness — its whole purpose is to
+# refuse a restart that only looks like one. The proper fix is to page to
+# exhaustion (or to sort server-side), and both need Railway's connection
+# schema confirmed against the live API first; PAGE_SIZE is the interim bound.
+PAGE_SIZE=50
+
+read -r -d '' QUERY <<GQL || true
+query(\$p:String!,\$s:String!,\$e:String!){
+  deployments(first:${PAGE_SIZE}, input:{projectId:\$p, serviceId:\$s, environmentId:\$e}){
     edges { node { id status createdAt } }
   }
 }
@@ -115,6 +134,17 @@ deployments=$(graphql "$(jq -nc \
 # as it can, so it captured the LAST id on the line rather than the first, and
 # `head -1` only deduplicated lines. One id in the response made that harmless;
 # any added id-bearing field would have restarted something else.
+edge_count=$(printf '%s' "$deployments" | jq '[.data.deployments.edges[]?] | length')
+
+if [[ "$edge_count" -ge "$PAGE_SIZE" ]]; then
+  echo "Railway returned a full page of $edge_count deployments, so this page may be" >&2
+  echo "truncated. Railway guarantees no ordering for \`deployments\`, so a truncated" >&2
+  echo "page need not contain the newest one — refusing to restart a deployment this" >&2
+  echo "script cannot prove is the current one. Raise PAGE_SIZE in this script, or" >&2
+  echo "implement cursor pagination once the connection schema is confirmed." >&2
+  exit 1
+fi
+
 newest=$(printf '%s' "$deployments" \
   | jq -c '[.data.deployments.edges[]?.node] | sort_by(.createdAt) | last // empty')
 

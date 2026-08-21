@@ -26,6 +26,7 @@ import {
   micros,
   MONTHLY_CEILING,
   monthKeyOf,
+  monthlyCommitmentTotal,
   monthlySpend,
   PeriodError,
   priceRun,
@@ -164,6 +165,52 @@ describe('cost meter — the per-room token limb boundary', () => {
     });
 
     assert.equal(decision.permit, true);
+  });
+
+  it('reports the request separately from spent + reserved, so the message reconciles', () => {
+    /*
+     * The pause message named its figure "spent + reserved" while reporting
+     * spent + reserved + the request. An operator checking it against the
+     * room's counters would find a number matching neither and conclude the
+     * room was further along than it was. The arithmetic in the message has to
+     * be checkable against the inputs.
+     */
+    const decision = evaluateDispatch({
+      asOf: accountingInstant(2026, 8, 17),
+      ledger: { infrastructure: [], runs: [] },
+      budget: budget({ tokenCeiling: 1_000, tokensSpent: 600, tokensReserved: 100 }),
+      requestedTokens: 400,
+      priceTable: TABLE,
+    });
+
+    assert.equal(decision.permit, false);
+    const limb = decision.pausedBy.find((entry) => entry.limb === 'per_room_tokens');
+    assert.ok(limb, 'the per-room limb must be the one pausing');
+    // 700 already committed, 400 requested, 1100 projected against a 1000 ceiling.
+    assert.match(limb.reason, /spent \+ reserved \(700\)/);
+    assert.match(limb.reason, /this request \(400\)/);
+    assert.match(limb.reason, /1100/);
+    // And the old, wrong label must not come back: 1100 was reported AS
+    // "spent + reserved".
+    assert.doesNotMatch(limb.reason, /spent \+ reserved \(1100\)/);
+  });
+
+  it('admits on the projection, not after the fact — the request is counted before it is granted', () => {
+    // Under the clause read literally (spent + reserved >= ceiling) this would
+    // permit: 700 is below 1000. It pauses because granting 300 would reach the
+    // ceiling, which is the fail-closed direction the meter is required to err
+    // in. Pinned so the stricter reading is a decision on the record rather
+    // than an accident of how the sum was written.
+    const decision = evaluateDispatch({
+      asOf: accountingInstant(2026, 8, 17),
+      ledger: { infrastructure: [], runs: [] },
+      budget: budget({ tokenCeiling: 1_000, tokensSpent: 700, tokensReserved: 0 }),
+      requestedTokens: 300,
+      priceTable: TABLE,
+    });
+
+    assert.equal(decision.permit, false);
+    assert.equal(decision.pausedBy[0]?.limb, 'per_room_tokens');
   });
 
   it('pauses a dispatch above the per-run hard cap', () => {
@@ -622,6 +669,82 @@ describe('cost meter — infrastructure recognition', () => {
     // Only August's run, priced at 1M input tokens x USD 1 per Mtok.
     assert.equal(isUnknown(total), false);
     assert.equal(isUnknown(total) ? -1 : total.micros, 1_000_000);
+  });
+});
+
+describe('cost meter — the full-month figure counts the month, not the month so far', () => {
+  /*
+   * `monthlyCommitmentTotal` answers "what will this month cost", which is a
+   * different question from `recognizeInfrastructure`'s "what has it cost so
+   * far". It was filtering with the second question's predicate, so a
+   * commitment starting later in the same month reported nothing until the day
+   * it began and then jumped — a reporting figure that answered a question
+   * nobody asked.
+   */
+  const STARTS_LATE: InfrastructureCommitment = {
+    provider: 'railway',
+    description: 'control plane host, added mid-month',
+    monthlyMicros: usd(25).micros,
+    effectiveFrom: '2026-08-25',
+  };
+
+  it('counts a commitment that starts later in the same month', () => {
+    const total = monthlyCommitmentTotal([NEON, STARTS_LATE], accountingInstant(2026, 8, 17));
+    assert.equal(total.micros, usd(19).micros + usd(25).micros);
+  });
+
+  it('leaves the incurred-so-far figure alone — it must NOT count it yet', () => {
+    // The separation is the point. Counting an uncommenced plan as spent would
+    // overstate the month against the ceiling, which is a different failure
+    // from the one being fixed and no better.
+    const spent = recognizeInfrastructure([NEON, STARTS_LATE], accountingInstant(2026, 8, 17));
+    assert.equal(spent.micros, usd(19).micros);
+  });
+
+  it('still excludes a commitment that begins after this month ends', () => {
+    const nextMonth: InfrastructureCommitment = { ...STARTS_LATE, effectiveFrom: '2026-09-01' };
+    const total = monthlyCommitmentTotal([NEON, nextMonth], accountingInstant(2026, 8, 17));
+    assert.equal(total.micros, usd(19).micros);
+  });
+
+  it('counts a commitment that ended earlier in the month, and excludes one that ended before it', () => {
+    const endedMidMonth: InfrastructureCommitment = { ...NEON, effectiveUntil: '2026-08-10' };
+    const endedBeforeTheMonth: InfrastructureCommitment = { ...NEON, effectiveUntil: '2026-08-01' };
+
+    assert.equal(
+      monthlyCommitmentTotal([endedMidMonth], accountingInstant(2026, 8, 17)).micros,
+      usd(19).micros,
+    );
+    // `effectiveUntil` is the day AFTER the last day in force, so ending on the
+    // 1st means no day of August was served.
+    assert.equal(
+      monthlyCommitmentTotal([endedBeforeTheMonth], accountingInstant(2026, 8, 17)).micros,
+      0,
+    );
+  });
+
+  it('uses the real last day of the month, so February is not assumed to have 31', () => {
+    // A commitment beginning on the last day of a short month must count. A
+    // month-end bound computed as a fixed 31 would still include it; one
+    // computed as a fixed 28 would drop 29-31 in every long month. The leap
+    // case pins that the bound comes from the calendar.
+    const leapDayStart: InfrastructureCommitment = {
+      provider: 'railway',
+      description: 'starts on the leap day',
+      monthlyMicros: usd(25).micros,
+      effectiveFrom: '2028-02-29',
+    };
+
+    assert.equal(
+      monthlyCommitmentTotal([leapDayStart], accountingInstant(2028, 2, 1)).micros,
+      usd(25).micros,
+    );
+    // 2026 is not a leap year, so there is no 29 February to begin on and the
+    // same date is simply not a day of that month.
+    assert.equal(
+      monthlyCommitmentTotal([{ ...leapDayStart, effectiveFrom: '2026-03-01' }], accountingInstant(2026, 2, 1)).micros,
+      0,
+    );
   });
 });
 

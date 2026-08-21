@@ -211,9 +211,42 @@ project token, revoked immediately afterwards:
   `02:59:29.804Z`, strictly after the request. `/health` and `/ready` both
   answered afterwards, database reachable.
 
+**The client-side sort moved the ordering assumption rather than removing it —
+corrected 2026-08-21.** The rewrite above replaced `first:1` with "pull a page
+and sort by `createdAt` here", and described that as no longer trusting
+Railway's ordering. It still did. Sorting a page is exact only if the page
+CONTAINS the newest deployment, and with no documented ordering the thing that
+would have to promise that is the same guarantee the sort was introduced to
+stop relying on. The dependence did not go away; it went one level down, where
+it stopped being visible in the code.
+
+The live check on 2026-08-18 could not have caught it: it observed
+`first:20` returning twenty nodes, which is exactly the case where the set is
+truncated and the newest is not provably present. That the newest *was*
+present followed from the separate observation that Railway returns
+newest-first — an observation this section is otherwise careful to treat as not
+a guarantee.
+
+The script now refuses rather than assumes. `PAGE_SIZE` is 50, and a response
+carrying a full page exits non-zero naming the reason, because a truncated page
+is one the script cannot establish the newest deployment from. Fewer than
+`PAGE_SIZE` edges means the page is the complete set and the sort is exact.
+
+**What remains open.** `PAGE_SIZE` is an interim bound, not a fix: a service
+that accumulates more than fifty deployments will start refusing, and the
+message says to raise it. The real fix is cursor pagination to exhaustion, or a
+server-side sort, and both need Railway's connection schema (`pageInfo`,
+`after`, any ordering argument) confirmed against the live API under a scoped
+token — which is a Founder-issued credential, so it is not something this
+session can establish on its own. Refusing was chosen over proceeding because
+a gate that stops loudly costs a token and a minute, and a gate that restarts a
+deployment it cannot identify writes bad evidence into a run bundle.
+
 **Raised by** `builder` while reading the 23:47 bundle, after the ordering fix
 had already landed. Narrowed once the Founder issued a scoped Railway project
-token; the rewrite re-verified live under a second one.
+token; the rewrite re-verified live under a second one. The residual ordering
+dependence was found on 2026-08-21 in the Phase 2 close-out review
+(`HO-20260818-01`, finding 6).
 
 ---
 
