@@ -115,11 +115,11 @@ describe('railway restart — the deployment page is either complete or refused'
   it('refuses a node with a missing or malformed createdAt rather than sorting around it', () => {
     // jq sorts an absent or unparseable key first, so one bad node silently
     // changes which deployment is selected.
-    for (const bad of [undefined, '', 'yesterday', '2026-08-21']) {
+    for (const bad of [undefined, '', 'yesterday', '2026-08-21', '2026-08-21T00:00:00 junk', 123, null]) {
       const body = JSON.stringify({
         data: { deployments: { edges: [
           { node: { id: 'good', status: 'SUCCESS', createdAt: '2026-08-21T00:01:00.000Z' } },
-          { node: { id: 'bad', status: 'SUCCESS', ...(bad === undefined ? {} : { createdAt: bad }) } },
+          { node: { id: 'bad', status: 'SUCCESS', ...(bad === undefined ? {} : { createdAt: bad as unknown as string }) } },
         ] } },
       });
       const result = select(body);
@@ -133,6 +133,8 @@ describe('railway restart — the deployment page is either complete or refused'
     for (const node of [
       { status: 'SUCCESS', createdAt: '2026-08-21T00:01:00.000Z' },
       { id: 'x', createdAt: '2026-08-21T00:01:00.000Z' },
+      { id: 42, status: 'SUCCESS', createdAt: '2026-08-21T00:01:00.000Z' },
+      { id: 'x', status: 7, createdAt: '2026-08-21T00:01:00.000Z' },
     ]) {
       const body = JSON.stringify({ data: { deployments: { edges: [{ node }] } } });
       assert.equal(select(body).status, 3);

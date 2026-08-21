@@ -49,10 +49,17 @@ fi
 
 # jq sorts a null or absent key first, so one malformed `createdAt` silently
 # changes which node is "newest". Refuse instead of sorting around it.
-RFC3339='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}'
+# Anchored at both ends and type-checked: a prefix match accepts
+# "2026-08-21T00:00:00 whatever", and a non-string id or status is truthy but
+# unusable. Raised by CodeRabbit on PR #6.
+RFC3339='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$'
 invalid=$(printf '%s' "$response" | jq -r --arg re "$RFC3339" '
   .data.deployments.edges[]?.node
-  | select((.id // "") == "" or (.status // "") == "" or ((.createdAt // "") | test($re) | not))
+  | select(
+      (.id     | type != "string" or . == "")
+      or (.status | type != "string" or . == "")
+      or (.createdAt | type != "string" or (test($re) | not))
+    )
   | tojson')
 
 if [[ -n "$invalid" ]]; then
