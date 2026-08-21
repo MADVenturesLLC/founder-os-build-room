@@ -481,6 +481,88 @@ describe('control plane — room surface', () => {
     await harness.close();
   });
 
+  it('answers an unparseable body 400, not 500, and never reaches the store', async () => {
+    /*
+     * The parser's own failures used to fall through to the catch-all handler,
+     * which returns `500 internal_error` with an incident id — telling the
+     * operator a fault occurred and the caller nothing about the mistake they
+     * made. A body the parser cannot read is the caller's error, and the
+     * closed response vocabulary has a code for it.
+     */
+    let reached = false;
+    const store = {
+      append: async () => {
+        reached = true;
+        throw new Error('should not be reached');
+      },
+    } as unknown as PostgresLedgerStore;
+
+    const harness = await start(reachablePool, store);
+    const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      body: '{"event": "plan.approved"',
+    });
+    const body = await json(response);
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error, 'invalid_request');
+    assert.equal(reached, false);
+    // No incident id: this is not an incident, and emitting one trains an
+    // operator to chase a log line for a caller's typo.
+    assert.equal(body.incidentId, undefined);
+    await harness.close();
+  });
+
+  it('answers an oversized body 413, distinctly from a malformed one', async () => {
+    /*
+     * A size failure and a syntax failure are different failures. Reporting
+     * both as 400 tells a client to fix its JSON when the JSON was fine, and
+     * reporting both as 500 tells it to retry something that will never
+     * succeed. `ROOM_BODY_LIMIT` is 256kb; this is comfortably past it and
+     * is valid JSON, so 413 is the only correct answer.
+     */
+    let reached = false;
+    const store = {
+      append: async () => {
+        reached = true;
+        throw new Error('should not be reached');
+      },
+    } as unknown as PostgresLedgerStore;
+
+    const harness = await start(reachablePool, store);
+    const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ event: 'plan.approved', padding: 'x'.repeat(400_000) }),
+    });
+    const body = await json(response);
+
+    assert.equal(response.status, 413);
+    assert.equal(body.error, 'payload_too_large');
+    assert.equal(reached, false);
+    await harness.close();
+  });
+
+  it('refuses an unauthenticated oversized body without parsing it', async () => {
+    /*
+     * Ordering, not just status. The token guard is mounted BEFORE the body
+     * parser on every room route, so an anonymous caller cannot make this
+     * process allocate and parse a quarter-megabyte body. The proof is that
+     * the answer is 401 and not 413: a 413 here would mean the parser ran
+     * first and the size check is what stopped it.
+     */
+    const harness = await start(reachablePool, emptyStore);
+    const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event: 'plan.approved', padding: 'x'.repeat(400_000) }),
+    });
+
+    assert.equal(response.status, 401);
+    await harness.close();
+  });
+
   it('leaves lifecycle judgement to the reducer rather than pre-judging the event name', async () => {
     // A body that is well-SHAPED but names an event the vocabulary does not
     // contain must reach the ledger, so the refusal carries the reducer's

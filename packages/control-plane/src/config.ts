@@ -55,6 +55,24 @@ export interface Config {
    * value a thousand times too small. Caught by CodeRabbit on PR #2.
    */
   readonly poolIdleTimeoutMs: number;
+  /**
+   * Milliseconds the pool may wait to ESTABLISH a connection, mapping to
+   * `pg`'s `connectionTimeoutMillis`.
+   *
+   * Its own knob rather than a reuse of `readyProbeTimeoutMs`, because the two
+   * answer opposite questions. The readiness probe asks "can this instance
+   * serve traffic right now?" and wants a fast no — two seconds is right for
+   * it. Opening a connection asks "can this request reach the database?", and
+   * on Neon the honest answer after an idle period is "yes, in a moment": a
+   * suspended compute takes roughly one to five seconds to resume. Bounding
+   * that at the probe's two seconds failed the first request after every idle
+   * period, which is the request most likely to be a real user arriving.
+   *
+   * Ten seconds clears the observed resume range with headroom and still
+   * fails rather than hanging. It is not a statement timeout — once connected,
+   * `statementTimeoutMs` bounds the query.
+   */
+  readonly poolConnectionTimeoutMs: number;
 
   /* ---- Gateway enrollment and pairing (contract §6) ------------------- */
 
@@ -323,6 +341,7 @@ export function loadConfig(env: Env): Config {
     statementTimeoutMs: integer(env, 'STATEMENT_TIMEOUT_MS', 10_000),
     poolMax: integer(env, 'PG_POOL_MAX', 4),
     poolIdleTimeoutMs: integer(env, 'PG_POOL_IDLE_TIMEOUT_MS', 30_000),
+    poolConnectionTimeoutMs: integer(env, 'PG_CONNECTION_TIMEOUT_MS', 10_000),
 
     gatewayCodeTtlMs,
     gatewayHeartbeatCadenceMs,

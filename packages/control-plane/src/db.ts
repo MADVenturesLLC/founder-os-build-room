@@ -23,7 +23,16 @@ export function createPool(config: Config): Pool {
     connectionString: config.databaseUrl,
     max: config.poolMax,
     idleTimeoutMillis: config.poolIdleTimeoutMs,
-    connectionTimeoutMillis: config.readyProbeTimeoutMs,
+    /*
+     * The pool's own connect budget, NOT the readiness probe's. This once read
+     * `config.readyProbeTimeoutMs` — two seconds — which is a correct bound
+     * for "is this instance ready?" and a wrong one for "can this request
+     * open a connection?". Neon suspends an idle compute and takes roughly
+     * one to five seconds to resume it, so the first request after any idle
+     * period was being failed while the database was in the middle of coming
+     * back. See the field's doc comment in `config.ts`.
+     */
+    connectionTimeoutMillis: config.poolConnectionTimeoutMs,
     // Applied per connection by the server, so it survives pool recycling.
     options: `-c statement_timeout=${config.statementTimeoutMs}`,
   };
