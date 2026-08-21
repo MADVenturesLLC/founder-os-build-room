@@ -318,7 +318,21 @@ export class GatewayDaemon {
       if (lane === 'PROMOTED') {
         // Promotion interrupted before the custody write: staging survives, so
         // promotion retries from staging (§14 crash table).
-        await this.promote();
+        //
+        // (correction 9, finding #2) A busy staging lock DEFERS this retry; it
+        // does not refuse the boot. `promote()` carries no busy catch of its
+        // own, so an orphaned or peer-held lock propagated `StagingLockBusy`
+        // out of `boot()` and left the daemon unable to start until someone
+        // removed a lock file by hand — the same "wedged into a shape only a
+        // file edit could fix" posture `state.ts` was corrected to avoid at
+        // `read()`. The sibling recovery path below already logs and continues;
+        // this makes the two agree.
+        try {
+          await this.promote();
+        } catch (error) {
+          if (!(error instanceof StagingLockBusy)) throw error;
+          this.log('warn', 'staging.lock_busy_promotion_deferred_at_boot', {});
+        }
       }
       // Every other lane with staging custody intact resumes normally:
       // AWAITING and TRANSPORT_RETRY probe, PENDING_REDEEM and HALTED surface

@@ -24,7 +24,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -437,6 +437,43 @@ describe('gateway-daemon · lane transitions persist at their recoverable bounda
       const state = await f.state.read();
       assert.equal(state.primary.identity.keyId, identity.keyId);
       assert.equal(state.staging.lane, 'INACTIVE');
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  it('daemon:a-busy-staging-lock-defers-the-interrupted-promotion-instead-of-refusing-boot', async () => {
+    /*
+     * (correction 9, finding #2) `promote()` carries no `StagingLockBusy` catch
+     * of its own, and the interrupted-PROMOTED boot path called it directly, so
+     * an orphaned or peer-held lock propagated out of `boot()` and the daemon
+     * could not start until someone deleted a lock file by hand. Its sibling
+     * recovery path already logged and continued; the two now agree.
+     *
+     * The lock is planted, not held by a real peer: `acquireStagingLock` opens
+     * with `wx`, so an existing file at that path IS the busy condition, which
+     * is also exactly what an orphan left by a crash looks like.
+     */
+    const f = daemonFixture();
+    const { clock } = scriptClock();
+    try {
+      const { identity, secret } = stagingIdentity();
+      await plant(f, { lane: 'PROMOTED', identity, stagingSecret: secret });
+
+      mkdirSync(f.paths.directory, { recursive: true });
+      writeFileSync(f.paths.stagingLockPath, JSON.stringify({ ownerToken: 'someone-else' }), {
+        mode: 0o600,
+      });
+
+      const daemon = daemonOf(f, scriptedFetch(down), clock);
+      await assert.doesNotReject(() => daemon.boot(), 'a busy lock must defer the retry, not refuse the boot');
+      await daemon.stop();
+
+      // Deferred means deferred: nothing was promoted behind the held lock.
+      assert.equal(await f.custody.read('staging'), secret, 'staging custody is untouched');
+      assert.equal(await f.custody.read('primary'), null, 'no promotion happened under a held lock');
+      const state = await f.state.read();
+      assert.equal(state.staging.lane, 'PROMOTED', 'the lane still awaits its retry');
     } finally {
       f.cleanup();
     }

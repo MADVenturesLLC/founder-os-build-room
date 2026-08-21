@@ -244,5 +244,24 @@ export function validateControlPlaneUrl(
       return { ok: false, reason: 'plain "http://" is allowed only on loopback; use "https://"' };
     }
   }
-  return { ok: true, url: parsed.toString() };
+  /*
+   * (correction 9, finding #1) A base URL must be safe to CONCATENATE, because
+   * that is what the client does with it: `request()` builds
+   * `${this.baseUrl}${path}` and every path already begins with "/".
+   *
+   * `URL.toString()` serializes an origin-only URL with a trailing slash, so
+   * the ruled default `http://127.0.0.1:8080` came back as
+   * `http://127.0.0.1:8080/` and produced `http://127.0.0.1:8080//gateway/...`.
+   * Express does not collapse that: the doubled path 404s, which would have
+   * broken enroll, challenge, session-start and heartbeat on every request made
+   * through a validated URL — i.e. both real entry points.
+   *
+   * A query or fragment is refused rather than trimmed. Neither is meaningful
+   * on a control-plane base, and concatenation would bury the path inside them
+   * ("…/?x=1" + "/gateway/enroll") instead of failing where it can be seen.
+   */
+  if (parsed.search !== '' || parsed.hash !== '') {
+    return { ok: false, reason: 'the control-plane URL must carry no query string or fragment' };
+  }
+  return { ok: true, url: parsed.toString().replace(/\/+$/, '') };
 }
