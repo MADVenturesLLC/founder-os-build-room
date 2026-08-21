@@ -195,12 +195,20 @@ describe('cost meter — the per-room token limb boundary', () => {
     assert.doesNotMatch(limb.reason, /spent \+ reserved \(1100\)/);
   });
 
-  it('admits on the projection, not after the fact — the request is counted before it is granted', () => {
-    // Under the clause read literally (spent + reserved >= ceiling) this would
-    // permit: 700 is below 1000. It pauses because granting 300 would reach the
-    // ceiling, which is the fail-closed direction the meter is required to err
-    // in. Pinned so the stricter reading is a decision on the record rather
-    // than an accident of how the sum was written.
+  it('admits on the projection, not after the fact — CURRENT BEHAVIOUR, semantics unresolved', () => {
+    /*
+     * This pins WHAT THE CODE DOES, not what the rule is. Under `-16` clause 2
+     * read literally (spent + reserved >= ceiling) this case permits: 700 is
+     * below 1000. It pauses because granting 300 would reach the ceiling,
+     * which makes the ceiling exclusive — a different rule from the ratified
+     * one, not a stricter phrasing of it.
+     *
+     * FOUNDER_DECISION_REQUIRED (`docs/phase-2-known-limits.md` §9). The test
+     * exists so the divergence is visible and cannot drift further while the
+     * question is open; a green test here is NOT a ruling that this reading is
+     * correct. If the Founder rules for the literal clause, this test changes
+     * with it.
+     */
     const decision = evaluateDispatch({
       asOf: accountingInstant(2026, 8, 17),
       ledger: { infrastructure: [], runs: [] },

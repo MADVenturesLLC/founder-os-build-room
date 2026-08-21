@@ -38,13 +38,6 @@ export interface Migration {
 /**
  * Ordered, append-only list. Never edit a shipped migration — add another.
  * The `id` is the identity recorded in `schema_migrations`.
- *
- * `0002` carries one edit made after shipping, and the bar it had to clear is
- * the rule, not an exception to it: a database that already ran the old
- * migration must end in the same state as one that runs the new migration and
- * everything after it. That held there because the removed statement is
- * re-issued by `0004` and is a no-op when already applied. An edit that cannot
- * demonstrate that property is not allowed — it gets a new migration.
  */
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -173,22 +166,6 @@ export const MIGRATIONS: readonly Migration[] = [
      * and the validation pass then confirms existing rows. On an empty or small
      * table this is indistinguishable from a plain ADD; on a large one it is
      * the difference between a brief lock and a long one.
-     *
-     * The two steps are two MIGRATIONS, not two statements here. This one adds
-     * the constraint NOT VALID and stops; `0004_validate_pending_is_bare` runs
-     * the scan. The runner wraps each migration's statements in ONE
-     * transaction, so keeping both here held the ADD's ACCESS EXCLUSIVE lock
-     * across the validating scan — the exact cost NOT VALID exists to avoid.
-     * Written that way it read as the careful two-phase pattern while behaving
-     * as the blocking one-phase one.
-     *
-     * This edits a migration the header says never to edit. The reason that
-     * rule exists — that an edit changes what a database which already ran the
-     * migration received — does not apply to this edit: the removed statement
-     * is re-issued by 0004, and `VALIDATE CONSTRAINT` on an already-validated
-     * constraint is a no-op in Postgres. So a database that ran the old 0002
-     * ends in the same state as one that runs the new 0002 and then 0004.
-     * Anything that does NOT hold that property still gets a new migration.
      */
     id: '0002_pending_rows_carry_no_transition_fields',
     statements: [
@@ -204,9 +181,10 @@ export const MIGRATIONS: readonly Migration[] = [
                AND resulting_state IS NULL
                AND entry_seq       IS NULL)
          ) NOT VALID`,
+      `ALTER TABLE build_room_events
+         VALIDATE CONSTRAINT build_room_events_pending_is_bare`,
     ],
   },
-
 
   {
     /*
@@ -445,16 +423,40 @@ export const MIGRATIONS: readonly Migration[] = [
     /*
      * The validating scan for 0002's constraint, in its own transaction.
      *
-     * `VALIDATE CONSTRAINT` takes SHARE UPDATE EXCLUSIVE, which lets reads and
-     * writes continue while it scans. That is only true if the ACCESS
-     * EXCLUSIVE from the `ADD CONSTRAINT` has already been released, and the
-     * runner releases it at COMMIT — so the two have to be separate
-     * migrations, not two statements in one.
+     * Read the honest version first: **on any database that runs the
+     * migrations in order, this does nothing.** 0002 already carries its own
+     * `VALIDATE CONSTRAINT`, so by the time this runs the constraint is
+     * validated, and Postgres skips `VALIDATE CONSTRAINT` on an
+     * already-validated constraint rather than erroring. It is a recorded
+     * no-op, and saying otherwise would be dressing it up.
      *
-     * Idempotent on a database that ran the older single-transaction 0002:
-     * Postgres skips `VALIDATE CONSTRAINT` when the constraint is already
-     * validated rather than erroring, so this applies cleanly and records
-     * itself as a no-op.
+     * Why it is here anyway. 0002 pairs `ADD CONSTRAINT ... NOT VALID` with
+     * `VALIDATE CONSTRAINT` in one statements array, and the runner wraps each
+     * migration in ONE transaction — so the ADD's ACCESS EXCLUSIVE lock is
+     * held across the validating scan, which is the cost NOT VALID exists to
+     * avoid. Written that way it reads as the careful two-phase pattern while
+     * behaving as the blocking one-phase one.
+     *
+     * The fix for that is NOT to edit 0002. A shipped migration's identity is
+     * more than the database state it produces: its checksum, its provenance,
+     * and the reproducibility of a run from the recorded history all change
+     * when its text changes, and no comment inside the file can grant itself
+     * permission to break that (Founder ruling, 2026-08-21, rejecting exactly
+     * that edit). So 0002 stands byte for byte and the correctly-transacted
+     * validation is recorded here.
+     *
+     * How much the underlying hazard actually costs, stated plainly: close to
+     * nothing. Migrations run at boot, before this process serves a request,
+     * and `build_room_events` is empty when 0002 first runs — so the scan it
+     * holds the lock across is a scan of no rows. The defect is one of form,
+     * and the correction is one of form.
+     *
+     * **The rule this sets for later migrations.** A `NOT VALID` / `VALIDATE`
+     * pair goes in TWO migrations from the start — the ADD in one, the scan in
+     * the next. Doing it in one is only cheap while the table is empty, and
+     * discovering that after the migration ships leaves no good move: editing
+     * it is refused, and a follow-up like this one cannot undo the lock the
+     * original already took.
      */
     id: '0004_validate_pending_is_bare',
     statements: [

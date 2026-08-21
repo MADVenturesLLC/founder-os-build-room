@@ -238,15 +238,32 @@ carrying a full page exits non-zero naming the reason, because a truncated page
 is one the script cannot establish the newest deployment from. Fewer than
 `PAGE_SIZE` edges means the page is the complete set and the sort is exact.
 
-**What remains open.** `PAGE_SIZE` is an interim bound, not a fix: a service
-that accumulates more than fifty deployments will start refusing, and the
-message says to raise it. The real fix is cursor pagination to exhaustion, or a
-server-side sort, and both need Railway's connection schema (`pageInfo`,
-`after`, any ordering argument) confirmed against the live API under a scoped
-token — which is a Founder-issued credential, so it is not something this
-session can establish on its own. Refusing was chosen over proceeding because
-a gate that stops loudly costs a token and a minute, and a gate that restarts a
-deployment it cannot identify writes bad evidence into a run bundle.
+**The fail-closed behaviour is Founder-accepted (2026-08-21).** Refusing on a
+full page is safer than acting on incomplete evidence, and that part is
+settled.
+
+**`PAGE_SIZE` is a bound, not the fix — also Founder-ruled, same date.**
+"Raise `PAGE_SIZE`" only moves the failure point: a service that accumulates
+more than fifty deployments starts refusing, fifty-one starts refusing at
+fifty-one, and at no value does the script gain the ability to prove it holds
+the newest. The real fix is **verified pagination** — cursor to exhaustion, or
+a server-side sort — and it is gated on confirming Railway's response contract
+first: whether `pageInfo`/`after` exist on this connection, whether any
+ordering argument is offered, and what a full traversal costs. That
+confirmation needs a live API call under a Founder-issued project token, so it
+is not something a session can settle on its own. Until then the bound stands
+and the refusal is the control.
+
+**The decision is now tested, which it was not before.** It moved out of
+`railway-restart.sh` into `scripts/select-newest-deployment.sh` — a script that
+reads the response on stdin and either prints the newest node or exits
+non-zero — precisely so it could be exercised.
+`test/railway-deployment-selection.test.ts` drives it at the boundary the
+Founder named: **49 edges selects correctly, 50 edges refuses**, plus 51 to
+show the check is `>=` rather than `==`, an empty response, and a shuffled
+fixture that only a real sort can pass. The fixture puts the newest in the
+middle deliberately, so neither "first edge" nor "last edge" would pass —
+Railway's observed newest-first ordering must never be what makes this work.
 
 **Raised by** `builder` while reading the 23:47 bundle, after the ordering fix
 had already landed. Narrowed once the Founder issued a scoped Railway project
@@ -429,6 +446,56 @@ of the record.
 
 ---
 
+## 9. The per-room ceiling is enforced exclusively, and `-16` clause 2 reads inclusive — FOUNDER_DECISION_REQUIRED
+
+**What it is.** `perRoomTokenLimb` refuses when `spent + reserved + requested
+≥ ceiling`. `DEC-20260815-16` clause 2 refuses when `spent + reserved ≥
+ceiling`. Those are not the same rule. The implementation makes the ceiling
+**exclusive**: a room at 700 of a 1000 ceiling asking for 300 tokens is
+refused, where the clause read literally permits it, since 700 is below 1000.
+
+**Why the code reads the way it does.** It is admission control — the question
+asked is whether *granting* the request breaches the ceiling, rather than
+noticing after the fact that it did. It errs fail-closed, which is the
+direction §3.15 requires a spend meter to err in. That is a defensible reading
+and it may well be the intended one.
+
+**Why that does not settle it.** "Stricter, in the safe direction" is not the
+same as "the ratified rule". A room can be paused that the clause as written
+permits, and a Founder reading the clause would not predict the refusal. The
+gap is semantic, not cosmetic, and it is not an agent's to close.
+
+**What was done, and what was deliberately not done.** The `per_room_tokens`
+reason string was wrong in a separate and smaller way: it labelled its figure
+"spent + reserved" while reporting spent + reserved + the request, so an
+operator reconciling the message against the room's counters found a number
+matching neither. Both figures are now reported separately and the arithmetic
+in the message is checkable. **That is a message fix and nothing more.** The
+behaviour is unchanged, and the relabelling must not be read as having resolved
+the semantic question — a Founder ruling on 2026-08-21 named exactly that risk.
+
+**Pinned, not endorsed.** `test/cost-meter.test.ts` carries a test named
+*"admits on the projection, not after the fact — CURRENT BEHAVIOUR, semantics
+unresolved"*. It exists so the divergence stays visible and cannot drift while
+the question is open. A green test there is not a ruling.
+
+**What closing it takes.** A Founder ruling on which reading governs:
+
+- **Exclusive (current code).** `-16` clause 2 is amended, or a decision
+  records that admission control against the projected total is the intended
+  enforcement. Code unchanged; the test is renamed to state the settled rule.
+- **Inclusive (clause as written).** `perRoomTokenLimb` compares `spent +
+  reserved` against the ceiling and the request is checked only by the per-run
+  cap. The test changes with it, and the boundary tests at
+  `tokensSpent: 900, tokensReserved: 100` keep their current meaning either
+  way.
+
+**Raised by** the Founder on 2026-08-21, reviewing the `HO-20260818-01`
+close-out. Recorded as open rather than absorbed into a comment that would have
+read as settled.
+
+---
+
 ## Related
 
 - `docs/phase-2-provider-controls.md` — the Neon spend-control gap, which is a
@@ -437,3 +504,4 @@ of the record.
 - `packages/control-plane/src/store.ts` — where limit 1 lives
 - `packages/run-harness/src/sequence.ts` — where limit 2 lives
 - `packages/run-harness/src/runner.ts` — where limits 3 and 7 live
+- `packages/cost-meter/src/meter.ts` — where limit 9 lives

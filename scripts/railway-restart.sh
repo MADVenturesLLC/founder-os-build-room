@@ -97,16 +97,14 @@ graphql() {
 # need not include the most recent one — so the client-side sort did not remove
 # the assumption, it moved it one level down where it stopped being visible.
 #
-# The page size is therefore load-bearing, and the script proves rather than
-# hopes: if exactly PAGE_SIZE edges come back, the set may be truncated and the
-# newest cannot be established, so this refuses instead of restarting something
-# it cannot identify. Fewer than PAGE_SIZE means the page is the complete set
-# and the sort is exact.
+# The page size is therefore load-bearing, and the selection now proves rather
+# than hopes. That decision lives in `scripts/select-newest-deployment.sh` —
+# split out so it can be TESTED, which it could not be while inline here. See
+# `test/railway-deployment-selection.test.ts` for the 49- and 50-edge cases.
 #
-# Refusing is the right failure for this harness — its whole purpose is to
-# refuse a restart that only looks like one. The proper fix is to page to
-# exhaustion (or to sort server-side), and both need Railway's connection
-# schema confirmed against the live API first; PAGE_SIZE is the interim bound.
+# PAGE_SIZE is a bound, not the fix: raising it moves the failure point rather
+# than removing it. The fix is verified pagination, and it needs Railway's
+# connection contract confirmed live first. `docs/phase-2-known-limits.md` §3.
 PAGE_SIZE=50
 
 read -r -d '' QUERY <<GQL || true
@@ -134,24 +132,7 @@ deployments=$(graphql "$(jq -nc \
 # as it can, so it captured the LAST id on the line rather than the first, and
 # `head -1` only deduplicated lines. One id in the response made that harmless;
 # any added id-bearing field would have restarted something else.
-edge_count=$(printf '%s' "$deployments" | jq '[.data.deployments.edges[]?] | length')
-
-if [[ "$edge_count" -ge "$PAGE_SIZE" ]]; then
-  echo "Railway returned a full page of $edge_count deployments, so this page may be" >&2
-  echo "truncated. Railway guarantees no ordering for \`deployments\`, so a truncated" >&2
-  echo "page need not contain the newest one — refusing to restart a deployment this" >&2
-  echo "script cannot prove is the current one. Raise PAGE_SIZE in this script, or" >&2
-  echo "implement cursor pagination once the connection schema is confirmed." >&2
-  exit 1
-fi
-
-newest=$(printf '%s' "$deployments" \
-  | jq -c '[.data.deployments.edges[]?.node] | sort_by(.createdAt) | last // empty')
-
-if [[ -z "$newest" || "$newest" == "null" ]]; then
-  echo "no deployment found for the service; response: $deployments" >&2
-  exit 1
-fi
+newest=$(printf '%s' "$deployments" | "$(dirname "${BASH_SOURCE[0]}")/select-newest-deployment.sh" "$PAGE_SIZE")
 
 deployment_id=$(printf '%s' "$newest" | jq -r '.id // empty')
 status=$(printf '%s' "$newest" | jq -r '.status // empty')

@@ -260,20 +260,26 @@ function tokenInputLimb(budget: RoomBudget, requestedTokens: number): LimbResult
 }
 
 /*
- * `-16` clause 2 refuses when spent + reserved ≥ ceiling. The quantity
- * compared here adds `requestedTokens` on top, which is admission control
- * rather than a restatement of the clause: the question is whether GRANTING
- * this request breaches the ceiling, and answering it after the fact would
- * mean the breach has already happened. Stricter than the clause in the
- * fail-closed direction, which is the direction this meter is required to err
- * in (§3.15).
+ * FOUNDER_DECISION_REQUIRED — the comparison here does not match `-16`
+ * clause 2 as written, and relabelling it did not fix that.
  *
- * The reason string used to call that quantity "spent + reserved", which it is
- * not — it is spent + reserved + the request. An operator reconciling the
- * message against the room's actual counters would find a number that matched
- * neither, and would reasonably conclude the room was further along than it
- * was. Both figures are now named and reported separately, so the arithmetic
- * in the message is checkable.
+ * The clause refuses when spent + reserved ≥ ceiling. This adds
+ * `requestedTokens` on top, so the ceiling becomes exclusive: a room at 700
+ * of 1000 asking for 300 is refused, where the clause read literally permits
+ * it (700 < 1000). The reading is defensible — it asks whether GRANTING the
+ * request breaches the ceiling rather than noticing afterwards that it did,
+ * and it errs fail-closed, which is the direction §3.15 requires. It is still
+ * a different rule from the ratified one, not a stricter statement of the
+ * same rule, and only the Founder can settle which is meant.
+ *
+ * What this commit fixed is narrower, and must not be read as settling the
+ * above: the reason string called its figure "spent + reserved" while
+ * reporting spent + reserved + the request. An operator reconciling the
+ * message against the room's counters would find a number matching neither
+ * and conclude the room was further along than it was. Both figures are now
+ * named separately so the arithmetic is checkable. The behaviour is
+ * unchanged and the semantic question stays open — see
+ * `docs/phase-2-known-limits.md` §9.
  */
 function perRoomTokenLimb(budget: RoomBudget, requestedTokens: number): LimbResult {
   const alreadyCommitted = budget.tokensSpent + budget.tokensReserved;
