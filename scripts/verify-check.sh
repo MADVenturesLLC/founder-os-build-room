@@ -75,15 +75,28 @@ for entry in "${CHECKS[@]}"; do
   tool="${cmd_tokens[0]}"
 
   # Tool existence. For a bare command name, PATH lookup; for a path, the
-  # file itself must exist and be readable.
+  # file itself must exist, be a regular file (not a directory), be readable,
+  # and be executable. Directories that happen to be readable (e.g. /tmp)
+  # would otherwise pass `-r` — that is wrong; we want a real executable
+  # tool.
   if [[ "$tool" == */* ]]; then
     if [[ ! -e "$tool" ]]; then
       echo "UNVERIFIED: ${name} — '${tool}' does not exist"
       UNVERIFIED+=("$name")
       continue
     fi
+    if [[ ! -f "$tool" ]]; then
+      echo "UNVERIFIED: ${name} — '${tool}' is not a regular file (directory or special)"
+      UNVERIFIED+=("$name")
+      continue
+    fi
     if [[ ! -r "$tool" ]]; then
       echo "UNVERIFIED: ${name} — '${tool}' is not readable"
+      UNVERIFIED+=("$name")
+      continue
+    fi
+    if [[ ! -x "$tool" ]]; then
+      echo "UNVERIFIED: ${name} — '${tool}' is not executable"
       UNVERIFIED+=("$name")
       continue
     fi
@@ -97,12 +110,18 @@ for entry in "${CHECKS[@]}"; do
 
   # Script behind an interpreter: `bash scripts/foo.sh ...`. The first token
   # is the interpreter (always present); the SECOND token, when it is a path,
-  # is the check script itself. A missing script is an unverified check, not
-  # a failed one — exit 2, never "clean".
+  # is the check script itself. A missing script, a directory, or a
+  # non-readable script is an unverified check, not a failed one — exit 2,
+  # never "clean".
   if [[ ${#cmd_tokens[@]} -ge 2 && "${cmd_tokens[1]}" == */* && "${cmd_tokens[1]}" != -* ]]; then
     script="${cmd_tokens[1]}"
     if [[ ! -e "$script" ]]; then
       echo "UNVERIFIED: ${name} — check script '${script}' does not exist"
+      UNVERIFIED+=("$name")
+      continue
+    fi
+    if [[ ! -f "$script" ]]; then
+      echo "UNVERIFIED: ${name} — check script '${script}' is not a regular file (directory or special)"
       UNVERIFIED+=("$name")
       continue
     fi
@@ -113,7 +132,11 @@ for entry in "${CHECKS[@]}"; do
     fi
   fi
 
-  out="$(mktemp)"
+  out="$(mktemp)" || {
+    echo "UNVERIFIED: ${name} — could not allocate temp file (mktemp failed)"
+    UNVERIFIED+=("$name")
+    continue
+  }
   # Run the command via direct exec on the token array — never re-parse via
   # the shell (avoids CWE-78 command injection; cf. ast-grep
   # bash-c-variable-injection-bash). Each token is passed as a separate argv
@@ -126,19 +149,22 @@ for entry in "${CHECKS[@]}"; do
     echo "PASS: ${name}"
     pass=$((pass+1))
   fi
-  rm -f "$out"
+  rm -f "$out" || true
 done
 
 echo
 echo "verify-check: ${pass} passed, ${#FAILED[@]} failed, ${#UNVERIFIED[@]} unverified"
 
-if [[ ${#FAILED[@]} -gt 0 ]]; then
-  echo "verify-check: FAILED — gate exit 1" >&2
-  exit 1
-fi
+# UNVERIFIED takes precedence over FAILED: an unverified check means we
+# genuinely don't know whether the failed check would have passed if it
+# could run, so we cannot honestly report "clean". Exit 2 wins.
 if [[ ${#UNVERIFIED[@]} -gt 0 ]]; then
   echo "verify-check: UNVERIFIED — a check could not run; refusing to report clean" >&2
   exit 2
+fi
+if [[ ${#FAILED[@]} -gt 0 ]]; then
+  echo "verify-check: FAILED — gate exit 1" >&2
+  exit 1
 fi
 
 echo "verify-check: PASS — every check ran and passed"

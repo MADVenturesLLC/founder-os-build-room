@@ -98,6 +98,39 @@ else
   echo "FAIL: missing check script -> expected exit 2" >&2; cat "$TMPDIR_HARNESS/missingscript.out" >&2; fails=$((fails+1))
 fi
 
+# Case 7: tool path is a directory, not a regular file (exit 2).
+# /tmp is a directory that is readable — `-e` and `-r` would pass; only
+# `-f` rejects it. The fix in scripts/verify-check.sh adds an explicit
+# -f check so directories are classified as UNVERIFIED, not silently run.
+VERIFY_CHECKS='a:/tmp' \
+  bash "$V" "" >"$TMPDIR_HARNESS/dirtool.out" 2>&1
+if [[ $? -eq 2 ]] && grep -qF 'is not a regular file' "$TMPDIR_HARNESS/dirtool.out"; then
+  echo "PASS: directory as tool path -> exit 2"
+else
+  echo "FAIL: directory as tool path -> expected exit 2" >&2; cat "$TMPDIR_HARNESS/dirtool.out" >&2; fails=$((fails+1))
+fi
+
+# Case 8: tool path exists but is not executable (exit 2).
+# Create a temp file, leave it non-executable, point at it.
+NOTEXEC="$(mktemp -p "$TMPDIR_HARNESS" notexec-XXXXXX.sh)"
+VERIFY_CHECKS="a:${NOTEXEC}" \
+  bash "$V" "" >"$TMPDIR_HARNESS/notexec.out" 2>&1
+if [[ $? -eq 2 ]] && grep -qF 'is not executable' "$TMPDIR_HARNESS/notexec.out"; then
+  echo "PASS: non-executable tool path -> exit 2"
+else
+  echo "FAIL: non-executable tool path -> expected exit 2" >&2; cat "$TMPDIR_HARNESS/notexec.out" >&2; fails=$((fails+1))
+fi
+
+# Case 9: mixed — one check fails, one check has missing tool.
+# UNVERIFIED must take precedence over FAILED: exit 2, not 1.
+VERIFY_CHECKS='a:false|b:definitely-no-such-tool-mixed-xyz' \
+  bash "$V" "" >"$TMPDIR_HARNESS/mixed.out" 2>&1
+if [[ $? -eq 2 ]] && grep -qF 'UNVERIFIED' "$TMPDIR_HARNESS/mixed.out"; then
+  echo "PASS: mixed false|missing-tool -> exit 2 (UNVERIFIED precedence)"
+else
+  echo "FAIL: mixed false|missing-tool -> expected exit 2" >&2; cat "$TMPDIR_HARNESS/mixed.out" >&2; fails=$((fails+1))
+fi
+
 echo
-echo "verify-check-self-test: $((6 - fails))/6 cases passed"
+echo "verify-check-self-test: $((9 - fails))/9 cases passed"
 [[ $fails -eq 0 ]]

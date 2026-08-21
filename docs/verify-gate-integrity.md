@@ -27,9 +27,17 @@ that never ran — all can read as green.
 treated exactly like a failed check:
 
 - every declared check runs and passes → `exit 0`
-- at least one check runs and fails → `exit 1`
-- a check cannot run (tool/script missing, unreadable, or no checks
-  declared) → `exit 2` — **never reported as clean**
+- a check cannot run (tool/script missing, unreadable, not a regular
+  file, not executable, mktemp failed, or no checks declared) →
+  `exit 2` — **never reported as clean**
+- at least one check runs and fails **and no check is unverified** →
+  `exit 1`
+
+**UNVERIFIED takes precedence over FAILED.** If any check could not run,
+the gate exits 2 even if other checks also failed. An unverified check
+means we genuinely cannot know whether the failed check would have passed
+had it been able to run, so we cannot honestly report "clean". Exit 1
+applies only when every declared check actually ran.
 
 This is the "unchecked = failing" behavior taken from the procoder audit
 (`build-room/source/procoder-audit/README.md`, verified against
