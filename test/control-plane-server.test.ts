@@ -19,6 +19,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import type { Pool } from 'pg';
 import { createServer } from '../packages/control-plane/src/server.js';
+import { createGatewaySurface, type GatewaySurface } from '../packages/control-plane/src/gateway/index.js';
 import type { PostgresLedgerStore } from '../packages/control-plane/src/store.js';
 import { loadConfig } from '../packages/control-plane/src/config.js';
 import { initialLedger } from '../packages/ledger/src/index.js';
@@ -40,17 +41,89 @@ const ROOM = '11111111-2222-4333-8444-555555555555';
 interface Harness {
   readonly url: string;
   readonly close: () => Promise<void>;
+  /** The real leadership supervisor, over the stubbed database. */
+  readonly gateway: GatewaySurface;
 }
 
 const openServers: Server[] = [];
 
-function start(pool: Pool, store: PostgresLedgerStore): Harness {
-  const app = createServer({ config: CONFIG, pool, store, startedAt: Date.now() });
+/**
+ * A pool stub that answers the handful of statements leadership issues, so the
+ * gateway surface in these tests is the REAL one and only the database is
+ * stubbed — which is this suite's premise everywhere else too.
+ *
+ * Faking leadership itself would have been easier and would have proved less:
+ * `requireLeader` would then be tested against a fake instead of against the
+ * supervisor that actually decides it.
+ */
+function fakeLeaderPool(): Pool {
+  let ownerId: string | null = null;
+  const challenge = 'a'.repeat(64);
+
+  const answer = async (sql: string, params: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> => {
+    if (/UPDATE control_plane_lease\s+SET owner_id = \$1, generation/.test(sql)) {
+      ownerId = String(params[0]);
+      return { rows: [{ generation: '1', challenge: String(params[1]) }], rowCount: 1 };
+    }
+    if (/FROM control_plane_lease WHERE id = 1 FOR UPDATE/.test(sql)) {
+      return {
+        rows: [
+          {
+            id: 1,
+            owner_id: ownerId,
+            generation: '1',
+            heartbeat_at: new Date(),
+            challenge,
+            challenge_published_at: new Date(),
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+    if (/SELECT now\(\)/.test(sql)) return { rows: [{ now: new Date() }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+
+  const client = {
+    query: (sql: string, params?: unknown[]) => answer(sql, params),
+    release: () => undefined,
+  };
+
+  return {
+    query: (sql: string, params?: unknown[]) => answer(sql, params),
+    connect: async () => client,
+    on: () => undefined,
+    end: async () => undefined,
+  } as unknown as Pool;
+}
+
+const openGateways: GatewaySurface[] = [];
+
+/**
+ * Start a server and bring its leadership to a serving state.
+ *
+ * Async because promotion is: the supervisor acquires the lease, reconciles,
+ * and only then sets `servingGeneration`. Room append is leader-gated now
+ * (contract §11), so a harness that returned before that would be testing the
+ * 503 pre-filter in every case rather than the route.
+ */
+async function start(pool: Pool, store: PostgresLedgerStore): Promise<Harness> {
+  const gateway = createGatewaySurface({
+    pool: fakeLeaderPool(),
+    config: CONFIG,
+    log: () => undefined,
+  });
+  openGateways.push(gateway);
+  const app = createServer({ config: CONFIG, pool, store, startedAt: Date.now(), gateway });
   const server = app.listen(0);
   openServers.push(server);
   const { port } = server.address() as AddressInfo;
+
+  await gateway.leadership.attemptAcquisition();
+
   return {
     url: `http://127.0.0.1:${port}`,
+    gateway,
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
@@ -93,7 +166,7 @@ describe('control plane — health, readiness and version', () => {
       },
     } as unknown as Pool;
 
-    const harness = start(pool, emptyStore);
+    const harness = await start(pool, emptyStore);
     const response = await fetch(`${harness.url}/health`);
 
     assert.equal(response.status, 200);
@@ -103,7 +176,7 @@ describe('control plane — health, readiness and version', () => {
   });
 
   it('/ready reports ready when the database answers', async () => {
-    const harness = start(reachablePool, emptyStore);
+    const harness = await start(reachablePool, emptyStore);
     const response = await fetch(`${harness.url}/ready`);
     const body = await json(response);
 
@@ -120,7 +193,7 @@ describe('control plane — health, readiness and version', () => {
      * onto a public URL. Now the detail goes to the log under a correlation id
      * and the caller gets the id. Raised by CodeRabbit on PR #2.
      */
-    const harness = start(unreachablePool, emptyStore);
+    const harness = await start(unreachablePool, emptyStore);
     const response = await fetch(`${harness.url}/ready`);
     const body = await json(response);
 
@@ -135,7 +208,7 @@ describe('control plane — health, readiness and version', () => {
   });
 
   it('/version reports the commit it was built from', async () => {
-    const harness = start(reachablePool, emptyStore);
+    const harness = await start(reachablePool, emptyStore);
     const body = await json(await fetch(`${harness.url}/version`));
 
     assert.equal(body.commit, 'deadbeef');
@@ -178,7 +251,7 @@ describe('control plane — the room endpoints are not public', () => {
 
   for (const [method, path] of guarded) {
     it(`answers 401 on ${method} ${path} with no credential`, async () => {
-      const harness = start(reachablePool, explodingStore);
+      const harness = await start(reachablePool, explodingStore);
       const response = await fetch(`${harness.url}${path}`, {
         method,
         ...(method === 'POST'
@@ -193,7 +266,7 @@ describe('control plane — the room endpoints are not public', () => {
   }
 
   it('answers 401 for a wrong token, and says nothing beyond "unauthorized"', async () => {
-    const harness = start(reachablePool, explodingStore);
+    const harness = await start(reachablePool, explodingStore);
     const response = await fetch(`${harness.url}/rooms/${ROOM}`, {
       headers: { authorization: `Bearer ${'w'.repeat(TOKEN.length)}` },
     });
@@ -212,7 +285,7 @@ describe('control plane — the room endpoints are not public', () => {
     const wrong = `${TOKEN.slice(0, -1)}${TOKEN.endsWith('x') ? 'y' : 'x'}`;
     assert.equal(wrong.length, TOKEN.length, 'the fixture must be the same length');
 
-    const harness = start(reachablePool, explodingStore);
+    const harness = await start(reachablePool, explodingStore);
     const response = await fetch(`${harness.url}/rooms/${ROOM}`, {
       headers: { authorization: `Bearer ${wrong}` },
     });
@@ -224,7 +297,7 @@ describe('control plane — the room endpoints are not public', () => {
   it('leaves /health, /ready and /version reachable without a credential', async () => {
     // Railway's health check presents no credential and would fail the deploy
     // if these were guarded; the harness reads /version to prove a restart.
-    const harness = start(reachablePool, explodingStore);
+    const harness = await start(reachablePool, explodingStore);
 
     for (const path of ['/health', '/ready', '/version']) {
       assert.equal((await fetch(`${harness.url}${path}`)).status, 200, `${path} must stay open`);
@@ -252,7 +325,7 @@ describe('control plane — occurredAt is a real RFC3339 instant', () => {
 
   const post = async (occurredAt: string) => {
     reached = false;
-    const harness = start(reachablePool, watchfulStore);
+    const harness = await start(reachablePool, watchfulStore);
     const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
@@ -320,7 +393,7 @@ describe('control plane — an internal failure does not describe itself to the 
       },
     } as unknown as PostgresLedgerStore;
 
-    const harness = start(reachablePool, store);
+    const harness = await start(reachablePool, store);
     const response = await fetch(`${harness.url}/rooms/${ROOM}`, {
       headers: { authorization: `Bearer ${TOKEN}` },
     });
@@ -336,7 +409,7 @@ describe('control plane — an internal failure does not describe itself to the 
 
   it('still returns author-written messages for client mistakes', async () => {
     // `HttpError` text says only what the caller did wrong, so it stays.
-    const harness = start(reachablePool, emptyStore);
+    const harness = await start(reachablePool, emptyStore);
     const response = await fetch(`${harness.url}/rooms/not-a-uuid`, {
       headers: { authorization: `Bearer ${TOKEN}` },
     });
@@ -350,7 +423,7 @@ describe('control plane — an internal failure does not describe itself to the 
 
 describe('control plane — room surface', () => {
   it('rejects a room id that is not a UUID', async () => {
-    const harness = start(reachablePool, emptyStore);
+    const harness = await start(reachablePool, emptyStore);
     const response = await fetch(`${harness.url}/rooms`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
@@ -372,7 +445,7 @@ describe('control plane — room surface', () => {
       }),
     } as unknown as PostgresLedgerStore;
 
-    const harness = start(reachablePool, store);
+    const harness = await start(reachablePool, store);
     const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
@@ -396,7 +469,7 @@ describe('control plane — room surface', () => {
       },
     } as unknown as PostgresLedgerStore;
 
-    const harness = start(reachablePool, store);
+    const harness = await start(reachablePool, store);
     const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
@@ -426,7 +499,7 @@ describe('control plane — room surface', () => {
       },
     } as unknown as PostgresLedgerStore;
 
-    const harness = start(reachablePool, store);
+    const harness = await start(reachablePool, store);
     const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },

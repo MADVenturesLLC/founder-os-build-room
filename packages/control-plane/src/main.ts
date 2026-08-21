@@ -21,6 +21,7 @@ import { createPool } from './db.js';
 import { createServer } from './server.js';
 import { migrate } from './migrations.js';
 import { PostgresLedgerStore } from './store.js';
+import { createGatewaySurface } from './gateway/index.js';
 
 function log(level: 'info' | 'error', at: string, fields: Record<string, unknown> = {}): void {
   const line = JSON.stringify({ level, at, ts: new Date().toISOString(), ...fields });
@@ -41,8 +42,27 @@ export async function main(): Promise<void> {
     alreadyApplied: migration.alreadyApplied,
   });
 
-  const store = new PostgresLedgerStore(pool);
-  const app = createServer({ config, pool, store, startedAt });
+  /*
+   * The gateway subsystem is built BEFORE the store, because the store's room
+   * append runs inside its fence (contract §10). The store is never constructed
+   * without it here — that is what makes "the room-append route is always
+   * fenced" a property of the boot sequence rather than of a convention.
+   */
+  const gateway = createGatewaySurface({
+    pool,
+    config,
+    log: (level, at, fields) => log(level === 'warn' ? 'info' : level, at, fields),
+  });
+  const store = new PostgresLedgerStore(pool, gateway.roomAppendFence);
+  const app = createServer({ config, pool, store, startedAt, gateway });
+
+  /*
+   * Started after the server object exists but before it listens: the
+   * supervisor's first ticks are what acquire the lease, reconcile, and take
+   * the clock monitor's two clean boot readings, and every leader-gated route
+   * answers 503 until those complete.
+   */
+  gateway.start();
 
   const server: Server = app.listen(config.port, () => {
     log('info', 'boot.listening', { port: config.port });
@@ -54,10 +74,29 @@ export async function main(): Promise<void> {
     shuttingDown = true;
     log('info', 'shutdown.start', { signal });
 
+    /*
+     * Release the lease on the way out. This only accelerates takeover — the
+     * TTL alone is sufficient and no correctness claim rests on it — so its
+     * failure is logged and never blocks the shutdown.
+     */
+    /*
+     * Retained, not fire-and-forget: the pool is ended only after this chain
+     * settles, so in-flight gateway teardown never loses its database
+     * mid-flight (correction 5, M14).
+     */
+    const gatewayStopped = gateway
+      .stop()
+      .then(() => gateway.leadership.releaseGracefully())
+      .catch((error: unknown) => {
+        log('error', 'shutdown.gateway_stop_failed', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+
     server.close((closeError) => {
       if (closeError) log('error', 'shutdown.server_close_failed', { message: closeError.message });
-      pool
-        .end()
+      gatewayStopped
+        .then(() => pool.end())
         .then(() => {
           log('info', 'shutdown.complete', { signal });
           process.exit(0);

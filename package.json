@@ -19,7 +19,11 @@
     "gate:path-audit": "bash scripts/path-audit.sh",
     "gate:attribution-selftest": "bash scripts/attribution-shape-check.sh selftest",
     "start": "node dist/packages/control-plane/src/main.js",
-    "phase2:runs": "node dist/packages/run-harness/src/cli.js"
+    "phase2:runs": "node dist/packages/run-harness/src/cli.js",
+    "test:storage": "npm run build && node dist/test/support/require-test-database-url.js && node --test dist/test/*.storage.test.js",
+    "test:custody:macos": "npm run build && BUILDROOM_CUSTODY_MACOS=1 node --test dist/test/custody-macos.test.js",
+    "gate:integrity": "bash scripts/contract-integrity-scan.sh",
+    "smoke:gateway": "npm run build && bash scripts/gateway-smoke.sh"
   },
   "devDependencies": {
     "@types/express": "5.0.0",

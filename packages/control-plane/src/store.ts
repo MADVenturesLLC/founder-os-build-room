@@ -32,7 +32,40 @@ import {
   type RejectionCode,
 } from '../../ledger/src/index.js';
 
-export type AppendOutcome = 'transition' | 'conjunction_pending' | 'replay' | 'rejected';
+export type AppendOutcome =
+  | 'transition'
+  | 'conjunction_pending'
+  | 'replay'
+  | 'rejected'
+  | 'not_leader';
+
+export type RoomAppendOutcome<T> =
+  | { readonly status: 'ok'; readonly value: T }
+  | { readonly status: 'not_leader'; readonly committed: boolean }
+  | { readonly status: 'commit_failed'; readonly message: string };
+
+/**
+ * The fenced-transaction collaborator a room append runs inside.
+ *
+ * Injected rather than imported so this module keeps knowing only about the
+ * ledger. It supplies two things the ledger cannot: the leader-dependent
+ * transaction of contract §7 (L0 -> L1 -> L2, with the three-point demotion
+ * discipline), and the `gatewayOnline` derivation of §10.
+ *
+ * `main.ts` always constructs the store WITH it, and `createServer` cannot be
+ * called without a gateway surface — so the room-append route is never mounted
+ * without the fence. The collaborator is optional on this constructor only so
+ * that the pre-existing Phase 2 ledger suite, which predates the gateway and
+ * asserts ledger semantics alone, can exercise the store directly.
+ */
+export interface RoomAppendFence {
+  runRoomAppend<T>(
+    body: (
+      client: PoolClient,
+      deriveGatewayOnline: () => Promise<boolean>,
+    ) => Promise<{ readonly value: T; readonly commit: boolean }>,
+  ): Promise<RoomAppendOutcome<T>>;
+}
 
 export type AppendResult =
   | {
@@ -61,7 +94,13 @@ export type AppendResult =
       readonly code: RejectionCode;
       readonly reason: string;
       readonly state: LedgerState;
-    };
+    }
+  /**
+   * The fence refused, or detected a demotion. `committed` is true only for a
+   * post-COMMIT detection: the durable append stands and the caller is still
+   * told 503, because no pipeline may answer "accepted" after demotion.
+   */
+  | { readonly ok: false; readonly outcome: 'not_leader'; readonly committed: boolean };
 
 export interface RoomView {
   readonly roomId: string;
@@ -84,7 +123,10 @@ interface EventRow {
 }
 
 export class PostgresLedgerStore {
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly fence?: RoomAppendFence,
+  ) {}
 
   /**
    * Create a room. Idempotent: creating an existing room reports
@@ -119,16 +161,75 @@ export class PostgresLedgerStore {
    * acceptance or a rejection, only records it.
    */
   async append(roomId: string, event: LifecycleEvent): Promise<AppendResult> {
+    if (this.fence !== undefined) return this.appendFenced(roomId, event);
+
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      const result = await this.runAppendBody(client, roomId, event, null);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 
-      // Serializes writers for this room. Also proves the room exists.
+  /**
+   * The same append, inside the leader-dependent fenced transaction, with the
+   * `gatewayOnline` overlay derived rather than believed (contract §10).
+   */
+  private async appendFenced(roomId: string, event: LifecycleEvent): Promise<AppendResult> {
+    const fence = this.fence;
+    if (fence === undefined) throw new Error('appendFenced called without a fence');
+
+    let notFound = false;
+    const outcome = await fence.runRoomAppend<AppendResult | null>(async (client, derive) => {
+      try {
+        const result = await this.runAppendBody(client, roomId, event, derive);
+        return { value: result, commit: true };
+      } catch (error) {
+        if (error instanceof RoomNotFoundError) {
+          notFound = true;
+          return { value: null, commit: false };
+        }
+        throw error;
+      }
+    });
+
+    if (notFound) throw new RoomNotFoundError(roomId);
+    if (outcome.status === 'not_leader') {
+      return { ok: false, outcome: 'not_leader', committed: outcome.committed };
+    }
+    if (outcome.status === 'commit_failed') {
+      throw new Error(`room append commit failed: ${outcome.message}`);
+    }
+    if (outcome.value === null) throw new RoomNotFoundError(roomId);
+    return outcome.value;
+  }
+
+  /**
+   * Everything an append does between BEGIN and COMMIT.
+   *
+   * Factored out so the plain and fenced paths cannot drift: the ledger rules,
+   * the replay, the rejection record and the insert are one body, and the only
+   * difference between the two callers is what surrounds it.
+   */
+  private async runAppendBody(
+    client: PoolClient,
+    roomId: string,
+    event: LifecycleEvent,
+    deriveGatewayOnline: (() => Promise<boolean>) | null,
+  ): Promise<AppendResult> {
+    {
+      // Serializes writers for this room. Also proves the room exists. This is
+      // L3, and it is taken last, after L0, L1 and L2 (contract §13).
       const locked = await client.query('SELECT room_id FROM build_room_rooms WHERE room_id = $1 FOR UPDATE', [
         roomId,
       ]);
       if (locked.rowCount === 0) {
-        await client.query('ROLLBACK');
         throw new RoomNotFoundError(roomId);
       }
 
@@ -142,17 +243,39 @@ export class PostgresLedgerStore {
        * by CodeRabbit on PR #2.
        */
       const { state: current, logLength } = await replay(client, roomId);
-      const result: ApplyResult = apply(current, event);
+
+      /*
+       * The overlay is derived and OVERWRITES whatever the caller asserted
+       * (contract §10). `gatewayOnline` decides whether work may be dispatched
+       * to a machine; a caller asserting its own reachability is a caller
+       * marking its own homework. `@build-room/contracts` shapes are untouched
+       * — only this one fact's value is replaced.
+       *
+       * The DERIVED event is what gets reduced AND what gets persisted
+       * (correction B1, Rev 4.7 tester). The log is the input to every future
+       * replay, so a row carrying the caller's original value would commit a
+       * transition that replay refuses — write-time and read-time verdicts
+       * disagreeing. Only the rejection record keeps the submitted event, and
+       * deliberately: it is evidence of what the caller sent, never an input
+       * to a replay.
+       */
+      const offered =
+        deriveGatewayOnline === null
+          ? event
+          : {
+              ...event,
+              facts: { ...event.facts, gatewayOnline: await deriveGatewayOnline() },
+            };
+
+      const result: ApplyResult = apply(current, offered);
 
       if (!result.ok) {
         await recordRejection(client, roomId, event, result.code, result.reason);
-        await client.query('COMMIT');
         return { ok: false, outcome: 'rejected', code: result.code, reason: result.reason, state: current };
       }
 
       if (result.kind === 'replay') {
         // INV-4. Nothing is written; the log already holds this event.
-        await client.query('COMMIT');
         return { ok: true, outcome: 'replay', entry: result.entry, state: result.state };
       }
 
@@ -162,12 +285,11 @@ export class PostgresLedgerStore {
         await insertEvent(client, {
           roomId,
           seq,
-          event,
+          event: offered,
           outcome: 'conjunction_pending',
           entry: null,
           state: result.state,
         });
-        await client.query('COMMIT');
         return {
           ok: true,
           outcome: 'conjunction_pending',
@@ -180,18 +302,12 @@ export class PostgresLedgerStore {
       await insertEvent(client, {
         roomId,
         seq,
-        event,
+        event: offered,
         outcome: 'transition',
         entry: result.entry,
         state: result.state,
       });
-      await client.query('COMMIT');
       return { ok: true, outcome: 'transition', seq, entry: result.entry, state: result.state };
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
     }
   }
 

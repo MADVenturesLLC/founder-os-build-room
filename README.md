@@ -13,19 +13,23 @@ Monorepo. Present today:
 - `packages/contracts` — the lifecycle as types and data: 17 states, 29 events, the T1–T22 transition table, the G1–G22 guards.
 - `packages/ledger` — the reducer that enforces that lifecycle and its four core invariants.
 - `packages/cost-meter` — the ratified spend rule as a function. Carries no rate data; the canonical price table lives in `founder-os-console` (`DEC-20260722-01`).
+- `packages/gateway-protocol` — the shared signed-message protocol: canonical bytes, envelope validation, bounds, encodings, and the clock-reliability evaluator. Zero dependencies, so both sides of the wire derive signed bytes from one implementation.
+- `packages/gateway-registry` — the gateway lifecycle vocabulary and the pure projection reducer.
 
 **Impure by design:**
 
 - `packages/control-plane` — the single writer to the durable ledger: Postgres storage, the HTTP surface, the boot sequence.
 - `packages/run-harness` — performs the Phase 2 run cycle, judges it against the Founder's three conditions, and emits the evidence bundle.
+- `packages/gateway-daemon` — the macOS-local gateway host: Keychain custody through `/usr/bin/security`, two identity lanes, timers, an IPC socket and a ring buffer.
+- `packages/gateway-cli` — the `buildroom` five-verb surface: `enroll`, `status`, `doctor`, `providers`, `tail`.
 
-Not yet created: the gateway and web surfaces (`DEC-20260815-08`), both deferred out of Phase 2. `DEC-20260815-01` clause 2 fixes the repository identity, not the internal layout, and defers the exact package boundaries to later Step 2 decisions.
+The web surface is not created (`DEC-20260815-08`), and remains deferred. `DEC-20260815-01` clause 2 fixes the repository identity, not the internal layout, and defers the exact package boundaries to later Step 2 decisions.
 
 ## Status
 
 **Phase 1 (pure protocol/ledger) — complete.** Founder-confirmed 2026-08-16 at `main@4155761` under `DEC-20260815-17` clause 2.
 
-**Phase 2 (cloud skeleton) — in progress.** Authorized by the Founder **in session on 2026-08-17** as the full arc *provision → wire → run three times → return at the stop gate*, on the bound reduced stack: **Railway** control plane plus **Neon** operational Postgres. The web tier, gateway platform and Redis/queue are deferred and are not authorized.
+**Phase 2 (cloud skeleton) — in progress.** Authorized by the Founder **in session on 2026-08-17** as the full arc *provision → wire → run three times → return at the stop gate*, on the bound reduced stack: **Railway** control plane plus **Neon** operational Postgres. The web tier and Redis/queue are deferred and are not authorized.
 
 > **The workflow record has not been reconciled with that authorization, and that is flagged here rather than smoothed over.** The WF-04 Sentinel record still reads `Ready-to-start` with last activity 2026-07-19, and the last authorization recorded there covers WF-04 Step 3 **Slice 1**, dated 2026-08-16 — no separate full-Phase-2 authorization dated 2026-08-17 appears in it. The sentence above therefore rests on a Founder direction given in session and recorded in this repository, not on the workflow record, and the two disagree.
 >
@@ -33,7 +37,9 @@ Not yet created: the gateway and web surfaces (`DEC-20260815-08`), both deferred
 
 What is built here: the control plane, the cost meter, and the run harness. What is **not** claimed by the code alone — provisioning, deployment, three-run evidence, and the Founder-confirmed stop gate that closes the phase. Architecture §3.17: *"Completing three runs authorizes nothing."*
 
-Phases 3 through 7 are not authorized. Every phase carries a stop gate that must be Founder-confirmed before the next begins, and no phase ships in the same PR as its predecessor.
+**Gateway Enrollment Pairing (Phase 3's first authorized mechanism) — built on this branch, awaiting independent retest.** This work is authorized by its own commissioning contract — Gateway Enrollment Pairing Rev 4.7 — not by the Phase 2 authorization above: the three-act pairing (mint → redeem → confirm) with code-only redemption authentication, migration `0003_gateway_registry`, the control-plane side of the signed-message protocol, fenced leadership with published challenges, signed session-start and heartbeat with replay discipline, the macOS daemon with Keychain custody and two identity lanes, and the `buildroom` five-verb CLI. An independent test pass against the delivered build returned `TEST_FAIL — REQUEST CHANGES`; its ten findings (B1–B6, T1–T4) are corrected on this branch, and a fresh independent retest is pending. **Nothing here claims the Phase 3 stop gate.** The Founder-reserved Phase 3 run definition is untouched by this branch, and completing the mechanism authorizes nothing.
+
+Phases 3 through 7 carry no authorization beyond that commission — the Gateway Enrollment Pairing mechanism above is the full extent of authorized Phase 3 work. Every phase carries a stop gate that must be Founder-confirmed before the next begins, and no phase ships in the same PR as its predecessor.
 
 ## Verifying
 
@@ -46,9 +52,33 @@ npm test                            # build + the acceptance-criteria suite
 # the variable the deployed service reads, and a shell carrying the production
 # value would point the suite at the live ledger.
 TEST_DATABASE_URL=postgresql://…/buildroom_test npm test
+
+# The strict storage command. Unlike `npm test`, it REFUSES to start without a
+# database — a command whose job is to exercise Postgres must not be able to
+# report success by skipping everything.
+TEST_DATABASE_URL=postgresql://…/buildroom_test npm run test:storage
+
+# The real-Keychain suite. Darwin only, opt-in only, synthetic item, never in
+# CI: touching a developer's login Keychain because they typed `npm test` would
+# be a surprising thing for a test suite to do.
+npm run test:custody:macos
+
 npm run gate:path-audit             # required check
 npm run gate:attribution-selftest   # required check, parser regression cases
+
+# The contract integrity gate. It scans the authorizing contract DOCUMENT,
+# which lives outside this repository, so it takes the path explicitly and is
+# not a CI step.
+npm run gate:integrity -- <contract-path>
+
+# Local CLI smoke: the five verbs against a throwaway HOME, contacting no
+# control plane and performing no Founder act.
+npm run smoke:gateway
 ```
+
+Gateway enrolment is documented in `docs/gateway-ops-actions-log-runbook.md`,
+which covers the manual same-day ops-actions-log obligation that attaches when a
+live mint, confirm or revoke is performed.
 
 ## Running the Phase 2 gate
 

@@ -55,6 +55,12 @@ jobs:
       - name: Attribution checker self-test
         run: npm run gate:attribution-selftest
 
+      # The contract integrity gate (C12) is deliberately NOT a CI step. It
+      # scans the authorizing contract DOCUMENT, which lives outside this
+      # repository and is not a tracked file — a CI job has nothing to point it
+      # at. It runs pre-PR via `npm run gate:integrity <contract-path>`, and its
+      # result and the artifact's SHA-256 are recorded in the PR body.
+
   # The storage suite skips itself when TEST_DATABASE_URL is unset, which is the
   # right default locally and the wrong one in CI: coverage that depends on
   # someone remembering to export a variable is coverage that quietly lapses.
@@ -91,10 +97,16 @@ jobs:
       - name: Locked install
         run: npm ci
 
+      # `npm run test:storage` rather than `npm test`, and the difference is not
+      # cosmetic: the storage command refuses to start without
+      # TEST_DATABASE_URL, so this job can no longer report success by skipping
+      # everything it exists to run. `npm test` keeps its own behaviour and
+      # still runs the storage cases (which self-skip) in the credential-free
+      # job above.
       - name: Test (storage suite against Postgres)
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/buildroom_test
-        run: npm test
+        run: npm run test:storage
 
       # The suite is designed to be re-runnable against a database that
       # already holds a previous run's rows. It was not, at first: room ids
@@ -104,4 +116,4 @@ jobs:
       - name: Test again (proves the suite is re-runnable, not virgin-only)
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/buildroom_test
-        run: npm test
+        run: npm run test:storage

@@ -26,12 +26,23 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
  * exclusion list, and neither states which packages carry the guarantee.
  * `packages/cost-meter` is on this list because it is pure by design: it takes
  * time, usage and rates as arguments and reads no clock and no table.
+ *
+ * `packages/gateway-protocol` is here for the same reason and one more: it is
+ * the shared implementation both sides of the gateway wire derive signed bytes
+ * from, so an I/O import or an ambient clock reading in it would be a
+ * difference the two sides could not see. Ed25519 and the real clock adapter
+ * live in the daemon, the CLI and the control plane, never here (contract §2).
  */
 const PACKAGE_SOURCES = [
   join(REPO_ROOT, 'packages', 'contracts', 'src'),
   join(REPO_ROOT, 'packages', 'ledger', 'src'),
   join(REPO_ROOT, 'packages', 'cost-meter', 'src'),
+  join(REPO_ROOT, 'packages', 'gateway-protocol', 'src'),
+  join(REPO_ROOT, 'packages', 'gateway-registry', 'src'),
 ];
+
+/** The gateway packages contract §2 declares pure and dependency-free. */
+const GATEWAY_PURE_PACKAGES = ['gateway-protocol', 'gateway-registry'];
 
 /** Named explicitly by AC#5, plus the sibling forms of the same capabilities. */
 const FORBIDDEN_NODE_MODULES = [
@@ -143,6 +154,25 @@ describe('AC#5 — zero I/O', () => {
 
     assert.deepEqual(Object.keys(contracts.dependencies ?? {}), []);
     assert.deepEqual(Object.keys(ledger.dependencies ?? {}), ['@build-room/contracts']);
+  });
+
+  /*
+   * Contract §2 states the gateway's pure packages as depending on nothing at
+   * all — not even a sibling. Asserted separately from the pair above because
+   * the guarantee is different: `@build-room/ledger` may lean on
+   * `@build-room/contracts`, and these two may lean on nothing.
+   */
+  it('gives the gateway pure packages zero declared dependencies', () => {
+    for (const name of GATEWAY_PURE_PACKAGES) {
+      const manifest = JSON.parse(
+        readFileSync(join(REPO_ROOT, 'packages', name, 'package.json'), 'utf8'),
+      ) as { dependencies?: Record<string, string> };
+      assert.deepEqual(
+        Object.keys(manifest.dependencies ?? {}),
+        [],
+        `${name} must declare no dependencies`,
+      );
+    }
   });
 
   it('reads no clock and no randomness — replay must be deterministic', () => {

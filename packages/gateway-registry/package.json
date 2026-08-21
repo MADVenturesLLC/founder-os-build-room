@@ -1,0 +1,11 @@
+{
+  "name": "@build-room/gateway-registry",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build Room gateway registry — lifecycle event vocabulary, states, and the pure projection reducer. Pure, zero I/O, zero dependencies.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {}
+}

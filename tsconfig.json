@@ -13,9 +13,13 @@
   "include": [
     "packages/contracts/src/**/*.ts",
     "packages/ledger/src/**/*.ts",
+    "packages/gateway-protocol/src/**/*.ts",
+    "packages/gateway-registry/src/**/*.ts",
     "packages/control-plane/src/**/*.ts",
     "packages/cost-meter/src/**/*.ts",
     "packages/run-harness/src/**/*.ts",
+    "packages/gateway-daemon/src/**/*.ts",
+    "packages/gateway-cli/src/**/*.ts",
     "test/**/*.ts"
   ]
 }

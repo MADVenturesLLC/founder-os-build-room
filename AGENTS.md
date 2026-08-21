@@ -51,6 +51,6 @@ Execution-Surface: <surface_id>
 ## Stack
 
 - **Control plane:** Node 22 / TypeScript / Express on Railway
-- **Gateway:** macOS-local daemon (Bun/TypeScript)
+- **Gateway:** macOS-local daemon (Node >= 22 / TypeScript)
 - **Web:** Bun + TanStack Start on Cloudflare Workers
 - **Data:** Postgres (Neon) for operational data; evidence store per `DEC-20260815-02`
