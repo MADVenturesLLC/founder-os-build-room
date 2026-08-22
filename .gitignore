@@ -22,3 +22,9 @@ dist/
 
 # Build artifacts
 *.log
+
+# Agent-local state — machine-local, never source of truth.
+# Deliberately ignored here: unlike FounderOS, which tracks .claude/skills/,
+# this repo carries no committed agent configuration.
+.claude/
+.claude-backups/
