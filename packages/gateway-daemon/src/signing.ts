@@ -38,10 +38,10 @@ export interface GeneratedKeypair {
    * PKCS#8 DER as SINGLE-LINE base64 — what goes into Keychain custody, and
    * nowhere else.
    *
-   * Single-line deliberately. `security add-generic-password -w` takes the
-   * secret from an interactive prompt that reads one line, so a PEM would be
-   * truncated at its first newline and the custody item would silently hold a
-   * fragment of a key. Base64 of the DER has no newline to truncate at.
+   * Single-line deliberately. `security add-generic-password -w` prompts for
+   * one line at a time, so a PEM would be truncated at its first newline and
+   * the custody item would silently hold a fragment of a key. Base64 of the
+   * DER has no newline to truncate at.
    */
   readonly privateKeySecret: string;
 }

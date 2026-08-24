@@ -67,6 +67,33 @@ export interface KeychainRunner {
   run(args: readonly string[], stdin?: string): Promise<CommandResult>;
 }
 
+const EXPECT_BINARY = '/usr/bin/expect';
+const EXPECT_COMMAND_ENV = 'BUILDROOM_EXPECT_COMMAND';
+const EXPECT_SEPARATOR = '\u001f';
+
+/*
+ * `security add-generic-password -w` requires a controlling terminal: a pipe
+ * leaves it prompting forever, and `-w <password>` would expose the secret in
+ * argv. `expect` is part of macOS and gives `security` a local PTY while this
+ * driver reads the two password lines from its own stdin. The command vector
+ * contains only executable and public Keychain metadata; the secret is never
+ * placed in argv or the environment.
+ */
+const SECURITY_PROMPT_DRIVER = String.raw`
+log_user 0
+set timeout 10
+set first [gets stdin]
+set second [gets stdin]
+set command [split $env(BUILDROOM_EXPECT_COMMAND) "\037"]
+spawn -noecho {*}$command
+expect {
+  -re {password data for new item:} { send -- "$first\r"; exp_continue }
+  -re {retype password for new item:} { send -- "$second\r"; exp_continue }
+  timeout { puts stderr "security password prompt timed out"; exit 124 }
+  eof { catch wait result; exit [lindex $result 3] }
+}
+`;
+
 /** The real runner: `/usr/bin/security`, spawned, with no shell anywhere. */
 export class SecurityCommandRunner implements KeychainRunner {
   constructor(private readonly binary = '/usr/bin/security') {}
@@ -78,7 +105,13 @@ export class SecurityCommandRunner implements KeychainRunner {
        * code interpolated into a shell command would be visible in the process
        * table and, worse, subject to shell quoting rules.
        */
-      const child = spawn(this.binary, [...args], { stdio: ['pipe', 'pipe', 'pipe'] });
+      const interactiveWrite = stdin !== undefined && this.binary === '/usr/bin/security' && process.platform === 'darwin';
+      const command = interactiveWrite ? EXPECT_BINARY : this.binary;
+      const commandArgs = interactiveWrite ? ['-c', SECURITY_PROMPT_DRIVER] : [...args];
+      const env = interactiveWrite
+        ? { ...process.env, [EXPECT_COMMAND_ENV]: [this.binary, ...args].join(EXPECT_SEPARATOR) }
+        : process.env;
+      const child = spawn(command, commandArgs, { env, stdio: ['pipe', 'pipe', 'pipe'] });
 
       let stdout = '';
       let stderr = '';
@@ -123,9 +156,9 @@ export class Custody {
   /**
    * Create the staging item. Fails if one already exists.
    *
-   * No `-U`. The secret goes on stdin TWICE, because the interactive `-w` form
-   * prompts for the password and then for a retype — and it never appears in
-   * argv, where it would be readable from the process table.
+   * No `-U`. The secret goes on stdin TWICE. The real macOS runner gives
+   * `security` a private PTY for its password-and-retype prompts, while the
+   * secret itself never appears in argv or the environment.
    */
   async createStaging(secret: string): Promise<void> {
     assertSingleLine(secret);
@@ -257,7 +290,7 @@ export class Custody {
 /**
  * Refuse a secret carrying a newline.
  *
- * The interactive `-w` prompt reads ONE line. A multi-line secret would be
+ * The `security -w` prompt reads ONE line. A multi-line secret would be
  * silently truncated at its first newline and the item would hold a fragment of
  * a key that read back as something else — which the read-back verification
  * would catch, but as a confusing failure rather than as the plain statement it
