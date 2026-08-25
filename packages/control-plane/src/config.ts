@@ -32,6 +32,8 @@ export interface Config {
    * missing `DATABASE_URL`.
    */
   readonly apiToken: string;
+  /** Founder-only Phase 3 adjudication credential; null keeps the route absent. */
+  readonly phase3AdjudicationToken: string | null;
   /** TCP port for the HTTP surface. */
   readonly port: number;
   /**
@@ -272,6 +274,18 @@ export function loadConfig(env: Env): Config {
         'echoed here because it is a credential.',
     );
   }
+  const rawAdjudicationToken = env['PHASE3_ADJUDICATION_TOKEN'];
+  let phase3AdjudicationToken: string | null = null;
+  if (rawAdjudicationToken !== undefined) {
+    const candidate = rawAdjudicationToken.trim();
+    if (candidate.length < 32 || candidate === apiToken) {
+      throw new ConfigError(
+        'PHASE3_ADJUDICATION_TOKEN must be at least 32 characters and distinct from ' +
+          'CONTROL_PLANE_TOKEN. Neither credential is echoed.',
+      );
+    }
+    phase3AdjudicationToken = candidate;
+  }
 
   /* ---- Gateway timing, bounds first, then the cross-field relations ---- */
 
@@ -355,6 +369,7 @@ export function loadConfig(env: Env): Config {
   return {
     databaseUrl,
     apiToken,
+    phase3AdjudicationToken,
     port: integer(env, 'PORT', 8080),
     commitSha: (env['RAILWAY_GIT_COMMIT_SHA'] ?? env['COMMIT_SHA'] ?? 'unknown').trim() || 'unknown',
     environment: (env['RAILWAY_ENVIRONMENT_NAME'] ?? env['NODE_ENV'] ?? 'unknown').trim() || 'unknown',

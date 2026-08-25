@@ -26,6 +26,7 @@ import {
   type FixtureLifecycleEvent,
 } from './fixture-adapter.js';
 import { verifyFixtureRepository, type VerifiedFixtureRepository } from './repository.js';
+import type { Phase3AttemptPlan } from './model.js';
 import {
   Phase3PreflightError,
   phase3LocalUnresolvedEvidence,
@@ -57,18 +58,7 @@ async function runConfiguredPhase3(config: Phase3CliConfig): Promise<number> {
   let verifiedControlPlane: { readonly commit: string | null; readonly environment: string | null } | null = null;
   const observeEntry = async () => {
     if (verifiedControlPlane === null) throw new Error('control_plane_identity_not_verified');
-    const buildRepository = await repositoryPreflight(
-      'build',
-      process.cwd(),
-      plan.buildRoomSha,
-      'MADVenturesLLC/founder-os-build-room',
-    );
-    const fixtureRepository = await repositoryPreflight(
-      'fixture',
-      plan.fixture.path,
-      plan.fixture.sha,
-      plan.fixture.repository,
-    );
+    const repositories = await verifyPhase3EntryRepositories(plan);
     const doctor = await preflight('gateway_health_failed', () =>
       runDoctor({ paths, custody, client: gatewayClient, state }),
     );
@@ -77,30 +67,46 @@ async function runConfiguredPhase3(config: Phase3CliConfig): Promise<number> {
     );
     const machine = await preflight('context_invalid', localMachineIdentity);
     verifiedDefinition = await preflight('fixture_unavailable', () =>
-      loadFixtureDefinition(fixtureRepository),
+      loadFixtureDefinition(repositories.fixture),
     );
-    verifiedFixture = fixtureRepository;
+    verifiedFixture = repositories.fixture;
     return {
-      localBuildRoomSha: buildRepository.commitSha,
-      controlPlaneCommit: verifiedControlPlane.commit ?? 'unknown',
-      controlPlaneEnvironment: verifiedControlPlane.environment ?? 'unknown',
-      localMachineIdentity: machine,
+      status: 'complete' as const,
+      observedAt: new Date().toISOString(),
+      founderOs: {
+        repository: repositories.founderOs.repository,
+        sha: repositories.founderOs.commitSha,
+        treeSha: repositories.founderOs.treeSha,
+        clean: repositories.founderOs.clean,
+      },
+      buildRoom: {
+        repository: repositories.buildRoom.repository,
+        sha: repositories.buildRoom.commitSha,
+        treeSha: repositories.buildRoom.treeSha,
+        clean: repositories.buildRoom.clean,
+        buildPassed: config.buildVerifiedSha === repositories.buildRoom.commitSha,
+      },
+      controlPlane: {
+        commit: verifiedControlPlane.commit ?? 'unknown',
+        environment: verifiedControlPlane.environment ?? 'unknown',
+        status: doctor.controlPlane.status,
+      },
+      machineIdentity: machine,
       nodeMajor: Number(process.versions.node.split('.')[0]),
-      buildPassed: config.buildVerifiedSha === buildRepository.commitSha,
       fixture: {
         repository: plan.fixture.repository,
-        sha: fixtureRepository.commitSha,
-        clean: fixtureRepository.clean,
+        sha: repositories.fixture.commitSha,
+        treeSha: repositories.fixture.treeSha,
+        clean: repositories.fixture.clean,
       },
       enrollments,
       doctor: {
-        controlPlaneStatus: doctor.controlPlane.status,
         daemonReachable: doctor.daemon.reachable,
         primaryLane: doctor.lanes.primary,
         stagingLane: doctor.lanes.staging,
         primaryCustody: doctor.custody.primary,
         stagingCustody: doctor.custody.staging,
-        custodyError: doctor.custody.error,
+        custodyError: doctor.custody.error !== null,
         stagingLockPresent: doctor.stagingLock.present,
       },
     };
@@ -308,6 +314,35 @@ export async function withPhase3TerminationSignals<T>(
   }
 }
 
+export async function verifyPhase3EntryRepositories(
+  plan: Phase3AttemptPlan,
+  buildRoomPath = process.cwd(),
+): Promise<{
+  readonly founderOs: VerifiedFixtureRepository;
+  readonly buildRoom: VerifiedFixtureRepository;
+  readonly fixture: VerifiedFixtureRepository;
+}> {
+  const founderOs = await repositoryPreflight(
+    'founderOs',
+    plan.founderOs.path,
+    plan.founderOsSha,
+    plan.founderOs.repository,
+  );
+  const buildRoom = await repositoryPreflight(
+    'build',
+    buildRoomPath,
+    plan.buildRoomSha,
+    'MADVenturesLLC/founder-os-build-room',
+  );
+  const fixture = await repositoryPreflight(
+    'fixture',
+    plan.fixture.path,
+    plan.fixture.sha,
+    plan.fixture.repository,
+  );
+  return { founderOs, buildRoom, fixture };
+}
+
 async function preflight<T>(
   reasonCode: ConstructorParameters<typeof Phase3PreflightError>[0],
   work: () => Promise<T>,
@@ -320,7 +355,7 @@ async function preflight<T>(
 }
 
 async function repositoryPreflight(
-  kind: 'build' | 'fixture',
+  kind: 'founderOs' | 'build' | 'fixture',
   path: string,
   expectedSha: string,
   expectedRepository: string,
@@ -329,6 +364,7 @@ async function repositoryPreflight(
     return await verifyFixtureRepository({ path, expectedSha, expectedRepository });
   } catch (error) {
     const message = describe(error);
+    if (kind === 'founderOs') throw new Phase3PreflightError('founder_os_invalid');
     if (kind === 'build') {
       throw new Phase3PreflightError(
         message === 'fixture_sha_mismatch' ? 'build_sha_mismatch' : 'build_failed',

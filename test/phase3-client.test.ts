@@ -8,8 +8,11 @@ import {
 import { readFile } from 'node:fs/promises';
 import { describe, it } from 'node:test';
 import { heartbeatSignedBytes } from '../packages/gateway-protocol/src/index.js';
-import type { Phase3EvidenceExpectation } from '../packages/control-plane/src/phase3-run.js';
-import { phase3RequestSha256 } from '../packages/control-plane/src/phase3-run.js';
+import {
+  phase3EntryEvidenceSha256,
+  phase3RequestSha256,
+  type Phase3EvidenceExpectation,
+} from '../packages/control-plane/src/phase3-run.js';
 import {
   Phase3AbortError,
   Phase3ClientError,
@@ -18,6 +21,42 @@ import {
 } from '../packages/run-harness/src/phase3/client.js';
 
 const ATTEMPT_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const ENTRY_EVIDENCE = {
+  status: 'complete',
+  observedAt: '2026-08-25T12:00:00.000Z',
+  founderOs: {
+    repository: 'MADVenturesLLC/FounderOS',
+    sha: '1'.repeat(40),
+    treeSha: 'a'.repeat(40),
+    clean: true,
+  },
+  buildRoom: {
+    repository: 'MADVenturesLLC/founder-os-build-room',
+    sha: '2'.repeat(40),
+    treeSha: 'b'.repeat(40),
+    clean: true,
+    buildPassed: true,
+  },
+  fixture: {
+    repository: 'MADVenturesLLC/synthetic-fixture',
+    sha: '3'.repeat(40),
+    treeSha: 'c'.repeat(40),
+    clean: true,
+  },
+  controlPlane: { commit: '2'.repeat(40), environment: 'synthetic-test', status: 200 },
+  machineIdentity: 'synthetic-mac',
+  nodeMajor: 22,
+  enrollments: [{ gatewayId: '11111111-2222-4333-8444-555555555555', state: 'enrolled' }],
+  doctor: {
+    daemonReachable: true,
+    primaryLane: 'IDLE',
+    stagingLane: 'INACTIVE',
+    primaryCustody: true,
+    stagingCustody: false,
+    custodyError: false,
+    stagingLockPresent: false,
+  },
+} as const;
 const EXPECTED: Phase3EvidenceExpectation = {
   environment: 'synthetic-test',
   attempt: {
@@ -34,7 +73,8 @@ const EXPECTED: Phase3EvidenceExpectation = {
       { gatewayId: '11111111-2222-4333-8444-555555555555', state: 'enrolled' },
     ],
     machineIdentity: 'synthetic-mac',
-    entryEvidenceSha256: '4'.repeat(64),
+    entryEvidence: ENTRY_EVIDENCE,
+    entryEvidenceSha256: phase3EntryEvidenceSha256(ENTRY_EVIDENCE),
   },
 };
 
@@ -112,6 +152,14 @@ describe('Phase 3 HTTP client — untrusted responses', () => {
       { ...complete, note: 'must-not-be-persisted' },
       { ...complete, context: { ...(complete['context'] as object), note: 'extra' } },
       { ...complete, events: [{ ...firstEvent, note: 'extra' }] },
+      {
+        ...complete,
+        entryEvidence: {
+          ...(complete['entryEvidence'] as object),
+          controlPlaneToken: 'must-not-land',
+        },
+      },
+      { ...complete, entryEvidence: undefined },
     ];
     const client = new Phase3ControlPlaneClient(
       'https://control-plane.example',
@@ -121,12 +169,149 @@ describe('Phase 3 HTTP client — untrusted responses', () => {
       async () => new Response(JSON.stringify(responses.shift()), { status: 200 }),
     );
 
-    for (let index = 0; index < 3; index += 1) {
+    for (let index = 0; index < 5; index += 1) {
       await assert.rejects(
         client.exportAttempt(ATTEMPT_ID, EXPECTED),
         (error: unknown) => error instanceof Phase3ClientError && error.code === 'invalid_response',
       );
     }
+  });
+
+  it('requires entry evidence to match its retained entry event timestamp', async () => {
+    const complete = await syntheticExport();
+    const first = (complete['events'] as Record<string, unknown>[])[0]!;
+    const entry = {
+      ...first,
+      eventId: '10000000-0000-4000-8000-000000000002',
+      eventIndex: 2,
+      eventType: 'entry_verified',
+    };
+    const variants = [
+      { ...complete, events: [first] },
+      {
+        ...complete,
+        events: [first, entry],
+        entryEvidenceRecordedAt: '2030-01-01T00:00:00.000Z',
+      },
+    ];
+    const client = new Phase3ControlPlaneClient(
+      'https://control-plane.example',
+      'sensitive-test-token',
+      1_000,
+      1,
+      async () => new Response(JSON.stringify(variants.shift()), { status: 200 }),
+    );
+    for (let index = 0; index < 2; index += 1) {
+      await assert.rejects(
+        client.exportAttempt(ATTEMPT_ID, EXPECTED),
+        (error: unknown) => error instanceof Phase3ClientError && error.code === 'invalid_response',
+      );
+    }
+  });
+
+  it('binds passed state to the exact adjudication event and request digest', async () => {
+    const complete = await syntheticExport();
+    const events = complete['events'] as Record<string, unknown>[];
+    const adjudication = {
+      verdict: 'passed' as const,
+      tier2ReviewerId: 'Gemini 3.1 Pro (High)',
+      tier2EvidenceSha256: 'a'.repeat(64),
+      founderAuthorizationId: 'founder:phase3-cr1:pass:test',
+    };
+    const idempotencyKey = '40000000-0000-4000-8000-000000000010';
+    const occurredAt = '2026-08-25T12:00:08.000Z';
+    const event = {
+      ...(events.at(-1) as Record<string, unknown>),
+      eventId: '10000000-0000-4000-8000-000000000010',
+      eventIndex: 10,
+      eventType: 'attempt_adjudicated',
+      idempotencyKey,
+      requestSha256: phase3RequestSha256({ idempotencyKey, ...adjudication }),
+      reasonCode: null,
+      result: 'passed',
+      adjudication,
+      occurredAt,
+    };
+    const passed = {
+      ...complete,
+      attempt: {
+        ...(complete['attempt'] as Record<string, unknown>),
+        state: 'passed',
+        finishedAt: occurredAt,
+      },
+      events: [...events, event],
+    };
+    assert.equal((await clientFor(passed).exportAttempt(ATTEMPT_ID, EXPECTED)).attempt.state, 'passed');
+
+    for (const invalid of [
+      {
+        ...complete,
+        events: [events[0]!, events[1]!, { ...events.at(-1)!, eventIndex: 3 }],
+      },
+      {
+        ...complete,
+        attempt: { ...(complete['attempt'] as object), state: 'passed', finishedAt: occurredAt },
+      },
+      {
+        ...passed,
+        events: [...events, { ...event, requestSha256: '0'.repeat(64) }],
+      },
+      {
+        ...passed,
+        attempt: { ...(passed['attempt'] as object), finishedAt: '2030-01-01T00:00:00.000Z' },
+      },
+      { ...passed, heartbeat: null },
+    ]) {
+      await assert.rejects(
+        clientFor(invalid).exportAttempt(ATTEMPT_ID, EXPECTED),
+        (error: unknown) => error instanceof Phase3ClientError && error.code === 'invalid_response',
+      );
+    }
+  });
+
+  it('binds a not-started event reason to its deterministic entry failure', async () => {
+    const complete = await syntheticExport();
+    const entryEvidence = {
+      ...ENTRY_EVIDENCE,
+      doctor: { ...ENTRY_EVIDENCE.doctor, primaryCustody: false },
+    } as const;
+    const expected: Phase3EvidenceExpectation = {
+      ...EXPECTED,
+      attempt: {
+        ...EXPECTED.attempt,
+        mode: 'not_started',
+        reasonCode: 'custody_failed',
+        entryEvidence,
+        entryEvidenceSha256: phase3EntryEvidenceSha256(entryEvidence),
+      },
+    };
+    const event = {
+      ...(complete['events'] as Record<string, unknown>[])[0]!,
+      eventType: 'attempt_not_started',
+      reasonCode: 'custody_failed',
+      teardownResult: 'not_required',
+    };
+    const notStarted = {
+      ...complete,
+      entryEvidence,
+      attempt: {
+        ...(complete['attempt'] as Record<string, unknown>),
+        entryEvidenceSha256: phase3EntryEvidenceSha256(entryEvidence),
+        state: 'not_started',
+        finishedAt: complete['entryEvidenceRecordedAt'],
+      },
+      events: [event],
+      heartbeat: null,
+    };
+    assert.equal(
+      (await clientFor(notStarted).exportAttempt(ATTEMPT_ID, expected)).attempt.state,
+      'not_started',
+    );
+    await assert.rejects(
+      clientFor({ ...notStarted, events: [{ ...event, reasonCode: 'lane_state_failed' }] })
+        .exportAttempt(ATTEMPT_ID, expected),
+      (error: unknown) => error instanceof Phase3ClientError && error.code === 'invalid_response',
+    );
   });
 
   it('binds every exported identity field to the local Founder plan', async () => {
@@ -214,6 +399,7 @@ describe('Phase 3 HTTP client — untrusted responses', () => {
           result: null,
           teardownResult: null,
           teardownEvidenceSha256: null,
+          adjudication: null,
           occurredAt: '2026-08-25T12:00:02.000Z',
         },
       ],
@@ -234,6 +420,64 @@ describe('Phase 3 HTTP client — untrusted responses', () => {
       eventId: '30000000-0000-4000-8000-000000000003',
       replayed: true,
     });
+  });
+
+  it('reconciles oversized successful create and event responses', async () => {
+    const pristine = await pristineExport();
+    const oversized = (): Response =>
+      new Response('{}', {
+        status: 201,
+        headers: { 'content-length': String(300_000) },
+      });
+    const createResponses = [
+      oversized(),
+      new Response(JSON.stringify(pristine), { status: 200 }),
+    ];
+    const createClient = new Phase3ControlPlaneClient(
+      'https://control-plane.example',
+      'sensitive-test-token',
+      50,
+      1,
+      async () => createResponses.shift()!,
+    );
+    assert.equal((await createClient.createAttempt(EXPECTED.attempt, EXPECTED)).reconciled, true);
+
+    const event = {
+      kind: 'lifecycle_stage',
+      idempotencyKey: '20000000-0000-4000-8000-000000000012',
+      stage: 'connect',
+      artifactSha256: '7'.repeat(64),
+    } as const;
+    const prior = pristine['events'] as Record<string, unknown>[];
+    const appendExport = {
+      ...pristine,
+      events: [
+        ...prior,
+        {
+          ...prior[0],
+          eventId: '30000000-0000-4000-8000-000000000012',
+          eventIndex: 3,
+          eventType: 'lifecycle_stage_recorded',
+          idempotencyKey: event.idempotencyKey,
+          requestSha256: phase3RequestSha256(event),
+          lifecycleStage: 'connect',
+          stageArtifactSha256: event.artifactSha256,
+          occurredAt: '2026-08-25T12:00:02.000Z',
+        },
+      ],
+    };
+    const appendResponses = [
+      oversized(),
+      new Response(JSON.stringify(appendExport), { status: 200 }),
+    ];
+    const appendClient = new Phase3ControlPlaneClient(
+      'https://control-plane.example',
+      'sensitive-test-token',
+      50,
+      1,
+      async () => appendResponses.shift()!,
+    );
+    assert.equal((await appendClient.appendEvent(ATTEMPT_ID, event, EXPECTED)).replayed, true);
   });
 
   it('stops mutation retries after abort and performs one bounded reconciliation read', async () => {
@@ -416,7 +660,7 @@ describe('Phase 3 HTTP client — identity before bearer', () => {
   });
 
   it('aborts heartbeat polling on the operator signal', async () => {
-    const complete = { ...(await syntheticExport()), heartbeat: null };
+    const complete = await pristineExport();
     const controller = new AbortController();
     const waiting = clientFor(complete, 1_000).waitForHeartbeat(
       ATTEMPT_ID,

@@ -25,7 +25,7 @@ they are never valid plan fields or evidence keys.
 CONTROL_PLANE_URL       HTTPS control plane, or HTTP loopback for tests
 CONTROL_PLANE_TOKEN     token for the guarded Phase 3 evidence routes
 PHASE3_PLAN_PATH        absolute path to the nonsecret JSON plan
-PHASE3_EVIDENCE_PATH    absolute private directory outside Build Room and fixture repositories
+PHASE3_EVIDENCE_PATH    absolute private directory outside FounderOS, Build Room, and fixture repositories
 ```
 
 Run under the repository-required Node `22.x` after `npm ci` and
@@ -40,9 +40,9 @@ rechecks SHA and cleanliness, and passes the verified SHA to the CLI. Directly
 invoking the compiled JavaScript without that marker is refused.
 
 Before any control-plane request, configuration creates a private `0700`
-evidence directory outside both governed repositories and exclusively reserves
-the exact `0600` output file. The writer retains that file handle and refuses a
-directory, symlink, inode or filename replacement.
+evidence directory outside all three governed repositories and exclusively
+reserves the exact `0600` output file. The writer retains that file handle and
+refuses a directory, symlink, inode or filename replacement.
 
 Exit `2` means the technical lifecycle reached `awaiting_adjudication`; it is
 not a pass. Exit `1` means `not_started`, `failed`, `interrupted`, or a bounded
@@ -54,16 +54,27 @@ failure claim. Failures before any durable attempt use the distinct
 ## Plan shape
 
 The plan binds a unique UUID `runAttemptId`, counted-run label, Founder entry
-authorization identifier, exact FounderOS and Build Room SHAs, the sole enrolled
-gateway, the exact control-plane origin, the complete expected enrollment projection (terminal history may be
-present), fixture repository/path/SHA, environment, machine label, and heartbeat
-freshness window. `Phase3-CR3` additionally requires a separate revocation and
-re-enrollment authorization identifier.
+authorization identifier, exact FounderOS repository/root/SHA, exact Build Room
+SHA, the sole enrolled gateway, the exact control-plane origin, the complete
+expected enrollment projection (terminal history may be present), fixture
+repository/path/SHA, environment, machine label, and heartbeat freshness window.
+`Phase3-CR3` additionally requires a separate revocation and re-enrollment
+authorization identifier.
+
+FounderOS, Build Room, and the fixture are each verified as the exact repository
+root with the expected credential-free GitHub origin, clean worktree, commit,
+and tree before attempt mutation. A FounderOS mismatch records
+`founder_os_invalid`; it cannot be satisfied by a syntactically valid SHA in the
+plan.
 
 Attempt creation rereads the complete enrollment projection under the registry
 advisory lock. The exact canonical projection digest is retained with the
 attempt, so an extra or missing row between local observation and durable start
 refuses the run.
+
+The control plane also requires the requested Build Room SHA and retained
+control-plane environment to match the process that is accepting the attempt;
+a caller cannot make a self-consistent request for a different deployment.
 
 The machine label is exact and locally derived as
 `hostname+macOS:product-version+architecture`; a plan for a different host is
@@ -108,13 +119,28 @@ unrestricted payloads.
 Before advancing, the harness independently rebuilds the canonical heartbeat,
 binds its gateway, key, sequence and timestamp, derives the key ID, repeats
 Ed25519 verification and recomputes freshness. The control-plane assertion by
-itself cannot pass this gate.
+itself cannot pass this gate. If the export shape or expected attempt identity is
+untrusted, the runner emits fixed local unresolved evidence and performs no
+follow-up evidence write.
 
 ## Storage and adjudication
 
 Migration `0005_phase3_run_evidence` adds a retained attempt projection and a
 separate append-only event log. It does not edit migrations `0001`–`0004` or
 widen the six-event `gateway_registry_events` vocabulary.
+
+The append-only entry event retains the complete bounded, redacted entry
+observation and its canonical SHA-256 digest. The export includes both the
+preimage and its timestamp so Tier 2 can recompute the digest independently.
+Database triggers lock the attempt row, reject invalid event progression at
+insert time, and defer a projection-consistency check until commit so an event
+cannot persist without its matching projection update.
+
+The control plane derives the next allowed label from durable attempt history
+inside the same advisory-lock transaction that creates the attempt. A
+`not_started` attempt holds its current label, `failed` or `interrupted` resets
+the sequence to `Phase3-CR1`, pending adjudication blocks the next attempt, and
+`Phase3-CR3` is admitted only after durable passed CR1 and CR2 attempts.
 
 Ambiguous POST outcomes are reconciled by repeating the same attempt UUID or
 event idempotency key and reading the immutable export. A proven committed
@@ -126,8 +152,21 @@ unknown.
 
 The operator can end only at `awaiting_adjudication`, `failed`, `interrupted` or
 `not_started`. A passing counted run still requires independent Tier 2 evidence
-verification and separate Founder confirmation. The implementation intentionally
-provides no operator route that submits `heartbeat_verified` or `passed`.
+verification and separate Founder confirmation. The ordinary lifecycle route
+cannot submit `heartbeat_verified` or `passed`. The Founder-only adjudication
+route uses `PHASE3_ADJUDICATION_TOKEN`, which must be distinct from
+`CONTROL_PLANE_TOKEN` and is never read by the counted-run harness. When the
+credential is unset, the route is absent. The harness refuses to start if that
+Founder-only credential is present in its environment, and repository-check
+Git subprocesses use `/usr/bin/git` with only a small noncredential environment
+allowlist.
+
+The separate act is
+`POST /control-plane/phase3/run-attempts/:runAttemptId/adjudication` with one
+UUID idempotency key, `passed` or `failed`, a meaningful nonsecret Tier 2
+reviewer identifier, the SHA-256 of the evidence Tier 2 reviewed, and a
+nonsecret Founder authorization identifier. Reusing the key with different
+evidence is refused.
 Phase 3 writes run inside the existing leadership fence; a pre-commit demotion
 rolls them back, while a post-commit demotion retains the durable write but
 withholds a success response. `SIGINT` and `SIGTERM` trigger bounded fixture

@@ -1,16 +1,12 @@
-export type Phase3RunLabel = 'Phase3-CR1' | 'Phase3-CR2' | 'Phase3-CR3';
-
-export type Phase3AttemptOutcome =
-  | 'not_started'
-  | 'failed'
-  | 'interrupted'
-  | 'awaiting_adjudication'
-  | 'passed';
-
-export interface Phase3AttemptSummary {
-  readonly label: Phase3RunLabel;
-  readonly outcome: Phase3AttemptOutcome;
-}
+export {
+  phase3SequenceStatus,
+  type Phase3AttemptOutcome,
+  type Phase3AttemptSummary,
+  type Phase3RunLabel,
+  type Phase3SequenceStatus,
+} from '../../../control-plane/src/phase3-sequence.js';
+import type { Phase3RunLabel } from '../../../control-plane/src/phase3-sequence.js';
+import type { Phase3CompleteEntryEvidence } from '../../../control-plane/src/phase3-run.js';
 
 export interface Phase3AttemptPlan {
   readonly runAttemptId: string;
@@ -18,6 +14,7 @@ export interface Phase3AttemptPlan {
   readonly entryAuthorizationId: string;
   readonly revocationAuthorizationId?: string;
   readonly founderOsSha: string;
+  readonly founderOs: { readonly repository: string; readonly path: string };
   readonly buildRoomSha: string;
   readonly controlPlaneOrigin: string;
   readonly gatewayId: string;
@@ -31,31 +28,13 @@ export interface Phase3AttemptPlan {
   readonly heartbeatFreshnessMs: number;
 }
 
-export interface Phase3EntryObservation {
-  readonly localBuildRoomSha: string;
-  readonly controlPlaneCommit: string;
-  readonly controlPlaneEnvironment: string;
-  readonly localMachineIdentity: string;
-  readonly nodeMajor: number;
-  readonly buildPassed: boolean;
-  readonly fixture: { readonly repository: string; readonly sha: string; readonly clean: boolean };
-  readonly enrollments: readonly { readonly gatewayId: string; readonly state: string }[];
-  readonly doctor: {
-    readonly controlPlaneStatus: number | null;
-    readonly daemonReachable: boolean;
-    readonly primaryLane: string;
-    readonly stagingLane: string;
-    readonly primaryCustody: boolean;
-    readonly stagingCustody: boolean;
-    readonly custodyError: string | null;
-    readonly stagingLockPresent: boolean;
-  };
-}
+export type Phase3EntryObservation = Phase3CompleteEntryEvidence;
 
 export type Phase3EntryFailure =
   | 'attempt_identity_invalid'
   | 'authorization_invalid'
   | 'governing_sha_invalid'
+  | 'founder_os_invalid'
   | 'gateway_identity_invalid'
   | 'context_invalid'
   | 'build_sha_mismatch'
@@ -94,6 +73,13 @@ export function evaluatePhase3Entry(
   if (!SHA_RE.test(plan.founderOsSha) || !SHA_RE.test(plan.buildRoomSha)) {
     failures.push('governing_sha_invalid');
   }
+  if (
+    !observation.founderOs.clean ||
+    observation.founderOs.repository !== plan.founderOs.repository ||
+    observation.founderOs.sha !== plan.founderOsSha
+  ) {
+    failures.push('founder_os_invalid');
+  }
   if (!UUID_RE.test(plan.gatewayId)) failures.push('gateway_identity_invalid');
   if (
     plan.environment.trim() === '' ||
@@ -103,20 +89,23 @@ export function evaluatePhase3Entry(
   ) {
     failures.push('context_invalid');
   }
-  if (observation.controlPlaneEnvironment !== plan.environment && !failures.includes('context_invalid')) {
+  if (
+    observation.controlPlane.environment !== plan.environment &&
+    !failures.includes('context_invalid')
+  ) {
     failures.push('context_invalid');
   }
-  if (observation.localMachineIdentity !== plan.machine && !failures.includes('context_invalid')) {
+  if (observation.machineIdentity !== plan.machine && !failures.includes('context_invalid')) {
     failures.push('context_invalid');
   }
   if (
-    observation.localBuildRoomSha !== plan.buildRoomSha ||
-    observation.controlPlaneCommit !== plan.buildRoomSha
+    observation.buildRoom.sha !== plan.buildRoomSha ||
+    observation.controlPlane.commit !== plan.buildRoomSha
   ) {
     failures.push('build_sha_mismatch');
   }
   if (observation.nodeMajor !== 22) failures.push('node_version_mismatch');
-  if (!observation.buildPassed) failures.push('build_failed');
+  if (!observation.buildRoom.buildPassed) failures.push('build_failed');
   if (
     !observation.fixture.clean ||
     observation.fixture.repository !== plan.fixture.repository ||
@@ -127,7 +116,7 @@ export function evaluatePhase3Entry(
   if (!sameEnrollmentProjection(plan.expectedEnrollments, observation.enrollments)) {
     failures.push('enrollment_projection_failed');
   }
-  if (observation.doctor.controlPlaneStatus !== 200) failures.push('control_plane_status_failed');
+  if (observation.controlPlane.status !== 200) failures.push('control_plane_status_failed');
   if (!observation.doctor.daemonReachable) failures.push('daemon_unreachable');
   if (
     observation.doctor.primaryLane !== 'IDLE' ||
@@ -138,7 +127,7 @@ export function evaluatePhase3Entry(
   if (
     !observation.doctor.primaryCustody ||
     observation.doctor.stagingCustody ||
-    observation.doctor.custodyError !== null
+    observation.doctor.custodyError
   ) {
     failures.push('custody_failed');
   }
@@ -147,50 +136,6 @@ export function evaluatePhase3Entry(
   return { ok: failures.length === 0, failures };
 }
 
-export interface Phase3SequenceStatus {
-  readonly consecutivePasses: number;
-  readonly nextLabel: Phase3RunLabel | null;
-  readonly blockedByAdjudication: boolean;
-  readonly satisfied: boolean;
-}
-
-export function phase3SequenceStatus(attempts: readonly Phase3AttemptSummary[]): Phase3SequenceStatus {
-  let consecutivePasses = 0;
-  for (const attempt of attempts) {
-    const expected = LABELS[consecutivePasses];
-    if (expected === undefined || attempt.label !== expected) {
-      throw new Error(`expected ${expected ?? 'no further run'}, received ${attempt.label}`);
-    }
-    if (attempt.outcome === 'awaiting_adjudication') {
-      return {
-        consecutivePasses,
-        nextLabel: null,
-        blockedByAdjudication: true,
-        satisfied: false,
-      };
-    }
-    if (attempt.outcome === 'passed') {
-      consecutivePasses += 1;
-      continue;
-    }
-    if (attempt.outcome === 'failed' || attempt.outcome === 'interrupted') {
-      consecutivePasses = 0;
-    }
-    // A not-started attempt is evidence of a refused entry, not an
-    // interruption of a lifecycle that never began. The current streak and
-    // label therefore hold.
-  }
-
-  const satisfied = consecutivePasses >= 3;
-  return {
-    consecutivePasses,
-    nextLabel: satisfied ? null : LABELS[consecutivePasses] ?? 'Phase3-CR1',
-    blockedByAdjudication: false,
-    satisfied,
-  };
-}
-
-const LABELS: readonly Phase3RunLabel[] = ['Phase3-CR1', 'Phase3-CR2', 'Phase3-CR3'];
 const SHA_RE = /^[0-9a-f]{40}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SAFE_ID_RE = /^[A-Za-z0-9._:/-]{1,128}$/;

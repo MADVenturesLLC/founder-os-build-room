@@ -20,10 +20,11 @@ import {
 } from './gateway-session-helpers.js';
 import { Phase3ControlPlaneClient } from '../packages/run-harness/src/phase3/client.js';
 import type { GatewayHooks } from '../packages/control-plane/src/gateway/hooks.js';
-import type {
-  Phase3AttemptInput,
-  Phase3EvidenceExport,
-  Phase3EvidenceExpectation,
+import {
+  phase3EntryEvidenceSha256,
+  type Phase3AttemptInput,
+  type Phase3EvidenceExport,
+  type Phase3EvidenceExpectation,
 } from '../packages/control-plane/src/phase3-run.js';
 import { performPhase3Attempt, type Phase3FixturePort } from '../packages/run-harness/src/phase3/runner.js';
 import type { Phase3AttemptPlan, Phase3EntryObservation } from '../packages/run-harness/src/phase3/model.js';
@@ -31,6 +32,7 @@ import type { Phase3AttemptPlan, Phase3EntryObservation } from '../packages/run-
 let harness: GatewayHarness | undefined;
 let node: SessionNode | undefined;
 let server: { url: string; close: () => Promise<void> } | undefined;
+const ADJUDICATION_TOKEN = 'phase3-adjudication-test-token-value';
 
 beforeEach(async () => {
   if (STORAGE_SKIP !== false) return;
@@ -67,6 +69,14 @@ describe('Phase 3 run routes — authentication before parsing', { skip: STORAGE
 });
 
 describe('Phase 3 run routes — closed write and export surface', { skip: STORAGE_SKIP }, () => {
+  it('rejects CR2 as the first durable attempt', async () => {
+    const input = { ...attemptBody(), runLabel: 'Phase3-CR2' as const };
+    await insertEnrolledGateway(input.gatewayId);
+    const response = await request('/control-plane/phase3/run-attempts', 'POST', input);
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: 'sequence_invalid' });
+  });
+
   it('creates and exports one exact attempt', async () => {
     const input = attemptBody();
     await insertEnrolledGateway(input.gatewayId);
@@ -152,6 +162,7 @@ describe('Phase 3 run routes — closed write and export surface', { skip: STORA
       label: 'Phase3-CR1',
       entryAuthorizationId: 'founder:phase3-cr1:test',
       founderOsSha: '1'.repeat(40),
+      founderOs: { repository: 'MADVenturesLLC/FounderOS', path: '/tmp/FounderOS' },
       buildRoomSha: '2'.repeat(40),
       controlPlaneOrigin: server!.url,
       gatewayId: gateway.gatewayId,
@@ -166,22 +177,38 @@ describe('Phase 3 run routes — closed write and export surface', { skip: STORA
       heartbeatFreshnessMs: node!.config.gatewayTimestampWindowMs,
     };
     const observation: Phase3EntryObservation = {
-      localBuildRoomSha: plan.buildRoomSha,
-      controlPlaneCommit: plan.buildRoomSha,
-      controlPlaneEnvironment: plan.environment,
-      localMachineIdentity: plan.machine,
+      status: 'complete',
+      observedAt: new Date().toISOString(),
+      founderOs: {
+        repository: plan.founderOs.repository,
+        sha: plan.founderOsSha,
+        treeSha: '9'.repeat(40),
+        clean: true,
+      },
+      buildRoom: {
+        repository: 'MADVenturesLLC/founder-os-build-room',
+        sha: plan.buildRoomSha,
+        treeSha: '8'.repeat(40),
+        clean: true,
+        buildPassed: true,
+      },
+      controlPlane: { commit: plan.buildRoomSha, environment: plan.environment, status: 200 },
+      machineIdentity: plan.machine,
       nodeMajor: 22,
-      buildPassed: true,
-      fixture: { repository: plan.fixture.repository, sha: plan.fixture.sha, clean: true },
+      fixture: {
+        repository: plan.fixture.repository,
+        sha: plan.fixture.sha,
+        treeSha: '7'.repeat(40),
+        clean: true,
+      },
       enrollments: plan.expectedEnrollments,
       doctor: {
-        controlPlaneStatus: 200,
         daemonReachable: true,
         primaryLane: 'IDLE',
         stagingLane: 'INACTIVE',
         primaryCustody: true,
         stagingCustody: false,
-        custodyError: null,
+        custodyError: false,
         stagingLockPresent: false,
       },
     };
@@ -220,6 +247,73 @@ describe('Phase 3 run routes — closed write and export surface', { skip: STORA
 
     assert.equal(result.outcome, 'failed');
     assert.equal(result.reasonCode, 'out_of_order_stage');
+  });
+
+  it('does not expose adjudication to the harness-held control-plane token', async () => {
+    const response = await request(
+      `/control-plane/phase3/run-attempts/${randomUUID()}/adjudication`,
+      'POST',
+      {
+        idempotencyKey: randomUUID(),
+        verdict: 'passed',
+        tier2ReviewerId: 'Gemini 3.1 Pro (High)',
+        tier2EvidenceSha256: '9'.repeat(64),
+        founderAuthorizationId: 'founder:phase3-cr1:pass:test',
+      },
+    );
+    assert.equal(response.status, 404);
+  });
+
+  it('authenticates adjudication separately before parsing and then permits CR2', async () => {
+    await restartNode({}, { phase3AdjudicationToken: ADJUDICATION_TOKEN });
+    const gateway = await enrollGateway(node!);
+    const epoch = await openSession(node!, gateway);
+    const input = attemptBody(gateway.gatewayId);
+    await node!.surface.phase3Runs.createAttempt(input);
+    assert.equal(
+      (await node!.service.heartbeat(signedBeat(node!, gateway, epoch, 1), TEST_IP)).status,
+      200,
+    );
+    await appendCompleteLifecycle(input.runAttemptId);
+    await node!.surface.phase3Runs.appendEvent(input.runAttemptId, {
+      kind: 'attempt_finished',
+      idempotencyKey: randomUUID(),
+      result: 'awaiting_adjudication',
+      teardownResult: 'completed',
+      teardownEvidenceSha256: '8'.repeat(64),
+    });
+    const path = `/control-plane/phase3/run-attempts/${input.runAttemptId}/adjudication`;
+    const body = {
+      idempotencyKey: randomUUID(),
+      verdict: 'passed',
+      tier2ReviewerId: 'Gemini 3.1 Pro (High)',
+      tier2EvidenceSha256: '9'.repeat(64),
+      founderAuthorizationId: 'founder:phase3-cr1:pass:test',
+    };
+    const sharedToken = await fetch(`${server!.url}${path}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TEST_TOKEN}`, 'content-type': 'application/json' },
+      body: '{malformed',
+    });
+    assert.equal(sharedToken.status, 401);
+
+    const adjudicated = await fetch(`${server!.url}${path}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${ADJUDICATION_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    assert.equal(adjudicated.status, 201);
+    assert.equal((await node!.surface.phase3Runs.exportAttempt(input.runAttemptId)).attempt.state, 'passed');
+
+    const cr2 = {
+      ...attemptBody(gateway.gatewayId),
+      runLabel: 'Phase3-CR2' as const,
+      entryAuthorizationId: 'founder:phase3-cr2:test',
+    };
+    assert.equal((await request('/control-plane/phase3/run-attempts', 'POST', cr2)).status, 201);
   });
 });
 
@@ -299,8 +393,8 @@ async function request(path: string, method: 'GET' | 'POST', body?: unknown): Pr
   });
 }
 
-function attemptBody() {
-  const gatewayId = randomUUID();
+function attemptBody(gatewayId: string = randomUUID()) {
+  const entryEvidence = syntheticEntryEvidence(gatewayId, node?.config.environment ?? 'test');
   return {
     mode: 'started',
     runAttemptId: randomUUID(),
@@ -313,7 +407,65 @@ function attemptBody() {
     gatewayId,
     expectedEnrollments: [{ gatewayId, state: 'enrolled' }],
     machineIdentity: 'test-mac',
-    entryEvidenceSha256: '4'.repeat(64),
+    entryEvidence,
+    entryEvidenceSha256: phase3EntryEvidenceSha256(entryEvidence),
+  } as const;
+}
+
+async function appendCompleteLifecycle(runAttemptId: string): Promise<void> {
+  const exchangeId = randomUUID();
+  let requestEventId = '';
+  for (const stage of ['connect', 'adapter_registered', 'request', 'matched_response', 'disconnect'] as const) {
+    const result = await node!.surface.phase3Runs.appendEvent(runAttemptId, {
+      kind: 'lifecycle_stage',
+      idempotencyKey: randomUUID(),
+      stage,
+      artifactSha256: '7'.repeat(64),
+      ...(stage === 'request' ? { exchangeId } : {}),
+      ...(stage === 'matched_response'
+        ? { exchangeId, matchedRequestEventId: requestEventId, matchVerified: true as const }
+        : {}),
+    });
+    if (stage === 'request') requestEventId = result.eventId;
+  }
+}
+
+function syntheticEntryEvidence(gatewayId: string, environment: string) {
+  return {
+    status: 'complete',
+    observedAt: new Date().toISOString(),
+    founderOs: {
+      repository: 'MADVenturesLLC/FounderOS',
+      sha: '1'.repeat(40),
+      treeSha: 'a'.repeat(40),
+      clean: true,
+    },
+    buildRoom: {
+      repository: 'MADVenturesLLC/founder-os-build-room',
+      sha: '2'.repeat(40),
+      treeSha: 'b'.repeat(40),
+      clean: true,
+      buildPassed: true,
+    },
+    fixture: {
+      repository: 'MADVenturesLLC/phase3-fixture',
+      sha: '3'.repeat(40),
+      treeSha: 'c'.repeat(40),
+      clean: true,
+    },
+    controlPlane: { commit: '2'.repeat(40), environment, status: 200 },
+    machineIdentity: 'test-mac',
+    nodeMajor: 22,
+    enrollments: [{ gatewayId, state: 'enrolled' }],
+    doctor: {
+      daemonReachable: true,
+      primaryLane: 'IDLE',
+      stagingLane: 'INACTIVE',
+      primaryCustody: true,
+      stagingCustody: false,
+      custodyError: false,
+      stagingLockPresent: false,
+    },
   } as const;
 }
 
@@ -338,13 +490,16 @@ async function insertEnrolledGateway(gatewayId: string): Promise<void> {
   );
 }
 
-async function restartNode(hooks: GatewayHooks): Promise<SessionNode> {
+async function restartNode(
+  hooks: GatewayHooks,
+  configOverrides: { readonly phase3AdjudicationToken?: string | null } = {},
+): Promise<SessionNode> {
   await server?.close();
   await node?.leadership.releaseGracefully();
   await node?.surface.stop();
   node = await makeSessionNode(harness!, {
     hooks,
-    configOverrides: { commitSha: '2'.repeat(40) },
+    configOverrides: { commitSha: '2'.repeat(40), ...configOverrides },
   });
   await promoteNode(node);
   server = await startNodeServer(harness!, node);
@@ -397,6 +552,7 @@ async function runWithPostCommitDemotion(demoteAtCommit: number) {
     label: 'Phase3-CR1',
     entryAuthorizationId: 'founder:phase3-cr1:postcommit-test',
     founderOsSha: '1'.repeat(40),
+    founderOs: { repository: 'MADVenturesLLC/FounderOS', path: '/tmp/FounderOS' },
     buildRoomSha: '2'.repeat(40),
     controlPlaneOrigin: server!.url,
     gatewayId: gateway.gatewayId,
@@ -411,22 +567,38 @@ async function runWithPostCommitDemotion(demoteAtCommit: number) {
     heartbeatFreshnessMs: 100,
   };
   const observation: Phase3EntryObservation = {
-    localBuildRoomSha: plan.buildRoomSha,
-    controlPlaneCommit: plan.buildRoomSha,
-    controlPlaneEnvironment: plan.environment,
-    localMachineIdentity: plan.machine,
+    status: 'complete',
+    observedAt: new Date().toISOString(),
+    founderOs: {
+      repository: plan.founderOs.repository,
+      sha: plan.founderOsSha,
+      treeSha: '9'.repeat(40),
+      clean: true,
+    },
+    buildRoom: {
+      repository: 'MADVenturesLLC/founder-os-build-room',
+      sha: plan.buildRoomSha,
+      treeSha: '8'.repeat(40),
+      clean: true,
+      buildPassed: true,
+    },
+    controlPlane: { commit: plan.buildRoomSha, environment: plan.environment, status: 200 },
+    machineIdentity: plan.machine,
     nodeMajor: 22,
-    buildPassed: true,
-    fixture: { repository: plan.fixture.repository, sha: plan.fixture.sha, clean: true },
+    fixture: {
+      repository: plan.fixture.repository,
+      sha: plan.fixture.sha,
+      treeSha: '7'.repeat(40),
+      clean: true,
+    },
     enrollments: plan.expectedEnrollments,
     doctor: {
-      controlPlaneStatus: 200,
       daemonReachable: true,
       primaryLane: 'IDLE',
       stagingLane: 'INACTIVE',
       primaryCustody: true,
       stagingCustody: false,
-      custodyError: null,
+      custodyError: false,
       stagingLockPresent: false,
     },
   };

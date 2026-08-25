@@ -6,6 +6,7 @@ import { GATEWAY_BODY_LIMIT } from './gateway/routes.js';
 import {
   Phase3RunConflictError,
   type Phase3RunStore,
+  validatePhase3AdjudicationInput,
   validatePhase3AttemptInput,
   validatePhase3EventInput,
 } from './phase3-run.js';
@@ -14,6 +15,7 @@ export interface Phase3RunRoutesDeps {
   readonly store: Phase3RunStore;
   readonly leadership: GatewayLeadership;
   readonly requireToken: RequestHandler;
+  readonly requireAdjudicationToken: RequestHandler | null;
 }
 
 export function phase3RunRouter(deps: Phase3RunRoutesDeps): Router {
@@ -42,6 +44,32 @@ export function phase3RunRouter(deps: Phase3RunRoutesDeps): Router {
       }
     }),
   );
+
+  if (deps.requireAdjudicationToken !== null) {
+    router.post(
+      '/control-plane/phase3/run-attempts/:runAttemptId/adjudication',
+      deps.requireAdjudicationToken,
+      json,
+      deps.leadership.requireLeader(),
+      asyncRoute(async (req, res) => {
+        const runAttemptId = parameter(req.params['runAttemptId']);
+        const parsed = validatePhase3AdjudicationInput(req.body);
+        if (runAttemptId === null || !parsed.ok) {
+          res.status(400).json({ error: 'invalid_request' });
+          return;
+        }
+        try {
+          const result = await fencedWrite(deps, res, (client) =>
+            deps.store.adjudicateAttemptFenced(client, runAttemptId, parsed.value),
+          );
+          if (result === null) return;
+          res.status(result.replayed ? 200 : 201).json(result);
+        } catch (error) {
+          conflict(res, error);
+        }
+      }),
+    );
+  }
 
   router.post(
     '/control-plane/phase3/run-attempts/:runAttemptId/events',

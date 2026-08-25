@@ -136,17 +136,28 @@ async function git(path: string, args: readonly string[]): Promise<string> {
 }
 
 async function gitRaw(path: string, args: readonly string[], maxBuffer: number): Promise<string> {
-  const environment: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith('GIT_') && value !== undefined) environment[key] = value;
-  }
-  environment['GIT_OPTIONAL_LOCKS'] = '0';
-  environment['GIT_TERMINAL_PROMPT'] = '0';
+  const environment = phase3RepositoryGitEnvironment(process.env);
 
   const { stdout } = await execute(
-    'git',
+    '/usr/bin/git',
     ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-C', path, ...args],
     { env: environment, maxBuffer },
   );
   return stdout;
+}
+
+export function phase3RepositoryGitEnvironment(
+  source: Readonly<NodeJS.ProcessEnv>,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const key of ['TMPDIR', 'TMP', 'TEMP', 'LANG']) {
+    const value = source[key];
+    if (value !== undefined) environment[key] = value;
+  }
+  for (const [key, value] of Object.entries(source)) {
+    if (key.startsWith('LC_') && value !== undefined) environment[key] = value;
+  }
+  environment['GIT_OPTIONAL_LOCKS'] = '0';
+  environment['GIT_TERMINAL_PROMPT'] = '0';
+  return environment;
 }

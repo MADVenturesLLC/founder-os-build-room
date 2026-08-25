@@ -287,6 +287,10 @@ export function createServer(deps: ServerDeps): Express {
       store: deps.gateway.phase3Runs,
       leadership: deps.gateway.leadership,
       requireToken,
+      requireAdjudicationToken:
+        config.phase3AdjudicationToken === null
+          ? null
+          : tokenGuard(config.phase3AdjudicationToken),
     }),
   );
 

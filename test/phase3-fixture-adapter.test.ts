@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -13,7 +13,12 @@ import {
   validateFixtureLifecycle,
   type FixtureDefinition,
 } from '../packages/run-harness/src/phase3/fixture-adapter.js';
-import { verifyFixtureRepository } from '../packages/run-harness/src/phase3/repository.js';
+import {
+  phase3RepositoryGitEnvironment,
+  verifyFixtureRepository,
+} from '../packages/run-harness/src/phase3/repository.js';
+import { verifyPhase3EntryRepositories } from '../packages/run-harness/src/phase3/cli.js';
+import type { Phase3AttemptPlan } from '../packages/run-harness/src/phase3/model.js';
 
 const run = promisify(execFile);
 const tempDirectories: string[] = [];
@@ -32,7 +37,10 @@ const FIXTURE: FixtureDefinition = {
 };
 const FIXTURE_REPOSITORY = 'MADVenturesLLC/phase3-fixture';
 
-async function fixtureRepository(name = 'phase3-fixture-'): Promise<{ path: string; sha: string }> {
+async function fixtureRepository(
+  name = 'phase3-fixture-',
+  repository = FIXTURE_REPOSITORY,
+): Promise<{ path: string; sha: string }> {
   const path = await mkdtemp(join(tmpdir(), name));
   tempDirectories.push(path);
   await run('git', ['init', '-q', path]);
@@ -44,7 +52,7 @@ async function fixtureRepository(name = 'phase3-fixture-'): Promise<{ path: stri
     'remote',
     'add',
     'origin',
-    `https://github.com/${FIXTURE_REPOSITORY}.git`,
+    `https://github.com/${repository}.git`,
   ]);
   await writeFile(join(path, 'fixture.txt'), 'governed fixture\n', 'utf8');
   await writeFile(join(path, 'phase3-stub.json'), `${JSON.stringify(FIXTURE, null, 2)}\n`, 'utf8');
@@ -55,6 +63,123 @@ async function fixtureRepository(name = 'phase3-fixture-'): Promise<{ path: stri
 }
 
 describe('Phase 3 fixture repository binding', () => {
+  it('forwards no credential variables into Git subprocesses', () => {
+    const environment = phase3RepositoryGitEnvironment({
+      PATH: '/usr/bin',
+      TMPDIR: '/tmp',
+      LANG: 'en_US.UTF-8',
+      LC_ALL: 'C',
+      CONTROL_PLANE_TOKEN: 'control-secret',
+      PHASE3_ADJUDICATION_TOKEN: 'founder-secret',
+      DATABASE_URL: 'postgresql://credential@example.invalid/db',
+      GITHUB_TOKEN: 'github-secret',
+      AWS_SECRET_ACCESS_KEY: 'cloud-secret',
+    });
+    assert.deepEqual(environment, {
+      TMPDIR: '/tmp',
+      LANG: 'en_US.UTF-8',
+      LC_ALL: 'C',
+      GIT_OPTIONAL_LOCKS: '0',
+      GIT_TERMINAL_PROMPT: '0',
+    });
+  });
+
+  it('uses the trusted system Git even when PATH contains an impostor', async () => {
+    const repository = await fixtureRepository();
+    const fakeDirectory = await mkdtemp(join(tmpdir(), 'phase3-fake-git-'));
+    tempDirectories.push(fakeDirectory);
+    const marker = join(fakeDirectory, 'invoked');
+    const fakeGit = join(fakeDirectory, 'git');
+    await writeFile(fakeGit, `#!/bin/sh\nprintf hit > '${marker}'\nexit 1\n`, 'utf8');
+    await chmod(fakeGit, 0o755);
+    const originalPath = process.env['PATH'];
+    process.env['PATH'] = `${fakeDirectory}:${originalPath ?? ''}`;
+    try {
+      const verified = await verifyFixtureRepository({
+        path: repository.path,
+        expectedSha: repository.sha,
+        expectedRepository: FIXTURE_REPOSITORY,
+      });
+      assert.equal(verified.commitSha, repository.sha);
+      await assert.rejects(
+        realpath(marker),
+        (error: unknown) =>
+          typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT',
+      );
+    } finally {
+      if (originalPath === undefined) delete process.env['PATH'];
+      else process.env['PATH'] = originalPath;
+    }
+  });
+
+  it('verifies FounderOS root, origin, cleanliness, presence, and authority SHA before entry', async () => {
+    const founderOs = await fixtureRepository('phase3-founder-os-', 'MADVenturesLLC/FounderOS');
+    const buildRoom = await fixtureRepository(
+      'phase3-build-room-',
+      'MADVenturesLLC/founder-os-build-room',
+    );
+    const fixture = await fixtureRepository();
+    const plan = {
+      founderOsSha: founderOs.sha,
+      founderOs: { repository: 'MADVenturesLLC/FounderOS', path: founderOs.path },
+      buildRoomSha: buildRoom.sha,
+      fixture: {
+        repository: FIXTURE_REPOSITORY,
+        path: fixture.path,
+        sha: fixture.sha,
+      },
+    } as Phase3AttemptPlan;
+
+    assert.equal(
+      (await verifyPhase3EntryRepositories(plan, buildRoom.path)).founderOs.commitSha,
+      founderOs.sha,
+    );
+    await assert.rejects(
+      verifyPhase3EntryRepositories({ ...plan, founderOsSha: 'f'.repeat(40) }, buildRoom.path),
+      /founder_os_invalid/,
+    );
+
+    const subdirectory = join(founderOs.path, 'subdirectory');
+    await mkdir(subdirectory);
+    await assert.rejects(
+      verifyPhase3EntryRepositories(
+        { ...plan, founderOs: { ...plan.founderOs, path: subdirectory } },
+        buildRoom.path,
+      ),
+      /founder_os_invalid/,
+    );
+
+    await run('git', [
+      '-C',
+      founderOs.path,
+      'remote',
+      'set-url',
+      'origin',
+      'https://github.com/MADVenturesLLC/WrongFounderOS.git',
+    ]);
+    await assert.rejects(verifyPhase3EntryRepositories(plan, buildRoom.path), /founder_os_invalid/);
+    await run('git', [
+      '-C',
+      founderOs.path,
+      'remote',
+      'set-url',
+      'origin',
+      'https://github.com/MADVenturesLLC/FounderOS.git',
+    ]);
+
+    const dirty = join(founderOs.path, 'untracked.txt');
+    await writeFile(dirty, 'dirty\n', 'utf8');
+    await assert.rejects(verifyPhase3EntryRepositories(plan, buildRoom.path), /founder_os_invalid/);
+    await unlink(dirty);
+    await assert.rejects(
+      verifyPhase3EntryRepositories(
+        { ...plan, founderOs: { ...plan.founderOs, path: join(founderOs.path, 'missing') } },
+        buildRoom.path,
+      ),
+      /founder_os_invalid/,
+    );
+  });
+
   it('accepts only the clean repository root at the exact commit', async () => {
     const fixture = await fixtureRepository();
     const verified = await verifyFixtureRepository({

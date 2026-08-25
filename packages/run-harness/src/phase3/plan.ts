@@ -29,6 +29,15 @@ export function validatePhase3Plan(value: unknown): PlanResult {
   }
 
   const fixture = record(plan['fixture']);
+  const founderOs = record(plan['founderOs']);
+  if (
+    founderOs === null ||
+    !exact(founderOs, FOUNDER_OS_FIELDS) ||
+    founderOs['repository'] !== 'MADVenturesLLC/FounderOS' ||
+    !isAbsolute(text(founderOs['path']))
+  ) {
+    return INVALID;
+  }
   if (
     fixture === null ||
     !exact(fixture, FIXTURE_FIELDS) ||
@@ -40,7 +49,9 @@ export function validatePhase3Plan(value: unknown): PlanResult {
   }
 
   const enrollments = plan['expectedEnrollments'];
-  if (!Array.isArray(enrollments) || enrollments.length === 0) return INVALID;
+  if (!Array.isArray(enrollments) || enrollments.length === 0 || enrollments.length > 1_000) {
+    return INVALID;
+  }
   const identities = new Set<string>();
   let enrolled = 0;
   for (const raw of enrollments) {
@@ -73,6 +84,7 @@ const PLAN_FIELDS = [
   'label',
   'entryAuthorizationId',
   'founderOsSha',
+  'founderOs',
   'buildRoomSha',
   'controlPlaneOrigin',
   'gatewayId',
@@ -83,6 +95,7 @@ const PLAN_FIELDS = [
   'heartbeatFreshnessMs',
 ] as const;
 const FIXTURE_FIELDS = ['repository', 'path', 'sha'] as const;
+const FOUNDER_OS_FIELDS = ['repository', 'path'] as const;
 const ENROLLMENT_FIELDS = ['gatewayId', 'state'] as const;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

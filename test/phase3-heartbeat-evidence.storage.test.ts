@@ -7,6 +7,7 @@ import {
   STORAGE_SKIP,
   type GatewayHarness,
 } from './gateway-storage-helpers.js';
+import { phase3EntryEvidenceSha256 } from '../packages/control-plane/src/phase3-run.js';
 import {
   TEST_IP,
   enrollGateway,
@@ -45,7 +46,9 @@ beforeEach(async () => {
 });
 
 async function serving(): Promise<{ node: SessionNode; gateway: EnrolledGateway; epoch: string }> {
-  const node = await makeSessionNode(harness!);
+  const node = await makeSessionNode(harness!, {
+    configOverrides: { commitSha: '2'.repeat(40) },
+  });
   await promoteNode(node);
   const gateway = await enrollGateway(node);
   const epoch = await openSession(node, gateway);
@@ -54,6 +57,42 @@ async function serving(): Promise<{ node: SessionNode; gateway: EnrolledGateway;
 
 async function startAttempt(node: SessionNode, gateway: EnrolledGateway): Promise<string> {
   const runAttemptId = randomUUID();
+  const entryEvidence = {
+    status: 'complete',
+    observedAt: new Date(node.clock.wallNow()).toISOString(),
+    founderOs: {
+      repository: 'MADVenturesLLC/FounderOS',
+      sha: '1'.repeat(40),
+      treeSha: 'a'.repeat(40),
+      clean: true,
+    },
+    buildRoom: {
+      repository: 'MADVenturesLLC/founder-os-build-room',
+      sha: '2'.repeat(40),
+      treeSha: 'b'.repeat(40),
+      clean: true,
+      buildPassed: true,
+    },
+    fixture: {
+      repository: 'MADVenturesLLC/phase3-fixture',
+      sha: '3'.repeat(40),
+      treeSha: 'c'.repeat(40),
+      clean: true,
+    },
+    controlPlane: { commit: '2'.repeat(40), environment: node.config.environment, status: 200 },
+    machineIdentity: 'test-mac',
+    nodeMajor: 22,
+    enrollments: [{ gatewayId: gateway.gatewayId, state: 'enrolled' }],
+    doctor: {
+      daemonReachable: true,
+      primaryLane: 'IDLE',
+      stagingLane: 'INACTIVE',
+      primaryCustody: true,
+      stagingCustody: false,
+      custodyError: false,
+      stagingLockPresent: false,
+    },
+  } as const;
   await node.surface.phase3Runs.createAttempt({
     mode: 'started',
     runAttemptId,
@@ -66,7 +105,8 @@ async function startAttempt(node: SessionNode, gateway: EnrolledGateway): Promis
     gatewayId: gateway.gatewayId,
     expectedEnrollments: [{ gatewayId: gateway.gatewayId, state: 'enrolled' }],
     machineIdentity: 'test-mac',
-    entryEvidenceSha256: '4'.repeat(64),
+    entryEvidence,
+    entryEvidenceSha256: phase3EntryEvidenceSha256(entryEvidence),
   });
   return runAttemptId;
 }
@@ -143,6 +183,7 @@ describe('Phase 3 heartbeat evidence — refusal paths capture nothing', { skip:
 
   it('rolls back evidence and cursor publication when COMMIT fails', async () => {
     const node = await makeSessionNode(harness!, {
+      configOverrides: { commitSha: '2'.repeat(40) },
       hooks: {
         heartbeat: {
           commitFault: () => {

@@ -39,6 +39,7 @@ const PLAN: Phase3AttemptPlan = {
   label: 'Phase3-CR1',
   entryAuthorizationId: 'founder:phase3-cr1:test',
   founderOsSha: '9e87ba2b3cf632d892207b29211727bdf89c87d7',
+  founderOs: { repository: 'MADVenturesLLC/FounderOS', path: '/tmp/FounderOS' },
   buildRoomSha: BUILD_SHA,
   controlPlaneOrigin: 'https://control-plane.example',
   gatewayId: GATEWAY_ID,
@@ -54,22 +55,38 @@ const PLAN: Phase3AttemptPlan = {
 };
 
 const OBSERVATION: Phase3EntryObservation = {
-  localBuildRoomSha: BUILD_SHA,
-  controlPlaneCommit: BUILD_SHA,
-  controlPlaneEnvironment: 'test',
-  localMachineIdentity: 'test-mac',
+  status: 'complete',
+  observedAt: '2026-08-25T12:00:00.000Z',
+  founderOs: {
+    repository: PLAN.founderOs.repository,
+    sha: PLAN.founderOsSha,
+    treeSha: '9'.repeat(40),
+    clean: true,
+  },
+  buildRoom: {
+    repository: 'MADVenturesLLC/founder-os-build-room',
+    sha: BUILD_SHA,
+    treeSha: '8'.repeat(40),
+    clean: true,
+    buildPassed: true,
+  },
+  controlPlane: { commit: BUILD_SHA, environment: 'test', status: 200 },
+  machineIdentity: 'test-mac',
   nodeMajor: 22,
-  buildPassed: true,
-  fixture: { repository: PLAN.fixture.repository, sha: PLAN.fixture.sha, clean: true },
+  fixture: {
+    repository: PLAN.fixture.repository,
+    sha: PLAN.fixture.sha,
+    treeSha: '7'.repeat(40),
+    clean: true,
+  },
   enrollments: PLAN.expectedEnrollments,
   doctor: {
-    controlPlaneStatus: 200,
     daemonReachable: true,
     primaryLane: 'IDLE',
     stagingLane: 'INACTIVE',
     primaryCustody: true,
     stagingCustody: false,
-    custodyError: null,
+    custodyError: false,
     stagingLockPresent: false,
   },
 };
@@ -183,7 +200,10 @@ describe('Phase 3 attempt runner — fail-closed entry', () => {
     const fixturePort = fixture();
     const result = await performPhase3Attempt(
       PLAN,
-      deps(eventPort, fixturePort, { ...OBSERVATION, buildPassed: false }),
+      deps(eventPort, fixturePort, {
+        ...OBSERVATION,
+        buildRoom: { ...OBSERVATION.buildRoom, buildPassed: false },
+      }),
     );
 
     assert.equal(result.outcome, 'not_started');
@@ -205,7 +225,7 @@ describe('Phase 3 attempt runner — fail-closed entry', () => {
       plan,
       deps(firstPort, fixture(), {
         ...OBSERVATION,
-        buildPassed: false,
+        buildRoom: { ...OBSERVATION.buildRoom, buildPassed: false },
         enrollments: plan.expectedEnrollments,
       }),
     );
@@ -213,7 +233,7 @@ describe('Phase 3 attempt runner — fail-closed entry', () => {
       plan,
       deps(secondPort, fixture(), {
         ...OBSERVATION,
-        buildPassed: false,
+        buildRoom: { ...OBSERVATION.buildRoom, buildPassed: false },
         enrollments: [...plan.expectedEnrollments].reverse(),
       }),
     );
@@ -356,6 +376,33 @@ describe('Phase 3 attempt runner — lifecycle', () => {
     assert.equal(finish?.kind, 'attempt_finished');
   });
 
+  it('stops without evidence writes when heartbeat evidence identity is untrusted', async () => {
+    for (const code of [
+      'evidence_identity_mismatch',
+      'invalid_response',
+      'response_too_large',
+    ] as const) {
+      const eventPort = port(false, clientError(code));
+      let exportCalls = 0;
+      eventPort.exportAttempt = async () => {
+        exportCalls += 1;
+        throw clientError(code);
+      };
+      const fixturePort = fixture();
+
+      const result = await performPhase3Attempt(PLAN, deps(eventPort, fixturePort));
+
+      assert.equal(result.outcome, 'unresolved_commit');
+      assert.equal(
+        (result.evidence as Record<string, unknown>)['schema'],
+        'build-room/phase3-local-unresolved@1',
+      );
+      assert.deepEqual(eventPort.events, []);
+      assert.equal(exportCalls, 0);
+      assert.deepEqual(fixturePort.calls, []);
+    }
+  });
+
   it('retains bad-signature and stale-heartbeat reasons exactly', async () => {
     for (const code of ['bad_signature', 'stale_heartbeat'] as const) {
       const error = Object.assign(new Error(code), { code });
@@ -450,24 +497,26 @@ describe('Phase 3 attempt runner — lifecycle', () => {
   });
 
   it('keeps acknowledged awaiting finalization when its export is unavailable', async () => {
-    const eventPort = port();
-    eventPort.exportAttempt = async () => {
-      throw clientError('transport_error');
-    };
-    const result = await performPhase3Attempt(PLAN, deps(eventPort, fixture()));
-    assert.equal(result.outcome, 'unresolved_commit');
-    assert.equal(
-      eventPort.events.filter(
-        (event) => event.kind === 'attempt_finished' && event.result === 'awaiting_adjudication',
-      ).length,
-      1,
-    );
-    assert.equal(
-      eventPort.events.filter(
-        (event) => event.kind === 'attempt_finished' && event.result === 'failed',
-      ).length,
-      0,
-    );
+    for (const code of ['transport_error', 'response_too_large']) {
+      const eventPort = port();
+      eventPort.exportAttempt = async () => {
+        throw clientError(code);
+      };
+      const result = await performPhase3Attempt(PLAN, deps(eventPort, fixture()));
+      assert.equal(result.outcome, 'unresolved_commit');
+      assert.equal(
+        eventPort.events.filter(
+          (event) => event.kind === 'attempt_finished' && event.result === 'awaiting_adjudication',
+        ).length,
+        1,
+      );
+      assert.equal(
+        eventPort.events.filter(
+          (event) => event.kind === 'attempt_finished' && event.result === 'failed',
+        ).length,
+        0,
+      );
+    }
   });
 });
 

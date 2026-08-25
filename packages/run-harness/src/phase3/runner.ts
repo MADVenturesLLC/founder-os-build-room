@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import {
+  phase3EntryEvidenceSha256,
   phase3EnrollmentProjectionSha256,
   type Phase3AppendResult,
   type Phase3AttemptInput,
   type Phase3EventInput,
+  type Phase3EntryEvidence,
   type Phase3EvidenceExpectation,
   type Phase3ReasonCode,
 } from '../../../control-plane/src/phase3-run.js';
@@ -85,7 +87,12 @@ export async function performPhase3Attempt(
   } catch (error) {
     const reasonCode = preflightReason(error, deps.signal);
     if (reasonCode === null) throw error;
-    const input = attemptInput(plan, digest({ reasonCode }), 'not_started', reasonCode);
+    const input = attemptInput(
+      plan,
+      incompleteEntryEvidence(plan, reasonCode, deps.now()),
+      'not_started',
+      reasonCode,
+    );
     const expected = evidenceExpectation(plan, input);
     let creation;
     try {
@@ -100,11 +107,9 @@ export async function performPhase3Attempt(
     return resultWithEvidence(plan, deps, expected, { outcome: 'not_started', reasonCode });
   }
   const entry = evaluatePhase3Entry(plan, observation);
-  const entryEvidenceSha256 = entryEvidenceDigest(observation);
-
   if (!entry.ok) {
     const reasonCode = asReasonCode(entry.failures[0] ?? 'internal_error');
-    const input = attemptInput(plan, entryEvidenceSha256, 'not_started', reasonCode);
+    const input = attemptInput(plan, observation, 'not_started', reasonCode);
     const expected = evidenceExpectation(plan, input);
     let creation;
     try {
@@ -119,7 +124,7 @@ export async function performPhase3Attempt(
     return resultWithEvidence(plan, deps, expected, { outcome: 'not_started', reasonCode });
   }
 
-  const input = attemptInput(plan, entryEvidenceSha256, 'started');
+  const input = attemptInput(plan, observation, 'started');
   const expected = evidenceExpectation(plan, input);
   let creation;
   try {
@@ -146,6 +151,7 @@ export async function performPhase3Attempt(
     if (isAborted(error, deps.signal)) {
       return finish(plan, deps, expected, 'interrupted', 'operator_interrupted', 'not_required');
     }
+    if (isHeartbeatTrustFailure(error)) return localUnresolvedAttempt(plan, expected);
     return finish(plan, deps, expected, 'failed', heartbeatReason(error), 'not_required');
   }
   if (!heartbeat.captured) {
@@ -293,7 +299,7 @@ export class Phase3PreflightError extends Error {
 
 function attemptInput(
   plan: Phase3AttemptPlan,
-  entryEvidenceSha256: string,
+  entryEvidence: Phase3EntryEvidence,
   mode: 'started' | 'not_started',
   reasonCode?: Phase3ReasonCode,
 ): Phase3AttemptInput {
@@ -312,8 +318,30 @@ function attemptInput(
     gatewayId: plan.gatewayId,
     expectedEnrollments: plan.expectedEnrollments,
     machineIdentity: plan.machine,
-    entryEvidenceSha256,
+    entryEvidence,
+    entryEvidenceSha256: phase3EntryEvidenceSha256(entryEvidence),
     ...(reasonCode === undefined ? {} : { reasonCode }),
+  };
+}
+
+function incompleteEntryEvidence(
+  plan: Phase3AttemptPlan,
+  failureReason: Phase3ReasonCode,
+  observedAt: string,
+): Phase3EntryEvidence {
+  return {
+    status: 'incomplete',
+    observedAt,
+    failureReason,
+    expected: {
+      founderOsSha: plan.founderOsSha,
+      buildRoomSha: plan.buildRoomSha,
+      fixtureRepository: plan.fixture.repository,
+      fixtureSha: plan.fixture.sha,
+      environment: plan.environment,
+      machineIdentity: plan.machine,
+      gatewayId: plan.gatewayId,
+    },
   };
 }
 
@@ -419,12 +447,23 @@ async function unresolvedAttempt(
     evidence = await deps.eventPort.exportAttempt(plan.runAttemptId, expected);
   } catch (error) {
     if (!remoteUnavailable(error)) throw error;
-    evidence = phase3LocalUnresolvedEvidence(plan, expected.attempt.entryEvidenceSha256);
+    return localUnresolvedAttempt(plan, expected);
   }
   return {
     outcome: 'unresolved_commit',
     reasonCode: 'evidence_write_failed',
     evidence,
+  };
+}
+
+function localUnresolvedAttempt(
+  plan: Phase3AttemptPlan,
+  expected: Phase3EvidenceExpectation,
+): Phase3AttemptResult {
+  return {
+    outcome: 'unresolved_commit',
+    reasonCode: 'evidence_write_failed',
+    evidence: phase3LocalUnresolvedEvidence(plan, expected.attempt.entryEvidenceSha256),
   };
 }
 
@@ -489,6 +528,16 @@ function isUnresolvedCommit(error: unknown): boolean {
   );
 }
 
+function isHeartbeatTrustFailure(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false;
+  const code = String((error as { code: unknown }).code);
+  return (
+    code === 'invalid_response' ||
+    code === 'evidence_identity_mismatch' ||
+    code === 'response_too_large'
+  );
+}
+
 function remoteUnavailable(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const candidate = error as { code?: unknown; status?: unknown };
@@ -497,6 +546,7 @@ function remoteUnavailable(error: unknown): boolean {
     candidate.code === 'transport_error' ||
     candidate.code === 'attempt_not_found' ||
     candidate.code === 'invalid_response' ||
+    candidate.code === 'response_too_large' ||
     candidate.code === 'evidence_identity_mismatch' ||
     candidate.status === 0 ||
     candidate.status === 404 ||
@@ -531,6 +581,7 @@ function asReasonCode(value: string): Phase3ReasonCode {
     'attempt_identity_invalid',
     'authorization_invalid',
     'governing_sha_invalid',
+    'founder_os_invalid',
     'gateway_identity_invalid',
     'context_invalid',
     'gateway_health_failed',
@@ -554,6 +605,7 @@ function asReasonCode(value: string): Phase3ReasonCode {
     'duplicate_stage',
     'out_of_order_stage',
     'response_mismatch',
+    'adjudication_failed',
     'operator_interrupted',
     'teardown_failed',
     'evidence_write_failed',
@@ -564,17 +616,6 @@ function asReasonCode(value: string): Phase3ReasonCode {
 
 function teardownDigest(runAttemptId: string, at: string, result: string): string {
   return digest({ runAttemptId, at, result });
-}
-
-function entryEvidenceDigest(observation: Phase3EntryObservation): string {
-  return digest({
-    ...observation,
-    enrollments: [...observation.enrollments].sort((left, right) => {
-      const leftKey = `${left.gatewayId}:${left.state}`;
-      const rightKey = `${right.gatewayId}:${right.state}`;
-      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-    }),
-  });
 }
 
 function digest(value: unknown): string {

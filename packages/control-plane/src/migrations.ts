@@ -541,10 +541,14 @@ export const MIGRATIONS: readonly Migration[] = [
          event_type                 text        NOT NULL
            CHECK (event_type IN ('attempt_started','attempt_not_started','entry_verified',
                                  'heartbeat_verified','lifecycle_stage_recorded',
-                                 'lifecycle_stage_refused','attempt_finished')),
+                                 'lifecycle_stage_refused','attempt_finished',
+                                 'attempt_adjudicated')),
          idempotency_key            uuid,
          request_sha256             text
            CHECK (request_sha256 IS NULL OR request_sha256 ~ '^[0-9a-f]{64}$'),
+         entry_evidence             jsonb,
+         entry_evidence_sha256      text
+           CHECK (entry_evidence_sha256 IS NULL OR entry_evidence_sha256 ~ '^[0-9a-f]{64}$'),
          lifecycle_stage            text
            CHECK (lifecycle_stage IS NULL OR lifecycle_stage IN
                   ('connect','adapter_registered','request','matched_response','disconnect')),
@@ -556,6 +560,7 @@ export const MIGRATIONS: readonly Migration[] = [
          reason_code                text
            CHECK (reason_code IS NULL OR reason_code IN
                   ('attempt_identity_invalid','authorization_invalid','governing_sha_invalid',
+                   'founder_os_invalid',
                    'gateway_identity_invalid','context_invalid','gateway_health_failed',
                    'enrollment_projection_failed','control_plane_status_failed','daemon_unreachable',
                    'lane_state_failed','custody_failed','staging_lock_present','build_sha_mismatch',
@@ -563,7 +568,7 @@ export const MIGRATIONS: readonly Migration[] = [
                    'heartbeat_timeout','heartbeat_invalid','bad_signature','stale_heartbeat',
                    'fixture_unavailable','missing_stage',
                    'duplicate_stage','out_of_order_stage','response_mismatch','operator_interrupted',
-                   'teardown_failed','evidence_write_failed','internal_error')),
+                   'adjudication_failed','teardown_failed','evidence_write_failed','internal_error')),
          result                     text
            CHECK (result IS NULL OR result IN
                   ('awaiting_adjudication','passed','failed','interrupted')),
@@ -571,6 +576,7 @@ export const MIGRATIONS: readonly Migration[] = [
            CHECK (teardown_result IS NULL OR teardown_result IN ('completed','failed','not_required')),
          teardown_evidence_sha256   text
            CHECK (teardown_evidence_sha256 IS NULL OR teardown_evidence_sha256 ~ '^[0-9a-f]{64}$'),
+         adjudication               jsonb,
          heartbeat_key_id           text,
          heartbeat_sequence         bigint,
          heartbeat_timestamp_ms     bigint,
@@ -584,6 +590,16 @@ export const MIGRATIONS: readonly Migration[] = [
          recorded_at                timestamptz NOT NULL DEFAULT now(),
          CONSTRAINT phase3_run_events_idempotency_shape
            CHECK ((idempotency_key IS NULL) = (request_sha256 IS NULL)),
+         CONSTRAINT phase3_run_events_entry_evidence_shape
+           CHECK (
+             (event_type IN ('entry_verified','attempt_not_started')
+               AND entry_evidence IS NOT NULL
+               AND jsonb_typeof(entry_evidence) = 'object'
+               AND entry_evidence_sha256 IS NOT NULL)
+             OR
+             (event_type NOT IN ('entry_verified','attempt_not_started')
+               AND entry_evidence IS NULL AND entry_evidence_sha256 IS NULL)
+           ),
          CONSTRAINT phase3_run_events_attempt_index_unique
            UNIQUE (run_attempt_id, event_index),
          CONSTRAINT phase3_run_events_attempt_event_unique
@@ -646,7 +662,7 @@ export const MIGRATIONS: readonly Migration[] = [
            ),
          CONSTRAINT phase3_run_events_terminal_shape
            CHECK (
-             (event_type = 'attempt_finished'
+             (event_type IN ('attempt_finished','attempt_adjudicated')
                AND result IS NOT NULL AND teardown_result IS NOT NULL
                AND teardown_evidence_sha256 IS NOT NULL
                AND ((result IN ('awaiting_adjudication','passed')
@@ -657,7 +673,7 @@ export const MIGRATIONS: readonly Migration[] = [
                AND reason_code IS NOT NULL AND result IS NULL
                AND teardown_result = 'not_required')
              OR
-             (event_type NOT IN ('attempt_finished','attempt_not_started')
+             (event_type NOT IN ('attempt_finished','attempt_adjudicated','attempt_not_started')
                AND result IS NULL AND teardown_result IS NULL
                AND teardown_evidence_sha256 IS NULL
                AND (event_type = 'lifecycle_stage_refused' OR reason_code IS NULL))
@@ -675,12 +691,491 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE UNIQUE INDEX IF NOT EXISTS phase3_run_events_one_refusal
          ON phase3_run_events (run_attempt_id) WHERE event_type = 'lifecycle_stage_refused'`,
 
+      `CREATE OR REPLACE FUNCTION phase3_jsonb_exact_keys(value jsonb, expected text[])
+         RETURNS boolean AS $$
+       BEGIN
+         IF value IS NULL OR jsonb_typeof(value) <> 'object' THEN
+           RETURN false;
+         END IF;
+         RETURN (SELECT count(*) FROM jsonb_object_keys(value)) = cardinality(expected)
+           AND NOT EXISTS (
+             SELECT 1 FROM jsonb_object_keys(value) AS key
+              WHERE NOT (key = ANY(expected))
+           );
+       END;
+       $$ LANGUAGE plpgsql IMMUTABLE`,
+
+      `CREATE OR REPLACE FUNCTION phase3_iso_timestamp_valid(value text)
+         RETURNS boolean AS $$
+       DECLARE
+         parsed timestamptz;
+       BEGIN
+         IF value IS NULL OR value !~
+            '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$' THEN
+           RETURN false;
+         END IF;
+         BEGIN
+           parsed := value::timestamptz;
+         EXCEPTION WHEN others THEN
+           RETURN false;
+         END;
+         RETURN to_char(parsed AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') = value;
+       END;
+       $$ LANGUAGE plpgsql IMMUTABLE`,
+
+      `CREATE OR REPLACE FUNCTION phase3_jsonb_string_matches(
+           value jsonb,
+           key text,
+           pattern text
+         ) RETURNS boolean AS $$
+       BEGIN
+         RETURN value IS NOT NULL
+           AND jsonb_typeof(value) = 'object'
+           AND jsonb_typeof(value->key) = 'string'
+           AND COALESCE(value->>key,'') ~ pattern;
+       END;
+       $$ LANGUAGE plpgsql IMMUTABLE`,
+
+      `CREATE OR REPLACE FUNCTION phase3_jsonb_positive_safe_integer(value jsonb)
+         RETURNS boolean AS $$
+       BEGIN
+         IF value IS NULL OR jsonb_typeof(value) <> 'number'
+            OR value#>>'{}' !~ '^[1-9][0-9]*$' THEN
+           RETURN false;
+         END IF;
+         RETURN (value#>>'{}')::numeric <= 9007199254740991;
+       END;
+       $$ LANGUAGE plpgsql IMMUTABLE`,
+
+      `CREATE OR REPLACE FUNCTION phase3_repository_evidence_valid(value jsonb, build_room boolean)
+         RETURNS boolean AS $$
+       BEGIN
+         IF NOT phase3_jsonb_exact_keys(
+           value,
+           CASE WHEN build_room
+             THEN ARRAY['repository','sha','treeSha','clean','buildPassed']
+             ELSE ARRAY['repository','sha','treeSha','clean']
+           END
+         ) THEN
+           RETURN false;
+         END IF;
+         RETURN phase3_jsonb_string_matches(
+             value, 'repository', '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+           )
+           AND phase3_jsonb_string_matches(value, 'sha', '^[0-9a-f]{40}$')
+           AND phase3_jsonb_string_matches(value, 'treeSha', '^[0-9a-f]{40}$')
+           AND jsonb_typeof(value->'clean') = 'boolean'
+           AND (NOT build_room OR jsonb_typeof(value->'buildPassed') = 'boolean');
+       END;
+       $$ LANGUAGE plpgsql IMMUTABLE`,
+
+      `CREATE OR REPLACE FUNCTION phase3_entry_evidence_valid(evidence jsonb)
+         RETURNS boolean AS $$
+       DECLARE
+         expected jsonb;
+         control_plane jsonb;
+         doctor jsonb;
+       BEGIN
+         IF evidence IS NULL OR jsonb_typeof(evidence) <> 'object'
+            OR jsonb_typeof(evidence->'observedAt') <> 'string'
+            OR NOT phase3_iso_timestamp_valid(evidence->>'observedAt') THEN
+           RETURN false;
+         END IF;
+
+         IF evidence->>'status' = 'incomplete' THEN
+           IF NOT phase3_jsonb_exact_keys(
+             evidence,
+             ARRAY['status','observedAt','failureReason','expected']
+           ) THEN
+             RETURN false;
+           END IF;
+           expected := evidence->'expected';
+           RETURN phase3_jsonb_exact_keys(
+               expected,
+               ARRAY['founderOsSha','buildRoomSha','fixtureRepository','fixtureSha',
+                     'environment','machineIdentity','gatewayId']
+             )
+             AND phase3_jsonb_string_matches(evidence, 'failureReason', '^[a-z_]{1,64}$')
+             AND phase3_jsonb_string_matches(expected, 'founderOsSha', '^[0-9a-f]{40}$')
+             AND phase3_jsonb_string_matches(expected, 'buildRoomSha', '^[0-9a-f]{40}$')
+             AND phase3_jsonb_string_matches(
+               expected, 'fixtureRepository', '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+             )
+             AND phase3_jsonb_string_matches(expected, 'fixtureSha', '^[0-9a-f]{40}$')
+             AND phase3_jsonb_string_matches(
+               expected, 'environment', '^[A-Za-z0-9._:/+ -]{1,128}$'
+             )
+             AND phase3_jsonb_string_matches(
+               expected, 'machineIdentity', '^[A-Za-z0-9._:/+ -]{1,128}$'
+             )
+             AND phase3_jsonb_string_matches(
+               expected,
+               'gatewayId',
+               '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+             );
+         END IF;
+
+         IF evidence->>'status' <> 'complete'
+            OR NOT phase3_jsonb_exact_keys(
+              evidence,
+              ARRAY['status','observedAt','founderOs','buildRoom','fixture','controlPlane',
+                    'machineIdentity','nodeMajor','enrollments','doctor']
+            )
+            OR NOT phase3_repository_evidence_valid(evidence->'founderOs', false)
+            OR NOT phase3_repository_evidence_valid(evidence->'buildRoom', true)
+            OR NOT phase3_repository_evidence_valid(evidence->'fixture', false)
+            OR NOT phase3_jsonb_string_matches(
+              evidence, 'machineIdentity', '^[A-Za-z0-9._:/+ -]{1,128}$'
+            )
+            OR NOT phase3_jsonb_positive_safe_integer(evidence->'nodeMajor')
+            OR jsonb_typeof(evidence->'enrollments') <> 'array'
+            OR jsonb_array_length(evidence->'enrollments') > 1000 THEN
+           RETURN false;
+         END IF;
+
+         control_plane := evidence->'controlPlane';
+         doctor := evidence->'doctor';
+         IF NOT phase3_jsonb_exact_keys(control_plane, ARRAY['commit','environment','status'])
+            OR NOT phase3_jsonb_string_matches(control_plane, 'commit', '^[0-9a-f]{40}$')
+            OR NOT phase3_jsonb_string_matches(
+              control_plane, 'environment', '^[A-Za-z0-9._:/+ -]{1,128}$'
+            )
+            OR NOT (
+              control_plane->'status' = 'null'::jsonb
+              OR (jsonb_typeof(control_plane->'status') = 'number'
+                  AND COALESCE(control_plane->>'status','') ~ '^[1-5][0-9]{2}$')
+            )
+            OR NOT phase3_jsonb_exact_keys(
+              doctor,
+              ARRAY['daemonReachable','primaryLane','stagingLane','primaryCustody',
+                    'stagingCustody','custodyError','stagingLockPresent']
+            )
+            OR jsonb_typeof(doctor->'daemonReachable') <> 'boolean'
+            OR NOT phase3_jsonb_string_matches(
+              doctor, 'primaryLane', '^[A-Za-z0-9._:/+ -]{1,128}$'
+            )
+            OR NOT phase3_jsonb_string_matches(
+              doctor, 'stagingLane', '^[A-Za-z0-9._:/+ -]{1,128}$'
+            )
+            OR jsonb_typeof(doctor->'primaryCustody') <> 'boolean'
+            OR jsonb_typeof(doctor->'stagingCustody') <> 'boolean'
+            OR jsonb_typeof(doctor->'custodyError') <> 'boolean'
+            OR jsonb_typeof(doctor->'stagingLockPresent') <> 'boolean' THEN
+           RETURN false;
+         END IF;
+
+         IF EXISTS (
+           SELECT 1
+             FROM jsonb_array_elements(evidence->'enrollments') AS item
+            WHERE NOT phase3_jsonb_exact_keys(item, ARRAY['gatewayId','state'])
+               OR NOT phase3_jsonb_string_matches(
+                    item,
+                    'gatewayId',
+                    '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+                  )
+               OR jsonb_typeof(item->'state') <> 'string'
+               OR COALESCE(item->>'state','') NOT IN
+                  ('awaiting_approval','enrolled','denied','revoked','expired')
+         ) THEN
+           RETURN false;
+         END IF;
+         RETURN (
+           SELECT count(*) = count(DISTINCT item->>'gatewayId')
+             FROM jsonb_array_elements(evidence->'enrollments') AS item
+         );
+       END;
+       $$ LANGUAGE plpgsql IMMUTABLE`,
+
+      `CREATE OR REPLACE FUNCTION phase3_adjudication_evidence_valid(evidence jsonb)
+         RETURNS boolean AS $$
+       BEGIN
+         RETURN phase3_jsonb_exact_keys(
+             evidence,
+             ARRAY['verdict','tier2ReviewerId','tier2EvidenceSha256','founderAuthorizationId']
+           )
+           AND jsonb_typeof(evidence->'verdict') = 'string'
+           AND COALESCE(evidence->>'verdict','') IN ('passed','failed')
+           AND phase3_jsonb_string_matches(
+             evidence, 'tier2ReviewerId', '^[A-Za-z0-9._:/+() -]{1,128}$'
+           )
+           AND COALESCE(evidence->>'tier2ReviewerId','') ~ '[A-Za-z0-9]'
+           AND phase3_jsonb_string_matches(
+             evidence, 'tier2EvidenceSha256', '^[0-9a-f]{64}$'
+           )
+           AND phase3_jsonb_string_matches(
+             evidence, 'founderAuthorizationId', '^[A-Za-z0-9._:/-]{1,128}$'
+           );
+       END;
+       $$ LANGUAGE plpgsql IMMUTABLE`,
+      `ALTER TABLE phase3_run_events
+         ADD CONSTRAINT phase3_run_events_adjudication_shape
+         CHECK (
+           (event_type = 'attempt_adjudicated'
+             AND phase3_adjudication_evidence_valid(adjudication)
+             AND adjudication->>'verdict' = result)
+           OR (event_type <> 'attempt_adjudicated' AND adjudication IS NULL)
+         )`,
+
+      `CREATE OR REPLACE FUNCTION phase3_run_events_validate_insert()
+         RETURNS trigger AS $$
+       DECLARE
+         attempt phase3_run_attempts%ROWTYPE;
+         expected_stage text;
+         presented_position integer;
+       BEGIN
+         SELECT * INTO attempt
+           FROM phase3_run_attempts
+          WHERE run_attempt_id = NEW.run_attempt_id
+          FOR UPDATE;
+         IF NOT FOUND THEN
+           RAISE EXCEPTION 'phase3_run_events invalid progression'
+             USING ERRCODE = 'restrict_violation';
+         END IF;
+
+         IF NEW.event_type IN ('entry_verified','attempt_not_started') THEN
+           IF NEW.entry_evidence_sha256 IS DISTINCT FROM attempt.entry_evidence_sha256 THEN
+             RAISE EXCEPTION 'phase3_run_events invalid progression'
+               USING ERRCODE = 'restrict_violation';
+           END IF;
+           IF phase3_entry_evidence_valid(NEW.entry_evidence) IS NOT TRUE THEN
+             RAISE EXCEPTION 'phase3_run_events invalid entry evidence'
+               USING ERRCODE = 'restrict_violation';
+           END IF;
+           IF (NEW.event_type = 'entry_verified' AND NEW.entry_evidence->>'status' <> 'complete')
+              OR (NEW.event_type = 'attempt_not_started'
+                  AND NEW.entry_evidence->>'status' = 'incomplete'
+                  AND NEW.entry_evidence->>'failureReason' IS DISTINCT FROM NEW.reason_code) THEN
+             RAISE EXCEPTION 'phase3_run_events invalid entry evidence'
+               USING ERRCODE = 'restrict_violation';
+           END IF;
+           IF abs(extract(epoch FROM (
+                (NEW.entry_evidence->>'observedAt')::timestamptz - attempt.started_at
+              )) * 1000) >
+              extract(epoch FROM (attempt.capture_expires_at - attempt.started_at)) * 1000 THEN
+             RAISE EXCEPTION 'phase3_run_events invalid entry evidence'
+               USING ERRCODE = 'restrict_violation';
+           END IF;
+         END IF;
+
+         IF NEW.event_type = 'attempt_not_started' THEN
+           IF NEW.event_index = 1
+              AND attempt.state = 'not_started'
+              AND attempt.last_event_index = 1
+              AND attempt.started_at = NEW.occurred_at
+              AND attempt.finished_at = NEW.occurred_at
+              AND NOT EXISTS (
+                SELECT 1 FROM phase3_run_events
+                 WHERE run_attempt_id = NEW.run_attempt_id
+              ) THEN
+             RETURN NEW;
+           END IF;
+         ELSIF NEW.event_type = 'attempt_started' THEN
+           IF NEW.event_index = 1
+              AND attempt.state = 'active'
+              AND attempt.last_event_index = 2
+              AND attempt.heartbeat_captured IS FALSE
+              AND attempt.lifecycle_position = 0
+              AND attempt.started_at = NEW.occurred_at
+              AND NOT EXISTS (
+                SELECT 1 FROM phase3_run_events
+                 WHERE run_attempt_id = NEW.run_attempt_id
+              ) THEN
+             RETURN NEW;
+           END IF;
+         ELSIF NEW.event_type = 'entry_verified' THEN
+           IF NEW.event_index = 2
+              AND attempt.state = 'active'
+              AND attempt.last_event_index = 2
+              AND attempt.heartbeat_captured IS FALSE
+              AND attempt.lifecycle_position = 0
+              AND attempt.started_at = NEW.occurred_at
+              AND EXISTS (
+                SELECT 1 FROM phase3_run_events
+                 WHERE run_attempt_id = NEW.run_attempt_id
+                   AND event_index = 1
+                   AND event_type = 'attempt_started'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM phase3_run_events
+                 WHERE run_attempt_id = NEW.run_attempt_id
+                   AND event_index = 2
+              ) THEN
+             RETURN NEW;
+           END IF;
+         ELSIF NEW.event_index = attempt.last_event_index + 1 THEN
+           expected_stage := CASE attempt.lifecycle_position
+             WHEN 0 THEN 'connect'
+             WHEN 1 THEN 'adapter_registered'
+             WHEN 2 THEN 'request'
+             WHEN 3 THEN 'matched_response'
+             WHEN 4 THEN 'disconnect'
+             ELSE NULL
+           END;
+
+           IF NEW.event_type = 'heartbeat_verified'
+              AND attempt.state = 'active'
+              AND attempt.heartbeat_captured IS FALSE
+              AND attempt.lifecycle_position = 0 THEN
+             RETURN NEW;
+           END IF;
+
+           IF NEW.event_type = 'lifecycle_stage_recorded'
+              AND attempt.state = 'active'
+              AND attempt.heartbeat_captured IS TRUE
+              AND NEW.lifecycle_stage = expected_stage THEN
+             IF NEW.lifecycle_stage <> 'matched_response'
+                OR EXISTS (
+                  SELECT 1 FROM phase3_run_events request
+                   WHERE request.run_attempt_id = NEW.run_attempt_id
+                     AND request.event_id = NEW.matched_request_event_id
+                     AND request.event_type = 'lifecycle_stage_recorded'
+                     AND request.lifecycle_stage = 'request'
+                     AND request.exchange_id = NEW.exchange_id
+                ) THEN
+               RETURN NEW;
+             END IF;
+           END IF;
+
+           IF NEW.event_type = 'lifecycle_stage_refused'
+              AND attempt.state = 'active' THEN
+             IF attempt.heartbeat_captured IS FALSE
+                AND NEW.reason_code = 'out_of_order_stage' THEN
+               RETURN NEW;
+             END IF;
+             presented_position := array_position(
+               ARRAY['connect','adapter_registered','request','matched_response','disconnect'],
+               NEW.lifecycle_stage
+             ) - 1;
+             IF attempt.heartbeat_captured IS TRUE
+                AND NEW.lifecycle_stage IS DISTINCT FROM expected_stage
+                AND ((presented_position < attempt.lifecycle_position
+                      AND NEW.reason_code = 'duplicate_stage')
+                  OR (presented_position > attempt.lifecycle_position
+                      AND NEW.reason_code = 'out_of_order_stage')) THEN
+               RETURN NEW;
+             END IF;
+             IF attempt.heartbeat_captured IS TRUE
+                AND expected_stage = 'matched_response'
+                AND NEW.lifecycle_stage = expected_stage
+                AND NEW.reason_code = 'response_mismatch' THEN
+               RETURN NEW;
+             END IF;
+           END IF;
+
+           IF NEW.event_type = 'attempt_finished' THEN
+             IF NEW.result = 'awaiting_adjudication'
+                AND attempt.state = 'active'
+                AND attempt.heartbeat_captured IS TRUE
+                AND attempt.lifecycle_position = 5
+                AND NEW.teardown_result = 'completed' THEN
+               RETURN NEW;
+             END IF;
+             IF NEW.result IN ('failed','interrupted')
+                AND attempt.state IN ('active','failure_pending_teardown')
+                AND ((attempt.state = 'active'
+                      AND attempt.lifecycle_position = 0
+                      AND NEW.teardown_result = 'not_required')
+                  OR NEW.teardown_result IN ('completed','failed'))
+                AND (attempt.lifecycle_position < 5 OR NEW.teardown_result = 'completed') THEN
+               RETURN NEW;
+             END IF;
+           END IF;
+           IF NEW.event_type = 'attempt_adjudicated'
+              AND attempt.state = 'awaiting_adjudication'
+              AND attempt.heartbeat_captured IS TRUE
+              AND attempt.lifecycle_position = 5
+              AND NEW.result IN ('passed','failed')
+              AND NEW.teardown_result = 'completed'
+              AND EXISTS (
+                SELECT 1 FROM phase3_run_events completed
+                 WHERE completed.run_attempt_id = NEW.run_attempt_id
+                   AND completed.event_index = attempt.last_event_index
+                   AND completed.event_type = 'attempt_finished'
+                   AND completed.result = 'awaiting_adjudication'
+                   AND completed.teardown_evidence_sha256 = NEW.teardown_evidence_sha256
+              )
+              AND ((NEW.result = 'passed' AND NEW.reason_code IS NULL)
+                OR (NEW.result = 'failed' AND NEW.reason_code = 'adjudication_failed')) THEN
+             RETURN NEW;
+           END IF;
+         END IF;
+
+         RAISE EXCEPTION 'phase3_run_events invalid progression'
+           USING ERRCODE = 'restrict_violation';
+       END;
+       $$ LANGUAGE plpgsql`,
+      `DROP TRIGGER IF EXISTS phase3_run_events_validate_insert ON phase3_run_events`,
+      `CREATE TRIGGER phase3_run_events_validate_insert
+         BEFORE INSERT ON phase3_run_events
+         FOR EACH ROW EXECUTE FUNCTION phase3_run_events_validate_insert()`,
+
+      `CREATE OR REPLACE FUNCTION phase3_run_event_projection_consistent()
+         RETURNS trigger AS $$
+       DECLARE
+         projected_index integer;
+       BEGIN
+         SELECT last_event_index INTO projected_index
+           FROM phase3_run_attempts
+          WHERE run_attempt_id = NEW.run_attempt_id;
+         IF projected_index IS NULL OR projected_index < NEW.event_index THEN
+           RAISE EXCEPTION 'phase3_run_events projection not advanced'
+             USING ERRCODE = 'restrict_violation';
+         END IF;
+         RETURN NULL;
+       END;
+       $$ LANGUAGE plpgsql`,
+      `DROP TRIGGER IF EXISTS phase3_run_events_projection_consistent ON phase3_run_events`,
+      `CREATE CONSTRAINT TRIGGER phase3_run_events_projection_consistent
+         AFTER INSERT ON phase3_run_events
+         DEFERRABLE INITIALLY DEFERRED
+         FOR EACH ROW EXECUTE FUNCTION phase3_run_event_projection_consistent()`,
+
+      `CREATE OR REPLACE FUNCTION phase3_run_attempt_initial_events_present()
+         RETURNS trigger AS $$
+       BEGIN
+         IF NEW.state = 'not_started' THEN
+           IF NOT EXISTS (
+             SELECT 1 FROM phase3_run_events
+              WHERE run_attempt_id = NEW.run_attempt_id
+                AND event_index = 1
+                AND event_type = 'attempt_not_started'
+           ) THEN
+             RAISE EXCEPTION 'phase3_run_attempts initial events missing'
+               USING ERRCODE = 'restrict_violation';
+           END IF;
+         ELSIF NOT (
+           EXISTS (
+             SELECT 1 FROM phase3_run_events
+              WHERE run_attempt_id = NEW.run_attempt_id
+                AND event_index = 1
+                AND event_type = 'attempt_started'
+           )
+           AND EXISTS (
+             SELECT 1 FROM phase3_run_events
+              WHERE run_attempt_id = NEW.run_attempt_id
+                AND event_index = 2
+                AND event_type = 'entry_verified'
+           )
+         ) THEN
+           RAISE EXCEPTION 'phase3_run_attempts initial events missing'
+             USING ERRCODE = 'restrict_violation';
+         END IF;
+         RETURN NULL;
+       END;
+       $$ LANGUAGE plpgsql`,
+      `DROP TRIGGER IF EXISTS phase3_run_attempts_initial_events_present ON phase3_run_attempts`,
+      `CREATE CONSTRAINT TRIGGER phase3_run_attempts_initial_events_present
+         AFTER INSERT ON phase3_run_attempts
+         DEFERRABLE INITIALLY DEFERRED
+         FOR EACH ROW EXECUTE FUNCTION phase3_run_attempt_initial_events_present()`,
+
       `CREATE OR REPLACE FUNCTION phase3_run_attempts_protect_identity()
          RETURNS trigger AS $$
        DECLARE
          appended_type text;
          appended_stage text;
          appended_result text;
+         appended_reason text;
          appended_teardown text;
          appended_occurred timestamptz;
        BEGIN
@@ -714,8 +1209,9 @@ export const MIGRATIONS: readonly Migration[] = [
            RAISE EXCEPTION 'phase3_run_attempts projection update lacks matching event'
              USING ERRCODE = 'restrict_violation';
          END IF;
-         SELECT event_type, lifecycle_stage, result, teardown_result, occurred_at
-           INTO appended_type, appended_stage, appended_result, appended_teardown, appended_occurred
+         SELECT event_type, lifecycle_stage, result, reason_code, teardown_result, occurred_at
+           INTO appended_type, appended_stage, appended_result, appended_reason,
+                appended_teardown, appended_occurred
            FROM phase3_run_events
           WHERE run_attempt_id = NEW.run_attempt_id
             AND event_index = NEW.last_event_index;
@@ -790,9 +1286,11 @@ export const MIGRATIONS: readonly Migration[] = [
          IF NEW.heartbeat_captured = OLD.heartbeat_captured
             AND NEW.lifecycle_position = OLD.lifecycle_position
             AND OLD.state = 'awaiting_adjudication'
-            AND NEW.state = 'passed'
-            AND appended_type = 'attempt_finished'
-            AND appended_result = 'passed'
+            AND NEW.state IN ('passed','failed')
+            AND appended_type = 'attempt_adjudicated'
+            AND appended_result = NEW.state
+            AND ((NEW.state = 'passed' AND appended_reason IS NULL)
+              OR (NEW.state = 'failed' AND appended_reason = 'adjudication_failed'))
             AND appended_teardown = 'completed'
             AND NEW.finished_at IS NOT DISTINCT FROM appended_occurred THEN
            RETURN NEW;

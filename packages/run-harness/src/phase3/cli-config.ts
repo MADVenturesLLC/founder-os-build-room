@@ -22,6 +22,11 @@ export async function loadPhase3CliConfig(
   environment: Readonly<Record<string, string | undefined>>,
   buildRoomPath = process.cwd(),
 ): Promise<Phase3CliConfig> {
+  if (environment['PHASE3_ADJUDICATION_TOKEN'] !== undefined) {
+    throw new Error(
+      'PHASE3_ADJUDICATION_TOKEN must not be present in the counted-run harness environment',
+    );
+  }
   const controlPlaneUrl = required(environment, 'CONTROL_PLANE_URL');
   const controlPlaneToken = required(environment, 'CONTROL_PLANE_TOKEN');
   const buildVerifiedSha = required(environment, 'PHASE3_BUILD_VERIFIED_SHA');
@@ -57,8 +62,14 @@ export async function loadPhase3CliConfig(
     throw new Error('PHASE3_BUILD_VERIFIED_SHA does not match the plan SHA');
   }
 
-  const [canonicalEvidencePath, canonicalBuildRoomPath, canonicalFixturePath] = await Promise.all([
+  const [
+    canonicalEvidencePath,
+    canonicalFounderOsPath,
+    canonicalBuildRoomPath,
+    canonicalFixturePath,
+  ] = await Promise.all([
     canonicalTarget(evidencePath),
+    resolveRepositoryRoot(plan.value.founderOs.path),
     resolveRepositoryRoot(buildRoomPath),
     resolveRepositoryRoot(plan.value.fixture.path),
   ]);
@@ -66,18 +77,24 @@ export async function loadPhase3CliConfig(
     throw new Error('PHASE3_EVIDENCE_PATH must be absolute and not a filesystem root');
   }
   if (
+    containedBy(canonicalFounderOsPath, canonicalEvidencePath) ||
     containedBy(canonicalBuildRoomPath, canonicalEvidencePath) ||
     containedBy(canonicalFixturePath, canonicalEvidencePath)
   ) {
-    throw new Error('PHASE3_EVIDENCE_PATH must be outside the Build Room and fixture repositories');
+    throw new Error(
+      'PHASE3_EVIDENCE_PATH must be outside FounderOS, Build Room, and fixture repositories',
+    );
   }
   const evidenceDirectoryIdentity = await securePhase3EvidenceDirectory(canonicalEvidencePath);
   if (
     evidenceDirectoryIdentity.realPath !== canonicalEvidencePath ||
+    containedBy(canonicalFounderOsPath, evidenceDirectoryIdentity.realPath) ||
     containedBy(canonicalBuildRoomPath, evidenceDirectoryIdentity.realPath) ||
     containedBy(canonicalFixturePath, evidenceDirectoryIdentity.realPath)
   ) {
-    throw new Error('PHASE3_EVIDENCE_PATH must be outside the Build Room and fixture repositories');
+    throw new Error(
+      'PHASE3_EVIDENCE_PATH must be outside FounderOS, Build Room, and fixture repositories',
+    );
   }
   const evidenceReservation = await reservePhase3EvidenceFile(
     evidenceDirectoryIdentity,

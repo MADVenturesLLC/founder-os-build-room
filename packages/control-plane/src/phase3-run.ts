@@ -2,9 +2,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import type { Config } from './config.js';
 import { GATEWAY_REGISTRY_LOCK_KEY } from './migrations.js';
+import {
+  PHASE3_RUN_LABELS,
+  phase3SequenceStatus,
+  type Phase3AttemptOutcome,
+  type Phase3AttemptSummary,
+  type Phase3RunLabel,
+} from './phase3-sequence.js';
 
-export const PHASE3_RUN_LABELS = ['Phase3-CR1', 'Phase3-CR2', 'Phase3-CR3'] as const;
-export type Phase3RunLabel = (typeof PHASE3_RUN_LABELS)[number];
+export { PHASE3_RUN_LABELS };
+export type { Phase3RunLabel };
 
 export const PHASE3_EVIDENCE_AUTHORIZES =
   'Nothing. This evidence records one Phase 3 counted-run attempt and confers no ' +
@@ -23,6 +30,7 @@ export const PHASE3_REASON_CODES = [
   'attempt_identity_invalid',
   'authorization_invalid',
   'governing_sha_invalid',
+  'founder_os_invalid',
   'gateway_identity_invalid',
   'context_invalid',
   'gateway_health_failed',
@@ -46,12 +54,64 @@ export const PHASE3_REASON_CODES = [
   'duplicate_stage',
   'out_of_order_stage',
   'response_mismatch',
+  'adjudication_failed',
   'operator_interrupted',
   'teardown_failed',
   'evidence_write_failed',
   'internal_error',
 ] as const;
 export type Phase3ReasonCode = (typeof PHASE3_REASON_CODES)[number];
+
+export interface Phase3RepositoryEvidence {
+  readonly repository: string;
+  readonly sha: string;
+  readonly treeSha: string;
+  readonly clean: boolean;
+}
+
+export interface Phase3CompleteEntryEvidence {
+  readonly status: 'complete';
+  readonly observedAt: string;
+  readonly founderOs: Phase3RepositoryEvidence;
+  readonly buildRoom: Phase3RepositoryEvidence & { readonly buildPassed: boolean };
+  readonly fixture: Phase3RepositoryEvidence;
+  readonly controlPlane: {
+    readonly commit: string;
+    readonly environment: string;
+    readonly status: number | null;
+  };
+  readonly machineIdentity: string;
+  readonly nodeMajor: number;
+  readonly enrollments: readonly { readonly gatewayId: string; readonly state: string }[];
+  readonly doctor: {
+    readonly daemonReachable: boolean;
+    readonly primaryLane: string;
+    readonly stagingLane: string;
+    readonly primaryCustody: boolean;
+    readonly stagingCustody: boolean;
+    readonly custodyError: boolean;
+    readonly stagingLockPresent: boolean;
+  };
+}
+
+export interface Phase3IncompleteEntryEvidence {
+  readonly status: 'incomplete';
+  readonly observedAt: string;
+  readonly failureReason: Phase3ReasonCode;
+  readonly expected: {
+    readonly founderOsSha: string;
+    readonly buildRoomSha: string;
+    readonly fixtureRepository: string;
+    readonly fixtureSha: string;
+    readonly environment: string;
+    readonly machineIdentity: string;
+    readonly gatewayId: string;
+  };
+}
+
+export type Phase3EntryEvidence =
+  | Phase3CompleteEntryEvidence
+  | Phase3IncompleteEntryEvidence;
 
 type Invalid = { readonly ok: false; readonly code: 'invalid_request' };
 type Valid<T> = { readonly ok: true; readonly value: T };
@@ -72,6 +132,7 @@ export interface Phase3AttemptInput {
     readonly state: 'enrolled' | 'denied' | 'revoked' | 'expired';
   }[];
   readonly machineIdentity: string;
+  readonly entryEvidence: Phase3EntryEvidence;
   readonly entryEvidenceSha256: string;
   readonly reasonCode?: Phase3ReasonCode;
 }
@@ -94,6 +155,21 @@ export type Phase3EventInput =
       readonly teardownEvidenceSha256: string;
       readonly reasonCode?: Phase3ReasonCode;
     };
+
+export interface Phase3AdjudicationInput {
+  readonly idempotencyKey: string;
+  readonly verdict: 'passed' | 'failed';
+  readonly tier2ReviewerId: string;
+  readonly tier2EvidenceSha256: string;
+  readonly founderAuthorizationId: string;
+}
+
+export interface Phase3AdjudicationEvidence {
+  readonly verdict: 'passed' | 'failed';
+  readonly tier2ReviewerId: string;
+  readonly tier2EvidenceSha256: string;
+  readonly founderAuthorizationId: string;
+}
 
 export function validatePhase3AttemptInput(body: unknown): Valid<Phase3AttemptInput> | Invalid {
   const record = asRecord(body);
@@ -121,11 +197,38 @@ export function validatePhase3AttemptInput(body: unknown): Valid<Phase3AttemptIn
     !UUID_RE.test(string(record['gatewayId'])) ||
     !validExpectedEnrollments(record['expectedEnrollments'], string(record['gatewayId'])) ||
     !SAFE_LABEL_RE.test(string(record['machineIdentity'])) ||
+    !isPhase3EntryEvidence(record['entryEvidence']) ||
+    phase3EntryEvidenceSha256(record['entryEvidence'] as Phase3EntryEvidence) !==
+      string(record['entryEvidenceSha256']) ||
     !SHA256_RE.test(string(record['entryEvidenceSha256']))
   ) {
     return INVALID;
   }
   if (mode === 'not_started' && !includes(PHASE3_REASON_CODES, record['reasonCode'])) return INVALID;
+  const entryEvidence = record['entryEvidence'] as Phase3EntryEvidence;
+  const completeFailure =
+    entryEvidence.status === 'complete' ? completeEntryFailure(record, entryEvidence) : null;
+  if (
+    mode === 'started' &&
+    (entryEvidence.status !== 'complete' || completeFailure !== null)
+  ) {
+    return INVALID;
+  }
+  if (
+    mode === 'not_started' &&
+    entryEvidence.status === 'complete' &&
+    (completeFailure === null || completeFailure !== record['reasonCode'])
+  ) {
+    return INVALID;
+  }
+  if (
+    entryEvidence.status === 'incomplete' &&
+    (mode !== 'not_started' ||
+      entryEvidence.failureReason !== record['reasonCode'] ||
+      !incompleteEntryEvidenceMatches(record, entryEvidence))
+  ) {
+    return INVALID;
+  }
 
   return { ok: true, value: record as unknown as Phase3AttemptInput };
 }
@@ -191,6 +294,24 @@ export function validatePhase3EventInput(body: unknown): Valid<Phase3EventInput>
   return INVALID;
 }
 
+export function validatePhase3AdjudicationInput(
+  body: unknown,
+): Valid<Phase3AdjudicationInput> | Invalid {
+  const record = asRecord(body);
+  if (
+    record === null ||
+    !exactFields(record, ADJUDICATION_FIELDS) ||
+    !UUID_RE.test(string(record['idempotencyKey'])) ||
+    (record['verdict'] !== 'passed' && record['verdict'] !== 'failed') ||
+    !SAFE_REVIEWER_RE.test(string(record['tier2ReviewerId'])) ||
+    !SHA256_RE.test(string(record['tier2EvidenceSha256'])) ||
+    !SAFE_ID_RE.test(string(record['founderAuthorizationId']))
+  ) {
+    return INVALID;
+  }
+  return { ok: true, value: record as unknown as Phase3AdjudicationInput };
+}
+
 const INVALID: Invalid = { ok: false, code: 'invalid_request' };
 const ATTEMPT_FIELDS = [
   'mode',
@@ -204,6 +325,7 @@ const ATTEMPT_FIELDS = [
   'gatewayId',
   'expectedEnrollments',
   'machineIdentity',
+  'entryEvidence',
   'entryEvidenceSha256',
 ] as const;
 const LIFECYCLE_FIELDS = ['kind', 'idempotencyKey', 'stage', 'artifactSha256'] as const;
@@ -214,12 +336,21 @@ const FINISH_SUCCESS_FIELDS = [
   'teardownResult',
   'teardownEvidenceSha256',
 ] as const;
+const ADJUDICATION_FIELDS = [
+  'idempotencyKey',
+  'verdict',
+  'tier2ReviewerId',
+  'tier2EvidenceSha256',
+  'founderAuthorizationId',
+] as const;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SAFE_ID_RE = /^[A-Za-z0-9._:/-]{1,128}$/;
 const SAFE_LABEL_RE = /^[A-Za-z0-9._:/+ -]{1,128}$/;
+const SAFE_REVIEWER_RE = /^(?=.{1,128}$)(?=.*[A-Za-z0-9])[A-Za-z0-9._:/+() -]+$/;
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const MAX_ENROLLMENT_ROWS = 1_000;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
@@ -240,7 +371,7 @@ function includes<const T extends readonly string[]>(values: T, value: unknown):
 }
 
 function validExpectedEnrollments(value: unknown, gatewayId: string): boolean {
-  if (!Array.isArray(value) || value.length === 0) return false;
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_ENROLLMENT_ROWS) return false;
   const seen = new Set<string>();
   let enrolled = 0;
   for (const raw of value) {
@@ -264,6 +395,222 @@ function validExpectedEnrollments(value: unknown, gatewayId: string): boolean {
 }
 
 const PROJECTION_STATES = ['enrolled', 'denied', 'revoked', 'expired'] as const;
+const OBSERVED_PROJECTION_STATES = [
+  'awaiting_approval',
+  'enrolled',
+  'denied',
+  'revoked',
+  'expired',
+] as const;
+
+export function isPhase3EntryEvidence(value: unknown): value is Phase3EntryEvidence {
+  const evidence = asRecord(value);
+  if (evidence === null || !validTimestamp(evidence['observedAt'])) return false;
+  if (evidence['status'] === 'incomplete') {
+    const expected = asRecord(evidence['expected']);
+    return (
+      exactFields(evidence, ['status', 'observedAt', 'failureReason', 'expected']) &&
+      includes(PHASE3_REASON_CODES, evidence['failureReason']) &&
+      expected !== null &&
+      exactFields(expected, [
+        'founderOsSha',
+        'buildRoomSha',
+        'fixtureRepository',
+        'fixtureSha',
+        'environment',
+        'machineIdentity',
+        'gatewayId',
+      ]) &&
+      SHA_RE.test(string(expected['founderOsSha'])) &&
+      SHA_RE.test(string(expected['buildRoomSha'])) &&
+      REPOSITORY_RE.test(string(expected['fixtureRepository'])) &&
+      SHA_RE.test(string(expected['fixtureSha'])) &&
+      SAFE_LABEL_RE.test(string(expected['environment'])) &&
+      SAFE_LABEL_RE.test(string(expected['machineIdentity'])) &&
+      UUID_RE.test(string(expected['gatewayId']))
+    );
+  }
+  if (evidence['status'] !== 'complete') return false;
+  if (
+    !exactFields(evidence, [
+      'status',
+      'observedAt',
+      'founderOs',
+      'buildRoom',
+      'fixture',
+      'controlPlane',
+      'machineIdentity',
+      'nodeMajor',
+      'enrollments',
+      'doctor',
+    ]) ||
+    !validRepositoryEvidence(evidence['founderOs'], false) ||
+    !validRepositoryEvidence(evidence['buildRoom'], true) ||
+    !validRepositoryEvidence(evidence['fixture'], false) ||
+    !SAFE_LABEL_RE.test(string(evidence['machineIdentity'])) ||
+    !Number.isSafeInteger(evidence['nodeMajor']) ||
+    Number(evidence['nodeMajor']) <= 0
+  ) {
+    return false;
+  }
+  const controlPlane = asRecord(evidence['controlPlane']);
+  const doctor = asRecord(evidence['doctor']);
+  return (
+    controlPlane !== null &&
+    exactFields(controlPlane, ['commit', 'environment', 'status']) &&
+    SHA_RE.test(string(controlPlane['commit'])) &&
+    SAFE_LABEL_RE.test(string(controlPlane['environment'])) &&
+    (controlPlane['status'] === null ||
+      (Number.isSafeInteger(controlPlane['status']) &&
+        Number(controlPlane['status']) >= 100 &&
+        Number(controlPlane['status']) <= 599)) &&
+    validObservedEnrollments(evidence['enrollments']) &&
+    doctor !== null &&
+    exactFields(doctor, [
+      'daemonReachable',
+      'primaryLane',
+      'stagingLane',
+      'primaryCustody',
+      'stagingCustody',
+      'custodyError',
+      'stagingLockPresent',
+    ]) &&
+    typeof doctor['daemonReachable'] === 'boolean' &&
+    SAFE_LABEL_RE.test(string(doctor['primaryLane'])) &&
+    SAFE_LABEL_RE.test(string(doctor['stagingLane'])) &&
+    typeof doctor['primaryCustody'] === 'boolean' &&
+    typeof doctor['stagingCustody'] === 'boolean' &&
+    typeof doctor['custodyError'] === 'boolean' &&
+    typeof doctor['stagingLockPresent'] === 'boolean'
+  );
+}
+
+function validRepositoryEvidence(value: unknown, buildRoom: boolean): boolean {
+  const evidence = asRecord(value);
+  const fields = ['repository', 'sha', 'treeSha', 'clean', ...(buildRoom ? ['buildPassed'] : [])];
+  return (
+    evidence !== null &&
+    exactFields(evidence, fields) &&
+    REPOSITORY_RE.test(string(evidence['repository'])) &&
+    SHA_RE.test(string(evidence['sha'])) &&
+    SHA_RE.test(string(evidence['treeSha'])) &&
+    typeof evidence['clean'] === 'boolean' &&
+    (!buildRoom || typeof evidence['buildPassed'] === 'boolean')
+  );
+}
+
+function validObservedEnrollments(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > MAX_ENROLLMENT_ROWS) return false;
+  const seen = new Set<string>();
+  for (const raw of value) {
+    const row = asRecord(raw);
+    if (
+      row === null ||
+      !exactFields(row, ['gatewayId', 'state']) ||
+      !UUID_RE.test(string(row['gatewayId'])) ||
+      !OBSERVED_PROJECTION_STATES.includes(row['state'] as never) ||
+      seen.has(string(row['gatewayId']))
+    ) {
+      return false;
+    }
+    seen.add(string(row['gatewayId']));
+  }
+  return true;
+}
+
+function completeEntryFailure(
+  attempt: Record<string, unknown>,
+  evidence: Phase3CompleteEntryEvidence,
+): Phase3ReasonCode | null {
+  const expectedEnrollments = attempt['expectedEnrollments'] as readonly {
+    readonly gatewayId: string;
+    readonly state: string;
+  }[];
+  if (
+    evidence.founderOs.sha !== attempt['founderOsSha'] ||
+    evidence.founderOs.repository !== 'MADVenturesLLC/FounderOS' ||
+    !evidence.founderOs.clean
+  ) {
+    return 'founder_os_invalid';
+  }
+  if (evidence.machineIdentity !== attempt['machineIdentity']) return 'context_invalid';
+  if (
+    evidence.buildRoom.sha !== attempt['buildRoomSha'] ||
+    evidence.controlPlane.commit !== attempt['buildRoomSha']
+  ) {
+    return 'build_sha_mismatch';
+  }
+  if (evidence.nodeMajor !== 22) return 'node_version_mismatch';
+  if (
+    evidence.buildRoom.repository !== 'MADVenturesLLC/founder-os-build-room' ||
+    !evidence.buildRoom.clean ||
+    !evidence.buildRoom.buildPassed
+  ) {
+    return 'build_failed';
+  }
+  if (
+    evidence.fixture.repository !== attempt['fixtureRepository'] ||
+    evidence.fixture.sha !== attempt['fixtureSha'] ||
+    !evidence.fixture.clean
+  ) {
+    return 'fixture_unavailable';
+  }
+  if (
+    phase3EnrollmentProjectionSha256(evidence.enrollments) !==
+    phase3EnrollmentProjectionSha256(expectedEnrollments)
+  ) {
+    return 'enrollment_projection_failed';
+  }
+  if (evidence.controlPlane.status !== 200) return 'control_plane_status_failed';
+  if (!evidence.doctor.daemonReachable) return 'daemon_unreachable';
+  if (evidence.doctor.primaryLane !== 'IDLE' || evidence.doctor.stagingLane !== 'INACTIVE') {
+    return 'lane_state_failed';
+  }
+  if (
+    !evidence.doctor.primaryCustody ||
+    evidence.doctor.stagingCustody ||
+    evidence.doctor.custodyError
+  ) {
+    return 'custody_failed';
+  }
+  if (evidence.doctor.stagingLockPresent) return 'staging_lock_present';
+  return null;
+}
+
+function incompleteEntryEvidenceMatches(
+  attempt: Record<string, unknown>,
+  evidence: Phase3IncompleteEntryEvidence,
+): boolean {
+  return (
+    evidence.expected.founderOsSha === attempt['founderOsSha'] &&
+    evidence.expected.buildRoomSha === attempt['buildRoomSha'] &&
+    evidence.expected.fixtureRepository === attempt['fixtureRepository'] &&
+    evidence.expected.fixtureSha === attempt['fixtureSha'] &&
+    evidence.expected.machineIdentity === attempt['machineIdentity'] &&
+    evidence.expected.gatewayId === attempt['gatewayId']
+  );
+}
+
+function validTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const epoch = Date.parse(value);
+  return Number.isFinite(epoch) && new Date(epoch).toISOString() === value;
+}
+
+export function phase3EntryEvidenceSha256(evidence: Phase3EntryEvidence): string {
+  const normalized =
+    evidence.status === 'complete'
+      ? {
+          ...evidence,
+          enrollments: [...evidence.enrollments].sort((left, right) => {
+            const leftKey = `${left.gatewayId}:${left.state}`;
+            const rightKey = `${right.gatewayId}:${right.state}`;
+            return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+          }),
+        }
+      : evidence;
+  return phase3RequestSha256(normalized);
+}
 
 export interface Phase3HeartbeatEvidence {
   readonly gatewayId: string;
@@ -285,6 +632,10 @@ export interface Phase3AppendResult {
   readonly reasonCode?: Phase3ReasonCode;
 }
 
+export interface Phase3AdjudicationResult extends Phase3AppendResult {
+  readonly state: 'passed' | 'failed';
+}
+
 export interface Phase3AttemptCreation {
   readonly created: boolean;
   readonly runAttemptId: string;
@@ -299,6 +650,8 @@ export interface Phase3EvidenceExpectation {
 export interface Phase3EvidenceExport {
   readonly schema: 'build-room/phase3-run-evidence@1';
   readonly context: { readonly commit: string; readonly environment: string };
+  readonly entryEvidence: Phase3EntryEvidence;
+  readonly entryEvidenceRecordedAt: string;
   readonly attempt: {
     readonly runAttemptId: string;
     readonly runLabel: Phase3RunLabel;
@@ -332,6 +685,7 @@ export interface Phase3EvidenceExport {
     readonly result: string | null;
     readonly teardownResult: string | null;
     readonly teardownEvidenceSha256: string | null;
+    readonly adjudication: Phase3AdjudicationEvidence | null;
     readonly occurredAt: string;
   }[];
   readonly heartbeat: {
@@ -387,6 +741,8 @@ interface EventRow {
   readonly event_type: string;
   readonly idempotency_key: string | null;
   readonly request_sha256: string | null;
+  readonly entry_evidence: Phase3EntryEvidence | null;
+  readonly entry_evidence_sha256: string | null;
   readonly lifecycle_stage: string | null;
   readonly stage_artifact_sha256: string | null;
   readonly exchange_id: string | null;
@@ -396,6 +752,7 @@ interface EventRow {
   readonly result: string | null;
   readonly teardown_result: string | null;
   readonly teardown_evidence_sha256: string | null;
+  readonly adjudication: Phase3AdjudicationEvidence | null;
   readonly heartbeat_key_id: string | null;
   readonly heartbeat_sequence: string | null;
   readonly heartbeat_timestamp_ms: string | null;
@@ -423,6 +780,17 @@ export class Phase3RunStore {
     input: Phase3AttemptInput,
   ): Promise<Phase3AttemptCreation> {
     try {
+      const evidenceEnvironment =
+        input.entryEvidence.status === 'complete'
+          ? input.entryEvidence.controlPlane.environment
+          : input.entryEvidence.expected.environment;
+      if (evidenceEnvironment !== this.config.environment) {
+        throw new Phase3RunConflictError('context_invalid');
+      }
+      if (input.buildRoomSha !== this.config.commitSha) {
+        throw new Phase3RunConflictError('build_sha_mismatch');
+      }
+      await client.query('SELECT pg_advisory_xact_lock($1)', [GATEWAY_REGISTRY_LOCK_KEY]);
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [
         input.runAttemptId,
       ]);
@@ -448,8 +816,9 @@ export class Phase3RunStore {
         return { created: false, runAttemptId: input.runAttemptId, state: existing.state };
       }
 
+      await this.requireSequence(client, input.runLabel);
+
       if (input.mode === 'started') {
-        await client.query('SELECT pg_advisory_xact_lock($1)', [GATEWAY_REGISTRY_LOCK_KEY]);
         const current = await client.query<{ gateway_id: string; state: string }>(
           `SELECT gateway_id, state FROM gateway_current_state ORDER BY gateway_id FOR SHARE`,
         );
@@ -463,6 +832,13 @@ export class Phase3RunStore {
       }
 
       const now = await databaseNow(client);
+      const observedAt = Date.parse(input.entryEvidence.observedAt);
+      if (
+        !Number.isFinite(observedAt) ||
+        Math.abs(now.getTime() - observedAt) > this.config.gatewayTimestampWindowMs
+      ) {
+        throw new Phase3RunConflictError('entry_evidence_stale');
+      }
       const notStarted = input.mode === 'not_started';
       const state = notStarted ? 'not_started' : 'active';
       const lastEventIndex = notStarted ? 1 : 2;
@@ -502,17 +878,32 @@ export class Phase3RunStore {
         await client.query(
           `INSERT INTO phase3_run_events
              (event_id, run_attempt_id, event_index, event_type, reason_code,
-              teardown_result, occurred_at)
-           VALUES ($1,$2,1,'attempt_not_started',$3,'not_required',$4)`,
-          [randomUUID(), input.runAttemptId, input.reasonCode, now],
+              teardown_result, entry_evidence, entry_evidence_sha256, occurred_at)
+           VALUES ($1,$2,1,'attempt_not_started',$3,'not_required',$4::jsonb,$5,$6)`,
+          [
+            randomUUID(),
+            input.runAttemptId,
+            input.reasonCode,
+            JSON.stringify(input.entryEvidence),
+            input.entryEvidenceSha256,
+            now,
+          ],
         );
       } else {
         await client.query(
           `INSERT INTO phase3_run_events
-             (event_id, run_attempt_id, event_index, event_type, occurred_at)
-           VALUES ($1,$2,1,'attempt_started',$3),
-                  ($4,$2,2,'entry_verified',$3)`,
-          [randomUUID(), input.runAttemptId, now, randomUUID()],
+             (event_id, run_attempt_id, event_index, event_type,
+              entry_evidence, entry_evidence_sha256, occurred_at)
+           VALUES ($1,$2,1,'attempt_started',NULL,NULL,$3),
+                  ($4,$2,2,'entry_verified',$5::jsonb,$6,$3)`,
+          [
+            randomUUID(),
+            input.runAttemptId,
+            now,
+            randomUUID(),
+            JSON.stringify(input.entryEvidence),
+            input.entryEvidenceSha256,
+          ],
         );
       }
 
@@ -523,6 +914,38 @@ export class Phase3RunStore {
       }
       throw error;
     }
+  }
+
+  private async requireSequence(client: PoolClient, runLabel: Phase3RunLabel): Promise<void> {
+    const { rows } = await client.query<{ run_label: Phase3RunLabel; state: string }>(
+      `SELECT run_label, state FROM phase3_run_attempts ORDER BY attempt_seq FOR SHARE`,
+    );
+    if (rows.some((row) => row.state === 'active' || row.state === 'failure_pending_teardown')) {
+      throw new Phase3RunConflictError('sequence_blocked');
+    }
+
+    const summaries: Phase3AttemptSummary[] = rows.map((row) => {
+      if (
+        row.state !== 'not_started' &&
+        row.state !== 'failed' &&
+        row.state !== 'interrupted' &&
+        row.state !== 'awaiting_adjudication' &&
+        row.state !== 'passed'
+      ) {
+        throw new Phase3RunConflictError('sequence_history_invalid');
+      }
+      return { label: row.run_label, outcome: row.state as Phase3AttemptOutcome };
+    });
+
+    let status;
+    try {
+      status = phase3SequenceStatus(summaries);
+    } catch {
+      throw new Phase3RunConflictError('sequence_history_invalid');
+    }
+    if (status.blockedByAdjudication) throw new Phase3RunConflictError('sequence_blocked');
+    if (status.satisfied) throw new Phase3RunConflictError('sequence_satisfied');
+    if (status.nextLabel !== runLabel) throw new Phase3RunConflictError('sequence_invalid');
   }
 
   /** Called only inside the already-fenced accepted-heartbeat transaction. */
@@ -547,6 +970,7 @@ export class Phase3RunStore {
     );
     const attempt = rows[0];
     if (attempt === undefined) return false;
+    this.requireAttemptProcessIdentity(attempt);
 
     const eventIndex = attempt.last_event_index + 1;
     await client.query(
@@ -590,6 +1014,7 @@ export class Phase3RunStore {
   ): Promise<Phase3AppendResult> {
       const attempt = await this.attempt(client, runAttemptId, true);
       if (attempt === null) throw new Phase3RunConflictError('attempt_not_found');
+      this.requireAttemptProcessIdentity(attempt);
       const requestSha256 = phase3RequestSha256(input);
 
       const replay = await client.query<{
@@ -747,6 +1172,106 @@ export class Phase3RunStore {
       return { accepted: true, eventId, replayed: false };
   }
 
+  adjudicateAttempt(
+    runAttemptId: string,
+    input: Phase3AdjudicationInput,
+  ): Promise<Phase3AdjudicationResult> {
+    return this.transaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock($1)', [GATEWAY_REGISTRY_LOCK_KEY]);
+      return this.adjudicateAttemptFenced(client, runAttemptId, input);
+    });
+  }
+
+  async adjudicateAttemptFenced(
+    client: PoolClient,
+    runAttemptId: string,
+    input: Phase3AdjudicationInput,
+  ): Promise<Phase3AdjudicationResult> {
+    const attempt = await this.attempt(client, runAttemptId, true);
+    if (attempt === null) throw new Phase3RunConflictError('attempt_not_found');
+    this.requireAttemptProcessIdentity(attempt);
+    const requestSha256 = phase3RequestSha256(input);
+    const replay = await client.query<{
+      event_id: string;
+      event_type: string;
+      request_sha256: string | null;
+      result: 'passed' | 'failed' | null;
+    }>(
+      `SELECT event_id, event_type, request_sha256, result
+         FROM phase3_run_events
+        WHERE run_attempt_id = $1 AND idempotency_key = $2`,
+      [runAttemptId, input.idempotencyKey],
+    );
+    const replayed = replay.rows[0];
+    if (replayed !== undefined) {
+      if (
+        replayed.event_type !== 'attempt_adjudicated' ||
+        replayed.request_sha256 !== requestSha256 ||
+        replayed.result !== input.verdict
+      ) {
+        throw new Phase3RunConflictError('idempotency_key_mismatch');
+      }
+      return {
+        accepted: true,
+        eventId: replayed.event_id,
+        replayed: true,
+        state: input.verdict,
+      };
+    }
+    if (attempt.state !== 'awaiting_adjudication') {
+      throw new Phase3RunConflictError('attempt_not_awaiting_adjudication');
+    }
+    const prior = await client.query<{ teardown_evidence_sha256: string | null }>(
+      `SELECT teardown_evidence_sha256
+         FROM phase3_run_events
+        WHERE run_attempt_id = $1
+          AND event_type = 'attempt_finished'
+          AND result = 'awaiting_adjudication'
+        ORDER BY event_index DESC LIMIT 1`,
+      [runAttemptId],
+    );
+    const teardownEvidenceSha256 = prior.rows[0]?.teardown_evidence_sha256;
+    if (teardownEvidenceSha256 === null || teardownEvidenceSha256 === undefined) {
+      throw new Phase3RunConflictError('attempt_incomplete');
+    }
+
+    const eventId = randomUUID();
+    const eventIndex = attempt.last_event_index + 1;
+    const now = await databaseNow(client);
+    const adjudication: Phase3AdjudicationEvidence = {
+      verdict: input.verdict,
+      tier2ReviewerId: input.tier2ReviewerId,
+      tier2EvidenceSha256: input.tier2EvidenceSha256,
+      founderAuthorizationId: input.founderAuthorizationId,
+    };
+    await client.query(
+      `INSERT INTO phase3_run_events
+         (event_id, run_attempt_id, event_index, event_type, idempotency_key,
+          request_sha256, reason_code, result, teardown_result,
+          teardown_evidence_sha256, adjudication, occurred_at)
+       VALUES ($1,$2,$3,'attempt_adjudicated',$4,$5,$6,$7,'completed',$8,$9::jsonb,$10)`,
+      [
+        eventId,
+        runAttemptId,
+        eventIndex,
+        input.idempotencyKey,
+        requestSha256,
+        input.verdict === 'failed' ? 'adjudication_failed' : null,
+        input.verdict,
+        teardownEvidenceSha256,
+        JSON.stringify(adjudication),
+        now,
+      ],
+    );
+    await client.query(
+      `UPDATE phase3_run_attempts
+          SET state = $2, last_event_index = $3, finished_at = $4
+        WHERE run_attempt_id = $1`,
+      [runAttemptId, input.verdict, eventIndex, now],
+    );
+    return { accepted: true, eventId, replayed: false, state: input.verdict };
+  }
+
   async exportAttempt(runAttemptId: string): Promise<Phase3EvidenceExport> {
     const client = await this.pool.connect();
     try {
@@ -760,9 +1285,23 @@ export class Phase3RunStore {
       await client.query('COMMIT');
 
       const heartbeat = rows.find((row) => row.event_type === 'heartbeat_verified');
+      const entry = rows.find(
+        (row) => row.event_type === 'entry_verified' || row.event_type === 'attempt_not_started',
+      );
+      if (
+        entry?.entry_evidence === null ||
+        entry?.entry_evidence === undefined ||
+        !isPhase3EntryEvidence(entry.entry_evidence) ||
+        entry.entry_evidence_sha256 !== attempt.entry_evidence_sha256 ||
+        phase3EntryEvidenceSha256(entry.entry_evidence) !== attempt.entry_evidence_sha256
+      ) {
+        throw new Phase3RunConflictError('entry_evidence_missing');
+      }
       return {
         schema: 'build-room/phase3-run-evidence@1',
         context: { commit: this.config.commitSha, environment: this.config.environment },
+        entryEvidence: entry.entry_evidence,
+        entryEvidenceRecordedAt: entry.occurred_at.toISOString(),
         attempt: {
           runAttemptId: attempt.run_attempt_id,
           runLabel: attempt.run_label,
@@ -796,6 +1335,7 @@ export class Phase3RunStore {
           result: row.result,
           teardownResult: row.teardown_result,
           teardownEvidenceSha256: row.teardown_evidence_sha256,
+          adjudication: row.adjudication,
           occurredAt: row.occurred_at.toISOString(),
         })),
         heartbeat:
@@ -860,10 +1400,19 @@ export class Phase3RunStore {
     );
     return rows[0] ?? null;
   }
+
+  private requireAttemptProcessIdentity(attempt: AttemptRow): void {
+    if (
+      attempt.build_room_sha !== this.config.commitSha ||
+      attempt.environment_label !== this.config.environment
+    ) {
+      throw new Phase3RunConflictError('attempt_process_identity_mismatch');
+    }
+  }
 }
 
 async function databaseNow(client: PoolClient): Promise<Date> {
-  const { rows } = await client.query<{ now: Date }>('SELECT now() AS now');
+  const { rows } = await client.query<{ now: Date }>('SELECT clock_timestamp() AS now');
   const now = rows[0]?.now;
   if (now === undefined) throw new Error('database clock returned no row');
   return now;

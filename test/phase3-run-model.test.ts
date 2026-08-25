@@ -18,6 +18,7 @@ const PLAN: Phase3AttemptPlan = {
   label: 'Phase3-CR1',
   entryAuthorizationId: 'founder:phase3-cr1:2026-08-25',
   founderOsSha: FOUNDER_OS_SHA,
+  founderOs: { repository: 'MADVenturesLLC/FounderOS', path: '/tmp/FounderOS' },
   buildRoomSha: BUILD_SHA,
   controlPlaneOrigin: 'https://control-plane.example',
   gatewayId: GATEWAY_ID,
@@ -36,27 +37,67 @@ const PLAN: Phase3AttemptPlan = {
 };
 
 const OBSERVATION: Phase3EntryObservation = {
-  localBuildRoomSha: BUILD_SHA,
-  controlPlaneCommit: BUILD_SHA,
-  controlPlaneEnvironment: 'production',
-  localMachineIdentity: 'michael-macbook',
+  status: 'complete',
+  observedAt: '2026-08-25T12:00:00.000Z',
+  founderOs: {
+    repository: PLAN.founderOs.repository,
+    sha: FOUNDER_OS_SHA,
+    treeSha: '4'.repeat(40),
+    clean: true,
+  },
+  buildRoom: {
+    repository: 'MADVenturesLLC/founder-os-build-room',
+    sha: BUILD_SHA,
+    treeSha: '5'.repeat(40),
+    clean: true,
+    buildPassed: true,
+  },
+  controlPlane: { commit: BUILD_SHA, environment: 'production', status: 200 },
+  machineIdentity: 'michael-macbook',
   nodeMajor: 22,
-  buildPassed: true,
-  fixture: { repository: PLAN.fixture.repository, sha: FIXTURE_SHA, clean: true },
+  fixture: {
+    repository: PLAN.fixture.repository,
+    sha: FIXTURE_SHA,
+    treeSha: '6'.repeat(40),
+    clean: true,
+  },
   enrollments: [...PLAN.expectedEnrollments].reverse(),
   doctor: {
-    controlPlaneStatus: 200,
     daemonReachable: true,
     primaryLane: 'IDLE',
     stagingLane: 'INACTIVE',
     primaryCustody: true,
     stagingCustody: false,
-    custodyError: null,
+    custodyError: false,
     stagingLockPresent: false,
   },
 };
 
 describe('Phase 3 entry gate', () => {
+  it('binds entry to the observed clean FounderOS repository and authority SHA', () => {
+    const founderOs = PLAN.founderOs;
+    const plan = PLAN;
+    const observedFounderOs = {
+      repository: founderOs.repository,
+      sha: FOUNDER_OS_SHA,
+      treeSha: '4'.repeat(40),
+      clean: true,
+    };
+    const observation = {
+      ...OBSERVATION,
+      observedAt: '2026-08-25T12:00:00.000Z',
+      founderOs: observedFounderOs,
+    } as Phase3EntryObservation;
+    assert.deepEqual(evaluatePhase3Entry(plan, observation), { ok: true, failures: [] });
+    assert.deepEqual(
+      evaluatePhase3Entry(plan, {
+        ...observation,
+        founderOs: { ...observedFounderOs, sha: 'f'.repeat(40) },
+      } as Phase3EntryObservation),
+      { ok: false, failures: ['founder_os_invalid'] },
+    );
+  });
+
   it('passes only the exact authorized, clean observation', () => {
     assert.deepEqual(evaluatePhase3Entry(PLAN, OBSERVATION), { ok: true, failures: [] });
   });
@@ -64,9 +105,12 @@ describe('Phase 3 entry gate', () => {
   it('fails closed with every mismatched boundary visible', () => {
     const result = evaluatePhase3Entry(PLAN, {
       ...OBSERVATION,
-      localBuildRoomSha: '2222222222222222222222222222222222222222',
+      buildRoom: {
+        ...OBSERVATION.buildRoom,
+        sha: '2222222222222222222222222222222222222222',
+        buildPassed: false,
+      },
       nodeMajor: 23,
-      buildPassed: false,
       fixture: { ...OBSERVATION.fixture, clean: false },
       enrollments: [],
       doctor: {
@@ -99,7 +143,7 @@ describe('Phase 3 entry gate', () => {
   it('refuses a control-plane environment different from the authorized label', () => {
     const result = evaluatePhase3Entry(
       PLAN,
-      { ...OBSERVATION, controlPlaneEnvironment: 'staging' },
+      { ...OBSERVATION, controlPlane: { ...OBSERVATION.controlPlane, environment: 'staging' } },
     );
     assert.equal(result.ok, false);
     assert.deepEqual(result.failures, ['context_invalid']);
@@ -108,7 +152,7 @@ describe('Phase 3 entry gate', () => {
   it('refuses a different physical machine identity', () => {
     const result = evaluatePhase3Entry(
       PLAN,
-      { ...OBSERVATION, localMachineIdentity: 'michael-imac' },
+      { ...OBSERVATION, machineIdentity: 'michael-imac' },
     );
     assert.equal(result.ok, false);
     assert.deepEqual(result.failures, ['context_invalid']);

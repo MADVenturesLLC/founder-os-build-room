@@ -18,7 +18,9 @@ async function planFile(extra: Record<string, unknown> = {}): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'phase3-plan-'));
   directories.push(directory);
   const path = join(directory, 'plan.json');
+  const founderOsPath = join(directory, 'founder-os');
   const fixturePath = join(directory, 'fixture');
+  await initGit(founderOsPath);
   await initGit(fixturePath);
   await writeFile(
     path,
@@ -27,6 +29,7 @@ async function planFile(extra: Record<string, unknown> = {}): Promise<string> {
       label: 'Phase3-CR1',
       entryAuthorizationId: 'founder:phase3-cr1:test',
       founderOsSha: '1'.repeat(40),
+      founderOs: { repository: 'MADVenturesLLC/FounderOS', path: founderOsPath },
       buildRoomSha: '2'.repeat(40),
       controlPlaneOrigin: 'http://127.0.0.1:8080',
       gatewayId: '11111111-2222-4333-8444-555555555555',
@@ -63,6 +66,21 @@ describe('Phase 3 CLI configuration', () => {
     assert.equal(config.plan.runAttemptId, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
     assert.equal(config.evidencePath, await realpath(evidencePath));
     await config.evidenceReservation.handle.close();
+  });
+
+  it('refuses to run while the Founder-only adjudication credential is present', async () => {
+    const planPath = await planFile();
+    await assert.rejects(
+      loadPhase3CliConfig({
+        CONTROL_PLANE_URL: 'http://127.0.0.1:8080',
+        CONTROL_PLANE_TOKEN: 'test-token-not-exported',
+        PHASE3_ADJUDICATION_TOKEN: 'must-not-enter-the-counted-run-harness',
+        PHASE3_BUILD_VERIFIED_SHA: '2'.repeat(40),
+        PHASE3_PLAN_PATH: planPath,
+        PHASE3_EVIDENCE_PATH: join(dirname(planPath), 'evidence'),
+      }),
+      /PHASE3_ADJUDICATION_TOKEN must not be present in the counted-run harness environment/,
+    );
   });
 
   it('fails before execution when a required secret is absent', async () => {
@@ -133,12 +151,15 @@ describe('Phase 3 CLI configuration', () => {
 
   it('refuses evidence inside the Build Room, fixture repository, or a symlink into either', async () => {
     const buildRoot = await mkdtemp(join(tmpdir(), 'phase3-build-root-'));
+    const founderOsRoot = await mkdtemp(join(tmpdir(), 'phase3-founder-os-root-'));
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'phase3-fixture-root-'));
     const outside = await mkdtemp(join(tmpdir(), 'phase3-evidence-link-'));
-    directories.push(buildRoot, fixtureRoot, outside);
+    directories.push(buildRoot, founderOsRoot, fixtureRoot, outside);
     await initGit(buildRoot);
+    await initGit(founderOsRoot);
     await initGit(fixtureRoot);
     const planPath = await planFile({
+      founderOs: { repository: 'MADVenturesLLC/FounderOS', path: founderOsRoot },
       fixture: {
         repository: 'MADVenturesLLC/phase3-fixture',
         path: fixtureRoot,
@@ -152,10 +173,14 @@ describe('Phase 3 CLI configuration', () => {
       PHASE3_PLAN_PATH: planPath,
     };
 
-    for (const evidencePath of [join(buildRoot, 'evidence'), join(fixtureRoot, 'evidence')]) {
+    for (const evidencePath of [
+      join(founderOsRoot, 'evidence'),
+      join(buildRoot, 'evidence'),
+      join(fixtureRoot, 'evidence'),
+    ]) {
       await assert.rejects(
         loadPhase3CliConfig({ ...base, PHASE3_EVIDENCE_PATH: evidencePath }, buildRoot),
-        /outside the Build Room and fixture repositories/,
+        /outside FounderOS, Build Room, and fixture repositories/,
       );
     }
 
@@ -166,7 +191,7 @@ describe('Phase 3 CLI configuration', () => {
         { ...base, PHASE3_EVIDENCE_PATH: join(linked, 'evidence') },
         buildRoot,
       ),
-      /outside the Build Room and fixture repositories/,
+      /outside FounderOS, Build Room, and fixture repositories/,
     );
   });
 

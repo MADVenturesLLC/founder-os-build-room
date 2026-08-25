@@ -1,13 +1,51 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   PHASE3_LIFECYCLE_STAGES,
   PHASE3_REASON_CODES,
+  validatePhase3AdjudicationInput,
   validatePhase3AttemptInput,
   validatePhase3EventInput,
 } from '../packages/control-plane/src/phase3-run.js';
 
 const ATTEMPT_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const ENTRY_EVIDENCE = {
+  status: 'complete',
+  observedAt: '2026-08-25T12:00:00.000Z',
+  founderOs: {
+    repository: 'MADVenturesLLC/FounderOS',
+    sha: '1'.repeat(40),
+    treeSha: 'a'.repeat(40),
+    clean: true,
+  },
+  buildRoom: {
+    repository: 'MADVenturesLLC/founder-os-build-room',
+    sha: '2'.repeat(40),
+    treeSha: 'b'.repeat(40),
+    clean: true,
+    buildPassed: true,
+  },
+  fixture: {
+    repository: 'MADVenturesLLC/phase3-fixture',
+    sha: '3'.repeat(40),
+    treeSha: 'c'.repeat(40),
+    clean: true,
+  },
+  controlPlane: { commit: '2'.repeat(40), environment: 'test', status: 200 },
+  machineIdentity: 'michael-macbook',
+  nodeMajor: 22,
+  enrollments: [{ gatewayId: '11111111-2222-4333-8444-555555555555', state: 'enrolled' }],
+  doctor: {
+    daemonReachable: true,
+    primaryLane: 'IDLE',
+    stagingLane: 'INACTIVE',
+    primaryCustody: true,
+    stagingCustody: false,
+    custodyError: false,
+    stagingLockPresent: false,
+  },
+} as const;
 
 const STARTED = {
   mode: 'started',
@@ -23,7 +61,8 @@ const STARTED = {
     { gatewayId: '11111111-2222-4333-8444-555555555555', state: 'enrolled' },
   ],
   machineIdentity: 'michael-macbook',
-  entryEvidenceSha256: '4'.repeat(64),
+  entryEvidence: ENTRY_EVIDENCE,
+  entryEvidenceSha256: entryEvidenceDigest(ENTRY_EVIDENCE),
 };
 
 describe('Phase 3 control-plane attempt input', () => {
@@ -39,17 +78,138 @@ describe('Phase 3 control-plane attempt input', () => {
   });
 
   it('accepts a terminal not-started attempt only with a closed reason code', () => {
-    const result = validatePhase3AttemptInput({
+    const healthy = validatePhase3AttemptInput({
       ...STARTED,
       mode: 'not_started',
       reasonCode: 'custody_failed',
     });
+    assert.equal(healthy.ok, false);
+
+    const entryEvidence = {
+      ...ENTRY_EVIDENCE,
+      doctor: { ...ENTRY_EVIDENCE.doctor, primaryCustody: false },
+    };
+    const result = validatePhase3AttemptInput({
+      ...STARTED,
+      mode: 'not_started',
+      reasonCode: 'custody_failed',
+      entryEvidence,
+      entryEvidenceSha256: entryEvidenceDigest(entryEvidence),
+    });
     assert.equal(result.ok, true);
+    assert.equal(
+      validatePhase3AttemptInput({
+        ...STARTED,
+        mode: 'not_started',
+        reasonCode: 'lane_state_failed',
+        entryEvidence,
+        entryEvidenceSha256: entryEvidenceDigest(entryEvidence),
+      }).ok,
+      false,
+    );
 
     assert.deepEqual(
       validatePhase3AttemptInput({ ...STARTED, mode: 'not_started', reasonCode: 'free_text' }),
       { ok: false, code: 'invalid_request' },
     );
+  });
+
+  it('requires entry evidence whose canonical preimage matches its digest', () => {
+    assert.deepEqual(validatePhase3AttemptInput({ ...STARTED, entryEvidence: undefined }), {
+      ok: false,
+      code: 'invalid_request',
+    });
+    assert.deepEqual(
+      validatePhase3AttemptInput({ ...STARTED, entryEvidenceSha256: 'f'.repeat(64) }),
+      { ok: false, code: 'invalid_request' },
+    );
+    assert.deepEqual(
+      validatePhase3AttemptInput({
+        ...STARTED,
+        entryEvidence: { ...ENTRY_EVIDENCE, controlPlaneToken: 'must-not-land' },
+      }),
+      { ok: false, code: 'invalid_request' },
+    );
+    const denied = {
+      gatewayId: '22222222-3333-4444-8555-666666666666',
+      state: 'denied',
+    } as const;
+    const ordered = { ...ENTRY_EVIDENCE, enrollments: [...ENTRY_EVIDENCE.enrollments, denied] };
+    const reversed = { ...ordered, enrollments: [...ordered.enrollments].reverse() };
+    assert.equal(entryEvidenceDigest(ordered), entryEvidenceDigest(reversed));
+  });
+
+  it('binds a started attempt to the passing entry observation', () => {
+    const mismatches = [
+      { ...ENTRY_EVIDENCE, founderOs: { ...ENTRY_EVIDENCE.founderOs, sha: '4'.repeat(40) } },
+      { ...ENTRY_EVIDENCE, machineIdentity: 'different-machine' },
+      { ...ENTRY_EVIDENCE, enrollments: [] },
+      {
+        ...ENTRY_EVIDENCE,
+        doctor: { ...ENTRY_EVIDENCE.doctor, daemonReachable: false },
+      },
+    ];
+    for (const entryEvidence of mismatches) {
+      assert.deepEqual(
+        validatePhase3AttemptInput({
+          ...STARTED,
+          entryEvidence,
+          entryEvidenceSha256: entryEvidenceDigest(entryEvidence),
+        }),
+        { ok: false, code: 'invalid_request' },
+      );
+    }
+  });
+
+  it('binds incomplete evidence to the requested attempt identity', () => {
+    const entryEvidence = {
+      status: 'incomplete',
+      observedAt: '2026-08-25T12:00:00.000Z',
+      failureReason: 'founder_os_invalid',
+      expected: {
+        founderOsSha: STARTED.founderOsSha,
+        buildRoomSha: STARTED.buildRoomSha,
+        fixtureRepository: STARTED.fixtureRepository,
+        fixtureSha: STARTED.fixtureSha,
+        environment: 'test',
+        machineIdentity: STARTED.machineIdentity,
+        gatewayId: STARTED.gatewayId,
+      },
+    } as const;
+    const input = {
+      ...STARTED,
+      mode: 'not_started',
+      reasonCode: 'founder_os_invalid',
+      entryEvidence,
+      entryEvidenceSha256: entryEvidenceDigest(entryEvidence),
+    };
+    assert.equal(validatePhase3AttemptInput(input).ok, true);
+    const mismatched = {
+      ...entryEvidence,
+      expected: { ...entryEvidence.expected, buildRoomSha: '9'.repeat(40) },
+    };
+    assert.deepEqual(
+      validatePhase3AttemptInput({
+        ...input,
+        entryEvidence: mismatched,
+        entryEvidenceSha256: entryEvidenceDigest(mismatched),
+      }),
+      { ok: false, code: 'invalid_request' },
+    );
+  });
+
+  it('bounds the retained enrollment projection', () => {
+    const expectedEnrollments = [
+      ...STARTED.expectedEnrollments,
+      ...Array.from({ length: 1_000 }, (_, index) => ({
+        gatewayId: `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`,
+        state: 'denied' as const,
+      })),
+    ];
+    assert.deepEqual(validatePhase3AttemptInput({ ...STARTED, expectedEnrollments }), {
+      ok: false,
+      code: 'invalid_request',
+    });
   });
 
   it('requires the separate revocation authorization only for CR3', () => {
@@ -75,7 +235,56 @@ describe('Phase 3 control-plane attempt input', () => {
   });
 });
 
+function entryEvidenceDigest(value: unknown): string {
+  const canonical = (input: unknown): unknown => {
+    if (Array.isArray(input)) {
+      const values = input.map(canonical);
+      return values.every(
+        (item) =>
+          typeof item === 'object' &&
+          item !== null &&
+          'gatewayId' in item &&
+          'state' in item,
+      )
+        ? values.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+        : values;
+    }
+    if (typeof input !== 'object' || input === null) return input;
+    return Object.fromEntries(
+      Object.keys(input as Record<string, unknown>)
+        .sort()
+        .map((key) => [key, canonical((input as Record<string, unknown>)[key])]),
+    );
+  };
+  return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+}
+
 describe('Phase 3 control-plane event input', () => {
+  it('keeps adjudication on a separate closed input contract', () => {
+    const input = {
+      idempotencyKey: 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+      verdict: 'passed',
+      tier2ReviewerId: 'Gemini 3.1 Pro (High)',
+      tier2EvidenceSha256: '7'.repeat(64),
+      founderAuthorizationId: 'founder:phase3-cr1:pass:test',
+    };
+    assert.equal(validatePhase3AdjudicationInput(input).ok, true);
+    assert.deepEqual(validatePhase3AdjudicationInput({ ...input, verdict: 'approved' }), {
+      ok: false,
+      code: 'invalid_request',
+    });
+    assert.deepEqual(validatePhase3AdjudicationInput({ ...input, token: 'must-not-land' }), {
+      ok: false,
+      code: 'invalid_request',
+    });
+    for (const tier2ReviewerId of ['   ', '---', '()']) {
+      assert.equal(
+        validatePhase3AdjudicationInput({ ...input, tier2ReviewerId }).ok,
+        false,
+      );
+    }
+  });
+
   it('accepts only the five closed lifecycle stages', () => {
     assert.deepEqual(PHASE3_LIFECYCLE_STAGES, [
       'connect',

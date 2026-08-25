@@ -8,6 +8,7 @@ const PLAN = {
   label: 'Phase3-CR1',
   entryAuthorizationId: 'founder:phase3-cr1:2026-08-25',
   founderOsSha: '1'.repeat(40),
+  founderOs: { repository: 'MADVenturesLLC/FounderOS', path: '/tmp/FounderOS' },
   buildRoomSha: '2'.repeat(40),
   controlPlaneOrigin: 'https://control-plane.example',
   gatewayId: '11111111-2222-4333-8444-555555555555',
@@ -26,6 +27,20 @@ const PLAN = {
 };
 
 describe('Phase 3 plan validation', () => {
+  it('requires the governed FounderOS repository identity and absolute root', () => {
+    const { founderOs, ...withoutFounderOs } = PLAN;
+    assert.equal(validatePhase3Plan(PLAN).ok, true);
+    assert.equal(validatePhase3Plan(withoutFounderOs).ok, false);
+    assert.equal(
+      validatePhase3Plan({
+        ...PLAN,
+        founderOs: { ...founderOs, repository: 'MADVenturesLLC/not-founder-os' },
+      }).ok,
+      false,
+    );
+    assert.equal(validatePhase3Plan({ ...PLAN, founderOs: { ...founderOs, path: 'relative' } }).ok, false);
+  });
+
   it('accepts one exact nonsecret CR1 plan', () => {
     const result = validatePhase3Plan(PLAN);
     assert.equal(result.ok, true);
@@ -46,6 +61,19 @@ describe('Phase 3 plan validation', () => {
         expectedEnrollments: [
           ...PLAN.expectedEnrollments,
           { gatewayId: '33333333-4444-4555-8666-777777777777', state: 'enrolled' },
+        ],
+      }).ok,
+      false,
+    );
+    assert.equal(
+      validatePhase3Plan({
+        ...PLAN,
+        expectedEnrollments: [
+          PLAN.expectedEnrollments[0],
+          ...Array.from({ length: 1_000 }, (_, index) => ({
+            gatewayId: `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`,
+            state: 'denied',
+          })),
         ],
       }).ok,
       false,

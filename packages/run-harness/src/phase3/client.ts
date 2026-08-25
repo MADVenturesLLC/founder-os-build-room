@@ -5,8 +5,11 @@ import {
   PHASE3_EVIDENCE_AUTHORIZES,
   PHASE3_REASON_CODES,
   PHASE3_RUN_LABELS,
+  isPhase3EntryEvidence,
+  phase3EntryEvidenceSha256,
   phase3EnrollmentProjectionSha256,
   phase3RequestSha256,
+  validatePhase3AttemptInput,
   Phase3AppendResult,
   Phase3AttemptInput,
   Phase3EventInput,
@@ -234,7 +237,9 @@ export class Phase3ControlPlaneClient {
     } catch (error) {
       if (
         error instanceof Phase3ClientError &&
-        (error.code === 'invalid_response' || error.code === 'evidence_identity_mismatch')
+        (error.code === 'invalid_response' ||
+          error.code === 'evidence_identity_mismatch' ||
+          error.code === 'response_too_large')
       ) {
         throw new Phase3ClientError(0, 'commit_outcome_unresolved');
       }
@@ -332,6 +337,7 @@ function requireExpectation(
   expected: Phase3EvidenceExpectation,
 ): void {
   if (
+    !validatePhase3AttemptInput(input).ok ||
     expected.attempt.runAttemptId !== runAttemptId ||
     phase3RequestSha256(expected.attempt) !== phase3RequestSha256(input) ||
     !SAFE_LABEL_RE.test(expected.environment)
@@ -346,7 +352,8 @@ function ambiguousWrite(error: unknown): boolean {
     error instanceof Phase3ClientError &&
     ((error.status === 0 && error.code === 'transport_error') ||
       error.status >= 500 ||
-      error.code === 'invalid_response')
+      error.code === 'invalid_response' ||
+      error.code === 'response_too_large')
   );
 }
 
@@ -421,7 +428,16 @@ function validateEvidenceExport(
   const exported = asRecord(value);
   if (
     exported === null ||
-    !exact(exported, ['attempt', 'authorizes', 'context', 'events', 'heartbeat', 'schema']) ||
+    !exact(exported, [
+      'attempt',
+      'authorizes',
+      'context',
+      'entryEvidence',
+      'entryEvidenceRecordedAt',
+      'events',
+      'heartbeat',
+      'schema',
+    ]) ||
     exported['schema'] !== 'build-room/phase3-run-evidence@1' ||
     exported['authorizes'] !== PHASE3_EVIDENCE_AUTHORIZES ||
     !Array.isArray(exported['events'])
@@ -430,18 +446,42 @@ function validateEvidenceExport(
   }
   const context = validateContext(exported['context']);
   const attempt = validateAttempt(exported['attempt'], runAttemptId);
+  if (
+    !isPhase3EntryEvidence(exported['entryEvidence']) ||
+    !validTimestamp(exported['entryEvidenceRecordedAt']) ||
+    phase3EntryEvidenceSha256(exported['entryEvidence']) !== attempt.entryEvidenceSha256
+  ) {
+    throw new Phase3ClientError(200, 'invalid_response');
+  }
+  const entryEvidence = exported['entryEvidence'];
+  const entryEvidenceRecordedAt = exported['entryEvidenceRecordedAt'];
   const events = exported['events'].map((event, index) => validateEvent(event, index + 1));
+  const entryEvents = events.filter(
+    (event) => event.eventType === 'entry_verified' || event.eventType === 'attempt_not_started',
+  );
+  const expectedEntryType =
+    expected.attempt.mode === 'not_started' ? 'attempt_not_started' : 'entry_verified';
+  if (
+    entryEvents.length !== 1 ||
+    entryEvents[0]?.eventType !== expectedEntryType ||
+    entryEvents[0].occurredAt !== entryEvidenceRecordedAt
+  ) {
+    throw new Phase3ClientError(200, 'invalid_response');
+  }
   const heartbeat =
     exported['heartbeat'] === null ? null : validateHeartbeat(exported['heartbeat']);
+  validateTerminalHistory(attempt, events, expected, heartbeat);
   if (context.commit !== attempt.buildRoomSha || context.environment !== attempt.environmentLabel) {
     throw new Phase3ClientError(200, 'invalid_response');
   }
-  if (!matchesExpectedIdentity(context, attempt, expected)) {
+  if (!matchesExpectedIdentity(context, attempt, entryEvidence, expected)) {
     throw new Phase3ClientError(200, 'evidence_identity_mismatch');
   }
   return {
     schema: 'build-room/phase3-run-evidence@1',
     context,
+    entryEvidence,
+    entryEvidenceRecordedAt,
     attempt,
     events,
     heartbeat,
@@ -514,7 +554,147 @@ function validateEvent(value: unknown, expectedIndex: number): Phase3EvidenceExp
   ) {
     throw new Phase3ClientError(200, 'invalid_response');
   }
-  return pick<Phase3EvidenceExport['events'][number]>(event, EVENT_FIELDS);
+  const adjudication = validateAdjudication(event['adjudication']);
+  if (
+    (event['eventType'] === 'attempt_adjudicated' &&
+      (adjudication === null ||
+        adjudication.verdict !== event['result'] ||
+        event['idempotencyKey'] === null ||
+        event['requestSha256'] !==
+          phase3RequestSha256({ idempotencyKey: event['idempotencyKey'], ...adjudication }) ||
+        event['teardownResult'] !== 'completed' ||
+        (adjudication.verdict === 'passed'
+          ? event['reasonCode'] !== null
+          : event['reasonCode'] !== 'adjudication_failed'))) ||
+    (event['eventType'] !== 'attempt_adjudicated' && adjudication !== null)
+  ) {
+    throw new Phase3ClientError(200, 'invalid_response');
+  }
+  return { ...pick<Phase3EvidenceExport['events'][number]>(event, EVENT_FIELDS), adjudication };
+}
+
+function validateTerminalHistory(
+  attempt: Phase3EvidenceExport['attempt'],
+  events: readonly Phase3EvidenceExport['events'][number][],
+  expected: Phase3EvidenceExpectation,
+  heartbeat: Phase3EvidenceExport['heartbeat'],
+): void {
+  const last = events.at(-1);
+  if (last === undefined) throw new Phase3ClientError(200, 'invalid_response');
+  const finishedAtMatches = attempt.finishedAt === last.occurredAt;
+  const successfulLifecycle = heartbeat !== null && hasSuccessfulLifecycle(events);
+  let valid = false;
+  switch (attempt.state) {
+    case 'active':
+      valid =
+        attempt.finishedAt === null &&
+        last.eventType !== 'attempt_finished' &&
+        last.eventType !== 'attempt_adjudicated' &&
+        last.eventType !== 'attempt_not_started';
+      break;
+    case 'failure_pending_teardown':
+      valid = attempt.finishedAt === null && last.eventType === 'lifecycle_stage_refused';
+      break;
+    case 'awaiting_adjudication':
+      valid =
+        attempt.finishedAt === null &&
+        events.length === 9 &&
+        successfulLifecycle &&
+        last.eventType === 'attempt_finished' &&
+        last.result === 'awaiting_adjudication' &&
+        last.teardownResult === 'completed';
+      break;
+    case 'passed':
+      valid =
+        finishedAtMatches &&
+        events.length === 10 &&
+        successfulLifecycle &&
+        last.eventType === 'attempt_adjudicated' &&
+        last.result === 'passed' &&
+        events[8]?.teardownEvidenceSha256 === last.teardownEvidenceSha256;
+      break;
+    case 'failed':
+      valid =
+        finishedAtMatches &&
+        ((last.eventType === 'attempt_finished' && last.result === 'failed') ||
+          (events.length === 10 &&
+            successfulLifecycle &&
+            last.eventType === 'attempt_adjudicated' &&
+            last.result === 'failed' &&
+            events[8]?.teardownEvidenceSha256 === last.teardownEvidenceSha256));
+      break;
+    case 'interrupted':
+      valid = finishedAtMatches && last.eventType === 'attempt_finished' && last.result === 'interrupted';
+      break;
+    case 'not_started':
+      valid =
+        finishedAtMatches &&
+        expected.attempt.mode === 'not_started' &&
+        last.eventType === 'attempt_not_started' &&
+        last.reasonCode === expected.attempt.reasonCode;
+      break;
+  }
+  if (!valid) throw new Phase3ClientError(200, 'invalid_response');
+}
+
+function hasSuccessfulLifecycle(
+  events: readonly Phase3EvidenceExport['events'][number][],
+): boolean {
+  const request = events[5];
+  const response = events[6];
+  const completed = events[8];
+  return (
+    events.length >= 9 &&
+    events[0]?.eventType === 'attempt_started' &&
+    events[1]?.eventType === 'entry_verified' &&
+    events[2]?.eventType === 'heartbeat_verified' &&
+    events[3]?.eventType === 'lifecycle_stage_recorded' &&
+    events[3].lifecycleStage === 'connect' &&
+    events[4]?.eventType === 'lifecycle_stage_recorded' &&
+    events[4].lifecycleStage === 'adapter_registered' &&
+    request?.eventType === 'lifecycle_stage_recorded' &&
+    request.lifecycleStage === 'request' &&
+    request.exchangeId !== null &&
+    response?.eventType === 'lifecycle_stage_recorded' &&
+    response.lifecycleStage === 'matched_response' &&
+    response.exchangeId === request.exchangeId &&
+    response.matchedRequestEventId === request.eventId &&
+    response.matchVerified === true &&
+    events[7]?.eventType === 'lifecycle_stage_recorded' &&
+    events[7].lifecycleStage === 'disconnect' &&
+    completed?.eventType === 'attempt_finished' &&
+    completed.result === 'awaiting_adjudication' &&
+    completed.teardownResult === 'completed' &&
+    completed.teardownEvidenceSha256 !== null
+  );
+}
+
+function validateAdjudication(
+  value: unknown,
+): Phase3EvidenceExport['events'][number]['adjudication'] {
+  if (value === null) return null;
+  const adjudication = asRecord(value);
+  if (
+    adjudication === null ||
+    !exact(adjudication, [
+      'verdict',
+      'tier2ReviewerId',
+      'tier2EvidenceSha256',
+      'founderAuthorizationId',
+    ]) ||
+    (adjudication['verdict'] !== 'passed' && adjudication['verdict'] !== 'failed') ||
+    !SAFE_REVIEWER_RE.test(text(adjudication['tier2ReviewerId'])) ||
+    !SHA256_RE.test(text(adjudication['tier2EvidenceSha256'])) ||
+    !SAFE_ID_RE.test(text(adjudication['founderAuthorizationId']))
+  ) {
+    throw new Phase3ClientError(200, 'invalid_response');
+  }
+  return {
+    verdict: adjudication['verdict'],
+    tier2ReviewerId: adjudication['tier2ReviewerId'] as string,
+    tier2EvidenceSha256: adjudication['tier2EvidenceSha256'] as string,
+    founderAuthorizationId: adjudication['founderAuthorizationId'] as string,
+  };
 }
 
 function validateHeartbeat(value: unknown): NonNullable<Phase3EvidenceExport['heartbeat']> {
@@ -592,6 +772,7 @@ function verifyHeartbeatProof(
 function matchesExpectedIdentity(
   context: Phase3EvidenceExport['context'],
   attempt: Phase3EvidenceExport['attempt'],
+  entryEvidence: Phase3EvidenceExport['entryEvidence'],
   expected: Phase3EvidenceExpectation,
 ): boolean {
   const input = expected.attempt;
@@ -612,6 +793,8 @@ function matchesExpectedIdentity(
     attempt.machineIdentity === input.machineIdentity &&
     attempt.environmentLabel === expected.environment &&
     attempt.entryEvidenceSha256 === input.entryEvidenceSha256 &&
+    phase3EntryEvidenceSha256(entryEvidence) === input.entryEvidenceSha256 &&
+    phase3EntryEvidenceSha256(input.entryEvidence) === input.entryEvidenceSha256 &&
     (input.mode === 'not_started'
       ? attempt.state === 'not_started'
       : attempt.state !== 'not_started')
@@ -749,6 +932,7 @@ const SHA_RE = /^[0-9a-f]{40}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const SAFE_ID_RE = /^[A-Za-z0-9._:/-]{1,128}$/;
 const SAFE_LABEL_RE = /^[A-Za-z0-9._:/+ -]{1,128}$/;
+const SAFE_REVIEWER_RE = /^(?=.{1,128}$)(?=.*[A-Za-z0-9])[A-Za-z0-9._:/+() -]+$/;
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const ATTEMPT_STATES = [
   'active',
@@ -767,6 +951,7 @@ const EVENT_TYPES = [
   'lifecycle_stage_recorded',
   'lifecycle_stage_refused',
   'attempt_finished',
+  'attempt_adjudicated',
 ] as const;
 const RESULTS = ['awaiting_adjudication', 'passed', 'failed', 'interrupted'] as const;
 const TEARDOWN_RESULTS = ['completed', 'failed', 'not_required'] as const;
@@ -803,6 +988,7 @@ const EVENT_FIELDS = [
   'result',
   'teardownResult',
   'teardownEvidenceSha256',
+  'adjudication',
   'occurredAt',
 ] as const;
 const HEARTBEAT_FIELDS = [

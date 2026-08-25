@@ -38,6 +38,7 @@ same value as `CONTROL_PLANE_TOKEN`, or every room request answers 401.
 
 | Variable | Default | What it is |
 |---|---|---|
+| `PHASE3_ADJUDICATION_TOKEN` | route absent | Founder-only credential for Phase 3 pass/fail adjudication. At least 32 characters, distinct from `CONTROL_PLANE_TOKEN`, and never available to the counted-run harness. |
 | `PORT` | `8080` | TCP port for the HTTP surface. |
 | `RAILWAY_GIT_COMMIT_SHA` / `COMMIT_SHA` | `unknown` | The commit `/version` reports. Reported as `unknown` rather than guessed — evidence bound to a wrong SHA is worse than evidence bound to none. |
 | `RAILWAY_ENVIRONMENT_NAME` / `NODE_ENV` | `unknown` | Environment label, for evidence records. |
@@ -60,6 +61,7 @@ same value as `CONTROL_PLANE_TOKEN`, or every room request answers 401.
 | `GET /rooms/:roomId/export` | **token** | The room's full ledger: events and rejections. |
 | `POST /control-plane/phase3/run-attempts` | **token** | Create one exact started or not-started counted-run attempt. |
 | `POST /control-plane/phase3/run-attempts/:runAttemptId/events` | **token** | Append a closed lifecycle stage or technical completion event. Heartbeat and pass claims are refused. |
+| `POST /control-plane/phase3/run-attempts/:runAttemptId/adjudication` | **adjudication token** | Record a fenced, idempotent Tier 2 and Founder pass/fail decision. The route is absent when `PHASE3_ADJUDICATION_TOKEN` is unset. |
 | `GET /control-plane/phase3/run-attempts/:runAttemptId/export` | **token** | Snapshot-consistent, redacted run evidence. |
 
 The three open routes stay open because Railway's health check presents no
