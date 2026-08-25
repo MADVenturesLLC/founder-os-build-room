@@ -780,7 +780,9 @@ export const MIGRATIONS: readonly Migration[] = [
             AND appended_type = 'attempt_finished'
             AND appended_result = NEW.state
             AND NEW.finished_at IS NOT DISTINCT FROM appended_occurred
-            AND (OLD.lifecycle_position = 0 OR appended_teardown IN ('completed','failed'))
+            AND ((OLD.state = 'active' AND OLD.lifecycle_position = 0
+                  AND appended_teardown = 'not_required')
+              OR appended_teardown IN ('completed','failed'))
             AND (OLD.lifecycle_position < 5 OR appended_teardown = 'completed') THEN
            RETURN NEW;
          END IF;

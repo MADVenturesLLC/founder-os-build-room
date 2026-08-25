@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import { GATEWAY_EVENT_TYPES } from '../packages/gateway-registry/src/index.js';
 import { MIGRATIONS } from '../packages/control-plane/src/migrations.js';
 import {
+  Phase3RunConflictError,
   Phase3RunStore,
   type Phase3AttemptInput,
   type Phase3HeartbeatEvidence,
@@ -441,6 +442,58 @@ describe('Phase 3 run store — ordered, bounded evidence', { skip: STORAGE_SKIP
       }),
       (error: unknown) =>
         error instanceof Error && error.message === 'idempotency_key_mismatch',
+    );
+  });
+
+  it('returns a bounded conflict when teardown is claimed unnecessary after lifecycle progress', async () => {
+    const input = await enrolledAttemptInput();
+    await store!.createAttempt(input);
+    await capture(input.gatewayId);
+    await store!.appendEvent(input.runAttemptId, {
+      kind: 'lifecycle_stage',
+      idempotencyKey: randomUUID(),
+      stage: 'connect',
+      artifactSha256: 'e'.repeat(64),
+    });
+
+    await assert.rejects(
+      store!.appendEvent(input.runAttemptId, {
+        kind: 'attempt_finished',
+        idempotencyKey: randomUUID(),
+        result: 'failed',
+        reasonCode: 'internal_error',
+        teardownResult: 'not_required',
+        teardownEvidenceSha256: 'f'.repeat(64),
+      }),
+      (error: unknown) =>
+        error instanceof Phase3RunConflictError && error.code === 'attempt_incomplete',
+    );
+  });
+
+  it('requires teardown after a position-zero lifecycle refusal', async () => {
+    const input = await enrolledAttemptInput();
+    await store!.createAttempt(input);
+    await capture(input.gatewayId);
+    const refusal = await store!.appendEvent(input.runAttemptId, {
+      kind: 'lifecycle_stage',
+      idempotencyKey: randomUUID(),
+      stage: 'request',
+      artifactSha256: 'a'.repeat(64),
+      exchangeId: randomUUID(),
+    });
+    assert.equal(refusal.accepted, false);
+
+    await assert.rejects(
+      store!.appendEvent(input.runAttemptId, {
+        kind: 'attempt_finished',
+        idempotencyKey: randomUUID(),
+        result: 'failed',
+        reasonCode: 'out_of_order_stage',
+        teardownResult: 'not_required',
+        teardownEvidenceSha256: 'b'.repeat(64),
+      }),
+      (error: unknown) =>
+        error instanceof Phase3RunConflictError && error.code === 'attempt_incomplete',
     );
   });
 });

@@ -91,7 +91,7 @@ export type Phase3EventInput =
       readonly idempotencyKey: string;
       readonly result: 'awaiting_adjudication' | 'failed' | 'interrupted';
       readonly teardownResult: 'completed' | 'failed' | 'not_required';
-      readonly teardownEvidenceSha256?: string;
+      readonly teardownEvidenceSha256: string;
       readonly reasonCode?: Phase3ReasonCode;
     };
 
@@ -175,10 +175,7 @@ export function validatePhase3EventInput(body: unknown): Valid<Phase3EventInput>
     ) {
       return INVALID;
     }
-    if (
-      record['teardownEvidenceSha256'] !== undefined &&
-      !SHA256_RE.test(string(record['teardownEvidenceSha256']))
-    ) {
+    if (!SHA256_RE.test(string(record['teardownEvidenceSha256']))) {
       return INVALID;
     }
     if (result === 'awaiting_adjudication') {
@@ -706,8 +703,18 @@ export class Phase3RunStore {
         ) {
           throw new Phase3RunConflictError('attempt_incomplete');
         }
-      } else if (attempt.state !== 'active' && attempt.state !== 'failure_pending_teardown') {
-        throw new Phase3RunConflictError('attempt_not_active');
+      } else {
+        if (attempt.state !== 'active' && attempt.state !== 'failure_pending_teardown') {
+          throw new Phase3RunConflictError('attempt_not_active');
+        }
+        if (
+          (input.teardownResult === 'not_required' &&
+            (attempt.lifecycle_position > 0 || attempt.state === 'failure_pending_teardown')) ||
+          (attempt.lifecycle_position === PHASE3_LIFECYCLE_STAGES.length &&
+            input.teardownResult !== 'completed')
+        ) {
+          throw new Phase3RunConflictError('attempt_incomplete');
+        }
       }
 
       await client.query(
@@ -724,7 +731,7 @@ export class Phase3RunStore {
           input.reasonCode ?? null,
           input.result,
           input.teardownResult,
-          input.teardownEvidenceSha256 ?? null,
+          input.teardownEvidenceSha256,
           now,
         ],
       );

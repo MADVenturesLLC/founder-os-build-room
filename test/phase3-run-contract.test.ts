@@ -131,5 +131,19 @@ describe('Phase 3 control-plane event input', () => {
     assert.ok(PHASE3_REASON_CODES.includes('bad_signature'));
     assert.ok(PHASE3_REASON_CODES.includes('stale_heartbeat'));
     assert.equal(PHASE3_REASON_CODES.includes('raw_error' as never), false);
+    const failure = {
+      kind: 'attempt_finished',
+      idempotencyKey: 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+      result: 'failed',
+      reasonCode: 'internal_error',
+      teardownResult: 'not_required',
+      teardownEvidenceSha256: '6'.repeat(64),
+    };
+    assert.equal(validatePhase3EventInput(failure).ok, true);
+    const { teardownEvidenceSha256: _omitted, ...withoutEvidence } = failure;
+    assert.deepEqual(validatePhase3EventInput(withoutEvidence), {
+      ok: false,
+      code: 'invalid_request',
+    });
   });
 });
