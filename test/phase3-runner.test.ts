@@ -397,43 +397,50 @@ describe('Phase 3 attempt runner — lifecycle', () => {
     assert.equal(finish?.kind, 'attempt_finished');
   });
 
-  it('stops without evidence writes when heartbeat evidence identity is untrusted', async () => {
+  it('stops without follow-up append, export, or fixture calls when heartbeat evidence is untrusted', async () => {
     for (const code of [
       'evidence_identity_mismatch',
       'invalid_response',
       'response_too_large',
+      'heartbeat_invalid',
+      'bad_signature',
+      'stale_heartbeat',
     ] as const) {
       const eventPort = port(false, clientError(code));
       let exportCalls = 0;
-      eventPort.exportAttempt = async () => {
+      const exportAttempt = eventPort.exportAttempt;
+      eventPort.exportAttempt = async (...args) => {
         exportCalls += 1;
-        throw clientError(code);
+        return exportAttempt(...args);
       };
       const fixturePort = fixture();
 
       const result = await performPhase3Attempt(PLAN, deps(eventPort, fixturePort));
 
-      assert.equal(result.outcome, 'unresolved_commit');
+      assert.deepEqual(
+        {
+          injectedTrustFailure: code,
+          outcome: result.outcome,
+          reasonCode: result.reasonCode,
+          attemptWrites: eventPort.attempts.length,
+          followUpEventWrites: eventPort.events.length,
+          exportCalls,
+          fixtureCalls: fixturePort.calls.length,
+        },
+        {
+          injectedTrustFailure: code,
+          outcome: 'unresolved_commit',
+          reasonCode: 'evidence_write_failed',
+          attemptWrites: 1,
+          followUpEventWrites: 0,
+          exportCalls: 0,
+          fixtureCalls: 0,
+        },
+      );
       assert.equal(
         (result.evidence as Record<string, unknown>)['schema'],
         'build-room/phase3-local-unresolved@1',
       );
-      assert.deepEqual(eventPort.events, []);
-      assert.equal(exportCalls, 0);
-      assert.deepEqual(fixturePort.calls, []);
-    }
-  });
-
-  it('retains bad-signature and stale-heartbeat reasons exactly', async () => {
-    for (const code of ['bad_signature', 'stale_heartbeat'] as const) {
-      const error = Object.assign(new Error(code), { code });
-      const eventPort = port(false, error);
-      const result = await performPhase3Attempt(PLAN, deps(eventPort, fixture()));
-      assert.equal(result.outcome, 'failed');
-      assert.equal(result.reasonCode, code);
-      const finish = eventPort.events.at(-1);
-      assert.equal(finish?.kind, 'attempt_finished');
-      if (finish?.kind === 'attempt_finished') assert.equal(finish.reasonCode, code);
     }
   });
 

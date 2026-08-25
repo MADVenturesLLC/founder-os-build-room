@@ -538,7 +538,10 @@ function isHeartbeatTrustFailure(error: unknown): boolean {
   return (
     code === 'invalid_response' ||
     code === 'evidence_identity_mismatch' ||
-    code === 'response_too_large'
+    code === 'response_too_large' ||
+    code === 'heartbeat_invalid' ||
+    code === 'bad_signature' ||
+    code === 'stale_heartbeat'
   );
 }
 

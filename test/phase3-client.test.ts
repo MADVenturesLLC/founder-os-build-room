@@ -632,32 +632,66 @@ describe('Phase 3 HTTP client — identity before bearer', () => {
     assert.deepEqual(await client.waitForHeartbeat(ATTEMPT_ID, 300_000, EXPECTED), {
       captured: true,
     });
+  });
 
-    const heartbeat = complete['heartbeat'] as Record<string, unknown>;
-    const signature = Buffer.from(String(heartbeat['signatureBase64']), 'base64');
-    signature[0] = (signature[0] ?? 0) ^ 1;
-    const badSignature = {
-      ...complete,
-      heartbeat: { ...heartbeat, signatureBase64: signature.toString('base64') },
-    };
-    await assert.rejects(
-      clientFor(badSignature).waitForHeartbeat(ATTEMPT_ID, 300_000, EXPECTED),
-      (error: unknown) => error instanceof Phase3ClientError && error.code === 'bad_signature',
-    );
-
-    const stale = {
-      ...complete,
-      heartbeat: {
+  for (const testCase of [
+    {
+      name: 'a corrupted gateway identity',
+      code: 'heartbeat_invalid',
+      mutate: (heartbeat: Record<string, unknown>) => {
+        const signedBytes = Buffer.from(String(heartbeat['signedBytesBase64']), 'base64');
+        const wrongGateway = '22222222-3333-4444-8555-666666666666';
+        return {
+          ...heartbeat,
+          signedBytesBase64: Buffer.from(
+            signedBytes.toString('utf8').replace(EXPECTED.attempt.gatewayId, wrongGateway),
+          ).toString('base64'),
+        };
+      },
+    },
+    {
+      name: 'corrupted canonical signed bytes',
+      code: 'heartbeat_invalid',
+      mutate: (heartbeat: Record<string, unknown>) => {
+        const signedBytes = Buffer.from(String(heartbeat['signedBytesBase64']), 'base64');
+        signedBytes[0] = (signedBytes[0] ?? 0) ^ 1;
+        return { ...heartbeat, signedBytesBase64: signedBytes.toString('base64') };
+      },
+    },
+    {
+      name: 'a corrupted signature',
+      code: 'bad_signature',
+      mutate: (heartbeat: Record<string, unknown>) => {
+        const signature = Buffer.from(String(heartbeat['signatureBase64']), 'base64');
+        signature[0] = (signature[0] ?? 0) ^ 1;
+        return { ...heartbeat, signatureBase64: signature.toString('base64') };
+      },
+    },
+    {
+      name: 'corrupted freshness evidence',
+      code: 'stale_heartbeat',
+      mutate: (heartbeat: Record<string, unknown>) => ({
         ...heartbeat,
         acceptedAt: new Date(Number(heartbeat['timestampMs']) + 300_001).toISOString(),
         freshnessMs: 300_001,
-      },
-    };
-    await assert.rejects(
-      clientFor(stale).waitForHeartbeat(ATTEMPT_ID, 300_000, EXPECTED),
-      (error: unknown) => error instanceof Phase3ClientError && error.code === 'stale_heartbeat',
-    );
-  });
+      }),
+    },
+  ] as const) {
+    it(`rejects ${testCase.name}`, async () => {
+      const complete = await signedExport();
+      const heartbeat = complete['heartbeat'] as Record<string, unknown>;
+      const corrupted = {
+        ...complete,
+        heartbeat: testCase.mutate(heartbeat),
+      };
+
+      await assert.rejects(
+        clientFor(corrupted).waitForHeartbeat(ATTEMPT_ID, 300_000, EXPECTED),
+        (error: unknown) =>
+          error instanceof Phase3ClientError && error.code === testCase.code,
+      );
+    });
+  }
 
   it('aborts heartbeat polling on the operator signal', async () => {
     const complete = await pristineExport();
