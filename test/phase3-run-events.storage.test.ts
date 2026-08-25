@@ -368,6 +368,7 @@ describe('0005_phase3_run_evidence — storage shape', { skip: STORAGE_SKIP }, (
         .finally(() => {
           settled = true;
         });
+      void competing.catch(() => undefined);
       await new Promise((resolve) => setTimeout(resolve, 25));
       assert.equal(settled, false);
 
