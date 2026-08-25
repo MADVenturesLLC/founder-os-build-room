@@ -195,6 +195,63 @@ function deps(
 }
 
 describe('Phase 3 attempt runner — fail-closed entry', () => {
+  it('rejects invalid plans locally before observation or remote attempt creation', async () => {
+    const cases = [
+      {
+        plan: { ...PLAN, runAttemptId: PLAN.label },
+        reasonCode: 'attempt_identity_invalid',
+      },
+      {
+        plan: { ...PLAN, entryAuthorizationId: '' },
+        reasonCode: 'authorization_invalid',
+      },
+      {
+        plan: { ...PLAN, heartbeatFreshnessMs: 0 },
+        reasonCode: 'context_invalid',
+      },
+      {
+        plan: { ...PLAN, expectedEnrollments: [] },
+        reasonCode: 'enrollment_projection_failed',
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const eventPort = port();
+      const fixturePort = fixture();
+      let observationCalls = 0;
+      const runnerDeps: Phase3AttemptRunnerDeps = {
+        ...deps(eventPort, fixturePort),
+        observeEntry: async () => {
+          observationCalls += 1;
+          return OBSERVATION;
+        },
+      };
+
+      const result = await performPhase3Attempt(testCase.plan, runnerDeps);
+
+      assert.deepEqual(
+        {
+          outcome: result.outcome,
+          reasonCode: result.reasonCode,
+          schema: (result.evidence as Record<string, unknown>)['schema'],
+          observationCalls,
+          attemptWrites: eventPort.attempts.length,
+          eventWrites: eventPort.events.length,
+          fixtureCalls: fixturePort.calls.length,
+        },
+        {
+          outcome: 'not_started',
+          reasonCode: testCase.reasonCode,
+          schema: 'build-room/phase3-local-plan-rejected@1',
+          observationCalls: 0,
+          attemptWrites: 0,
+          eventWrites: 0,
+          fixtureCalls: 0,
+        },
+      );
+    }
+  });
+
   it('records not-started and performs no fixture action', async () => {
     const eventPort = port();
     const fixturePort = fixture();

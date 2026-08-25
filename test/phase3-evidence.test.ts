@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
+import { phase3RequestSha256 } from '../packages/control-plane/src/phase3-run.js';
 import {
+  PHASE3_LOCAL_FAILURE_AUTHORIZES,
   securePhase3EvidenceDirectory,
   disposePhase3EvidenceReservation,
   reservePhase3EvidenceFile,
@@ -18,9 +20,16 @@ afterEach(async () => {
 });
 
 const EVIDENCE = {
-  schema: 'build-room/phase3-run-evidence@1',
-  attempt: { runAttemptId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
-  authorizes: 'Nothing.',
+  schema: 'build-room/phase3-local-failure@1',
+  attempt: {
+    runAttemptId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    runLabel: 'Phase3-CR1',
+    buildRoomSha: '1'.repeat(40),
+    fixtureSha: '2'.repeat(40),
+    outcome: 'failed',
+    reasonCode: 'internal_error',
+  },
+  authorizes: PHASE3_LOCAL_FAILURE_AUTHORIZES,
 };
 
 describe('Phase 3 local evidence boundary', () => {
@@ -52,6 +61,56 @@ describe('Phase 3 local evidence boundary', () => {
       () => serializePhase3Evidence({ ...EVIDENCE, nested: { controlPlaneToken: 'secret' } }),
       /forbidden evidence key/,
     );
+    for (const key of ['apiKey', 'authorization', 'secret', 'cookie']) {
+      assert.throws(
+        () => serializePhase3Evidence({ ...EVIDENCE, [key]: 'synthetic-sensitive-value' }),
+        /forbidden evidence key/,
+      );
+    }
+    assert.throws(
+      () =>
+        serializePhase3Evidence({
+          ...EVIDENCE,
+          toJSON: () => ({ ...EVIDENCE, apiKey: 'synthetic-sensitive-value' }),
+        }),
+      /forbidden evidence key/,
+    );
+    assert.throws(
+      () => serializePhase3Evidence({ ...EVIDENCE, unexpected: 'synthetic-value' }),
+      /closed schema/,
+    );
+    for (const attempt of [
+      { ...EVIDENCE.attempt, runAttemptId: 7 },
+      { ...EVIDENCE.attempt, runLabel: null },
+      { ...EVIDENCE.attempt, buildRoomSha: ['1'.repeat(40)] },
+      { ...EVIDENCE.attempt, outcome: 'passed' },
+      { ...EVIDENCE.attempt, reasonCode: ['internal_error'] },
+    ]) {
+      assert.throws(
+        () => serializePhase3Evidence({ ...EVIDENCE, attempt }),
+        /closed schema/,
+      );
+    }
+    for (const authorizes of [
+      'Nothing prevents Phase 4 authorization.',
+      'Nothing. Phase 4 is authorized.',
+    ]) {
+      assert.throws(
+        () => serializePhase3Evidence({ ...EVIDENCE, authorizes }),
+        /must explicitly authorize nothing/,
+      );
+    }
+    assert.throws(
+      () =>
+        serializePhase3Evidence({
+          ...EVIDENCE,
+          toJSON: () => ({
+            ...EVIDENCE,
+            authorizes: 'Nothing. Phase 4 is authorized.',
+          }),
+        }),
+      /must explicitly authorize nothing/,
+    );
     assert.throws(
       () => serializePhase3Evidence({ ...EVIDENCE, authorizes: 'Phase 4' }),
       /must explicitly authorize nothing/,
@@ -65,6 +124,47 @@ describe('Phase 3 local evidence boundary', () => {
     assert.equal(example['synthetic'], undefined, 'the example retains the exact closed export schema');
     assert.equal((example['context'] as Record<string, unknown>)['environment'], 'synthetic-test');
     assert.doesNotThrow(() => serializePhase3Evidence(example));
+
+    const reviewed = structuredClone(example);
+    const reviewedEvents = reviewed['events'] as Record<string, unknown>[];
+    const technicalCompletion = reviewedEvents.at(-1)!;
+    const adjudication = {
+      verdict: 'passed',
+      tier2ReviewerId: 'Gemini 3.1 Pro (High)',
+      tier2EvidenceSha256: '7'.repeat(64),
+      founderAuthorizationId: 'founder:phase3:test',
+    };
+    const idempotencyKey = '20000000-0000-4000-8000-000000000010';
+    const occurredAt = '2026-08-25T12:00:08.000Z';
+    reviewedEvents.push({
+      ...technicalCompletion,
+      eventId: '10000000-0000-4000-8000-000000000010',
+      eventIndex: 10,
+      eventType: 'attempt_adjudicated',
+      idempotencyKey,
+      requestSha256: phase3RequestSha256({ idempotencyKey, ...adjudication }),
+      reasonCode: null,
+      result: 'passed',
+      teardownResult: 'completed',
+      teardownEvidenceSha256: technicalCompletion['teardownEvidenceSha256'],
+      adjudication,
+      occurredAt,
+    });
+    const reviewedAttempt = reviewed['attempt'] as Record<string, unknown>;
+    reviewedAttempt['state'] = 'passed';
+    reviewedAttempt['finishedAt'] = occurredAt;
+    assert.doesNotThrow(() => serializePhase3Evidence(reviewed));
+
+    const punctuationOnly = structuredClone(reviewed);
+    (((punctuationOnly['events'] as Record<string, unknown>[]).at(-1)![
+      'adjudication'
+    ]) as Record<string, unknown>)['tier2ReviewerId'] = '---';
+    assert.throws(() => serializePhase3Evidence(punctuationOnly), /closed schema/);
+
+    const misplaced = structuredClone(reviewed);
+    const misplacedEvent = (misplaced['events'] as Record<string, unknown>[])[0]!;
+    misplacedEvent['adjudication'] = adjudication;
+    assert.throws(() => serializePhase3Evidence(misplaced), /closed schema/);
   });
 
   it('refuses an evidence directory replaced by a symlink after validation', async () => {

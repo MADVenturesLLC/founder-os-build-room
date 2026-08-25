@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { formatMachineIdentity } from '../packages/run-harness/src/phase3/cli.js';
-import { validatePhase3Plan } from '../packages/run-harness/src/phase3/plan.js';
+import {
+  phase3PlanFailure,
+  validatePhase3Plan,
+} from '../packages/run-harness/src/phase3/plan.js';
 
 const PLAN = {
   runAttemptId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
@@ -27,6 +30,27 @@ const PLAN = {
 };
 
 describe('Phase 3 plan validation', () => {
+  it('classifies every invalid-plan category before generic shape refusal', () => {
+    const { founderOs: _founderOs, ...withoutFounderOs } = PLAN;
+    const cases = [
+      [{ ...PLAN, runAttemptId: 'invalid' }, 'attempt_identity_invalid'],
+      [{ ...PLAN, entryAuthorizationId: '' }, 'authorization_invalid'],
+      [{ ...PLAN, label: 'Phase3-CR3' }, 'authorization_invalid'],
+      [{ ...PLAN, revocationAuthorizationId: 'founder:unexpected' }, 'authorization_invalid'],
+      [{ ...PLAN, founderOsSha: 'invalid' }, 'governing_sha_invalid'],
+      [withoutFounderOs, 'founder_os_invalid'],
+      [{ ...PLAN, gatewayId: 'invalid' }, 'gateway_identity_invalid'],
+      [{ ...PLAN, controlPlaneOrigin: 'invalid' }, 'context_invalid'],
+      [{ ...PLAN, fixture: undefined }, 'fixture_unavailable'],
+      [{ ...PLAN, expectedEnrollments: [] }, 'enrollment_projection_failed'],
+      [{ ...PLAN, unexpected: true }, 'context_invalid'],
+    ] as const;
+
+    for (const [value, reasonCode] of cases) {
+      assert.equal(phase3PlanFailure(value), reasonCode);
+    }
+  });
+
   it('requires the governed FounderOS repository identity and absolute root', () => {
     const { founderOs, ...withoutFounderOs } = PLAN;
     assert.equal(validatePhase3Plan(PLAN).ok, true);

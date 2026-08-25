@@ -17,6 +17,7 @@ import { runDoctor } from '../../../gateway-cli/src/doctor.js';
 import { Phase3AbortError, Phase3ControlPlaneClient } from './client.js';
 import { loadPhase3CliConfig, type Phase3CliConfig } from './cli-config.js';
 import {
+  PHASE3_LOCAL_FAILURE_AUTHORIZES,
   disposePhase3EvidenceReservation,
   writePhase3Evidence,
 } from './evidence.js';
@@ -182,7 +183,7 @@ async function runConfiguredPhase3(config: Phase3CliConfig): Promise<number> {
             outcome: 'failed',
             reasonCode: 'internal_error',
           },
-          authorizes: 'Nothing. This failure record grants no operational or later-phase authority.',
+          authorizes: PHASE3_LOCAL_FAILURE_AUTHORIZES,
         };
     try {
       const path = await writePhase3Evidence(

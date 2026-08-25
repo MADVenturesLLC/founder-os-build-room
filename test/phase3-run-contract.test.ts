@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   PHASE3_LIFECYCLE_STAGES,
   PHASE3_REASON_CODES,
+  phase3EntryEvidenceSha256,
   validatePhase3AdjudicationInput,
   validatePhase3AttemptInput,
   validatePhase3EventInput,
@@ -62,7 +62,7 @@ const STARTED = {
   ],
   machineIdentity: 'michael-macbook',
   entryEvidence: ENTRY_EVIDENCE,
-  entryEvidenceSha256: entryEvidenceDigest(ENTRY_EVIDENCE),
+  entryEvidenceSha256: phase3EntryEvidenceSha256(ENTRY_EVIDENCE),
 };
 
 describe('Phase 3 control-plane attempt input', () => {
@@ -94,7 +94,7 @@ describe('Phase 3 control-plane attempt input', () => {
       mode: 'not_started',
       reasonCode: 'custody_failed',
       entryEvidence,
-      entryEvidenceSha256: entryEvidenceDigest(entryEvidence),
+      entryEvidenceSha256: phase3EntryEvidenceSha256(entryEvidence),
     });
     assert.equal(result.ok, true);
     assert.equal(
@@ -103,7 +103,7 @@ describe('Phase 3 control-plane attempt input', () => {
         mode: 'not_started',
         reasonCode: 'lane_state_failed',
         entryEvidence,
-        entryEvidenceSha256: entryEvidenceDigest(entryEvidence),
+        entryEvidenceSha256: phase3EntryEvidenceSha256(entryEvidence),
       }).ok,
       false,
     );
@@ -136,7 +136,9 @@ describe('Phase 3 control-plane attempt input', () => {
     } as const;
     const ordered = { ...ENTRY_EVIDENCE, enrollments: [...ENTRY_EVIDENCE.enrollments, denied] };
     const reversed = { ...ordered, enrollments: [...ordered.enrollments].reverse() };
-    assert.equal(entryEvidenceDigest(ordered), entryEvidenceDigest(reversed));
+    const expectedDigest = '830325cb4e7797186c4123e7c1de83d8050cd98a2a0712f107524e08702bc164';
+    assert.equal(phase3EntryEvidenceSha256(ordered), expectedDigest);
+    assert.equal(phase3EntryEvidenceSha256(reversed), expectedDigest);
   });
 
   it('binds a started attempt to the passing entry observation', () => {
@@ -154,7 +156,7 @@ describe('Phase 3 control-plane attempt input', () => {
         validatePhase3AttemptInput({
           ...STARTED,
           entryEvidence,
-          entryEvidenceSha256: entryEvidenceDigest(entryEvidence),
+          entryEvidenceSha256: phase3EntryEvidenceSha256(entryEvidence),
         }),
         { ok: false, code: 'invalid_request' },
       );
@@ -181,7 +183,7 @@ describe('Phase 3 control-plane attempt input', () => {
       mode: 'not_started',
       reasonCode: 'founder_os_invalid',
       entryEvidence,
-      entryEvidenceSha256: entryEvidenceDigest(entryEvidence),
+      entryEvidenceSha256: phase3EntryEvidenceSha256(entryEvidence),
     };
     assert.equal(validatePhase3AttemptInput(input).ok, true);
     const mismatched = {
@@ -192,7 +194,7 @@ describe('Phase 3 control-plane attempt input', () => {
       validatePhase3AttemptInput({
         ...input,
         entryEvidence: mismatched,
-        entryEvidenceSha256: entryEvidenceDigest(mismatched),
+        entryEvidenceSha256: phase3EntryEvidenceSha256(mismatched),
       }),
       { ok: false, code: 'invalid_request' },
     );
@@ -234,30 +236,6 @@ describe('Phase 3 control-plane attempt input', () => {
     );
   });
 });
-
-function entryEvidenceDigest(value: unknown): string {
-  const canonical = (input: unknown): unknown => {
-    if (Array.isArray(input)) {
-      const values = input.map(canonical);
-      return values.every(
-        (item) =>
-          typeof item === 'object' &&
-          item !== null &&
-          'gatewayId' in item &&
-          'state' in item,
-      )
-        ? values.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
-        : values;
-    }
-    if (typeof input !== 'object' || input === null) return input;
-    return Object.fromEntries(
-      Object.keys(input as Record<string, unknown>)
-        .sort()
-        .map((key) => [key, canonical((input as Record<string, unknown>)[key])]),
-    );
-  };
-  return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-}
 
 describe('Phase 3 control-plane event input', () => {
   it('keeps adjudication on a separate closed input contract', () => {

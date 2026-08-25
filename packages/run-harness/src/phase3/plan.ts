@@ -1,31 +1,42 @@
 import { isAbsolute } from 'node:path';
-import type { Phase3AttemptPlan } from './model.js';
+import type { Phase3AttemptPlan, Phase3EntryFailure } from './model.js';
 
 type PlanResult =
   | { readonly ok: true; readonly value: Phase3AttemptPlan }
   | { readonly ok: false; readonly code: 'invalid_plan' };
 
 export function validatePhase3Plan(value: unknown): PlanResult {
-  const plan = record(value);
-  if (plan === null || !LABELS.includes(plan['label'] as never)) return INVALID;
-  const cr3 = plan['label'] === 'Phase3-CR3';
-  if (!exact(plan, [...PLAN_FIELDS, ...(cr3 ? ['revocationAuthorizationId'] : [])])) return INVALID;
+  if (phase3PlanFailure(value) !== null) return INVALID;
+  return { ok: true, value: value as Phase3AttemptPlan };
+}
 
+export function phase3PlanFailure(value: unknown): Phase3EntryFailure | null {
+  const plan = record(value);
+  if (plan === null || !LABELS.includes(plan['label'] as never)) return 'context_invalid';
+  const cr3 = plan['label'] === 'Phase3-CR3';
+
+  if (!UUID_RE.test(text(plan['runAttemptId']))) return 'attempt_identity_invalid';
   if (
-    !UUID_RE.test(text(plan['runAttemptId'])) ||
     !SAFE_ID_RE.test(text(plan['entryAuthorizationId'])) ||
-    (cr3 && !SAFE_ID_RE.test(text(plan['revocationAuthorizationId']))) ||
-    !SHA_RE.test(text(plan['founderOsSha'])) ||
-    !SHA_RE.test(text(plan['buildRoomSha'])) ||
+    (cr3
+      ? !SAFE_ID_RE.test(text(plan['revocationAuthorizationId']))
+      : Object.prototype.hasOwnProperty.call(plan, 'revocationAuthorizationId'))
+  ) {
+    return 'authorization_invalid';
+  }
+  if (!SHA_RE.test(text(plan['founderOsSha'])) || !SHA_RE.test(text(plan['buildRoomSha']))) {
+    return 'governing_sha_invalid';
+  }
+  if (!UUID_RE.test(text(plan['gatewayId']))) return 'gateway_identity_invalid';
+  if (
     !validOrigin(plan['controlPlaneOrigin']) ||
-    !UUID_RE.test(text(plan['gatewayId'])) ||
     !SAFE_LABEL_RE.test(text(plan['environment'])) ||
     !SAFE_LABEL_RE.test(text(plan['machine'])) ||
     !Number.isSafeInteger(plan['heartbeatFreshnessMs']) ||
     Number(plan['heartbeatFreshnessMs']) <= 0 ||
     Number(plan['heartbeatFreshnessMs']) > 600_000
   ) {
-    return INVALID;
+    return 'context_invalid';
   }
 
   const fixture = record(plan['fixture']);
@@ -36,7 +47,7 @@ export function validatePhase3Plan(value: unknown): PlanResult {
     founderOs['repository'] !== 'MADVenturesLLC/FounderOS' ||
     !isAbsolute(text(founderOs['path']))
   ) {
-    return INVALID;
+    return 'founder_os_invalid';
   }
   if (
     fixture === null ||
@@ -45,12 +56,12 @@ export function validatePhase3Plan(value: unknown): PlanResult {
     !isAbsolute(text(fixture['path'])) ||
     !SHA_RE.test(text(fixture['sha']))
   ) {
-    return INVALID;
+    return 'fixture_unavailable';
   }
 
   const enrollments = plan['expectedEnrollments'];
   if (!Array.isArray(enrollments) || enrollments.length === 0 || enrollments.length > 1_000) {
-    return INVALID;
+    return 'enrollment_projection_failed';
   }
   const identities = new Set<string>();
   let enrolled = 0;
@@ -63,17 +74,21 @@ export function validatePhase3Plan(value: unknown): PlanResult {
       !STATES.includes(row['state'] as never) ||
       identities.has(text(row['gatewayId']))
     ) {
-      return INVALID;
+      return 'enrollment_projection_failed';
     }
     identities.add(text(row['gatewayId']));
     if (row['state'] === 'enrolled') {
       enrolled += 1;
-      if (row['gatewayId'] !== plan['gatewayId']) return INVALID;
+      if (row['gatewayId'] !== plan['gatewayId']) return 'enrollment_projection_failed';
     }
   }
-  if (enrolled !== 1) return INVALID;
+  if (enrolled !== 1) return 'enrollment_projection_failed';
 
-  return { ok: true, value: plan as unknown as Phase3AttemptPlan };
+  if (!exact(plan, [...PLAN_FIELDS, ...(cr3 ? ['revocationAuthorizationId'] : [])])) {
+    return 'context_invalid';
+  }
+
+  return null;
 }
 
 const INVALID = { ok: false, code: 'invalid_plan' } as const;

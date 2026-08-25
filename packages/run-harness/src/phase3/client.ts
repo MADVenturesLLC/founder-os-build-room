@@ -425,6 +425,24 @@ function validateEvidenceExport(
   runAttemptId: string,
   expected: Phase3EvidenceExpectation,
 ): Phase3EvidenceExport {
+  const exported = validatePhase3EvidenceForSerialization(value);
+  const last = exported.events.at(-1);
+  if (
+    expected.attempt.mode === 'not_started' &&
+    (last?.eventType !== 'attempt_not_started' || last.reasonCode !== expected.attempt.reasonCode)
+  ) {
+    throw new Phase3ClientError(200, 'invalid_response');
+  }
+  if (
+    exported.attempt.runAttemptId !== runAttemptId ||
+    !matchesExpectedIdentity(exported.context, exported.attempt, exported.entryEvidence, expected)
+  ) {
+    throw new Phase3ClientError(200, 'evidence_identity_mismatch');
+  }
+  return exported;
+}
+
+export function validatePhase3EvidenceForSerialization(value: unknown): Phase3EvidenceExport {
   const exported = asRecord(value);
   if (
     exported === null ||
@@ -445,7 +463,11 @@ function validateEvidenceExport(
     throw new Phase3ClientError(200, 'invalid_response');
   }
   const context = validateContext(exported['context']);
-  const attempt = validateAttempt(exported['attempt'], runAttemptId);
+  const rawAttempt = asRecord(exported['attempt']);
+  const attempt = validateAttempt(
+    exported['attempt'],
+    rawAttempt === null ? '' : text(rawAttempt['runAttemptId']),
+  );
   if (
     !isPhase3EntryEvidence(exported['entryEvidence']) ||
     !validTimestamp(exported['entryEvidenceRecordedAt']) ||
@@ -459,8 +481,8 @@ function validateEvidenceExport(
   const entryEvents = events.filter(
     (event) => event.eventType === 'entry_verified' || event.eventType === 'attempt_not_started',
   );
-  const expectedEntryType =
-    expected.attempt.mode === 'not_started' ? 'attempt_not_started' : 'entry_verified';
+  const entryMode = attempt.state === 'not_started' ? 'not_started' : 'started';
+  const expectedEntryType = entryMode === 'not_started' ? 'attempt_not_started' : 'entry_verified';
   if (
     entryEvents.length !== 1 ||
     entryEvents[0]?.eventType !== expectedEntryType ||
@@ -470,12 +492,15 @@ function validateEvidenceExport(
   }
   const heartbeat =
     exported['heartbeat'] === null ? null : validateHeartbeat(exported['heartbeat']);
-  validateTerminalHistory(attempt, events, expected, heartbeat);
+  validateTerminalHistory(
+    attempt,
+    events,
+    entryMode,
+    entryEvents[0]?.reasonCode ?? undefined,
+    heartbeat,
+  );
   if (context.commit !== attempt.buildRoomSha || context.environment !== attempt.environmentLabel) {
     throw new Phase3ClientError(200, 'invalid_response');
-  }
-  if (!matchesExpectedIdentity(context, attempt, entryEvidence, expected)) {
-    throw new Phase3ClientError(200, 'evidence_identity_mismatch');
   }
   return {
     schema: 'build-room/phase3-run-evidence@1',
@@ -576,7 +601,8 @@ function validateEvent(value: unknown, expectedIndex: number): Phase3EvidenceExp
 function validateTerminalHistory(
   attempt: Phase3EvidenceExport['attempt'],
   events: readonly Phase3EvidenceExport['events'][number][],
-  expected: Phase3EvidenceExpectation,
+  entryMode: 'started' | 'not_started',
+  entryReasonCode: string | undefined,
   heartbeat: Phase3EvidenceExport['heartbeat'],
 ): void {
   const last = events.at(-1);
@@ -629,9 +655,9 @@ function validateTerminalHistory(
     case 'not_started':
       valid =
         finishedAtMatches &&
-        expected.attempt.mode === 'not_started' &&
+        entryMode === 'not_started' &&
         last.eventType === 'attempt_not_started' &&
-        last.reasonCode === expected.attempt.reasonCode;
+        last.reasonCode === entryReasonCode;
       break;
   }
   if (!valid) throw new Phase3ClientError(200, 'invalid_response');

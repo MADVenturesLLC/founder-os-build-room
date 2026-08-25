@@ -14,6 +14,11 @@ import {
   type Phase3AttemptPlan,
   type Phase3EntryObservation,
 } from './model.js';
+import { phase3PlanFailure } from './plan.js';
+import {
+  PHASE3_LOCAL_PLAN_REJECTED_AUTHORIZES,
+  PHASE3_LOCAL_UNRESOLVED_AUTHORIZES,
+} from './evidence.js';
 
 export interface Phase3EventPort {
   createAttempt(
@@ -79,6 +84,9 @@ export async function performPhase3Attempt(
   plan: Phase3AttemptPlan,
   deps: Phase3AttemptRunnerDeps,
 ): Promise<Phase3AttemptResult> {
+  const planFailure = phase3PlanFailure(plan);
+  if (planFailure !== null) return rejectedPlan(planFailure);
+
   let observation: Phase3EntryObservation;
   try {
     throwIfAborted(deps.signal);
@@ -294,6 +302,19 @@ export async function performPhase3Attempt(
   }
 }
 
+function rejectedPlan(reasonCode: Phase3ReasonCode): Phase3AttemptResult {
+  return {
+    outcome: 'not_started',
+    reasonCode,
+    evidence: {
+      schema: 'build-room/phase3-local-plan-rejected@1',
+      outcome: 'not_started',
+      reasonCode,
+      authorizes: PHASE3_LOCAL_PLAN_REJECTED_AUTHORIZES,
+    },
+  };
+}
+
 export class Phase3PreflightError extends Error {
   constructor(readonly reasonCode: Phase3ReasonCode) {
     super(reasonCode);
@@ -495,8 +516,7 @@ export function phase3LocalUnresolvedEvidence(
       environmentLabel: plan.environment,
       entryEvidenceSha256,
     },
-    authorizes:
-      'Nothing. This local record states only that the remote commit outcome is unknown and grants no authority.',
+    authorizes: PHASE3_LOCAL_UNRESOLVED_AUTHORIZES,
   };
 }
 
