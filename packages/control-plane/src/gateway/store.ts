@@ -191,7 +191,7 @@ export class GatewayRegistryStore {
     const { rows } = await this.pool.query<ProjectionRowRaw>(
       `SELECT gateway_id, state, key_id, pubkey, host_descriptor, state_since,
               last_event_seq, awaiting_approval_expires_at, is_currently_enrolled
-         FROM gateway_current_state ORDER BY state_since DESC`,
+         FROM gateway_current_state ORDER BY state_since DESC, gateway_id ASC`,
     );
     return rows.map((row) => ({
       gatewayId: row.gateway_id,

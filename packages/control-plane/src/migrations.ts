@@ -464,6 +464,364 @@ export const MIGRATIONS: readonly Migration[] = [
          VALIDATE CONSTRAINT build_room_events_pending_is_bare`,
     ],
   },
+
+  {
+    /*
+     * Phase 3 counted-run evidence. Additive and separate from the closed
+     * six-event enrollment registry: a ten-second heartbeat must never widen
+     * that lifecycle vocabulary or become an unbounded long-retention stream.
+     *
+     * `phase3_run_attempts` is the replayable correlation projection. Its
+     * identity and governing metadata are immutable; only the derived progress
+     * fields may change. `phase3_run_events` is the append-only evidence log.
+     */
+    id: '0005_phase3_run_evidence',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS phase3_run_attempts (
+         attempt_seq             bigserial   UNIQUE NOT NULL,
+         run_attempt_id          uuid        PRIMARY KEY,
+         run_label               text        NOT NULL
+           CHECK (run_label IN ('Phase3-CR1','Phase3-CR2','Phase3-CR3')),
+         entry_authorization_id  text        NOT NULL
+           CHECK (length(entry_authorization_id) BETWEEN 1 AND 128
+              AND entry_authorization_id ~ '^[A-Za-z0-9._:/-]+$'),
+         revocation_authorization_id text
+           CHECK (revocation_authorization_id IS NULL OR
+                  (length(revocation_authorization_id) BETWEEN 1 AND 128
+                   AND revocation_authorization_id ~ '^[A-Za-z0-9._:/-]+$')),
+         founder_os_sha          text        NOT NULL CHECK (founder_os_sha ~ '^[0-9a-f]{40}$'),
+         build_room_sha          text        NOT NULL CHECK (build_room_sha ~ '^[0-9a-f]{40}$'),
+         fixture_repository      text        NOT NULL
+           CHECK (length(fixture_repository) BETWEEN 1 AND 200
+              AND fixture_repository ~ '^[A-Za-z0-9._/-]+$'),
+         fixture_sha             text        NOT NULL CHECK (fixture_sha ~ '^[0-9a-f]{40}$'),
+         requested_gateway_id    uuid        NOT NULL,
+         gateway_id              uuid        REFERENCES gateway_current_state(gateway_id),
+         enrollment_projection_sha256 text   NOT NULL
+           CHECK (enrollment_projection_sha256 ~ '^[0-9a-f]{64}$'),
+         machine_identity        text        NOT NULL CHECK (length(machine_identity) BETWEEN 1 AND 128),
+         environment_label       text        NOT NULL CHECK (length(environment_label) BETWEEN 1 AND 128),
+         entry_evidence_sha256   text        NOT NULL
+           CHECK (entry_evidence_sha256 ~ '^[0-9a-f]{64}$'),
+         state                   text        NOT NULL
+           CHECK (state IN ('active','failure_pending_teardown','passed','failed',
+                            'interrupted','not_started','awaiting_adjudication')),
+         heartbeat_captured      boolean     NOT NULL DEFAULT false,
+         lifecycle_position      smallint    NOT NULL DEFAULT 0
+           CHECK (lifecycle_position BETWEEN 0 AND 5),
+         last_event_index        integer     NOT NULL DEFAULT 0 CHECK (last_event_index >= 0),
+         started_at              timestamptz NOT NULL,
+         capture_expires_at      timestamptz NOT NULL,
+         finished_at             timestamptz,
+         created_at              timestamptz NOT NULL DEFAULT now(),
+         CONSTRAINT phase3_run_attempts_capture_window_positive
+           CHECK (capture_expires_at > started_at),
+         CONSTRAINT phase3_run_attempts_cr3_authorization_agrees
+           CHECK ((run_label = 'Phase3-CR3') = (revocation_authorization_id IS NOT NULL)),
+         CONSTRAINT phase3_run_attempts_gateway_binding_agrees
+           CHECK ((state = 'not_started' AND gateway_id IS NULL)
+               OR (state <> 'not_started' AND gateway_id = requested_gateway_id)),
+         CONSTRAINT phase3_run_attempts_finished_state_agrees
+           CHECK ((state IN ('active','failure_pending_teardown','awaiting_adjudication')
+                    AND finished_at IS NULL)
+               OR (state IN ('passed','failed','interrupted','not_started')
+                    AND finished_at IS NOT NULL))
+       )`,
+
+      `CREATE UNIQUE INDEX IF NOT EXISTS phase3_run_attempts_one_active_gateway
+         ON phase3_run_attempts ((true))
+         WHERE state IN ('active','failure_pending_teardown','awaiting_adjudication')`,
+
+      `CREATE TABLE IF NOT EXISTS phase3_run_events (
+         seq                        bigserial   PRIMARY KEY,
+         event_id                   uuid        NOT NULL UNIQUE,
+         run_attempt_id             uuid        NOT NULL
+           REFERENCES phase3_run_attempts(run_attempt_id),
+         event_index                integer     NOT NULL CHECK (event_index > 0),
+         event_type                 text        NOT NULL
+           CHECK (event_type IN ('attempt_started','attempt_not_started','entry_verified',
+                                 'heartbeat_verified','lifecycle_stage_recorded',
+                                 'lifecycle_stage_refused','attempt_finished')),
+         idempotency_key            uuid,
+         request_sha256             text
+           CHECK (request_sha256 IS NULL OR request_sha256 ~ '^[0-9a-f]{64}$'),
+         lifecycle_stage            text
+           CHECK (lifecycle_stage IS NULL OR lifecycle_stage IN
+                  ('connect','adapter_registered','request','matched_response','disconnect')),
+         stage_artifact_sha256       text
+           CHECK (stage_artifact_sha256 IS NULL OR stage_artifact_sha256 ~ '^[0-9a-f]{64}$'),
+         exchange_id                uuid,
+         matched_request_event_id   uuid,
+         match_verified             boolean,
+         reason_code                text
+           CHECK (reason_code IS NULL OR reason_code IN
+                  ('attempt_identity_invalid','authorization_invalid','governing_sha_invalid',
+                   'gateway_identity_invalid','context_invalid','gateway_health_failed',
+                   'enrollment_projection_failed','control_plane_status_failed','daemon_unreachable',
+                   'lane_state_failed','custody_failed','staging_lock_present','build_sha_mismatch',
+                   'node_version_mismatch','build_failed','fixture_sha_mismatch','gateway_not_enrolled',
+                   'heartbeat_timeout','heartbeat_invalid','bad_signature','stale_heartbeat',
+                   'fixture_unavailable','missing_stage',
+                   'duplicate_stage','out_of_order_stage','response_mismatch','operator_interrupted',
+                   'teardown_failed','evidence_write_failed','internal_error')),
+         result                     text
+           CHECK (result IS NULL OR result IN
+                  ('awaiting_adjudication','passed','failed','interrupted')),
+         teardown_result            text
+           CHECK (teardown_result IS NULL OR teardown_result IN ('completed','failed','not_required')),
+         teardown_evidence_sha256   text
+           CHECK (teardown_evidence_sha256 IS NULL OR teardown_evidence_sha256 ~ '^[0-9a-f]{64}$'),
+         heartbeat_key_id           text,
+         heartbeat_sequence         bigint,
+         heartbeat_timestamp_ms     bigint,
+         heartbeat_signed_bytes     bytea,
+         heartbeat_signature        bytea,
+         heartbeat_public_key       bytea,
+         heartbeat_accepted_at      timestamptz,
+         heartbeat_window_ms        integer,
+         signature_verified         boolean,
+         occurred_at                timestamptz NOT NULL,
+         recorded_at                timestamptz NOT NULL DEFAULT now(),
+         CONSTRAINT phase3_run_events_idempotency_shape
+           CHECK ((idempotency_key IS NULL) = (request_sha256 IS NULL)),
+         CONSTRAINT phase3_run_events_attempt_index_unique
+           UNIQUE (run_attempt_id, event_index),
+         CONSTRAINT phase3_run_events_attempt_event_unique
+           UNIQUE (run_attempt_id, event_id),
+         CONSTRAINT phase3_run_events_matched_request_same_attempt
+           FOREIGN KEY (run_attempt_id, matched_request_event_id)
+           REFERENCES phase3_run_events (run_attempt_id, event_id),
+         CONSTRAINT phase3_run_events_heartbeat_shape
+           CHECK (
+             (event_type = 'heartbeat_verified'
+               AND heartbeat_key_id IS NOT NULL
+               AND heartbeat_sequence IS NOT NULL AND heartbeat_sequence > 0
+               AND heartbeat_timestamp_ms IS NOT NULL
+               AND heartbeat_signed_bytes IS NOT NULL
+               AND heartbeat_signature IS NOT NULL AND octet_length(heartbeat_signature) = 64
+               AND heartbeat_public_key IS NOT NULL AND octet_length(heartbeat_public_key) = 32
+               AND heartbeat_accepted_at IS NOT NULL
+               AND heartbeat_window_ms IS NOT NULL AND heartbeat_window_ms > 0
+               AND signature_verified IS TRUE)
+             OR
+             (event_type <> 'heartbeat_verified'
+               AND heartbeat_key_id IS NULL AND heartbeat_sequence IS NULL
+               AND heartbeat_timestamp_ms IS NULL AND heartbeat_signed_bytes IS NULL
+               AND heartbeat_signature IS NULL AND heartbeat_public_key IS NULL
+               AND heartbeat_accepted_at IS NULL AND heartbeat_window_ms IS NULL
+               AND signature_verified IS NULL)
+           ),
+         CONSTRAINT phase3_run_events_lifecycle_shape
+           CHECK (
+             (event_type = 'lifecycle_stage_recorded'
+               AND lifecycle_stage IS NOT NULL AND stage_artifact_sha256 IS NOT NULL
+               AND reason_code IS NULL)
+             OR
+             (event_type = 'lifecycle_stage_refused'
+               AND lifecycle_stage IS NOT NULL AND reason_code IS NOT NULL)
+             OR
+             (event_type NOT IN ('lifecycle_stage_recorded','lifecycle_stage_refused')
+               AND lifecycle_stage IS NULL AND stage_artifact_sha256 IS NULL
+               AND exchange_id IS NULL AND matched_request_event_id IS NULL
+               AND match_verified IS NULL)
+           ),
+         CONSTRAINT phase3_run_events_lifecycle_exchange_shape
+           CHECK (
+             (event_type = 'lifecycle_stage_recorded' AND lifecycle_stage = 'request'
+               AND exchange_id IS NOT NULL AND matched_request_event_id IS NULL
+               AND match_verified IS NULL)
+             OR
+             (event_type = 'lifecycle_stage_recorded' AND lifecycle_stage = 'matched_response'
+               AND exchange_id IS NOT NULL AND matched_request_event_id IS NOT NULL
+               AND match_verified IS TRUE)
+             OR
+             (event_type = 'lifecycle_stage_recorded'
+               AND lifecycle_stage IN ('connect','adapter_registered','disconnect')
+               AND exchange_id IS NULL AND matched_request_event_id IS NULL
+               AND match_verified IS NULL)
+             OR
+             (event_type <> 'lifecycle_stage_recorded'
+               AND exchange_id IS NULL AND matched_request_event_id IS NULL
+               AND match_verified IS NULL)
+           ),
+         CONSTRAINT phase3_run_events_terminal_shape
+           CHECK (
+             (event_type = 'attempt_finished'
+               AND result IS NOT NULL AND teardown_result IS NOT NULL
+               AND teardown_evidence_sha256 IS NOT NULL
+               AND ((result IN ('awaiting_adjudication','passed')
+                     AND reason_code IS NULL AND teardown_result = 'completed')
+                 OR (result IN ('failed','interrupted') AND reason_code IS NOT NULL)))
+             OR
+             (event_type = 'attempt_not_started'
+               AND reason_code IS NOT NULL AND result IS NULL
+               AND teardown_result = 'not_required')
+             OR
+             (event_type NOT IN ('attempt_finished','attempt_not_started')
+               AND result IS NULL AND teardown_result IS NULL
+               AND teardown_evidence_sha256 IS NULL
+               AND (event_type = 'lifecycle_stage_refused' OR reason_code IS NULL))
+           )
+       )`,
+
+      `CREATE UNIQUE INDEX IF NOT EXISTS phase3_run_events_idempotency_unique
+         ON phase3_run_events (run_attempt_id, idempotency_key)
+         WHERE idempotency_key IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS phase3_run_events_one_heartbeat
+         ON phase3_run_events (run_attempt_id) WHERE event_type = 'heartbeat_verified'`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS phase3_run_events_one_accepted_stage
+         ON phase3_run_events (run_attempt_id, lifecycle_stage)
+         WHERE event_type = 'lifecycle_stage_recorded'`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS phase3_run_events_one_refusal
+         ON phase3_run_events (run_attempt_id) WHERE event_type = 'lifecycle_stage_refused'`,
+
+      `CREATE OR REPLACE FUNCTION phase3_run_attempts_protect_identity()
+         RETURNS trigger AS $$
+       DECLARE
+         appended_type text;
+         appended_stage text;
+         appended_result text;
+         appended_teardown text;
+         appended_occurred timestamptz;
+       BEGIN
+         IF TG_OP = 'DELETE' THEN
+           RAISE EXCEPTION 'phase3_run_attempts retained projection: DELETE rejected'
+             USING ERRCODE = 'restrict_violation';
+         END IF;
+         IF OLD.run_attempt_id          IS DISTINCT FROM NEW.run_attempt_id
+            OR OLD.attempt_seq          IS DISTINCT FROM NEW.attempt_seq
+            OR OLD.run_label            IS DISTINCT FROM NEW.run_label
+            OR OLD.entry_authorization_id IS DISTINCT FROM NEW.entry_authorization_id
+            OR OLD.revocation_authorization_id IS DISTINCT FROM NEW.revocation_authorization_id
+            OR OLD.founder_os_sha       IS DISTINCT FROM NEW.founder_os_sha
+            OR OLD.build_room_sha       IS DISTINCT FROM NEW.build_room_sha
+            OR OLD.fixture_repository   IS DISTINCT FROM NEW.fixture_repository
+            OR OLD.fixture_sha          IS DISTINCT FROM NEW.fixture_sha
+            OR OLD.requested_gateway_id IS DISTINCT FROM NEW.requested_gateway_id
+            OR OLD.gateway_id           IS DISTINCT FROM NEW.gateway_id
+            OR OLD.enrollment_projection_sha256 IS DISTINCT FROM NEW.enrollment_projection_sha256
+            OR OLD.machine_identity     IS DISTINCT FROM NEW.machine_identity
+            OR OLD.environment_label    IS DISTINCT FROM NEW.environment_label
+            OR OLD.entry_evidence_sha256 IS DISTINCT FROM NEW.entry_evidence_sha256
+            OR OLD.started_at           IS DISTINCT FROM NEW.started_at
+            OR OLD.capture_expires_at   IS DISTINCT FROM NEW.capture_expires_at
+            OR OLD.created_at           IS DISTINCT FROM NEW.created_at THEN
+           RAISE EXCEPTION 'phase3_run_attempts immutable identity: UPDATE rejected'
+             USING ERRCODE = 'restrict_violation';
+         END IF;
+
+         IF NEW.last_event_index <> OLD.last_event_index + 1 THEN
+           RAISE EXCEPTION 'phase3_run_attempts projection update lacks matching event'
+             USING ERRCODE = 'restrict_violation';
+         END IF;
+         SELECT event_type, lifecycle_stage, result, teardown_result, occurred_at
+           INTO appended_type, appended_stage, appended_result, appended_teardown, appended_occurred
+           FROM phase3_run_events
+          WHERE run_attempt_id = NEW.run_attempt_id
+            AND event_index = NEW.last_event_index;
+         IF NOT FOUND THEN
+           RAISE EXCEPTION 'phase3_run_attempts projection update lacks matching event'
+             USING ERRCODE = 'restrict_violation';
+         END IF;
+
+         IF OLD.state = 'active'
+            AND NEW.heartbeat_captured IS TRUE AND OLD.heartbeat_captured IS FALSE
+            AND NEW.lifecycle_position = OLD.lifecycle_position
+            AND NEW.state = OLD.state
+            AND NEW.finished_at IS NOT DISTINCT FROM OLD.finished_at
+            AND appended_type = 'heartbeat_verified' THEN
+           RETURN NEW;
+         END IF;
+
+         IF OLD.state = 'active'
+            AND OLD.heartbeat_captured IS TRUE
+            AND NEW.heartbeat_captured = OLD.heartbeat_captured
+            AND NEW.lifecycle_position = OLD.lifecycle_position + 1
+            AND NEW.state = OLD.state
+            AND NEW.finished_at IS NOT DISTINCT FROM OLD.finished_at
+            AND appended_type = 'lifecycle_stage_recorded'
+            AND appended_stage = (CASE OLD.lifecycle_position
+              WHEN 0 THEN 'connect'
+              WHEN 1 THEN 'adapter_registered'
+              WHEN 2 THEN 'request'
+              WHEN 3 THEN 'matched_response'
+              WHEN 4 THEN 'disconnect'
+              ELSE NULL
+            END) THEN
+           RETURN NEW;
+         END IF;
+
+         IF NEW.heartbeat_captured = OLD.heartbeat_captured
+            AND NEW.lifecycle_position = OLD.lifecycle_position
+            AND OLD.state = 'active'
+            AND NEW.state = 'failure_pending_teardown'
+            AND NEW.finished_at IS NOT DISTINCT FROM OLD.finished_at
+            AND appended_type = 'lifecycle_stage_refused' THEN
+           RETURN NEW;
+         END IF;
+
+         IF NEW.heartbeat_captured = OLD.heartbeat_captured
+            AND NEW.lifecycle_position = OLD.lifecycle_position
+            AND OLD.state = 'active'
+            AND NEW.state = 'awaiting_adjudication'
+            AND OLD.heartbeat_captured IS TRUE
+            AND OLD.lifecycle_position = 5
+            AND NEW.finished_at IS NULL
+            AND appended_type = 'attempt_finished'
+            AND appended_result = 'awaiting_adjudication'
+            AND appended_teardown = 'completed' THEN
+           RETURN NEW;
+         END IF;
+
+         IF NEW.heartbeat_captured = OLD.heartbeat_captured
+            AND NEW.lifecycle_position = OLD.lifecycle_position
+            AND OLD.state IN ('active','failure_pending_teardown')
+            AND NEW.state IN ('failed','interrupted')
+            AND appended_type = 'attempt_finished'
+            AND appended_result = NEW.state
+            AND NEW.finished_at IS NOT DISTINCT FROM appended_occurred
+            AND (OLD.lifecycle_position = 0 OR appended_teardown IN ('completed','failed'))
+            AND (OLD.lifecycle_position < 5 OR appended_teardown = 'completed') THEN
+           RETURN NEW;
+         END IF;
+
+         IF NEW.heartbeat_captured = OLD.heartbeat_captured
+            AND NEW.lifecycle_position = OLD.lifecycle_position
+            AND OLD.state = 'awaiting_adjudication'
+            AND NEW.state = 'passed'
+            AND appended_type = 'attempt_finished'
+            AND appended_result = 'passed'
+            AND appended_teardown = 'completed'
+            AND NEW.finished_at IS NOT DISTINCT FROM appended_occurred THEN
+           RETURN NEW;
+         END IF;
+
+         RAISE EXCEPTION 'phase3_run_attempts projection update lacks matching event'
+           USING ERRCODE = 'restrict_violation';
+       END;
+       $$ LANGUAGE plpgsql`,
+      `DROP TRIGGER IF EXISTS phase3_run_attempts_protect ON phase3_run_attempts`,
+      `CREATE TRIGGER phase3_run_attempts_protect
+         BEFORE UPDATE OR DELETE ON phase3_run_attempts
+         FOR EACH ROW EXECUTE FUNCTION phase3_run_attempts_protect_identity()`,
+
+      `CREATE OR REPLACE FUNCTION phase3_run_events_immutable()
+         RETURNS trigger AS $$
+       BEGIN
+         RAISE EXCEPTION 'phase3_run_events is append-only: % rejected', TG_OP
+           USING ERRCODE = 'restrict_violation';
+       END;
+       $$ LANGUAGE plpgsql`,
+      `DROP TRIGGER IF EXISTS phase3_run_events_no_update ON phase3_run_events`,
+      `CREATE TRIGGER phase3_run_events_no_update
+         BEFORE UPDATE ON phase3_run_events
+         FOR EACH ROW EXECUTE FUNCTION phase3_run_events_immutable()`,
+      `DROP TRIGGER IF EXISTS phase3_run_events_no_delete ON phase3_run_events`,
+      `CREATE TRIGGER phase3_run_events_no_delete
+         BEFORE DELETE ON phase3_run_events
+         FOR EACH ROW EXECUTE FUNCTION phase3_run_events_immutable()`,
+    ],
+  },
 ];
 
 /** Advisory-lock key. Arbitrary but fixed — any value works if it never changes. */

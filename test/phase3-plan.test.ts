@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { formatMachineIdentity } from '../packages/run-harness/src/phase3/cli.js';
+import { validatePhase3Plan } from '../packages/run-harness/src/phase3/plan.js';
+
+const PLAN = {
+  runAttemptId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+  label: 'Phase3-CR1',
+  entryAuthorizationId: 'founder:phase3-cr1:2026-08-25',
+  founderOsSha: '1'.repeat(40),
+  buildRoomSha: '2'.repeat(40),
+  controlPlaneOrigin: 'https://control-plane.example',
+  gatewayId: '11111111-2222-4333-8444-555555555555',
+  expectedEnrollments: [
+    { gatewayId: '11111111-2222-4333-8444-555555555555', state: 'enrolled' },
+    { gatewayId: '22222222-3333-4444-8555-666666666666', state: 'denied' },
+  ],
+  fixture: {
+    repository: 'MADVenturesLLC/phase3-fixture',
+    path: '/tmp/phase3-fixture',
+    sha: '3'.repeat(40),
+  },
+  environment: 'production',
+  machine: 'michael-macbook',
+  heartbeatFreshnessMs: 600_000,
+};
+
+describe('Phase 3 plan validation', () => {
+  it('accepts one exact nonsecret CR1 plan', () => {
+    const result = validatePhase3Plan(PLAN);
+    assert.equal(result.ok, true);
+    if (result.ok) assert.deepEqual(result.value, PLAN);
+  });
+
+  it('accepts the exact machine identity shape emitted on macOS', () => {
+    const machine = formatMachineIdentity('Michaels-iMac', '13.7.8', 'x64');
+    assert.equal(machine, 'Michaels-iMac+macOS:13.7.8+x64');
+    assert.equal(validatePhase3Plan({ ...PLAN, machine }).ok, true);
+  });
+
+  it('requires exactly one enrolled row matching the authorized gateway', () => {
+    assert.equal(validatePhase3Plan({ ...PLAN, expectedEnrollments: [] }).ok, false);
+    assert.equal(
+      validatePhase3Plan({
+        ...PLAN,
+        expectedEnrollments: [
+          ...PLAN.expectedEnrollments,
+          { gatewayId: '33333333-4444-4555-8666-777777777777', state: 'enrolled' },
+        ],
+      }).ok,
+      false,
+    );
+  });
+
+  it('refuses awaiting approval, relative fixture paths, excessive freshness, and secret-shaped fields', () => {
+    assert.equal(
+      validatePhase3Plan({
+        ...PLAN,
+        expectedEnrollments: [{ gatewayId: PLAN.gatewayId, state: 'awaiting_approval' }],
+      }).ok,
+      false,
+    );
+    assert.equal(validatePhase3Plan({ ...PLAN, fixture: { ...PLAN.fixture, path: 'relative' } }).ok, false);
+    assert.equal(validatePhase3Plan({ ...PLAN, heartbeatFreshnessMs: 600_001 }).ok, false);
+    assert.equal(validatePhase3Plan({ ...PLAN, controlPlaneOrigin: 'https://user:pass@example.com' }).ok, false);
+    assert.deepEqual(validatePhase3Plan({ ...PLAN, controlPlaneToken: 'secret' }), {
+      ok: false,
+      code: 'invalid_plan',
+    });
+  });
+
+  it('requires the separate CR3 revocation authorization and forbids it on CR1', () => {
+    assert.equal(validatePhase3Plan({ ...PLAN, label: 'Phase3-CR3' }).ok, false);
+    assert.equal(
+      validatePhase3Plan({
+        ...PLAN,
+        label: 'Phase3-CR3',
+        revocationAuthorizationId: 'founder:phase3-cr3:revocation:test',
+      }).ok,
+      true,
+    );
+    assert.equal(
+      validatePhase3Plan({ ...PLAN, revocationAuthorizationId: 'founder:unexpected' }).ok,
+      false,
+    );
+  });
+});

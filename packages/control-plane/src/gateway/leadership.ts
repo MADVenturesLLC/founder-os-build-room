@@ -77,14 +77,15 @@ function createBarrier(): Barrier {
   return { promise, resolve };
 }
 
-/** Which pipeline a fenced transaction belongs to. All six are named. */
+/** Which pipeline a fenced transaction belongs to. Every one is named. */
 export type PipelineName =
   | 'sessionStart'
   | 'heartbeat'
   | 'rotation'
   | 'reconciliation'
   | 'stalenessSweep'
-  | 'roomAppend';
+  | 'roomAppend'
+  | 'phase3Run';
 
 export interface FencedOptions {
   readonly pipeline: PipelineName;
@@ -789,6 +790,8 @@ export class GatewayLeadership {
         return this.hooks.stalenessSweep;
       case 'roomAppend':
         return this.hooks.roomAppend;
+      case 'phase3Run':
+        return this.hooks.phase3Run;
       default:
         return undefined;
     }

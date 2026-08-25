@@ -1,0 +1,58 @@
+{
+  "schema": "build-room/phase3-run-evidence@1",
+  "context": {
+    "commit": "2222222222222222222222222222222222222222",
+    "environment": "synthetic-test"
+  },
+  "attempt": {
+    "runAttemptId": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    "runLabel": "Phase3-CR1",
+    "entryAuthorizationId": "founder:synthetic:phase3-cr1",
+    "revocationAuthorizationId": null,
+    "founderOsSha": "1111111111111111111111111111111111111111",
+    "buildRoomSha": "2222222222222222222222222222222222222222",
+    "fixtureRepository": "MADVenturesLLC/synthetic-fixture",
+    "fixtureSha": "3333333333333333333333333333333333333333",
+    "gatewayId": "11111111-2222-4333-8444-555555555555",
+    "enrollmentProjectionSha256": "ce00a522081473f702129d1c305fffb3414046980920fe82da9cf9d257018fc0",
+    "machineIdentity": "synthetic-mac",
+    "environmentLabel": "synthetic-test",
+    "entryEvidenceSha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "state": "awaiting_adjudication",
+    "startedAt": "2026-08-25T12:00:00.000Z",
+    "finishedAt": null
+  },
+  "events": [
+    {
+      "eventId": "10000000-0000-4000-8000-000000000001",
+      "eventIndex": 1,
+      "eventType": "attempt_started",
+      "idempotencyKey": null,
+      "requestSha256": null,
+      "lifecycleStage": null,
+      "stageArtifactSha256": null,
+      "exchangeId": null,
+      "matchedRequestEventId": null,
+      "matchVerified": null,
+      "reasonCode": null,
+      "result": null,
+      "teardownResult": null,
+      "teardownEvidenceSha256": null,
+      "occurredAt": "2026-08-25T12:00:00.000Z"
+    }
+  ],
+  "heartbeat": {
+    "algorithm": "Ed25519",
+    "keyId": "5555555555555555555555555555555555555555555555555555555555555555",
+    "sequence": 1,
+    "timestampMs": 1787659200000,
+    "acceptedAt": "2026-08-25T12:00:01.000Z",
+    "freshnessMs": 1000,
+    "freshnessWindowMs": 300000,
+    "signedBytesBase64": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+    "signatureBase64": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg==",
+    "publicKeyBase64": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=",
+    "signatureVerified": true
+  },
+  "authorizes": "Nothing. This evidence records one Phase 3 counted-run attempt and confers no activation, merge, deployment, spend, later-phase, or Founder authority."
+}

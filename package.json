@@ -21,6 +21,7 @@
     "gate:verify-check": "bash scripts/verify-check.sh",
     "start": "node dist/packages/control-plane/src/main.js",
     "phase2:runs": "node dist/packages/run-harness/src/cli.js",
+    "phase3:counted-run": "bash scripts/phase3-counted-run.sh",
     "test:storage": "npm run build && node dist/test/support/require-test-database-url.js && node --test dist/test/*.storage.test.js",
     "test:custody:macos": "npm run build && BUILDROOM_CUSTODY_MACOS=1 node --test dist/test/custody-macos.test.js",
     "gate:integrity": "bash scripts/contract-integrity-scan.sh",

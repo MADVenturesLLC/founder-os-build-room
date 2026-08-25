@@ -39,7 +39,19 @@ What is built here: the control plane, the cost meter, and the run harness. What
 
 **Gateway Enrollment Pairing (Phase 3's first authorized mechanism) — merged to `main` in [PR #3](https://github.com/MADVenturesLLC/founder-os-build-room/pull/3).** This work is authorized by its own commissioning contract — Gateway Enrollment Pairing Rev 4.7 — not by the Phase 2 authorization above: the three-act pairing (mint → redeem → confirm) with code-only redemption authentication, migration `0003_gateway_registry`, the control-plane side of the signed-message protocol, fenced leadership with published challenges, signed session-start and heartbeat with replay discipline, the macOS daemon with Keychain custody and two identity lanes, and the `buildroom` five-verb CLI. The merged PR records the correction, review, and test evidence for this mechanism. **Nothing here claims the Phase 3 stop gate.** The Founder-reserved Phase 3 run definition is untouched by this branch, and completing the mechanism authorizes nothing.
 
-Phases 3 through 7 carry no authorization beyond that commission — the Gateway Enrollment Pairing mechanism above is the full extent of authorized Phase 3 work. Every phase carries a stop gate that must be Founder-confirmed before the next begins, and no phase ships in the same PR as its predecessor.
+**Phase 3 counted-run harness — implementation commissioned, no run authorized.**
+The Founder adopted the counted-run addendum in FounderOS PR #289 and separately
+commissioned this code slice against Build Room
+`5df7bd222a99e49c5f5a8ea449ffa2ef28a14de4`. The slice adds a sibling Phase 3
+runner, deterministic data-only fixture adapter, migration
+`0005_phase3_run_evidence`, bounded signed-heartbeat evidence and redacted
+export. It does not add a sixth `buildroom` verb, change Phase 2 evidence, or
+authorize `Phase3-CR1`; see `docs/phase3-counted-run-harness.md`.
+
+Phases 3 through 7 carry no authorization beyond the pairing mechanism and the
+counted-run harness commission above. Neither authorizes a counted run. Every
+phase carries a stop gate that must be Founder-confirmed before the next begins,
+and no phase ships in the same PR as its predecessor.
 
 ## Verifying
 
@@ -75,6 +87,9 @@ npm run gate:integrity -- <contract-path>
 # control plane and performing no Founder act.
 npm run smoke:gateway
 ```
+
+The Phase 3 implementation also exposes `npm run phase3:counted-run`. Do not run
+it without a separate Founder entry authorization and a complete nonsecret plan.
 
 Gateway enrolment is documented in `docs/gateway-ops-actions-log-runbook.md`,
 which covers the manual same-day ops-actions-log obligation that attaches when a

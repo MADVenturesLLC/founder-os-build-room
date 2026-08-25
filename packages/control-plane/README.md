@@ -58,11 +58,36 @@ same value as `CONTROL_PLANE_TOKEN`, or every room request answers 401.
 | `GET /rooms/:roomId` | **token** | Log length, entry count, lifecycle snapshot. |
 | `POST /rooms/:roomId/events` | **token** | Append an event. A ledger rejection is 409 carrying the reducer's own code and reason — a recorded outcome, not a server fault. |
 | `GET /rooms/:roomId/export` | **token** | The room's full ledger: events and rejections. |
+| `POST /control-plane/phase3/run-attempts` | **token** | Create one exact started or not-started counted-run attempt. |
+| `POST /control-plane/phase3/run-attempts/:runAttemptId/events` | **token** | Append a closed lifecycle stage or technical completion event. Heartbeat and pass claims are refused. |
+| `GET /control-plane/phase3/run-attempts/:runAttemptId/export` | **token** | Snapshot-consistent, redacted run evidence. |
 
 The three open routes stay open because Railway's health check presents no
 credential and would fail the deploy if `/health` were guarded, and because the
 run harness reads `/version` to prove a restart happened. None of the three
 touches the ledger.
+
+## Phase 3 run evidence
+
+Migration `0005_phase3_run_evidence` adds `phase3_run_attempts`, a retained
+correlation projection with immutable attempt identity, and
+`phase3_run_events`, a closed-schema append-only log. It does not edit the
+existing migrations or widen the six-event `gateway_registry_events`
+vocabulary.
+
+Started attempts bind the complete expected enrollment projection. Creation
+rereads all current rows while holding the registry advisory lock and persists
+the canonical projection digest; any extra or missing row refuses the start.
+
+One accepted heartbeat is correlated inside the existing fenced heartbeat
+transaction. With no active attempt, the added storage path is a no-op. Client
+writes cannot submit heartbeat verification or a passing verdict; technical
+completion stops at `awaiting_adjudication`.
+
+Attempt and lifecycle writes use the same three-checkpoint leadership fence as
+the signed gateway pipelines. A pre-commit demotion rolls the write back; a
+post-commit demotion leaves the legitimately fenced row durable and returns no
+success claim from the stale process.
 
 ## Errors
 
@@ -77,4 +102,6 @@ those strings are author-written and say only what the caller did wrong.
 
 - `docs/phase-2-known-limits.md` — replay cost per append, recorded rather than
   fixed in this phase
+- `docs/phase3-counted-run-harness.md` — Phase 3 plan, fixture, evidence and
+  non-authorization contract
 - `packages/run-harness` — the harness that exercises this surface
