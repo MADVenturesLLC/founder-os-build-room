@@ -355,6 +355,27 @@ describe('Phase 3 attempt runner — lifecycle', () => {
     assert.equal(fixturePort.calls.at(-1), 'disconnect');
   });
 
+  it('preserves response_mismatch when best-effort disconnect evidence throws', async () => {
+    const eventPort = port();
+    const append = eventPort.appendEvent;
+    eventPort.appendEvent = async (runAttemptId, event, expected, signal) => {
+      if (event.kind === 'lifecycle_stage' && event.stage === 'disconnect') {
+        throw new Error('synthetic disconnect evidence failure');
+      }
+      return append(runAttemptId, event, expected, signal);
+    };
+
+    const result = await performPhase3Attempt(PLAN, deps(eventPort, fixture(false)));
+
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.reasonCode, 'response_mismatch');
+    const terminal = eventPort.events.filter((event) => event.kind === 'attempt_finished');
+    assert.equal(terminal.length, 1);
+    if (terminal[0]?.kind === 'attempt_finished') {
+      assert.equal(terminal[0].reasonCode, 'response_mismatch');
+    }
+  });
+
   it('interrupts when the fixture SHA or cleanliness drifts after lifecycle work', async () => {
     const eventPort = port();
     const result = await performPhase3Attempt(PLAN, deps(eventPort, fixture(), OBSERVATION, false));
@@ -516,6 +537,30 @@ describe('Phase 3 attempt runner — lifecycle', () => {
         ).length,
         0,
       );
+    }
+  });
+
+  it('does not append a second terminal event when post-final export rejects', async () => {
+    const eventPort = port();
+    eventPort.exportAttempt = async () => {
+      throw clientError('unauthorized', 401);
+    };
+
+    await assert.rejects(
+      performPhase3Attempt(PLAN, deps(eventPort, fixture())),
+      (error: unknown) =>
+        error instanceof Error &&
+        'code' in error &&
+        (error as { code: unknown }).code === 'unauthorized',
+    );
+    assert.equal(
+      eventPort.events.filter((event) => event.kind === 'attempt_finished').length,
+      1,
+    );
+    const terminal = eventPort.events.at(-1);
+    assert.equal(terminal?.kind, 'attempt_finished');
+    if (terminal?.kind === 'attempt_finished') {
+      assert.equal(terminal.result, 'awaiting_adjudication');
     }
   });
 });

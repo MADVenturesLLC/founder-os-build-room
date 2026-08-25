@@ -250,8 +250,9 @@ describe('Phase 3 run routes — closed write and export surface', { skip: STORA
   });
 
   it('does not expose adjudication to the harness-held control-plane token', async () => {
+    const { input } = await createAwaitingAttempt();
     const response = await request(
-      `/control-plane/phase3/run-attempts/${randomUUID()}/adjudication`,
+      `/control-plane/phase3/run-attempts/${input.runAttemptId}/adjudication`,
       'POST',
       {
         idempotencyKey: randomUUID(),
@@ -266,22 +267,7 @@ describe('Phase 3 run routes — closed write and export surface', { skip: STORA
 
   it('authenticates adjudication separately before parsing and then permits CR2', async () => {
     await restartNode({}, { phase3AdjudicationToken: ADJUDICATION_TOKEN });
-    const gateway = await enrollGateway(node!);
-    const epoch = await openSession(node!, gateway);
-    const input = attemptBody(gateway.gatewayId);
-    await node!.surface.phase3Runs.createAttempt(input);
-    assert.equal(
-      (await node!.service.heartbeat(signedBeat(node!, gateway, epoch, 1), TEST_IP)).status,
-      200,
-    );
-    await appendCompleteLifecycle(input.runAttemptId);
-    await node!.surface.phase3Runs.appendEvent(input.runAttemptId, {
-      kind: 'attempt_finished',
-      idempotencyKey: randomUUID(),
-      result: 'awaiting_adjudication',
-      teardownResult: 'completed',
-      teardownEvidenceSha256: '8'.repeat(64),
-    });
+    const { input, gateway } = await createAwaitingAttempt();
     const path = `/control-plane/phase3/run-attempts/${input.runAttemptId}/adjudication`;
     const body = {
       idempotencyKey: randomUUID(),
@@ -410,6 +396,26 @@ function attemptBody(gatewayId: string = randomUUID()) {
     entryEvidence,
     entryEvidenceSha256: phase3EntryEvidenceSha256(entryEvidence),
   } as const;
+}
+
+async function createAwaitingAttempt() {
+  const gateway = await enrollGateway(node!);
+  const epoch = await openSession(node!, gateway);
+  const input = attemptBody(gateway.gatewayId);
+  await node!.surface.phase3Runs.createAttempt(input);
+  assert.equal(
+    (await node!.service.heartbeat(signedBeat(node!, gateway, epoch, 1), TEST_IP)).status,
+    200,
+  );
+  await appendCompleteLifecycle(input.runAttemptId);
+  await node!.surface.phase3Runs.appendEvent(input.runAttemptId, {
+    kind: 'attempt_finished',
+    idempotencyKey: randomUUID(),
+    result: 'awaiting_adjudication',
+    teardownResult: 'completed',
+    teardownEvidenceSha256: '8'.repeat(64),
+  });
+  return { input, gateway };
 }
 
 async function appendCompleteLifecycle(runAttemptId: string): Promise<void> {

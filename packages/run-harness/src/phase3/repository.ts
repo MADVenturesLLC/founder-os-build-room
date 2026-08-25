@@ -140,7 +140,17 @@ async function gitRaw(path: string, args: readonly string[], maxBuffer: number):
 
   const { stdout } = await execute(
     '/usr/bin/git',
-    ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-C', path, ...args],
+    [
+      '-c',
+      'core.fsmonitor=false',
+      '-c',
+      'core.hooksPath=/dev/null',
+      '-c',
+      'core.excludesFile=/dev/null',
+      '-C',
+      path,
+      ...args,
+    ],
     { env: environment, maxBuffer },
   );
   return stdout;
@@ -159,5 +169,7 @@ export function phase3RepositoryGitEnvironment(
   }
   environment['GIT_OPTIONAL_LOCKS'] = '0';
   environment['GIT_TERMINAL_PROMPT'] = '0';
+  environment['GIT_CONFIG_NOSYSTEM'] = '1';
+  environment['GIT_CONFIG_GLOBAL'] = '/dev/null';
   return environment;
 }

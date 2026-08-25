@@ -81,6 +81,8 @@ describe('Phase 3 fixture repository binding', () => {
       LC_ALL: 'C',
       GIT_OPTIONAL_LOCKS: '0',
       GIT_TERMINAL_PROMPT: '0',
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: '/dev/null',
     });
   });
 
@@ -110,6 +112,31 @@ describe('Phase 3 fixture repository binding', () => {
       if (originalPath === undefined) delete process.env['PATH'];
       else process.env['PATH'] = originalPath;
     }
+  });
+
+  it('does not let Git exclude configuration hide an untracked file', async () => {
+    const repository = await fixtureRepository();
+    const excludeDirectory = await mkdtemp(join(tmpdir(), 'phase3-git-excludes-'));
+    tempDirectories.push(excludeDirectory);
+    const excludes = join(excludeDirectory, 'global-excludes');
+    await writeFile(excludes, 'hidden-by-config.txt\n', 'utf8');
+    await run('/usr/bin/git', [
+      '-C',
+      repository.path,
+      'config',
+      'core.excludesFile',
+      excludes,
+    ]);
+    await writeFile(join(repository.path, 'hidden-by-config.txt'), 'must be detected\n', 'utf8');
+
+    await assert.rejects(
+      verifyFixtureRepository({
+        path: repository.path,
+        expectedSha: repository.sha,
+        expectedRepository: FIXTURE_REPOSITORY,
+      }),
+      /fixture_dirty/,
+    );
   });
 
   it('verifies FounderOS root, origin, cleanliness, presence, and authority SHA before entry', async () => {

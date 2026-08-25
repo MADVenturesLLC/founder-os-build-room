@@ -1,4 +1,5 @@
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from 'node:path';
 import type { Phase3AttemptPlan } from './model.js';
 import { validatePhase3Plan } from './plan.js';
@@ -38,15 +39,7 @@ export async function loadPhase3CliConfig(
     throw new Error('PHASE3_EVIDENCE_PATH must be absolute and not a filesystem root');
   }
 
-  const metadata = await stat(planPath);
-  if (!metadata.isFile() || metadata.size > 64 * 1024) throw new Error('PHASE3_PLAN_PATH is not a bounded file');
-
-  let raw: unknown;
-  try {
-    raw = JSON.parse(await readFile(planPath, 'utf8'));
-  } catch {
-    throw new Error('PHASE3_PLAN_PATH contains invalid JSON');
-  }
+  const raw = await readPhase3PlanFile(planPath);
   const plan = validatePhase3Plan(raw);
   if (!plan.ok) throw new Error(plan.code);
   let configuredOrigin: string;
@@ -110,6 +103,44 @@ export async function loadPhase3CliConfig(
     evidenceReservation,
     plan: plan.value,
   };
+}
+
+export async function readPhase3PlanFile(path: string): Promise<unknown> {
+  const handle = await open(
+    path,
+    constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+  );
+  try {
+    const before = await handle.stat();
+    if (!before.isFile() || before.size > 64 * 1024) {
+      throw new Error('PHASE3_PLAN_PATH is not a bounded file');
+    }
+    const bytes = Buffer.alloc(before.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const read = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (read.bytesRead === 0) break;
+      offset += read.bytesRead;
+    }
+    const after = await handle.stat();
+    if (
+      offset !== before.size ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs
+    ) {
+      throw new Error('PHASE3_PLAN_PATH changed while being read');
+    }
+    try {
+      return JSON.parse(bytes.toString('utf8')) as unknown;
+    } catch {
+      throw new Error('PHASE3_PLAN_PATH contains invalid JSON');
+    }
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 }
 
 async function canonicalTarget(path: string): Promise<string> {

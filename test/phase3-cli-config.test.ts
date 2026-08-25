@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, open, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { promisify } from 'node:util';
-import { loadPhase3CliConfig } from '../packages/run-harness/src/phase3/cli-config.js';
+import {
+  loadPhase3CliConfig,
+  readPhase3PlanFile,
+} from '../packages/run-harness/src/phase3/cli-config.js';
 
 const directories: string[] = [];
 const execute = promisify(execFile);
@@ -52,6 +55,41 @@ async function planFile(extra: Record<string, unknown> = {}): Promise<string> {
 }
 
 describe('Phase 3 CLI configuration', () => {
+  it('reads plan JSON through a bounded single-file handle', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'phase3-plan-reader-'));
+    directories.push(directory);
+    const path = join(directory, 'plan.json');
+    await writeFile(path, '{"plan":"bounded"}\n', 'utf8');
+    assert.deepEqual(await readPhase3PlanFile(path), { plan: 'bounded' });
+
+    await writeFile(path, 'x'.repeat(64 * 1024 + 1), 'utf8');
+    await assert.rejects(readPhase3PlanFile(path), /PHASE3_PLAN_PATH is not a bounded file/);
+    await writeFile(path, '{invalid', 'utf8');
+    await assert.rejects(readPhase3PlanFile(path), /PHASE3_PLAN_PATH contains invalid JSON/);
+  });
+
+  it('rejects a FIFO without blocking before regular-file validation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'phase3-plan-fifo-'));
+    directories.push(directory);
+    const path = join(directory, 'plan.fifo');
+    await execute('/usr/bin/mkfifo', [path]);
+    let rescue: Awaited<ReturnType<typeof open>> | undefined;
+    const timer = setTimeout(() => {
+      void open(path, 'w').then((handle) => {
+        rescue = handle;
+        return handle.close();
+      });
+    }, 100);
+    const started = Date.now();
+    try {
+      await assert.rejects(readPhase3PlanFile(path), /PHASE3_PLAN_PATH is not a bounded file/);
+      assert.equal(Date.now() - started < 75, true, 'FIFO validation blocked in open');
+    } finally {
+      clearTimeout(timer);
+      await rescue?.close().catch(() => undefined);
+    }
+  });
+
   it('loads a strict nonsecret plan and absolute private evidence destination', async () => {
     const planPath = await planFile();
     const evidencePath = join(dirname(planPath), 'evidence');

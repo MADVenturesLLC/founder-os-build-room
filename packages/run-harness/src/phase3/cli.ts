@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { arch, hostname, platform } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -156,7 +157,7 @@ async function runConfiguredPhase3(config: Phase3CliConfig): Promise<number> {
             return false;
           }
         },
-        newId: crypto.randomUUID,
+        newId: phase3NewId,
         now: () => new Date().toISOString(),
         signal,
       }),
@@ -295,6 +296,10 @@ async function localMachineIdentity(): Promise<string> {
 
 export function formatMachineIdentity(host: string, version: string, architecture: string): string {
   return `${host}+macOS:${version}+${architecture}`;
+}
+
+export function phase3NewId(): string {
+  return randomUUID();
 }
 
 export async function withPhase3TerminationSignals<T>(

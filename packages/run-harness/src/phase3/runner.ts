@@ -190,12 +190,16 @@ export async function performPhase3Attempt(
       // The control plane records the missing matched-response as the durable
       // refusal. A physical disconnect still occurs, but its out-of-order
       // evidence refusal must not replace the original response mismatch.
-      await deps.eventPort.appendEvent(plan.runAttemptId, {
-        kind: 'lifecycle_stage',
-        idempotencyKey: deps.newId(),
-        stage: 'disconnect',
-        artifactSha256: disconnected.artifactSha256,
-      }, expected);
+      try {
+        await deps.eventPort.appendEvent(plan.runAttemptId, {
+          kind: 'lifecycle_stage',
+          idempotencyKey: deps.newId(),
+          stage: 'disconnect',
+          artifactSha256: disconnected.artifactSha256,
+        }, expected);
+      } catch {
+        // The known response mismatch remains the terminal reason.
+      }
       return finish(
         plan,
         deps,

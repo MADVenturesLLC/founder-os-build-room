@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { describe, it } from 'node:test';
+import { phase3NewId } from '../packages/run-harness/src/phase3/cli.js';
 
 describe('Phase 3 CLI entrypoint — fail before live collaborators', () => {
+  it('generates UUIDs without relying on a Web Crypto receiver', () => {
+    assert.match(
+      phase3NewId(),
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
+
   it('exits nonzero on missing configuration without touching a live surface', async () => {
     const result = await run({});
     assert.equal(result.code, 1);

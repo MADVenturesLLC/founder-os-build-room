@@ -707,6 +707,7 @@ describe('Phase 3 run store — ordered, bounded evidence', { skip: STORAGE_SKIP
       await blocker.query('BEGIN');
       await blocker.query('SELECT pg_advisory_xact_lock($1)', [GATEWAY_REGISTRY_LOCK_KEY]);
       const creating = store!.createAttempt(input);
+      void creating.catch(() => undefined);
       await waitForWaitingAdvisoryLock();
 
       await contender.query('BEGIN');
@@ -738,6 +739,7 @@ describe('Phase 3 run store — ordered, bounded evidence', { skip: STORAGE_SKIP
       await blocker.query('BEGIN');
       await blocker.query('SELECT pg_advisory_xact_lock($1)', [GATEWAY_REGISTRY_LOCK_KEY]);
       const creating = shortWindowStore.createAttempt(input);
+      void creating.catch(() => undefined);
       await waitForWaitingAdvisoryLock();
       await new Promise((resolve) => setTimeout(resolve, 50));
       await blocker.query('COMMIT');
@@ -1250,6 +1252,7 @@ async function capture(gatewayId: string): Promise<void> {
     assert.equal(await store!.captureHeartbeat(client, heartbeatEvidence(gatewayId)), true);
     await client.query('COMMIT');
   } finally {
+    await client.query('ROLLBACK').catch(() => undefined);
     client.release();
   }
 }
