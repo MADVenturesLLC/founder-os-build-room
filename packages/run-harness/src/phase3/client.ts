@@ -22,12 +22,41 @@ export type Phase3Fetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+export const PHASE3_DIAGNOSTIC_OPERATION_STAGES = [
+  'attempt_create',
+  'attempt_reconcile',
+  'event_append',
+  'event_reconcile',
+  'evidence_export',
+] as const;
+export type Phase3DiagnosticOperationStage =
+  (typeof PHASE3_DIAGNOSTIC_OPERATION_STAGES)[number];
+export const PHASE3_DIAGNOSTIC_FAILURE_CLASSES = [
+  'request_serialization',
+  'request_construction',
+  'dns_resolution',
+  'tls_connection',
+  'connection_reset',
+  'request_timeout',
+  'http_5xx',
+  'invalid_response',
+  'response_too_large',
+  'transport_other',
+] as const;
+export type Phase3DiagnosticFailureClass =
+  (typeof PHASE3_DIAGNOSTIC_FAILURE_CLASSES)[number];
+export interface Phase3CommitDiagnostic {
+  readonly operationStage: Phase3DiagnosticOperationStage;
+  readonly failureClass: Phase3DiagnosticFailureClass;
+}
+
 const MAX_RESPONSE_BYTES = 256 * 1024;
 
 export class Phase3ClientError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    readonly diagnostic?: Phase3CommitDiagnostic,
   ) {
     super(`control plane request failed (${status} ${code})`);
     this.name = 'Phase3ClientError';
@@ -74,9 +103,10 @@ export class Phase3ControlPlaneClient {
     requireExpectation(input.runAttemptId, input, expected);
     const deadline = this.writeReconciliationDeadline();
     let ambiguous = false;
+    let diagnostic: Phase3CommitDiagnostic | undefined;
     for (;;) {
       const remaining = remainingBudget(deadline);
-      if (remaining === 0) throw new Phase3ClientError(0, 'commit_outcome_unresolved');
+      if (remaining === 0) throw unresolvedCommit(diagnostic);
       try {
         const result = validateAttemptCreation(
           await this.request(
@@ -87,18 +117,30 @@ export class Phase3ControlPlaneClient {
             [],
             signal,
             remaining,
+            'attempt_create',
           ),
           input.runAttemptId,
         );
         if (ambiguous && !result.created) {
-          const exported = await this.readAfterAmbiguous(input.runAttemptId, expected, deadline);
+          const exported = await this.readAfterAmbiguous(
+            input.runAttemptId,
+            expected,
+            deadline,
+            'attempt_reconcile',
+          );
           return { ...result, reconciled: exported !== null && resumableCreation(exported, input) };
         }
         return { ...result, reconciled: ambiguous };
       } catch (error) {
         if (!ambiguousWrite(error)) throw error;
         ambiguous = true;
-        const exported = await this.readAfterAmbiguous(input.runAttemptId, expected, deadline);
+        diagnostic ??= diagnosticFrom(error, 'attempt_create');
+        const exported = await this.readAfterAmbiguous(
+          input.runAttemptId,
+          expected,
+          deadline,
+          'attempt_reconcile',
+        );
         if (exported !== null) {
           return {
             created: false,
@@ -108,10 +150,10 @@ export class Phase3ControlPlaneClient {
           };
         }
         if (signal?.aborted === true || Date.now() >= deadline) {
-          throw new Phase3ClientError(0, 'commit_outcome_unresolved');
+          throw unresolvedCommit(diagnostic);
         }
         await delay(Math.min(this.pollIntervalMs, deadline - Date.now()), signal).catch(() => {
-          throw new Phase3ClientError(0, 'commit_outcome_unresolved');
+          throw unresolvedCommit(diagnostic);
         });
       }
     }
@@ -125,9 +167,10 @@ export class Phase3ControlPlaneClient {
   ): Promise<Phase3AppendResult> {
     requireExpectation(runAttemptId, expected.attempt, expected);
     const deadline = this.writeReconciliationDeadline();
+    let diagnostic: Phase3CommitDiagnostic | undefined;
     for (;;) {
       const remaining = remainingBudget(deadline);
-      if (remaining === 0) throw new Phase3ClientError(0, 'commit_outcome_unresolved');
+      if (remaining === 0) throw unresolvedCommit(diagnostic);
       try {
         return validateAppendResult(
           await this.request(
@@ -138,18 +181,25 @@ export class Phase3ControlPlaneClient {
             [409],
             signal,
             remaining,
+            'event_append',
           ),
         );
       } catch (error) {
         if (!ambiguousWrite(error)) throw error;
-        const exported = await this.readAfterAmbiguous(runAttemptId, expected, deadline);
+        diagnostic ??= diagnosticFrom(error, 'event_append');
+        const exported = await this.readAfterAmbiguous(
+          runAttemptId,
+          expected,
+          deadline,
+          'event_reconcile',
+        );
         const reconciled = exported === null ? null : reconciledAppend(exported, event);
         if (reconciled !== null) return reconciled;
         if (signal?.aborted === true || Date.now() >= deadline) {
-          throw new Phase3ClientError(0, 'commit_outcome_unresolved');
+          throw unresolvedCommit(diagnostic);
         }
         await delay(Math.min(this.pollIntervalMs, deadline - Date.now()), signal).catch(() => {
-          throw new Phase3ClientError(0, 'commit_outcome_unresolved');
+          throw unresolvedCommit(diagnostic);
         });
       }
     }
@@ -160,6 +210,7 @@ export class Phase3ControlPlaneClient {
     expected: Phase3EvidenceExpectation,
     signal?: AbortSignal,
     timeoutMs = this.requestTimeoutMs,
+    operationStage: Phase3DiagnosticOperationStage = 'evidence_export',
   ): Promise<Phase3EvidenceExport> {
     return this.request(
       'GET',
@@ -169,6 +220,7 @@ export class Phase3ControlPlaneClient {
       [],
       signal,
       timeoutMs,
+      operationStage,
     ).then((value) => validateEvidenceExport(value, runAttemptId, expected));
   }
 
@@ -229,11 +281,18 @@ export class Phase3ControlPlaneClient {
     runAttemptId: string,
     expected: Phase3EvidenceExpectation,
     deadline: number,
+    operationStage: 'attempt_reconcile' | 'event_reconcile',
   ): Promise<Phase3EvidenceExport | null> {
     const remaining = remainingBudget(deadline);
     if (remaining === 0) return null;
     try {
-      return await this.exportAttempt(runAttemptId, expected, undefined, remaining);
+      return await this.exportAttempt(
+        runAttemptId,
+        expected,
+        undefined,
+        remaining,
+        operationStage,
+      );
     } catch (error) {
       if (
         error instanceof Phase3ClientError &&
@@ -241,7 +300,12 @@ export class Phase3ControlPlaneClient {
           error.code === 'evidence_identity_mismatch' ||
           error.code === 'response_too_large')
       ) {
-        throw new Phase3ClientError(0, 'commit_outcome_unresolved');
+        throw unresolvedCommit(
+          diagnosticFrom(error, operationStage) ?? {
+            operationStage,
+            failureClass: 'invalid_response',
+          },
+        );
       }
       if (
         error instanceof Phase3ClientError &&
@@ -263,7 +327,17 @@ export class Phase3ControlPlaneClient {
     acceptedStatuses: readonly number[] = [],
     externalSignal?: AbortSignal,
     timeoutMs = this.requestTimeoutMs,
+    operationStage: Phase3DiagnosticOperationStage = 'evidence_export',
   ): Promise<unknown> {
+    let serializedBody: string | undefined;
+    try {
+      serializedBody = body === undefined ? undefined : JSON.stringify(body);
+    } catch {
+      throw new Phase3ClientError(0, 'transport_error', {
+        operationStage,
+        failureClass: 'request_serialization',
+      });
+    }
     let response: Response;
     try {
       const timeout = AbortSignal.timeout(Math.max(1, Math.min(this.requestTimeoutMs, timeoutMs)));
@@ -275,11 +349,11 @@ export class Phase3ControlPlaneClient {
           ...(authenticated ? { authorization: `Bearer ${this.token}` } : {}),
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(serializedBody === undefined ? {} : { body: serializedBody }),
       });
-    } catch {
+    } catch (error) {
       if (externalSignal?.aborted === true) throw new Phase3AbortError();
-      throw new Phase3ClientError(0, 'transport_error');
+      throw new Phase3ClientError(0, 'transport_error', classifyTransport(error, operationStage));
     }
 
     const accepted = response.ok || acceptedStatuses.includes(response.status);
@@ -287,8 +361,15 @@ export class Phase3ControlPlaneClient {
     try {
       parsed = JSON.parse(await readBoundedText(response));
     } catch (error) {
-      if (error instanceof Phase3ClientError) throw error;
-      if (accepted) throw new Phase3ClientError(response.status, 'invalid_response');
+      if (error instanceof Phase3ClientError) {
+        throw withDiagnostic(error, operationStage);
+      }
+      if (accepted) {
+        throw new Phase3ClientError(response.status, 'invalid_response', {
+          operationStage,
+          failureClass: 'invalid_response',
+        });
+      }
     }
     if (!response.ok && acceptedStatuses.includes(response.status)) {
       const record = asRecord(parsed);
@@ -304,10 +385,112 @@ export class Phase3ControlPlaneClient {
         typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
           ? String((parsed as Record<string, unknown>)['error'] ?? 'request_refused')
           : 'request_refused';
-      throw new Phase3ClientError(response.status, safeCode(code));
+      throw new Phase3ClientError(
+        response.status,
+        safeCode(code),
+        response.status >= 500
+          ? { operationStage, failureClass: 'http_5xx' }
+          : undefined,
+      );
     }
     return parsed;
   }
+}
+
+function diagnosticFrom(
+  error: unknown,
+  operationStage: Phase3DiagnosticOperationStage,
+): Phase3CommitDiagnostic | undefined {
+  if (!(error instanceof Phase3ClientError)) return undefined;
+  if (error.diagnostic !== undefined) return error.diagnostic;
+  if (error.code === 'invalid_response') {
+    return { operationStage, failureClass: 'invalid_response' };
+  }
+  if (error.code === 'response_too_large') {
+    return { operationStage, failureClass: 'response_too_large' };
+  }
+  if (error.status >= 500) return { operationStage, failureClass: 'http_5xx' };
+  return undefined;
+}
+
+function unresolvedCommit(diagnostic?: Phase3CommitDiagnostic): Phase3ClientError {
+  return new Phase3ClientError(0, 'commit_outcome_unresolved', diagnostic);
+}
+
+function classifyTransport(
+  error: unknown,
+  operationStage: Phase3DiagnosticOperationStage,
+): Phase3CommitDiagnostic {
+  const code = safeErrorCode(error);
+  const name = safeErrorName(error);
+  const topLevelName =
+    typeof error === 'object' && error !== null && typeof (error as { name?: unknown }).name === 'string'
+      ? String((error as { name: string }).name)
+      : null;
+  let failureClass: Phase3DiagnosticFailureClass = 'transport_other';
+  if (
+    code === 'UND_ERR_INVALID_ARG' ||
+    code === 'ERR_INVALID_CHAR' ||
+    (code === null && topLevelName === 'TypeError')
+  ) {
+    failureClass = 'request_construction';
+  } else if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') failureClass = 'dns_resolution';
+  else if (
+    code === 'CERT_HAS_EXPIRED' ||
+    code === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
+    code === 'ERR_TLS_CERT_ALTNAME_INVALID' ||
+    code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'
+  ) {
+    failureClass = 'tls_connection';
+  } else if (code === 'ECONNRESET' || code === 'EPIPE' || code === 'UND_ERR_SOCKET') {
+    failureClass = 'connection_reset';
+  } else if (
+    name === 'TimeoutError' ||
+    code === 'ETIMEDOUT' ||
+    code === 'UND_ERR_CONNECT_TIMEOUT' ||
+    code === 'UND_ERR_HEADERS_TIMEOUT' ||
+    code === 'UND_ERR_BODY_TIMEOUT'
+  ) {
+    failureClass = 'request_timeout';
+  }
+  return {
+    operationStage,
+    failureClass,
+  };
+}
+
+function withDiagnostic(
+  error: Phase3ClientError,
+  operationStage: Phase3DiagnosticOperationStage,
+): Phase3ClientError {
+  return error.diagnostic === undefined
+    ? new Phase3ClientError(error.status, error.code, diagnosticFrom(error, operationStage))
+    : error;
+}
+
+function safeErrorCode(error: unknown): string | null {
+  return safeErrorField(error, 'code', () => true);
+}
+
+function safeErrorName(error: unknown): string | null {
+  return safeErrorField(error, 'name', (value) => value !== 'TypeError' && value !== 'Error');
+}
+
+function safeErrorField(
+  error: unknown,
+  field: 'code' | 'name',
+  accept: (value: string) => boolean,
+): string | null {
+  const seen = new Set<unknown>();
+  let current = error;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (typeof current !== 'object' || current === null || seen.has(current)) return null;
+    seen.add(current);
+    const value = (current as Record<string, unknown>)[field];
+    if (typeof value === 'string' && accept(value)) return value;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
 }
 
 function validateAttemptCreation(

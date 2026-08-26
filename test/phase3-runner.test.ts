@@ -11,6 +11,7 @@ import type {
 } from '../packages/run-harness/src/phase3/model.js';
 import {
   Phase3AbortError,
+  Phase3ClientError,
 } from '../packages/run-harness/src/phase3/client.js';
 import {
   performPhase3Attempt,
@@ -373,6 +374,43 @@ describe('Phase 3 attempt runner — fail-closed entry', () => {
       assert.equal(JSON.stringify(result.evidence).includes('"outcome":"failed"'), false);
       assert.deepEqual(fixturePort.calls, []);
     }
+  });
+
+  it('carries only the closed client diagnostic into versioned local evidence', async () => {
+    const eventPort = port();
+    eventPort.createAttempt = async () => {
+      throw Object.assign(
+        new Phase3ClientError(0, 'commit_outcome_unresolved', {
+          operationStage: 'attempt_create',
+          failureClass: 'dns_resolution',
+        }),
+        {
+        unsafeDetail: 'Bearer must-not-land',
+        },
+      );
+    };
+    eventPort.exportAttempt = async () => {
+      throw clientError('attempt_not_found', 404);
+    };
+
+    const result = await performPhase3Attempt(PLAN, deps(eventPort, fixture()));
+
+    assert.equal(result.outcome, 'unresolved_commit');
+    assert.deepEqual(
+      {
+        schema: (result.evidence as Record<string, unknown>)['schema'],
+        diagnostic: (result.evidence as Record<string, unknown>)['diagnostic'],
+        leaked: JSON.stringify(result.evidence).includes('must-not-land'),
+      },
+      {
+        schema: 'build-room/phase3-local-unresolved@2',
+        diagnostic: {
+          operationStage: 'attempt_create',
+          failureClass: 'dns_resolution',
+        },
+        leaked: false,
+      },
+    );
   });
 });
 

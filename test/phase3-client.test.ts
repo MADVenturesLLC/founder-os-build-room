@@ -531,8 +531,290 @@ describe('Phase 3 HTTP client — untrusted responses', () => {
     );
     await assert.rejects(
       client.createAttempt(EXPECTED.attempt, EXPECTED),
-      (error: unknown) =>
-        error instanceof Phase3ClientError && error.code === 'commit_outcome_unresolved',
+      (error: unknown) => {
+        assert.equal(error instanceof Phase3ClientError, true);
+        assert.equal((error as Phase3ClientError).code, 'commit_outcome_unresolved');
+        assert.deepEqual(
+          (error as Phase3ClientError & { diagnostic?: unknown }).diagnostic,
+          {
+            operationStage: 'attempt_create',
+            failureClass: 'invalid_response',
+          },
+        );
+        return true;
+      },
+    );
+  });
+
+  it('retains a closed DNS diagnostic when attempt creation never receives a response', async () => {
+    const sensitiveMessage = 'fetch failed for Bearer must-not-land';
+    let attemptedWrites = 0;
+    let reconciliationReads = 0;
+    const client = new Phase3ControlPlaneClient(
+      'https://control-plane.example',
+      'sensitive-test-token',
+      5,
+      1,
+      async (_input, init) => {
+        if (init?.method === 'POST') {
+          attemptedWrites += 1;
+          throw Object.assign(new TypeError(sensitiveMessage), { cause: { code: 'ENOTFOUND' } });
+        }
+        reconciliationReads += 1;
+        return new Response(JSON.stringify({ error: 'attempt_not_found' }), { status: 404 });
+      },
+    );
+
+    await assert.rejects(
+      client.createAttempt(EXPECTED.attempt, EXPECTED),
+      (error: unknown) => {
+        assert.equal(error instanceof Phase3ClientError, true);
+        assert.equal((error as Phase3ClientError).code, 'commit_outcome_unresolved');
+        assert.deepEqual(
+          (error as Phase3ClientError & { diagnostic?: unknown }).diagnostic,
+          {
+            operationStage: 'attempt_create',
+            failureClass: 'dns_resolution',
+          },
+        );
+        assert.equal(JSON.stringify(error).includes(sensitiveMessage), false);
+        return true;
+      },
+    );
+    assert.equal(attemptedWrites > 0, true);
+    assert.equal(reconciliationReads > 0, true);
+  });
+
+  for (const testCase of [
+    {
+      name: 'request construction failure',
+      code: 'UND_ERR_INVALID_ARG',
+      failureClass: 'request_construction',
+    },
+    { name: 'TLS failure', code: 'CERT_HAS_EXPIRED', failureClass: 'tls_connection' },
+    { name: 'connection reset', code: 'ECONNRESET', failureClass: 'connection_reset' },
+    { name: 'request timeout', code: 'UND_ERR_CONNECT_TIMEOUT', failureClass: 'request_timeout' },
+  ] as const) {
+    it(`retains a closed ${testCase.name} diagnostic`, async () => {
+      const client = new Phase3ControlPlaneClient(
+        'https://control-plane.example',
+        'sensitive-test-token',
+        5,
+        1,
+        async (_input, init) => {
+          if (init?.method === 'POST') {
+            throw Object.assign(new TypeError('must-not-land'), {
+              cause: { code: testCase.code },
+            });
+          }
+          return new Response(JSON.stringify({ error: 'attempt_not_found' }), { status: 404 });
+        },
+      );
+
+      await assert.rejects(
+        client.createAttempt(EXPECTED.attempt, EXPECTED),
+        (error: unknown) => {
+          assert.deepEqual(
+            (error as Phase3ClientError & { diagnostic?: unknown }).diagnostic,
+            {
+              operationStage: 'attempt_create',
+              failureClass: testCase.failureClass,
+            },
+          );
+          assert.equal(JSON.stringify(error).includes('must-not-land'), false);
+          return true;
+        },
+      );
+    });
+  }
+
+  it('classifies request serialization before the fetch boundary', async () => {
+    let fetchCalls = 0;
+    const input = Object.defineProperty({ ...EXPECTED.attempt }, 'toJSON', {
+      enumerable: false,
+      value: () => {
+        throw new TypeError('must-not-land');
+      },
+    });
+    const expected = { ...EXPECTED, attempt: input } as Phase3EvidenceExpectation;
+    const client = new Phase3ControlPlaneClient(
+      'https://control-plane.example',
+      'sensitive-test-token',
+      5,
+      1,
+      async () => {
+        fetchCalls += 1;
+        return new Response(JSON.stringify({ error: 'attempt_not_found' }), { status: 404 });
+      },
+    );
+
+    await assert.rejects(
+      client.createAttempt(input, expected),
+      (error: unknown) => {
+        assert.deepEqual(
+          (error as Phase3ClientError & { diagnostic?: unknown }).diagnostic,
+          {
+            operationStage: 'attempt_create',
+            failureClass: 'request_serialization',
+          },
+        );
+        assert.equal(JSON.stringify(error).includes('must-not-land'), false);
+        return true;
+      },
+    );
+    assert.equal(fetchCalls > 0, true, 'reconciliation reads still use the fetch boundary');
+  });
+
+  it('retains HTTP 5xx as the mutation failure after unsuccessful reconciliation', async () => {
+    const client = new Phase3ControlPlaneClient(
+      'https://control-plane.example',
+      'sensitive-test-token',
+      5,
+      1,
+      async (_input, init) =>
+        init?.method === 'POST'
+          ? new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 })
+          : new Response(JSON.stringify({ error: 'attempt_not_found' }), { status: 404 }),
+    );
+
+    await assert.rejects(
+      client.createAttempt(EXPECTED.attempt, EXPECTED),
+      (error: unknown) => {
+        assert.deepEqual(
+          (error as Phase3ClientError & { diagnostic?: unknown }).diagnostic,
+          {
+            operationStage: 'attempt_create',
+            failureClass: 'http_5xx',
+          },
+        );
+        return true;
+      },
+    );
+  });
+
+  it('retains an oversized mutation response as the unresolved cause', async () => {
+    const client = new Phase3ControlPlaneClient(
+      'https://control-plane.example',
+      'sensitive-test-token',
+      5,
+      1,
+      async (_input, init) =>
+        init?.method === 'POST'
+          ? new Response('{}', {
+              status: 201,
+              headers: { 'content-length': String(300_000) },
+            })
+          : new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 }),
+    );
+
+    await assert.rejects(
+      client.createAttempt(EXPECTED.attempt, EXPECTED),
+      (error: unknown) => {
+        assert.deepEqual(
+          (error as Phase3ClientError & { diagnostic?: unknown }).diagnostic,
+          {
+            operationStage: 'attempt_create',
+            failureClass: 'response_too_large',
+          },
+        );
+        return true;
+      },
+    );
+  });
+
+  it('binds an unresolved append transport failure to the event operation', async () => {
+    const client = new Phase3ControlPlaneClient(
+      'https://control-plane.example',
+      'sensitive-test-token',
+      5,
+      1,
+      async (_input, init) => {
+        if (init?.method === 'POST') {
+          throw Object.assign(new TypeError('must-not-land'), { cause: { code: 'ECONNRESET' } });
+        }
+        return new Response(JSON.stringify({ error: 'attempt_not_found' }), { status: 404 });
+      },
+    );
+
+    await assert.rejects(
+      client.appendEvent(
+        ATTEMPT_ID,
+        {
+          kind: 'lifecycle_stage',
+          idempotencyKey: '20000000-0000-4000-8000-000000000099',
+          stage: 'connect',
+          artifactSha256: '7'.repeat(64),
+        },
+        EXPECTED,
+      ),
+      (error: unknown) => {
+        assert.deepEqual(
+          (error as Phase3ClientError & { diagnostic?: unknown }).diagnostic,
+          {
+            operationStage: 'event_append',
+            failureClass: 'connection_reset',
+          },
+        );
+        return true;
+      },
+    );
+  });
+
+  it('bounds hostile cyclic error causes without retaining their text', async () => {
+    const cyclic = new TypeError('Bearer must-not-land') as TypeError & { cause?: unknown };
+    cyclic.cause = cyclic;
+    const client = new Phase3ControlPlaneClient(
+      'https://control-plane.example',
+      'sensitive-test-token',
+      5,
+      1,
+      async (_input, init) => {
+        if (init?.method === 'POST') throw cyclic;
+        return new Response(JSON.stringify({ error: 'attempt_not_found' }), { status: 404 });
+      },
+    );
+
+    await assert.rejects(
+      client.createAttempt(EXPECTED.attempt, EXPECTED),
+      (error: unknown) => {
+        assert.deepEqual(
+          (error as Phase3ClientError & { diagnostic?: unknown }).diagnostic,
+          {
+            operationStage: 'attempt_create',
+            failureClass: 'request_construction',
+          },
+        );
+        assert.equal(JSON.stringify(error).includes('must-not-land'), false);
+        return true;
+      },
+    );
+  });
+
+  it('classifies Node 22 header construction TypeError without an error code', async () => {
+    const client = new Phase3ControlPlaneClient(
+      'https://control-plane.example',
+      'sensitive-test-token',
+      5,
+      1,
+      async (_input, init) => {
+        if (init?.method === 'POST') throw new TypeError('Bearer must-not-land');
+        return new Response(JSON.stringify({ error: 'attempt_not_found' }), { status: 404 });
+      },
+    );
+
+    await assert.rejects(
+      client.createAttempt(EXPECTED.attempt, EXPECTED),
+      (error: unknown) => {
+        assert.deepEqual(
+          (error as Phase3ClientError & { diagnostic?: unknown }).diagnostic,
+          {
+            operationStage: 'attempt_create',
+            failureClass: 'request_construction',
+          },
+        );
+        assert.equal(JSON.stringify(error).includes('must-not-land'), false);
+        return true;
+      },
     );
   });
 

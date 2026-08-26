@@ -16,6 +16,10 @@ import {
 } from './model.js';
 import { phase3PlanFailure } from './plan.js';
 import {
+  Phase3ClientError,
+  type Phase3CommitDiagnostic,
+} from './client.js';
+import {
   PHASE3_LOCAL_PLAN_REJECTED_AUTHORIZES,
   PHASE3_LOCAL_UNRESOLVED_AUTHORIZES,
 } from './evidence.js';
@@ -107,7 +111,7 @@ export async function performPhase3Attempt(
       creation = await deps.eventPort.createAttempt(input, expected, deps.signal);
     } catch (error) {
       if (!isUnresolvedCommit(error)) throw error;
-      return unresolvedAttempt(plan, deps, expected);
+      return unresolvedAttempt(plan, deps, expected, error);
     }
     if (!creation.created && creation.reconciled !== true) {
       return existingAttempt(plan, deps, expected);
@@ -124,7 +128,7 @@ export async function performPhase3Attempt(
       creation = await deps.eventPort.createAttempt(input, expected, deps.signal);
     } catch (error) {
       if (!isUnresolvedCommit(error)) throw error;
-      return unresolvedAttempt(plan, deps, expected);
+      return unresolvedAttempt(plan, deps, expected, error);
     }
     if (!creation.created && creation.reconciled !== true) {
       return existingAttempt(plan, deps, expected);
@@ -139,7 +143,7 @@ export async function performPhase3Attempt(
     creation = await deps.eventPort.createAttempt(input, expected, deps.signal);
   } catch (error) {
     if (!isUnresolvedCommit(error)) throw error;
-    return unresolvedAttempt(plan, deps, expected);
+    return unresolvedAttempt(plan, deps, expected, error);
   }
   if (!creation.created && creation.reconciled !== true) {
     return existingAttempt(plan, deps, expected);
@@ -289,7 +293,7 @@ export async function performPhase3Attempt(
         if (!preserveReason) reasonCode = 'teardown_failed';
       }
     }
-    if (unresolved) return unresolvedAttempt(plan, deps, expected);
+    if (unresolved) return unresolvedAttempt(plan, deps, expected, error);
     return finish(
       plan,
       deps,
@@ -423,7 +427,7 @@ async function finish(
     return resultWithEvidence(plan, deps, expected, { outcome: result, reasonCode });
   } catch (error) {
     if (!isUnresolvedCommit(error)) throw error;
-    return unresolvedAttempt(plan, deps, expected);
+    return unresolvedAttempt(plan, deps, expected, error);
   }
 }
 
@@ -458,7 +462,7 @@ async function resultWithEvidence(
     };
   } catch (error) {
     if (!remoteUnavailable(error)) throw error;
-    return unresolvedAttempt(plan, deps, expected);
+    return unresolvedAttempt(plan, deps, expected, error);
   }
 }
 
@@ -466,13 +470,14 @@ async function unresolvedAttempt(
   plan: Phase3AttemptPlan,
   deps: Phase3AttemptRunnerDeps,
   expected: Phase3EvidenceExpectation,
+  sourceError?: unknown,
 ): Promise<Phase3AttemptResult> {
   let evidence: unknown;
   try {
     evidence = await deps.eventPort.exportAttempt(plan.runAttemptId, expected);
   } catch (error) {
     if (!remoteUnavailable(error)) throw error;
-    return localUnresolvedAttempt(plan, expected);
+    return localUnresolvedAttempt(plan, expected, commitDiagnostic(sourceError ?? error));
   }
   return {
     outcome: 'unresolved_commit',
@@ -484,20 +489,29 @@ async function unresolvedAttempt(
 function localUnresolvedAttempt(
   plan: Phase3AttemptPlan,
   expected: Phase3EvidenceExpectation,
+  diagnostic?: Phase3CommitDiagnostic,
 ): Phase3AttemptResult {
   return {
     outcome: 'unresolved_commit',
     reasonCode: 'evidence_write_failed',
-    evidence: phase3LocalUnresolvedEvidence(plan, expected.attempt.entryEvidenceSha256),
+    evidence: phase3LocalUnresolvedEvidence(
+      plan,
+      expected.attempt.entryEvidenceSha256,
+      diagnostic,
+    ),
   };
 }
 
 export function phase3LocalUnresolvedEvidence(
   plan: Phase3AttemptPlan,
   entryEvidenceSha256: string | null = null,
+  diagnostic?: Phase3CommitDiagnostic,
 ): Record<string, unknown> {
   return {
-    schema: 'build-room/phase3-local-unresolved@1',
+    schema:
+      diagnostic === undefined
+        ? 'build-room/phase3-local-unresolved@1'
+        : 'build-room/phase3-local-unresolved@2',
     outcome: 'unresolved_commit',
     reasonCode: 'commit_outcome_unresolved',
     remoteState: 'unknown',
@@ -516,8 +530,13 @@ export function phase3LocalUnresolvedEvidence(
       environmentLabel: plan.environment,
       entryEvidenceSha256,
     },
+    ...(diagnostic === undefined ? {} : { diagnostic }),
     authorizes: PHASE3_LOCAL_UNRESOLVED_AUTHORIZES,
   };
+}
+
+function commitDiagnostic(error: unknown): Phase3CommitDiagnostic | undefined {
+  return error instanceof Phase3ClientError ? error.diagnostic : undefined;
 }
 
 function preflightReason(error: unknown, signal?: AbortSignal): Phase3ReasonCode | null {

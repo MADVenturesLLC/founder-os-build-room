@@ -148,7 +148,12 @@ finalization continues normally; a write that cannot be resolved returns
 `unresolved_commit` with server evidence and no contradictory local verdict.
 If the export is also unavailable, the fixed
 `build-room/phase3-local-unresolved@1` record states only that remote state is
-unknown.
+unknown. When the client has a safe closed classification for the ambiguous
+write, it emits `build-room/phase3-local-unresolved@2` instead. The additive
+`diagnostic` object contains only an operation stage and failure class from
+closed allowlists. Raw exceptions, request data, headers, URLs, credentials,
+addresses, and stack traces are never retained. Existing `@1` evidence remains
+valid and unchanged.
 
 The operator can end only at `awaiting_adjudication`, `failed`, `interrupted` or
 `not_started`. A passing counted run still requires independent Tier 2 evidence
