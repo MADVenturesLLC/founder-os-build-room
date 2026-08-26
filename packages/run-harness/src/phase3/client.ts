@@ -28,6 +28,7 @@ export const PHASE3_DIAGNOSTIC_OPERATION_STAGES = [
   'event_append',
   'event_reconcile',
   'evidence_export',
+  'heartbeat_verify',
 ] as const;
 export type Phase3DiagnosticOperationStage =
   (typeof PHASE3_DIAGNOSTIC_OPERATION_STAGES)[number];
@@ -41,6 +42,10 @@ export const PHASE3_DIAGNOSTIC_FAILURE_CLASSES = [
   'http_5xx',
   'invalid_response',
   'response_too_large',
+  'evidence_identity_mismatch',
+  'heartbeat_invalid',
+  'bad_signature',
+  'stale_heartbeat',
   'transport_other',
 ] as const;
 export type Phase3DiagnosticFailureClass =

@@ -527,14 +527,15 @@ describe('Phase 3 attempt runner — lifecycle', () => {
   });
 
   it('stops without follow-up append, export, or fixture calls when heartbeat evidence is untrusted', async () => {
-    for (const code of [
-      'evidence_identity_mismatch',
-      'invalid_response',
-      'response_too_large',
-      'heartbeat_invalid',
-      'bad_signature',
-      'stale_heartbeat',
+    for (const testCase of [
+      ['evidence_identity_mismatch', 'evidence_export'],
+      ['invalid_response', 'evidence_export'],
+      ['response_too_large', 'evidence_export'],
+      ['heartbeat_invalid', 'heartbeat_verify'],
+      ['bad_signature', 'heartbeat_verify'],
+      ['stale_heartbeat', 'heartbeat_verify'],
     ] as const) {
+      const [code, operationStage] = testCase;
       const eventPort = port(false, clientError(code));
       let exportCalls = 0;
       const exportAttempt = eventPort.exportAttempt;
@@ -568,8 +569,12 @@ describe('Phase 3 attempt runner — lifecycle', () => {
       );
       assert.equal(
         (result.evidence as Record<string, unknown>)['schema'],
-        'build-room/phase3-local-unresolved@1',
+        'build-room/phase3-local-unresolved@2',
       );
+      assert.deepEqual((result.evidence as Record<string, unknown>)['diagnostic'], {
+        operationStage,
+        failureClass: code,
+      });
     }
   });
 

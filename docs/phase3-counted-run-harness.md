@@ -156,6 +156,9 @@ addresses, and stack traces are never retained. Existing `@1` evidence remains
 valid and unchanged. Diagnostic precedence is deterministic: the ambiguous
 mutation diagnostic wins when present; otherwise the reconciliation or
 recovery-export diagnostic is retained.
+Heartbeat identity, proof, signature, and freshness trust stops use the closed
+`evidence_export` or `heartbeat_verify` diagnostic stages while preserving the
+same zero-follow-up-write behavior.
 
 The operator can end only at `awaiting_adjudication`, `failed`, `interrupted` or
 `not_started`. A passing counted run still requires independent Tier 2 evidence

@@ -164,7 +164,7 @@ export async function performPhase3Attempt(
       return finish(plan, deps, expected, 'interrupted', 'operator_interrupted', 'not_required');
     }
     if (isHeartbeatTrustFailure(error)) {
-      return localUnresolvedAttempt(plan, expected, commitDiagnostic(error));
+      return localUnresolvedAttempt(plan, expected, heartbeatTrustDiagnostic(error));
     }
     return finish(plan, deps, expected, 'failed', heartbeatReason(error), 'not_required');
   }
@@ -543,6 +543,25 @@ export function phase3LocalUnresolvedEvidence(
 
 function commitDiagnostic(error: unknown): Phase3CommitDiagnostic | undefined {
   return error instanceof Phase3ClientError ? error.diagnostic : undefined;
+}
+
+function heartbeatTrustDiagnostic(error: unknown): Phase3CommitDiagnostic | undefined {
+  const retained = commitDiagnostic(error);
+  if (retained !== undefined) return retained;
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
+  const code = String((error as { code: unknown }).code);
+  switch (code) {
+    case 'evidence_identity_mismatch':
+    case 'invalid_response':
+    case 'response_too_large':
+      return { operationStage: 'evidence_export', failureClass: code };
+    case 'heartbeat_invalid':
+    case 'bad_signature':
+    case 'stale_heartbeat':
+      return { operationStage: 'heartbeat_verify', failureClass: code };
+    default:
+      return undefined;
+  }
 }
 
 function preflightReason(error: unknown, signal?: AbortSignal): Phase3ReasonCode | null {
