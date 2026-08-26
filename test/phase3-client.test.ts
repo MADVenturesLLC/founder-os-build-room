@@ -89,7 +89,14 @@ describe('Phase 3 HTTP client — untrusted responses', () => {
     );
     await assert.rejects(
       client.exportAttempt(ATTEMPT_ID, EXPECTED),
-      (error: unknown) => error instanceof Phase3ClientError && error.code === 'invalid_response',
+      (error: unknown) => {
+        assert.equal(error instanceof Phase3ClientError && error.code === 'invalid_response', true);
+        assert.deepEqual((error as Phase3ClientError).diagnostic, {
+          operationStage: 'evidence_export',
+          failureClass: 'invalid_response',
+        });
+        return true;
+      },
     );
   });
 
@@ -553,6 +560,43 @@ describe('Phase 3 HTTP client — untrusted responses', () => {
         return true;
       },
     );
+  });
+
+  it('keeps the primary mutation diagnostic when reconciliation evidence is malformed', async () => {
+    let posts = 0;
+    let reads = 0;
+    const client = new Phase3ControlPlaneClient(
+      'https://control-plane.example',
+      'sensitive-test-token',
+      50,
+      1,
+      async (_input, init) => {
+        if (init?.method === 'POST') {
+          posts += 1;
+          throw Object.assign(new TypeError('must-not-land'), { cause: { code: 'ENOTFOUND' } });
+        }
+        reads += 1;
+        return new Response('{}', { status: 200 });
+      },
+    );
+
+    await assert.rejects(
+      client.createAttempt(EXPECTED.attempt, EXPECTED),
+      (error: unknown) => {
+        assert.equal(
+          error instanceof Phase3ClientError && error.code === 'commit_outcome_unresolved',
+          true,
+        );
+        assert.deepEqual((error as Phase3ClientError).diagnostic, {
+          operationStage: 'attempt_create',
+          failureClass: 'dns_resolution',
+        });
+        assert.equal(JSON.stringify(error).includes('must-not-land'), false);
+        return true;
+      },
+    );
+    assert.equal(posts, 1);
+    assert.equal(reads, 1);
   });
 
   it('retains a closed DNS diagnostic when attempt creation never receives a response', async () => {

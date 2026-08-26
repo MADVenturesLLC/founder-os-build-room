@@ -208,14 +208,14 @@ export class Phase3ControlPlaneClient {
     }
   }
 
-  exportAttempt(
+  async exportAttempt(
     runAttemptId: string,
     expected: Phase3EvidenceExpectation,
     signal?: AbortSignal,
     timeoutMs = this.requestTimeoutMs,
     operationStage: Phase3DiagnosticOperationStage = 'evidence_export',
   ): Promise<Phase3EvidenceExport> {
-    return this.request(
+    const value = await this.request(
       'GET',
       `/control-plane/phase3/run-attempts/${encodeURIComponent(runAttemptId)}/export`,
       undefined,
@@ -224,7 +224,13 @@ export class Phase3ControlPlaneClient {
       signal,
       timeoutMs,
       operationStage,
-    ).then((value) => validateEvidenceExport(value, runAttemptId, expected));
+    );
+    try {
+      return validateEvidenceExport(value, runAttemptId, expected);
+    } catch (error) {
+      if (error instanceof Phase3ClientError) throw withDiagnostic(error, operationStage);
+      throw error;
+    }
   }
 
   async waitForHeartbeat(
@@ -305,7 +311,7 @@ export class Phase3ControlPlaneClient {
           error.code === 'response_too_large')
       ) {
         throw unresolvedCommit(
-          diagnosticFrom(error, operationStage) ?? {
+          primaryDiagnostic ?? diagnosticFrom(error, operationStage) ?? {
             operationStage,
             failureClass: 'invalid_response',
           },
