@@ -1,7 +1,11 @@
 import { lstat, mkdir, open, realpath, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PHASE3_EVIDENCE_AUTHORIZES } from '../../../control-plane/src/phase3-run.js';
-import { validatePhase3EvidenceForSerialization } from './client.js';
+import {
+  PHASE3_DIAGNOSTIC_FAILURE_CLASSES,
+  PHASE3_DIAGNOSTIC_OPERATION_STAGES,
+  validatePhase3EvidenceForSerialization,
+} from './client.js';
 
 const LABEL_RE = /^Phase3-CR[123]$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -52,6 +56,8 @@ const LOCAL_UNRESOLVED_FIELDS = [
   'expected',
   'authorizes',
 ] as const;
+const LOCAL_UNRESOLVED_V2_FIELDS = [...LOCAL_UNRESOLVED_FIELDS, 'diagnostic'] as const;
+const LOCAL_UNRESOLVED_DIAGNOSTIC_FIELDS = ['operationStage', 'failureClass'] as const;
 const LOCAL_UNRESOLVED_EXPECTED_FIELDS = [
   'runAttemptId',
   'runLabel',
@@ -269,6 +275,11 @@ function requireClosedEvidenceShape(evidence: Record<string, unknown>): string {
       requireFields(evidence, LOCAL_UNRESOLVED_FIELDS);
       requireLocalUnresolvedValues(evidence);
       return PHASE3_LOCAL_UNRESOLVED_AUTHORIZES;
+    case 'build-room/phase3-local-unresolved@2':
+      requireFields(evidence, LOCAL_UNRESOLVED_V2_FIELDS);
+      requireLocalUnresolvedValues(evidence);
+      requireLocalUnresolvedDiagnostic(evidence['diagnostic']);
+      return PHASE3_LOCAL_UNRESOLVED_AUTHORIZES;
     case 'build-room/phase3-local-failure@1':
       requireFields(evidence, LOCAL_FAILURE_FIELDS);
       requireLocalFailureValues(evidence);
@@ -301,6 +312,16 @@ function requireLocalUnresolvedValues(evidence: Record<string, unknown>): void {
     !SAFE_LABEL_RE.test(text(expected['machineIdentity'])) ||
     !SAFE_LABEL_RE.test(text(expected['environmentLabel'])) ||
     !nullableText(expected['entryEvidenceSha256'], SHA256_RE)
+  ) {
+    invalidEvidence();
+  }
+}
+
+function requireLocalUnresolvedDiagnostic(value: unknown): void {
+  const diagnostic = requireFields(value, LOCAL_UNRESOLVED_DIAGNOSTIC_FIELDS);
+  if (
+    !PHASE3_DIAGNOSTIC_OPERATION_STAGES.includes(diagnostic['operationStage'] as never) ||
+    !PHASE3_DIAGNOSTIC_FAILURE_CLASSES.includes(diagnostic['failureClass'] as never)
   ) {
     invalidEvidence();
   }

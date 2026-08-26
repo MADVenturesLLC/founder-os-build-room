@@ -6,6 +6,7 @@ import { afterEach, describe, it } from 'node:test';
 import { phase3RequestSha256 } from '../packages/control-plane/src/phase3-run.js';
 import {
   PHASE3_LOCAL_FAILURE_AUTHORIZES,
+  PHASE3_LOCAL_UNRESOLVED_AUTHORIZES,
   securePhase3EvidenceDirectory,
   disposePhase3EvidenceReservation,
   reservePhase3EvidenceFile,
@@ -32,7 +33,48 @@ const EVIDENCE = {
   authorizes: PHASE3_LOCAL_FAILURE_AUTHORIZES,
 };
 
+const UNRESOLVED_V2 = {
+  schema: 'build-room/phase3-local-unresolved@2',
+  outcome: 'unresolved_commit',
+  reasonCode: 'commit_outcome_unresolved',
+  remoteState: 'unknown',
+  expected: {
+    runAttemptId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    runLabel: 'Phase3-CR1',
+    entryAuthorizationId: 'founder:phase3-cr1:test',
+    revocationAuthorizationId: null,
+    founderOsSha: '1'.repeat(40),
+    buildRoomSha: '2'.repeat(40),
+    fixtureRepository: 'MADVenturesLLC/phase3-fixture',
+    fixtureSha: '3'.repeat(40),
+    gatewayId: '11111111-2222-4333-8444-555555555555',
+    enrollmentProjectionSha256: '4'.repeat(64),
+    machineIdentity: 'synthetic-mac',
+    environmentLabel: 'synthetic-test',
+    entryEvidenceSha256: '5'.repeat(64),
+  },
+  diagnostic: {
+    operationStage: 'attempt_create',
+    failureClass: 'dns_resolution',
+  },
+  authorizes: PHASE3_LOCAL_UNRESOLVED_AUTHORIZES,
+};
+
 describe('Phase 3 local evidence boundary', () => {
+  it('accepts only the closed redacted unresolved diagnostic schema', () => {
+    assert.deepEqual(JSON.parse(serializePhase3Evidence(UNRESOLVED_V2)), UNRESOLVED_V2);
+    for (const diagnostic of [
+      { ...UNRESOLVED_V2.diagnostic, operationStage: 'raw_fetch_stack' },
+      { ...UNRESOLVED_V2.diagnostic, failureClass: 'Bearer must-not-land' },
+      { ...UNRESOLVED_V2.diagnostic, rawMessage: 'must-not-land' },
+    ]) {
+      assert.throws(
+        () => serializePhase3Evidence({ ...UNRESOLVED_V2, diagnostic }),
+        /closed schema/,
+      );
+    }
+  });
+
   it('writes one private, non-overwritable redacted export', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'phase3-evidence-'));
     directories.push(directory);
