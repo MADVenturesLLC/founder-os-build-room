@@ -23,6 +23,7 @@ import { randomBytes, verify as cryptoVerify, createPublicKey } from 'node:crypt
 import type { Pool, PoolClient } from 'pg';
 import {
   encodeBase64Url,
+  decodeTransportSignature,
   heartbeatSignedBytes,
   sessionStartSignedBytes,
   timestampWithinWindow,
@@ -33,6 +34,7 @@ import {
 } from '../../../gateway-protocol/src/index.js';
 import type { GatewayState } from '../../../gateway-registry/src/index.js';
 import { challengeFreshnessDeadlineMs, type Config } from '../config.js';
+import type { Phase3RunStore } from '../phase3-run.js';
 import type { ClockGate } from './clock.js';
 import { readLease } from './fence.js';
 import type { GatewayLeadership } from './leadership.js';
@@ -56,6 +58,7 @@ export interface SessionServiceDeps {
   readonly session: GatewaySessionState;
   readonly leadership: GatewayLeadership;
   readonly store: GatewayRegistryStore;
+  readonly phase3Runs: Phase3RunStore;
 }
 
 interface ResolvedKey {
@@ -72,6 +75,7 @@ export class GatewaySessionService {
   private readonly session: GatewaySessionState;
   private readonly leadership: GatewayLeadership;
   private readonly store: GatewayRegistryStore;
+  private readonly phase3Runs: Phase3RunStore;
 
   /**
    * Set when reconciliation could not write its edges because the clock was
@@ -87,6 +91,7 @@ export class GatewaySessionService {
     this.session = deps.session;
     this.leadership = deps.leadership;
     this.store = deps.store;
+    this.phase3Runs = deps.phase3Runs;
   }
 
   get hasDeferredReconciliation(): boolean {
@@ -274,9 +279,12 @@ export class GatewaySessionService {
     const resolved = await this.resolveKey(envelope.gatewayId, envelope.keyId);
     if (resolved === null) return this.refuse(401, 'unknown_key', null, sourceIp);
 
-    if (!this.verify(resolved, heartbeatSignedBytes(canonicalOf(envelope)), envelope.signature)) {
+    const signedBytes = heartbeatSignedBytes(canonicalOf(envelope));
+    if (!this.verify(resolved, signedBytes, envelope.signature)) {
       return this.refuse(401, 'bad_signature', resolved.keyId, sourceIp);
     }
+    const signature = decodeTransportSignature(envelope.signature);
+    if (signature === null) return this.refuse(400, 'invalid_request', resolved.keyId, sourceIp);
 
     const outcome = await this.leadership.runFenced<RouteResult>(
       { pipeline: 'heartbeat', takeL0: true, takeRegistryLock: true, verifyServingGeneration: true },
@@ -310,6 +318,26 @@ export class GatewaySessionService {
         if (!timestampWithinWindow(envelope.timestampMs, wallNow, this.config.gatewayTimestampWindowMs)) {
           return rollback({ status: 409, body: { error: 'stale_timestamp' } });
         }
+
+        /*
+         * A counted-run attempt captures exactly one already-accepted signed
+         * heartbeat. The insert shares this fenced transaction with the
+         * cursor/liveness publication: if evidence cannot commit, neither can
+         * the heartbeat. With no active attempt this is a bounded no-op, so
+         * the normal ten-second cadence adds no durable run rows.
+         */
+        await this.phase3Runs.captureHeartbeat(ctx.client, {
+          gatewayId: envelope.gatewayId,
+          keyId: resolved.keyId,
+          sequence: envelope.sequence,
+          timestampMs: envelope.timestampMs,
+          signedBytes,
+          signature,
+          publicKey: resolved.rawPublicKey,
+          acceptedAt: new Date(wallNow),
+          freshnessWindowMs: this.config.gatewayTimestampWindowMs,
+          signatureVerified: true,
+        });
 
         // Transition logic. A stale-liveness case cannot arise from an
         // unreliable clock: the beat was already refused above if it were.

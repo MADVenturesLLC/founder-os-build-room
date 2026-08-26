@@ -26,6 +26,7 @@ import type { Pool } from 'pg';
 import { snapshot, type LifecycleEvent } from '../../ledger/src/index.js';
 import type { Config } from './config.js';
 import { probe } from './db.js';
+import { phase3RunRouter } from './phase3-run-routes.js';
 import { PostgresLedgerStore, RoomNotFoundError } from './store.js';
 import {
   ROOM_BODY_LIMIT,
@@ -281,6 +282,17 @@ export function createServer(deps: ServerDeps): Express {
   };
   app.use(gatewayRouter(routeDeps));
   app.use(founderRouter(routeDeps));
+  app.use(
+    phase3RunRouter({
+      store: deps.gateway.phase3Runs,
+      leadership: deps.gateway.leadership,
+      requireToken,
+      requireAdjudicationToken:
+        config.phase3AdjudicationToken === null
+          ? null
+          : tokenGuard(config.phase3AdjudicationToken),
+    }),
+  );
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: 'not_found' });

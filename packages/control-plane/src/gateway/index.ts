@@ -12,6 +12,7 @@
 
 import type { Pool } from 'pg';
 import type { Config } from '../config.js';
+import { Phase3RunStore } from '../phase3-run.js';
 import { ClockGate, createSystemClock } from './clock.js';
 import type { Clock } from '../../../gateway-protocol/src/index.js';
 import { NO_HOOKS, type GatewayHooks } from './hooks.js';
@@ -42,6 +43,7 @@ export interface GatewaySurface {
   readonly limiter: RateLimiter;
   readonly roomAppendFence: GatewayRoomAppendFence;
   readonly sweeps: GatewaySweeps;
+  readonly phase3Runs: Phase3RunStore;
   /** Start the supervisor, the limiter sweep, and the retention cadence. */
   start(): void;
   stop(): Promise<void>;
@@ -58,6 +60,7 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
 
   const session = new GatewaySessionState(config.sessionNonceCapacity);
   const store = new GatewayRegistryStore(pool, config);
+  const phase3Runs = new Phase3RunStore(pool, config);
   const limiter = new RateLimiter(clock);
 
   let service!: GatewaySessionService;
@@ -71,7 +74,7 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
     reconciler: async (context) => service.reconcile(context),
   });
 
-  service = new GatewaySessionService({ pool, config, clock, session, leadership, store });
+  service = new GatewaySessionService({ pool, config, clock, session, leadership, store, phase3Runs });
 
   const roomAppendFence = new GatewayRoomAppendFence({ config, clock, session, leadership });
   /*
@@ -91,6 +94,7 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
     limiter,
     roomAppendFence,
     sweeps,
+    phase3Runs,
     start(): void {
       leadership.start();
       limiter.start();

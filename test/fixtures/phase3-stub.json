@@ -1,0 +1,12 @@
+{
+  "fixtureId": "phase3-local-stub-v1",
+  "caseId": "inspect-bound-sha",
+  "request": {
+    "operation": "inspect_fixture",
+    "value": "bound"
+  },
+  "response": {
+    "status": "ok",
+    "value": "bound"
+  }
+}

@@ -78,6 +78,7 @@ export interface GatewayHooks {
   readonly reconciliation?: PipelineHooks;
   readonly stalenessSweep?: PipelineHooks;
   readonly roomAppend?: PipelineHooks;
+  readonly phase3Run?: PipelineHooks;
   readonly acquisition?: AcquisitionHooks;
   readonly phase2?: Phase2Hooks;
 }

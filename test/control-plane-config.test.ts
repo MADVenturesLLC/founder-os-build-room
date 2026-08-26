@@ -35,8 +35,32 @@ describe('control plane — configuration', () => {
     assert.equal(config.databaseUrl, VALID_URL);
     assert.equal(config.port, 8080);
     assert.equal(config.commitSha, 'unknown');
+    assert.equal(config.phase3AdjudicationToken, null);
     assert.ok(config.readyProbeTimeoutMs > 0);
     assert.ok(config.poolMax > 0);
+  });
+
+  it('keeps the optional adjudication credential distinct and fail-closed', () => {
+    const adjudicationToken = 'y'.repeat(32);
+    assert.equal(
+      loadConfig({
+        DATABASE_URL: VALID_URL,
+        CONTROL_PLANE_TOKEN: VALID_TOKEN,
+        PHASE3_ADJUDICATION_TOKEN: adjudicationToken,
+      }).phase3AdjudicationToken,
+      adjudicationToken,
+    );
+    for (const value of ['', 'short', VALID_TOKEN]) {
+      assert.throws(
+        () =>
+          loadConfig({
+            DATABASE_URL: VALID_URL,
+            CONTROL_PLANE_TOKEN: VALID_TOKEN,
+            PHASE3_ADJUDICATION_TOKEN: value,
+          }),
+        ConfigError,
+      );
+    }
   });
 
   it('gives the pool its own connect budget, larger than the readiness probe', () => {

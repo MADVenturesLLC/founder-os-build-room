@@ -16,6 +16,8 @@
 # which is the intended behaviour, not a regression. At least 32 characters;
 # `openssl rand -hex 24` produces a suitable value. The run harness must be
 # given the same value or every room request answers 401.
+# `PHASE3_ADJUDICATION_TOKEN` is a separate optional Founder-only credential.
+# It is never stored here; when absent, the adjudication route is not mounted.
 
 [build]
 builder = "NIXPACKS"
