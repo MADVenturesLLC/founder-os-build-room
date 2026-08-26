@@ -412,6 +412,40 @@ describe('Phase 3 attempt runner — fail-closed entry', () => {
       },
     );
   });
+
+  it('uses recovery diagnostics only when no primary diagnostic exists', async () => {
+    for (const testCase of [
+      {
+        source: new Phase3ClientError(0, 'commit_outcome_unresolved'),
+        expected: { operationStage: 'evidence_export', failureClass: 'request_timeout' },
+      },
+      {
+        source: new Phase3ClientError(0, 'commit_outcome_unresolved', {
+          operationStage: 'attempt_create',
+          failureClass: 'dns_resolution',
+        }),
+        expected: { operationStage: 'attempt_create', failureClass: 'dns_resolution' },
+      },
+    ] as const) {
+      const eventPort = port();
+      eventPort.createAttempt = async () => {
+        throw testCase.source;
+      };
+      eventPort.exportAttempt = async () => {
+        throw new Phase3ClientError(0, 'transport_error', {
+          operationStage: 'evidence_export',
+          failureClass: 'request_timeout',
+        });
+      };
+
+      const result = await performPhase3Attempt(PLAN, deps(eventPort, fixture()));
+
+      assert.deepEqual(
+        (result.evidence as Record<string, unknown>)['diagnostic'],
+        testCase.expected,
+      );
+    }
+  });
 });
 
 describe('Phase 3 attempt runner — lifecycle', () => {
@@ -537,6 +571,33 @@ describe('Phase 3 attempt runner — lifecycle', () => {
         'build-room/phase3-local-unresolved@1',
       );
     }
+  });
+
+  it('retains a safe diagnostic on a heartbeat trust stop without follow-up writes', async () => {
+    const eventPort = port(
+      false,
+      new Phase3ClientError(200, 'invalid_response', {
+        operationStage: 'evidence_export',
+        failureClass: 'invalid_response',
+      }),
+    );
+    const result = await performPhase3Attempt(PLAN, deps(eventPort, fixture()));
+
+    assert.deepEqual(
+      {
+        schema: (result.evidence as Record<string, unknown>)['schema'],
+        diagnostic: (result.evidence as Record<string, unknown>)['diagnostic'],
+        followUpWrites: eventPort.events.length,
+      },
+      {
+        schema: 'build-room/phase3-local-unresolved@2',
+        diagnostic: {
+          operationStage: 'evidence_export',
+          failureClass: 'invalid_response',
+        },
+        followUpWrites: 0,
+      },
+    );
   });
 
   it('binds completed teardown evidence to the adapter disconnect artifact', async () => {

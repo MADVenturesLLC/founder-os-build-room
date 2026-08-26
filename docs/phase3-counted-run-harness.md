@@ -153,7 +153,9 @@ write, it emits `build-room/phase3-local-unresolved@2` instead. The additive
 `diagnostic` object contains only an operation stage and failure class from
 closed allowlists. Raw exceptions, request data, headers, URLs, credentials,
 addresses, and stack traces are never retained. Existing `@1` evidence remains
-valid and unchanged.
+valid and unchanged. Diagnostic precedence is deterministic: the ambiguous
+mutation diagnostic wins when present; otherwise the reconciliation or
+recovery-export diagnostic is retained.
 
 The operator can end only at `awaiting_adjudication`, `failed`, `interrupted` or
 `not_started`. A passing counted run still requires independent Tier 2 evidence

@@ -127,6 +127,7 @@ export class Phase3ControlPlaneClient {
             expected,
             deadline,
             'attempt_reconcile',
+            diagnostic,
           );
           return { ...result, reconciled: exported !== null && resumableCreation(exported, input) };
         }
@@ -140,6 +141,7 @@ export class Phase3ControlPlaneClient {
           expected,
           deadline,
           'attempt_reconcile',
+          diagnostic,
         );
         if (exported !== null) {
           return {
@@ -192,6 +194,7 @@ export class Phase3ControlPlaneClient {
           expected,
           deadline,
           'event_reconcile',
+          diagnostic,
         );
         const reconciled = exported === null ? null : reconciledAppend(exported, event);
         if (reconciled !== null) return reconciled;
@@ -282,6 +285,7 @@ export class Phase3ControlPlaneClient {
     expected: Phase3EvidenceExpectation,
     deadline: number,
     operationStage: 'attempt_reconcile' | 'event_reconcile',
+    primaryDiagnostic?: Phase3CommitDiagnostic,
   ): Promise<Phase3EvidenceExport | null> {
     const remaining = remainingBudget(deadline);
     if (remaining === 0) return null;
@@ -309,10 +313,18 @@ export class Phase3ControlPlaneClient {
       }
       if (
         error instanceof Phase3ClientError &&
-        (error.status === 404 ||
-          error.code === 'transport_error' ||
-          error.status >= 500)
+        error.status === 404
       ) {
+        return null;
+      }
+      if (
+        error instanceof Phase3ClientError &&
+        (error.code === 'transport_error' || error.status >= 500)
+      ) {
+        const recoveryDiagnostic = diagnosticFrom(error, operationStage);
+        if (primaryDiagnostic === undefined && recoveryDiagnostic !== undefined) {
+          throw unresolvedCommit(recoveryDiagnostic);
+        }
         return null;
       }
       throw error;

@@ -493,10 +493,10 @@ describe('Phase 3 HTTP client — untrusted responses', () => {
         if (init?.method === 'POST') {
           posts += 1;
           controller.abort();
-          return new Response(JSON.stringify({ error: 'not_leader' }), { status: 503 });
+          throw new Phase3AbortError();
         }
         reads += 1;
-        return new Response(JSON.stringify({ error: 'attempt_not_found' }), { status: 404 });
+        return new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 });
       },
     );
     await assert.rejects(
@@ -511,8 +511,17 @@ describe('Phase 3 HTTP client — untrusted responses', () => {
         EXPECTED,
         controller.signal,
       ),
-      (error: unknown) =>
-        error instanceof Phase3ClientError && error.code === 'commit_outcome_unresolved',
+      (error: unknown) => {
+        assert.equal(
+          error instanceof Phase3ClientError && error.code === 'commit_outcome_unresolved',
+          true,
+        );
+        assert.deepEqual((error as Phase3ClientError).diagnostic, {
+          operationStage: 'event_reconcile',
+          failureClass: 'http_5xx',
+        });
+        return true;
+      },
     );
     assert.equal(posts, 1);
     assert.equal(reads, 1);

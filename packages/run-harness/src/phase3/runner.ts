@@ -163,7 +163,9 @@ export async function performPhase3Attempt(
     if (isAborted(error, deps.signal)) {
       return finish(plan, deps, expected, 'interrupted', 'operator_interrupted', 'not_required');
     }
-    if (isHeartbeatTrustFailure(error)) return localUnresolvedAttempt(plan, expected);
+    if (isHeartbeatTrustFailure(error)) {
+      return localUnresolvedAttempt(plan, expected, commitDiagnostic(error));
+    }
     return finish(plan, deps, expected, 'failed', heartbeatReason(error), 'not_required');
   }
   if (!heartbeat.captured) {
@@ -477,7 +479,11 @@ async function unresolvedAttempt(
     evidence = await deps.eventPort.exportAttempt(plan.runAttemptId, expected);
   } catch (error) {
     if (!remoteUnavailable(error)) throw error;
-    return localUnresolvedAttempt(plan, expected, commitDiagnostic(sourceError ?? error));
+    return localUnresolvedAttempt(
+      plan,
+      expected,
+      commitDiagnostic(sourceError) ?? commitDiagnostic(error),
+    );
   }
   return {
     outcome: 'unresolved_commit',
