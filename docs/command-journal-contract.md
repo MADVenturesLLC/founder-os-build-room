@@ -1,0 +1,213 @@
+# Build Room Canonical Command Journal — Contract v0.1 (PROPOSED)
+
+Status: **proposed** — Phase 4 journal-first implementation order, step 1
+("establish the command-journal contract and invariants"). Two clauses are
+Founder rulings brought as builder proposals on the `DEC-20260818-01`
+pattern and are marked **[FOUNDER PROPOSAL]**; no write-path or
+approval-path code is implemented before those rulings. Everything else is
+binding on the implementation once this contract merges.
+
+Governing authority: the command-journal Phase 4 ruling
+(`FounderOS/07-decisions/DEC-20260827-01` Section 10, 2026-08-31) and the
+Phase 4 Founder Authorization
+(`FounderOS/07-decisions/DEC-20260815-17`, `## Founder Authorization —
+Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
+`main` at `ad23c6ea6117a54bce5be7208a5a5768ec5bfbc9`.
+
+## 1. Authority and singularity
+
+1. The canonical command journal belongs to the Build Room governance
+   authority. MadBridge contributes implementation primitives only; no
+   authority over command history transfers (BR-Authority Principle,
+   `DEC-20260827-01` §2).
+2. There is exactly one canonical governed command history. No planner,
+   gateway, adapter, CLI, TUI, provider integration, local process,
+   evidence recorder, or other component may establish a second
+   authoritative command journal. Local diagnostic logs, provider logs,
+   process output, evidence records, and telemetry are not substitutes.
+3. Singularity is tested, not asserted: the Phase 4 suite must demonstrate
+   that every governed-command dispatch path reaches the journal module and
+   that no second write path to journal state exists
+   (stop-gate items §7.1–7.2).
+
+## 2. Journal record contract
+
+Every governed command establishes, at minimum, the eleven ruled
+relationship elements:
+
+| # | Ruled element | Field(s) | Notes |
+|---|---|---|---|
+| 1 | command identity | `command_id` | dedicated `cmd_` namespace; generator never shared with another kind |
+| 2 | room / run / execution identity | `room_id`, `run_id`, `execution_id` | where applicable; null only before the identity exists, never backfilled with a guess |
+| 3 | actor and role | `actor_id`, `role_id` | registry-valid values only |
+| 4 | actual provider, model, execution surface | `provider`, `model`, `execution_surface` | recorded truthfully at dispatch from observed identity, never from configuration intent |
+| 5 | repository and governed scope | `repository`, `scope_ref` | the run's immutable scope input |
+| 6 | authorized command / normalized envelope | `command_envelope`, `envelope_digest` | §6 normalization; raw commands that would expose secrets are never stored |
+| 7 | governing authorization or approval | `authorization_ref` | e.g. the plan-approval record |
+| 8 | dispatch state | `dispatch_state` | closed enum, §5 |
+| 9 | terminal outcome | `outcome` | closed enum, §5 |
+| 10 | resulting evidence references | `evidence_refs` | pointers into the evidence store; payloads never inlined |
+| 11 | timestamps and ordering | `recorded_at`, `seq` | server-generated; sufficient to reconstruct command history |
+
+Any change to the elements above after ratification is a contract
+amendment, not a refactor.
+
+## 3. Storage locus and sole writer — [FOUNDER PROPOSAL]
+
+**Proposal: the journal lives in the Build Room's existing Neon-hosted
+Postgres as dedicated append-only journal tables, and the sole writer is
+the Build Room control plane through a single journal module.**
+
+- Tables: `command_journal` (rows per §2) plus its hash-chain column(s);
+  no other table or component holds journal state.
+- Append-only is enforced at the database layer (no `UPDATE`/`DELETE` for
+  any application role on journal tables, trigger-enforced), following the
+  corpus's ratified append-only pattern — enforcement by construction, not
+  by convention.
+- No new infrastructure: the store is the already-bound Neon project the
+  control plane writes today (`build_room_events`,
+  `gateway_registry_events`, `phase3_run_*` establish the pattern and the
+  writer). No new custody domain is created; `DEC-20260815-02` custody and
+  sole-writer rules are untouched, and evidence custody is unchanged —
+  journal rows reference evidence, they do not store it.
+- Distinction preserved from `DEC-20260815-08`'s two-store split: the
+  journal is neither the mutable operational room state nor the evidence
+  store. It is its own governed contract hosted on the bound project with
+  stricter (append-only, chained) guarantees than the operational tables
+  around it.
+
+**Alternative considered and not proposed:** a gateway-local SQLite journal
+on the MadBridge ledger primitive. Declined in this proposal because the
+governed dispatch decision and the Founder plan decision are recorded at
+the control plane, so a gateway-local journal would make the fail-closed
+pre-dispatch rule depend on the partition state between gateway and control
+plane, and `DEC-20260820-01` clause 7 already declined to authorize the
+local ledger as a custody domain. The Founder may nevertheless rule the
+alternative; this clause takes effect only on the Founder's ruling.
+
+## 4. Append-only and tamper evidence
+
+1. Journal rows are hash-chained: each row's chain hash covers its
+   canonical serialization (§6) and the prior row's chain hash. `verify()`
+   over the chain detects tamper and divergence.
+2. Primitive reuse: the Build Room `packages/ledger` implementation and the
+   consumed MadBridge contracts (`DEC-20260827-01` §5, rows 3.3 and 3.5:
+   `Ledger`/`LedgerRow`/`VerifyResult`; `rebuildState`, reconciliation
+   semantics) are reused where their frozen contracts permit, at the pinned
+   TUI head `7d37a61dcaeaef77c55013c7620deb8445726788`. Before consumption,
+   the pinned blobs are re-resolved per `DEC-20260827-01`'s named drift
+   procedure; a materially changed consumed interface stops implementation
+   pending amendment and Founder ruling.
+3. Reuse does not make the evidence ledger the journal: the journal is a
+   separately defined governed contract with its own chain
+   (`DEC-20260827-01` Section 10).
+4. Implementation-order reading, recorded: step 2 (journal foundation) may
+   itself consume rows 3.3/3.5 primitives as the ruling's reuse clause
+   permits; step 3 covers the remaining consumed capabilities for the
+   planner path (3.1 worktree/sandbox, 3.4 adapter lifecycle, and any
+   3.3/3.5 surface not already integrated).
+
+## 5. Dispatch states, outcomes, and the fail-closed rule
+
+1. Pre-dispatch: a governed command may not be dispatched unless its
+   pre-dispatch journal record is durably committed. Journal write failure,
+   timeout, or unavailability means no dispatch — fail closed, never
+   journal-after.
+2. Closed enums: `dispatch_state` ∈ {`journaled`, `dispatched`,
+   `completed`, `failed`, `unresolved`}; `outcome` terminal values
+   {`completed`, `failed`, `unresolved`}. `unresolved` blocks any success
+   claim and any retry until reconciled under the consumed 3.5 semantics
+   (`reconciled` / `ambiguous` / `mismatch`; `ambiguous` never resolves
+   silently).
+3. No component represents an unreconciled outcome as success. All
+   user-visible state distinguishes observed, failed, unavailable, pending,
+   rejected, and unresolved rather than fabricating completion.
+4. Fault-injection obligations: journal store down, gateway loss
+   mid-dispatch, crash between journal write and dispatch, duplicate replay
+   after restart — no duplicate dispatch, no duplicate authority, no
+   silent success (stop-gate items §7.9–7.10).
+
+## 6. Secrets and normalization
+
+1. Never persisted: provider credentials, authentication tokens, secret
+   environment values, private keys, or other credential material. Where a
+   raw command would expose secret material, the journal stores the safe
+   normalized representation plus digest and evidence reference. Redaction
+   runs before the journal write, never after.
+2. The normalized command envelope and the plan digest each get a
+   versioned canonical serialization specification with golden vectors,
+   defined and ratified **before** any hashing implementation — the Build
+   Room instance of the corpus's spec-before-hashing discipline. Hash
+   values are generated by implementation against the spec, never
+   hand-authored into this document.
+3. Security-negative obligation: seeded credential-shaped values in
+   command envelopes must never reach a persisted row (stop-gate §7.3).
+4. Committed exports or diagnostics derived from the journal follow the
+   repository's existing redaction practice.
+
+## 7. Planner lifecycle binding
+
+1. States and events are the ratified `DEC-20260815-11` set, unmodified.
+   Phase 4 uses T1 `scope.captured`, T2 `task.dispatched.planner`
+   (guard: roles assigned; reviewer ≠ builder; gateway online), T3
+   `plan.submitted` (PlanDoc schema; plan_hash computed), T4
+   `plan.revision_requested`, T5 `plan.approved` (guard: plan_hash match;
+   scope paths canonical), T22 `founder.cancel`.
+2. Rejection binds to T4 or T22 only. No `plan.rejected` event, no
+   rejected terminal state, no third path; any addition requires a
+   `DEC-20260815-11` lifecycle amendment ruled before implementation.
+3. T5 enters BUILDING and dispatches nothing: the approved-plan record
+   only — no Builder execution, no target-repository modification, no
+   runtime draft-PR (Phase 4 authorization, Section 2).
+4. A modified plan invalidates prior approval unless byte- or
+   digest-equivalence is proven under §6's serialization discipline.
+5. Enforcement obligations: the Planner cannot self-approve; an unapproved
+   or invalidated plan cannot progress; identity, role, provider, model,
+   surface, scope, authorization, journal, and evidence stay bound through
+   every transition (stop-gate §7.6–7.8).
+
+## 8. Founder plan-decision origination and authentication
+
+1. Ruled and binding: the plan decision originates at the control plane on
+   the `DEC-20260818-01` clause 1 pattern — the client surface may render
+   the plan and relay the request; the authority-bearing act is recorded at
+   the control plane. Neither the CLI (`DEC-20260815-13` clause 2) nor the
+   web tier may originate it. Any other origination surface requires a
+   separate Founder ruling before implementation.
+2. **[FOUNDER PROPOSAL] Authentication of the Founder at the control plane
+   for the plan decision: the Phase 3 posture — a Founder-held
+   control-plane credential — with the decision endpoint additionally
+   requiring the exact `plan_hash` being decided, and the act journaled
+   (actor `founder`, the decision, the hash, timestamps) before it takes
+   effect.** `DEC-20260815-07`'s step-up authentication remains an unbound
+   proposal and is not activated by this contract.
+   **Alternative considered and not proposed:** a dedicated Founder
+   Ed25519 keypair signing each decision payload (the gateway-identity
+   pattern applied to the Founder). Stronger cryptographic binding, more
+   custody surface; deferred unless the Founder rules it. This clause
+   takes effect only on the Founder's ruling.
+
+## 9. Out of scope
+
+Phase 5 Builder execution; runtime draft-PR creation; autonomous merge;
+deployment; activation; new infrastructure, credentials, providers, or
+spend; `build-room-web`; evidence-custody changes; modification of the
+frozen consumed contracts; any second authoritative command journal.
+Counted Phase 4 runs require their own Founder entry authorization, which
+defines the Phase 4 run unit and its per-run-vs-set granularity.
+
+## 10. Test map to the Phase 4 stop gate
+
+| Stop-gate item (Phase 4 authorization §7) | Contract section |
+|---|---|
+| 1 append-only / tamper-evident / reconstructable / singular | §1, §4 |
+| 2 no bypass of the journal path | §1, §5 |
+| 3 no secrets persisted | §6 |
+| 4–5 goal → planner → durable plan | §7 |
+| 6–7 approval/rejection enforced; no progress from unapproved | §7, §8 |
+| 8 identity/scope/authorization binding | §2, §7 |
+| 9 fail-closed interruption/ambiguity | §5 |
+| 10 reconstruction without duplicate authority | §4, §5 |
+
+Items 11–13 (repository gates, exact-head Tier-2, counted runs) bind the
+pull requests and runs, not this document.
