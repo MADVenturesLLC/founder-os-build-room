@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.3 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.4 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). Two clauses are
@@ -89,18 +89,26 @@ Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
 The journal stores **events** (§5); this section defines the **projection**:
 for every governed command, the set of journal events sharing its
 `command_id`, ordered by `seq`, must establish the eleven ruled
-relationship elements below. Identity-bearing fields (elements 1–7) are
+relationship elements below. Identity-bearing fields for elements 1–3 and 5–7 are
 carried on the command's first event (`journaled`) and are **immutable for
 the command**: a later event for the same `command_id` either omits them or
 must carry byte-identical values — a divergence is a chain-integrity
-failure, not an update.
+failure, not an update. Element 4 splits by observability: `journaled`
+carries the **intended** routing identity, labeled as intent; the
+**observed actual** identity is recorded on `dispatched` (the first event
+at which it can be truthfully observed), is authoritative for element 4,
+and is immutable once recorded. A command may not be represented as
+`completed` while its observed identity is absent, and an
+intended-vs-observed divergence is surfaced (identity mismatch is a named
+fail-closed condition of the authorization's Section 5), never silently
+reconciled.
 
 | # | Ruled element | Field(s) | Notes |
 |---|---|---|---|
 | 1 | command identity | `command_id` | dedicated `cmd_` namespace; generator never shared with another kind |
 | 2 | room / run / execution identity | `room_id`, `run_id`, `execution_id` | where applicable; null only before the identity exists, never backfilled with a guess |
 | 3 | actor and role | `actor_id`, `role_id` | registry-valid values only |
-| 4 | actual provider, model, execution surface | `provider`, `model`, `execution_surface` | recorded truthfully at dispatch from observed identity, never from configuration intent |
+| 4 | actual provider, model, execution surface | `intended_provider`, `intended_model`, `intended_surface` on `journaled`; `provider`, `model`, `execution_surface` on `dispatched` | intent labeled as intent pre-dispatch; the observed actual identity is recorded on `dispatched`, is authoritative for this element, and is never backfilled from configuration |
 | 5 | repository and governed scope | `repository`, `scope_ref` | the run's immutable scope input |
 | 6 | authorized command / normalized envelope | `command_envelope`, `envelope_digest` | §6 normalization; raw commands that would expose secrets are never stored |
 | 7 | governing authorization or approval | `authorization_ref` | e.g. the plan-approval record |
@@ -179,7 +187,9 @@ alternative; this clause takes effect only on the Founder's ruling.
    `journaled` event is durably committed. Journal write failure, timeout,
    or unavailability means no dispatch — fail closed, never journal-after.
 2. **Closed event vocabulary** (one appended row each): `journaled` (the
-   pre-dispatch record, carrying §2 elements 1–7), `dispatched`, then
+   pre-dispatch record, carrying §2 elements 1–3 and 5–7 plus the intended
+   routing identity), `dispatched` (carrying the observed actual provider,
+   model, and execution surface), then
    exactly one of `completed` | `failed` | `unresolved`, and — only after
    `unresolved` — `resolved` (carrying the reconciled terminal
    determination, `completed` or `failed`, with its reconciliation
@@ -319,6 +329,15 @@ quoted in §7 match `packages/contracts/src/transitions.ts` at this
 repository's base `ad23c6e`.
 
 ## Changelog
+
+- **v0.4 (2026-08-31):** review-input disposition (Greptile, advisory),
+  TAKEN: execution identity cannot be observed before dispatch, so
+  element 4 splits — intended routing identity on `journaled`, labeled as
+  intent; observed actual identity on `dispatched`, authoritative and
+  immutable once recorded; no `completed` representation without observed
+  identity; intended-vs-observed divergence surfaces as the
+  authorization's named identity-mismatch fail-closed condition. Elements
+  1–3 and 5–7 remain immutable from `journaled`.
 
 - **v0.3 (2026-08-31):** review-input dispositions (Greptile, advisory).
   TAKEN: the chain hash now requires a ratified versioned canonical
