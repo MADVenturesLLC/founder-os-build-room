@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.1 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.2 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). Two clauses are
@@ -6,6 +6,15 @@ Founder rulings brought as builder proposals on the `DEC-20260818-01`
 pattern and are marked **[FOUNDER PROPOSAL]**; no write-path or
 approval-path code is implemented before those rulings. Everything else is
 binding on the implementation once this contract merges.
+
+**Row model, ruled by this contract: the journal is event-sourced.** One
+appended row per command *event*; nothing on a journal row is ever
+updated. The eleven-element record contract (§2) is a projection over a
+command's events; dispatch state is derived from the latest event, never
+stored as a mutable column (§5). This resolves the v0.1 contradiction
+between §4's database-enforced append-only rule and §5's state
+transitions, in favor of the model every existing append surface in this
+repository and the consumed MadBridge `Ledger` already use.
 
 Governing authority: the command-journal Phase 4 ruling
 (`FounderOS/07-decisions/DEC-20260827-01` Section 10, 2026-08-31) and the
@@ -29,11 +38,46 @@ Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
    that every governed-command dispatch path reaches the journal module and
    that no second write path to journal state exists
    (stop-gate items §7.1–7.2).
+4. **Authority boundary with the lifecycle event log
+   (`build_room_events`).** The closest existing structure to a command
+   history in this repository is `build_room_events` — the ratified
+   `DEC-20260815-11` lifecycle machine's own event log — and roughly six
+   of §2's eleven elements have counterparts there (actor, attribution,
+   scope, outcome, evidence, ordering). The boundary is therefore stated,
+   not left to co-location:
+   - `build_room_events` remains authoritative for **lifecycle facts**: a
+     room's state transitions, the transition's actor, guard, and
+     resulting state. Nothing in this contract moves, duplicates, or
+     re-derives lifecycle authority.
+   - The command journal is authoritative for **governed-command facts**:
+     command identity, the normalized envelope and digest, the governing
+     authorization binding, dispatch state, the command's terminal
+     outcome, and the provider, model, and surface that actually executed
+     the command.
+   - Where an element appears in both, each store carries it **in its own
+     scope**: `build_room_events.actor` is the actor of a transition; the
+     journal's `actor_id` is the actor of a command. A journal event that
+     corresponds to a lifecycle transition carries a
+     `lifecycle_event_ref` (`room_id` + that log's event identity) —
+     a reference, never a copy of the lifecycle row's content.
+   - A disagreement between the two stores on a shared fact is a
+     reconciliation `mismatch`: surfaced, never auto-resolved in either
+     direction, and never silently overwritten in either store.
+   - Co-location in one database is not co-authority. The journal must be
+     independently reconstructable as command history from its own rows
+     (§4); lifecycle references are for cross-verification, not
+     reconstruction dependencies.
 
-## 2. Journal record contract
+## 2. Journal record contract (projection over events)
 
-Every governed command establishes, at minimum, the eleven ruled
-relationship elements:
+The journal stores **events** (§5); this section defines the **projection**:
+for every governed command, the set of journal events sharing its
+`command_id`, ordered by `seq`, must establish the eleven ruled
+relationship elements below. Identity-bearing fields (elements 1–7) are
+carried on the command's first event (`journaled`) and are **immutable for
+the command**: a later event for the same `command_id` either omits them or
+must carry byte-identical values — a divergence is a chain-integrity
+failure, not an update.
 
 | # | Ruled element | Field(s) | Notes |
 |---|---|---|---|
@@ -44,8 +88,8 @@ relationship elements:
 | 5 | repository and governed scope | `repository`, `scope_ref` | the run's immutable scope input |
 | 6 | authorized command / normalized envelope | `command_envelope`, `envelope_digest` | §6 normalization; raw commands that would expose secrets are never stored |
 | 7 | governing authorization or approval | `authorization_ref` | e.g. the plan-approval record |
-| 8 | dispatch state | `dispatch_state` | closed enum, §5 |
-| 9 | terminal outcome | `outcome` | closed enum, §5 |
+| 8 | dispatch state | derived from the latest event (§5) | never a stored mutable column |
+| 9 | terminal outcome | derived from the terminal event (§5) | never a stored mutable column |
 | 10 | resulting evidence references | `evidence_refs` | pointers into the evidence store; payloads never inlined |
 | 11 | timestamps and ordering | `recorded_at`, `seq` | server-generated; sufficient to reconstruct command history |
 
@@ -58,8 +102,9 @@ amendment, not a refactor.
 Postgres as dedicated append-only journal tables, and the sole writer is
 the Build Room control plane through a single journal module.**
 
-- Tables: `command_journal` (rows per §2) plus its hash-chain column(s);
-  no other table or component holds journal state.
+- Tables: `command_journal_events` (one appended row per command event,
+  §5) plus its hash-chain column(s); no other table or component holds
+  journal state.
 - Append-only is enforced at the database layer (no `UPDATE`/`DELETE` for
   any application role on journal tables, trigger-enforced), following the
   corpus's ratified append-only pattern — enforcement by construction, not
@@ -87,9 +132,13 @@ alternative; this clause takes effect only on the Founder's ruling.
 
 ## 4. Append-only and tamper evidence
 
-1. Journal rows are hash-chained: each row's chain hash covers its
+1. Journal event rows are hash-chained: each row's chain hash covers its
    canonical serialization (§6) and the prior row's chain hash. `verify()`
-   over the chain detects tamper and divergence.
+   over the chain detects tamper and divergence. Because the model is
+   event-sourced (§5), no row is ever updated or deleted — database-layer
+   enforcement (no `UPDATE`/`DELETE` for any application role,
+   trigger-enforced) and the chain protect the same invariant, and
+   reconstruction replays events in `seq` order.
 2. Primitive reuse: the Build Room `packages/ledger` implementation and the
    consumed MadBridge contracts (`DEC-20260827-01` §5, rows 3.3 and 3.5:
    `Ledger`/`LedgerRow`/`VerifyResult`; `rebuildState`, reconciliation
@@ -107,23 +156,39 @@ alternative; this clause takes effect only on the Founder's ruling.
    planner path (3.1 worktree/sandbox, 3.4 adapter lifecycle, and any
    3.3/3.5 surface not already integrated).
 
-## 5. Dispatch states, outcomes, and the fail-closed rule
+## 5. Command events, derived state, and the fail-closed rule
 
 1. Pre-dispatch: a governed command may not be dispatched unless its
-   pre-dispatch journal record is durably committed. Journal write failure,
-   timeout, or unavailability means no dispatch — fail closed, never
-   journal-after.
-2. Closed enums: `dispatch_state` ∈ {`journaled`, `dispatched`,
-   `completed`, `failed`, `unresolved`}; `outcome` terminal values
-   {`completed`, `failed`, `unresolved`}. `unresolved` blocks any success
-   claim and any retry until reconciled under the consumed 3.5 semantics
-   (`reconciled` / `ambiguous` / `mismatch`; `ambiguous` never resolves
-   silently).
-3. No component represents an unreconciled outcome as success. All
-   user-visible state distinguishes observed, failed, unavailable, pending,
-   rejected, and unresolved rather than fabricating completion.
-4. Fault-injection obligations: journal store down, gateway loss
-   mid-dispatch, crash between journal write and dispatch, duplicate replay
+   `journaled` event is durably committed. Journal write failure, timeout,
+   or unavailability means no dispatch — fail closed, never journal-after.
+2. **Closed event vocabulary** (one appended row each): `journaled` (the
+   pre-dispatch record, carrying §2 elements 1–7), `dispatched`, then
+   exactly one of `completed` | `failed` | `unresolved`, and — only after
+   `unresolved` — `resolved` (carrying the reconciled terminal
+   determination, `completed` or `failed`, with its reconciliation
+   evidence under the consumed 3.5 semantics: `reconciled` / `ambiguous` /
+   `mismatch`, where `ambiguous` never resolves silently).
+3. **Ordering invariants** (enforced, and verified on rebuild):
+   `journaled` first and exactly once per `command_id`; `dispatched` at
+   most once, only after `journaled`; exactly one of
+   `completed`/`failed`/`unresolved`, only after `dispatched`; `resolved`
+   only after `unresolved`, at most once; no event after
+   `completed`/`failed`/`resolved`. A sequence violating these is a
+   journal-integrity failure.
+4. **Derived state — the two views cannot disagree by construction.**
+   `dispatch_state` is the latest event's type; the command's `outcome` is
+   the terminal determination (`completed`/`failed`, directly or via
+   `resolved`), `unresolved` while an `unresolved` event is unreconciled,
+   and pending otherwise. Both are computed from the same event sequence;
+   neither is stored independently, so no invariant between two stored
+   columns is needed — there is one source and two readings of it.
+5. `unresolved` blocks any success claim, any retry, and any
+   representation of completion until `resolved`. No component represents
+   an unreconciled outcome as success. All user-visible state
+   distinguishes observed, failed, unavailable, pending, rejected, and
+   unresolved rather than fabricating completion.
+6. Fault-injection obligations: journal store down, gateway loss
+   mid-dispatch, crash between `journaled` and dispatch, duplicate replay
    after restart — no duplicate dispatch, no duplicate authority, no
    silent success (stop-gate items §7.9–7.10).
 
@@ -175,12 +240,14 @@ alternative; this clause takes effect only on the Founder's ruling.
    web tier may originate it. Any other origination surface requires a
    separate Founder ruling before implementation.
 2. **[FOUNDER PROPOSAL] Authentication of the Founder at the control plane
-   for the plan decision: the Phase 3 posture — a Founder-held
-   control-plane credential — with the decision endpoint additionally
-   requiring the exact `plan_hash` being decided, and the act journaled
-   (actor `founder`, the decision, the hash, timestamps) before it takes
-   effect.** `DEC-20260815-07`'s step-up authentication remains an unbound
-   proposal and is not activated by this contract.
+   for the plan decision, stated as a requirement, not a description of
+   current configuration: the plan-decision endpoint shall require a
+   Founder-held control-plane credential — the same class of credential
+   posture the Phase 3 counted runs operated under — and shall
+   additionally require the exact `plan_hash` being decided, with the act
+   journaled (actor `founder`, the decision, the hash, timestamps) before
+   it takes effect.** `DEC-20260815-07`'s step-up authentication remains
+   an unbound proposal and is not activated by this contract.
    **Alternative considered and not proposed:** a dedicated Founder
    Ed25519 keypair signing each decision payload (the gateway-identity
    pattern applied to the Founder). Stronger cryptographic binding, more
@@ -210,4 +277,34 @@ defines the Phase 4 run unit and its per-run-vs-set granularity.
 | 10 reconstruction without duplicate authority | §4, §5 |
 
 Items 11–13 (repository gates, exact-head Tier-2, counted runs) bind the
-pull requests and runs, not this document.
+pull requests and runs, not this document. The repository's required
+status-check contexts on `main`, read from the rulesets API on 2026-08-31:
+`path-audit`, `attribution-shape`, `CodeRabbit`, `build-and-test`.
+
+## 11. Citation basis
+
+The FounderOS decisions this contract relies on in §3 and §8 —
+`DEC-20260815-02` (evidence custody, Option A), `DEC-20260815-08` (the
+two-store split), `DEC-20260820-01` clause 7 (the local ledger not
+authorized as a custody domain), and `DEC-20260815-07` (authentication
+proposals unbound) — were read at the pinned controlling FounderOS head
+`6f5f4405da40c90028df0c1efefed2f44da65b1c` on 2026-08-31 (named check:
+files read at that commit, not from memory). The lifecycle guard texts
+quoted in §7 match `packages/contracts/src/transitions.ts` at this
+repository's base `ad23c6e`.
+
+## Changelog
+
+- **v0.2 (2026-08-31):** four Founder findings applied. (1) Row model
+  ruled event-sourced, resolving the v0.1 contradiction between §4's
+  DB-enforced append-only rule and §5's mutable dispatch_state — §2 is now
+  a projection contract, §5 a closed event vocabulary with ordering
+  invariants. (2) §1.4 added: the authority boundary against
+  `build_room_events`, per-element, with reference-not-copy and
+  mismatch-surfacing rules — co-location is not co-authority. (3) The
+  dispatch_state/outcome overlap dissolved by construction: both are
+  readings of one event sequence, neither stored. (4) §8.2 rephrased from
+  a description of live configuration to a requirement. Citation basis
+  (§11) added with the pinned head named. The two [FOUNDER PROPOSAL]
+  clauses remain open for ruling; their substance is unchanged.
+- **v0.1 (2026-08-31):** initial proposed contract.
