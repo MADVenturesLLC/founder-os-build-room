@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.11 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.12 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). The two clauses
@@ -47,11 +47,15 @@ Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
    authority. MadBridge contributes implementation primitives only; no
    authority over command history transfers (BR-Authority Principle,
    `DEC-20260827-01` §2).
-2. There is exactly one canonical governed command history. No planner,
-   gateway, adapter, CLI, TUI, provider integration, local process,
-   evidence recorder, or other component may establish a second
-   authoritative command journal. Local diagnostic logs, provider logs,
-   process output, evidence records, and telemetry are not substitutes.
+2. There is exactly one canonical governed command history: **one
+   canonical journal, one chain, one `seq` space, two record classes**
+   (`command` and `decision`, per the Founder ruling of 2026-09-01 —
+   §12). A record class is not a second journal, and nothing permits a
+   second chain. No planner, gateway, adapter, CLI, TUI, provider
+   integration, local process, evidence recorder, or other component may
+   establish a second authoritative command journal. Local diagnostic
+   logs, provider logs, process output, evidence records, and telemetry
+   are not substitutes.
 3. Singularity is tested, not asserted: the Phase 4 suite must demonstrate
    that every governed-command dispatch path reaches the journal module and
    that no second write path to journal state exists
@@ -137,7 +141,7 @@ reconciled.
 | 4 | actual provider, model, execution surface | `intended_provider`, `intended_model`, `intended_surface` on `journaled`; `provider`, `model`, `execution_surface` on `dispatched` | intent labeled as intent pre-dispatch; the observed actual identity is recorded on `dispatched`, is authoritative for this element, and is never backfilled from configuration |
 | 5 | repository and governed scope | `repository`, `scope_ref` | the run's immutable scope input |
 | 6 | authorized command / normalized envelope | `command_envelope`, `envelope_digest` | §6 normalization; raw commands that would expose secrets are never stored |
-| 7 | governing authorization or approval | `authorization_ref` | e.g. the plan-approval record |
+| 7 | governing authorization or approval | `authorization_ref` | e.g. the plan-approval decision record; must be **resolvable**, not merely well-formed (§5.3) |
 | 8 | dispatch state | derived from the latest event (§5) | never a stored mutable column |
 | 9 | terminal outcome | derived from the terminal event (§5) | never a stored mutable column |
 | 10 | resulting evidence references | `evidence_refs` | pointers into the evidence store; payloads never inlined |
@@ -145,6 +149,25 @@ reconciled.
 
 Any change to the elements above after ratification is a contract
 amendment, not a refactor.
+
+**Decision-class records (Founder ruling, 2026-09-01 — §12, option (b)).**
+Founder decision acts (T4 `plan.revision_requested`, T5 `plan.approved`,
+T22 `founder.cancel`) are journaled as a distinct `decision` record
+class on the same chain. A decision record is a **single event, terminal
+by construction, with no state machine**: it commits atomically with its
+lifecycle event under §1.4 or it does not happen. Its element set is
+closed: actor `founder`, the decision, `plan_hash`, `authorization_ref`,
+`lifecycle_event_ref`, and timestamps. **§2's elements 4, 8, and 9 are
+not applicable to the class** — stated here rather than left absent by
+omission: a decision record has no execution identity, no
+`dispatch_state`, and no reconciliation path. Element 1's `command_id`
+is likewise not applicable — a decision is not a command; the record is
+identified on the chain by its `seq` and bound to its room by
+`lifecycle_event_ref` — so the §4 command-scoped uniqueness constraints
+are class-scoped to command records. The record class is an explicit
+field on every row and part of the canonical byte input to the row hash
+(§6.2): a verifier must never infer a record's class from which fields
+happen to be absent.
 
 ## 3. Storage locus and sole writer — [RULED]
 
@@ -285,10 +308,12 @@ as written.
    transaction (§4.1) is one of these fail-closed conditions by name: the
    append aborts, nothing is inserted, and dispatch is blocked until the
    divergence is resolved as an integrity finding.
-2. **Closed event vocabulary** (one appended row each — governing
-   **dispatched commands**; terminal semantics for non-dispatch
-   authority acts are an open Founder ruling request, §12, and are not
-   implementable until ruled): `journaled` (the
+2. **Closed event vocabulary** (one appended row each), **closed over
+   command-class records**. Decision-class records are not events in
+   this vocabulary: each is a single terminal record defined in §2 under
+   the §12 ruling, chained on the same `seq` space, with no state
+   machine, no `dispatch_state`, and no reconciliation path. For command
+   records: `journaled` (the
    pre-dispatch record, carrying §2 elements 1, 3, and 5–7, any element-2
    identities that already exist, and the intended routing identity);
    `identity_bound` (at most once, only between `journaled` and
@@ -316,11 +341,21 @@ as written.
      intended routing identity**. An intended-vs-observed divergence bars
      `completed` and every success representation by the vocabulary
      itself: a divergent command routes to `failed` or `unresolved`, and
-     may reach a `completed` determination only through `resolved`, whose
-     reconciliation evidence must cite the governing authorization for
-     the identity substitution — absent that citation, the reconciled
-     determination is `failed`. This closes §2's identity-mismatch
-     fail-closed condition in the event rules, not only in prose.
+     may reach a `completed` determination only through `resolved` under
+     the following resolution requirement (Founder ruling, 2026-09-01):
+     reconciliation must **resolve** `authorization_ref` to an
+     authorization that exists, is valid, and is applicable to the
+     command's repository, scope, and run, and the resolved
+     authorization's granted scope must **cover** the observed
+     `(provider, model, execution_surface)`. Coverage may be by set or
+     roster and need not enumerate the intended-to-observed pair —
+     but **silence is not coverage**: an authorization that does not
+     speak to the observed route does not cover it. Absent that proof,
+     the determination is `failed` where the evidence is sufficient to
+     conclude non-coverage, and stays `unresolved` where the evidence is
+     indeterminate. **A citation alone never reaches `completed`.** This
+     closes §2's identity-mismatch fail-closed condition in the event
+     rules, not only in prose.
    - `failed` may follow `dispatched`, or may follow `journaled` /
      `identity_bound` directly **only where the attempt provably never
      left the gateway boundary** — policy rejection, local validation
@@ -379,11 +414,17 @@ as written.
    envelope. Three serialization contracts, each versioned with golden
    vectors and ratified **before** the corresponding hashing
    implementation:
-   (a) the normalized command envelope; (b) the plan digest; and (c) the
-   **complete event row** the chain hash covers — field presence and
-   order, scalar encodings, collection ordering (`evidence_refs` hashed in
-   recorded order, never re-sorted), and the chain framing (how the prior
-   row's chain hash is combined with the row bytes). Two conforming
+   (a) the normalized command envelope; (b) the plan digest; (c) the
+   **complete command-class event row** the chain hash covers — field
+   presence and order, scalar encodings, collection ordering
+   (`evidence_refs` hashed in recorded order, never re-sorted), and the
+   chain framing (how the prior row's chain hash is combined with the row
+   bytes); and (d) the **complete decision-class record row** (Founder
+   ruling, 2026-09-01), with exact byte inputs stated for the decision
+   shape and **its own golden vector**, chained over the one `seq` space
+   by the same framing. **The record class is an explicit field in the
+   canonical byte input to the row hash for both classes** — never
+   inferred from absent fields. Two conforming
    implementations must produce byte-identical canonical forms and
    identical chain hashes for the same events, so a benign serializer
    difference can never masquerade as — or mask — tampering. Hash values
@@ -444,7 +485,8 @@ as written.
    Founder-held control-plane credential and the exact `plan_hash` being
    decided, with the act journaled (actor `founder`, the decision, the
    hash, timestamps) before it takes effect — where "before" is the §1.4
-   atomic commit boundary: the decision's journal record and its
+   atomic commit boundary: the decision's journal record — a
+   `decision`-class record per §2 and the §12 ruling — and its
    lifecycle event (T5, T4, or T22) commit in one transaction, and the
    decision has taken effect only when that transaction commits. **The credential is ruled:
    the existing `PHASE3_ADJUDICATION_TOKEN`.** No new secret —
@@ -482,7 +524,11 @@ defines the Phase 4 run unit and its per-run-vs-set granularity.
 | 3 no secrets persisted | §6 |
 | 4–5 goal → planner → durable plan | §7 |
 | 6–7 approval/rejection enforced; no progress from unapproved | §7, §8 |
-| 8 identity/scope/authorization binding | §2, §7 |
+| 8 identity/scope/authorization binding | §2, §7 — including the negative case: a citation resolving to an authorization that does not cover the observed route must not reach `completed` (§5.3) |
+| §12 conditions: a decision record cannot carry elements 4, 8, or 9 | §2 |
+| §12 conditions: a command record cannot use the decision shape | §2, §6.2 |
+| §12 conditions: a decision record whose lifecycle write fails commits nothing | §1.4, §2 |
+| §12 conditions: rebuild over a mixed chain reproduces both classes and their order | §4, §6.2 |
 | 9 fail-closed interruption/ambiguity | §5 |
 | 10 reconstruction without duplicate authority | §4, §5 |
 
@@ -530,10 +576,13 @@ checks, not memory. The lifecycle guard texts quoted in §7 match
 `packages/contracts/src/transitions.ts` at this repository's base
 `ad23c6e`.
 
-## 12. Open Founder ruling request — terminal semantics for non-dispatch authority acts
+## 12. Founder ruling — terminal semantics for non-dispatch authority acts — [RULED]
 
-**[FOUNDER RULING REQUESTED — drafted, not implemented. The write path
-for decision-act journaling is blocked until this ruling.]**
+**[RULED by the Founder, 2026-09-01, on this PR: option (b), the
+decision record class. Option (a) is declined. The operative content is
+folded into §§1.2, 2, 5, 6.2, 8.2, and 10; the decision-act write path
+is unblocked. The collision analysis and both option drafts are
+preserved below as the record of why this clause exists.]**
 
 **The collision.** The §8 ruling requires the Founder plan decision
 journaled before it takes effect. But T5 enters BUILDING and dispatches
@@ -578,8 +627,61 @@ unchanged. The choice shapes the closed enum, the rebuild model, and the
 identity rules — a contract-shape decision downstream of a Founder
 ruling, reserved to the Founder and not made here.
 
+**Disposition (Founder ruling, 2026-09-01, recorded verbatim on this
+PR).** Option (b) ruled; option (a) declined, for the ruling's four
+stated reasons: §1.4 already draws the boundary and (a) forces an
+authority act into a shape defined by exactly the fields it lacks;
+carve-outs inside a closed vocabulary are where the next defect lives;
+(a)'s carve-out falls on the identity-binding rules, the surface a
+review had just breached, which the Founder declined to widen in the
+same revision that repairs it; and (b) dissolves the question — a
+terminal event is only needed by something with an in-flight period,
+and a decision act has none, committing atomically under §1.4 or not
+happening. The ruling covers the class: T4, T5, and T22 are all
+`decision`-class records. Five conditions ride with the ruling and are
+folded normatively: singularity restated (§1.2); the class
+discriminator as an explicit field inside the canonical byte input
+(§6.2); a decision-class canonical encoding and golden vector over the
+one `seq` space (§6.2(d)); §5 closed over command records with the
+decision class carrying its own closed element set and elements 4, 8,
+and 9 stated as not applicable (§2); and four new §10 cases. The
+decision-act write path is unblocked by those landings.
+
 ## Changelog
 
+- **v0.12 (2026-09-01):** two Founder rulings (posted on PR #11,
+  2026-09-01T05:42:44Z) landed in one revision. **Ruling 1 — §12
+  resolved as option (b), the decision record class; option (a)
+  declined** for the ruling's four recorded reasons (the §1.4 boundary
+  already excludes decision acts from the command shape; carve-outs in a
+  closed vocabulary breed the next defect; (a)'s carve-out would widen
+  the identity-binding rules in the same revision that repairs them; a
+  decision act has no in-flight period, so (b) dissolves the terminal
+  question rather than answering it). The ruling covers T4, T5, and T22
+  as a class. Its five riding conditions are folded normatively:
+  §1.2 singularity restated (one journal, one chain, one `seq` space,
+  two record classes); the record-class discriminator as an explicit
+  field inside the canonical byte input to the row hash, never inferred
+  from absent fields (§6.2); a decision-class canonical encoding with
+  its own golden vector over the one `seq` space (§6.2(d)); §5 restated
+  as closed over command records, with the decision class's own closed
+  element set in §2 and elements 4, 8, and 9 stated as not applicable
+  rather than absent by omission (element 1 likewise n/a — a decision is
+  not a command — so the §4 command-scoped constraints are class-scoped);
+  and four new §10 cases. §12 is retained as a [RULED] record with the
+  collision analysis and both drafts preserved. The decision-act write
+  path is unblocked. **Ruling 2 — §5.3 reconciliation must resolve the
+  authorization, not cite it:** `authorization_ref` must resolve to an
+  authorization that exists, is valid, and is applicable to the
+  command's repository, scope, and run, whose granted scope covers the
+  observed `(provider, model, execution_surface)`; coverage may be by
+  set or roster and need not enumerate the intended-to-observed pair
+  (the reviewer's "explicitly permits the exact substitution" phrasing
+  declined as failing ordinary roster-scoped authorizations for no
+  security gain); **silence is not coverage**; non-coverage proven is
+  `failed`, indeterminate stays `unresolved`, and a citation alone
+  never reaches `completed`. Element 7's note gains resolvability;
+  §10's identity/scope/authorization map gains the negative case.
 - **v0.11 (2026-09-01):** CodeRabbit round at `283fccd` (three Majors,
   all Founder-confirmed as blocking; the 04:38:24Z Founder merge
   authorization is void under `DEC-20260801-02` and stands unedited as
