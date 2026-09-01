@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.10 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.11 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). The two clauses
@@ -82,9 +82,24 @@ Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
      event_id)`, alongside the `(room_id, seq)` primary key) and is a
      stable business identifier rather than a positional one. The pair's
      exact shape is part of the canonical event-row encoding (§6.2(c)).
+   - **Commit boundary, resolved as option (a) — one transaction.**
+     Where a single control-plane act writes both a journal event and
+     the lifecycle event it references (`lifecycle_event_ref` present
+     and created by the same act — the §8 decision acts foremost), both
+     writes execute in **one Neon transaction**: the pair commits or
+     neither does. An act "takes effect" only at that commit; a failure
+     of either write aborts both, fail closed. The contract chooses (a)
+     over durable pending/apply states because both stores live in the
+     same bound database, the append protocol already runs in a
+     transaction the lifecycle insert joins, and (a) adds no member to
+     the closed vocabulary.
    - A disagreement between the two stores on a shared fact is a
      reconciliation `mismatch`: surfaced, never auto-resolved in either
-     direction, and never silently overwritten in either store.
+     direction, and never silently overwritten in either store. With the
+     atomic commit boundary above, such a mismatch can arise only
+     outside that boundary (tamper, partial restore, an act that
+     references a pre-existing lifecycle event); the rule remains as
+     defense in depth, not as the happy path's failure mode.
    - Co-location in one database is not co-authority. The journal must be
      independently reconstructable as command history from its own rows
      (§4); lifecycle references are for cross-verification, not
@@ -230,6 +245,16 @@ as written.
      database-layer enforcement apply to `command_journal_events`; the
      head row is the one deliberate, named exception, on its own table
      with its own grants.
+   - **Singleton, enforced in schema — the §3 enforcement-by-grant
+     standard applied here too:** the table carries a fixed singleton
+     key with a check constraint pinning it (`head_id` primary key,
+     `CHECK (head_id = 1)`), so a second row is unrepresentable;
+     `INSERT` and `DELETE` are denied to every application role,
+     `command_journal_writer` included — row creation belongs to
+     migrations alone, and the migration-initialized genesis row is the
+     table's sole insert, ever. Two concurrent writers therefore cannot
+     lock different head rows: there is exactly one row to lock, by
+     constraint, not by convention.
    - **Uniqueness, enforced in schema:** `seq` primary key; `chain_hash`
      unique; `(command_id, event_type)` unique for the at-most-once
      event types (`journaled`, `identity_bound`, `dispatched`,
@@ -260,7 +285,10 @@ as written.
    transaction (§4.1) is one of these fail-closed conditions by name: the
    append aborts, nothing is inserted, and dispatch is blocked until the
    divergence is resolved as an integrity finding.
-2. **Closed event vocabulary** (one appended row each): `journaled` (the
+2. **Closed event vocabulary** (one appended row each — governing
+   **dispatched commands**; terminal semantics for non-dispatch
+   authority acts are an open Founder ruling request, §12, and are not
+   implementable until ruled): `journaled` (the
    pre-dispatch record, carrying §2 elements 1, 3, and 5–7, any element-2
    identities that already exist, and the intended routing identity);
    `identity_bound` (at most once, only between `journaled` and
@@ -415,7 +443,10 @@ as written.
    revisit point.** The plan-decision endpoint shall require a
    Founder-held control-plane credential and the exact `plan_hash` being
    decided, with the act journaled (actor `founder`, the decision, the
-   hash, timestamps) before it takes effect. **The credential is ruled:
+   hash, timestamps) before it takes effect — where "before" is the §1.4
+   atomic commit boundary: the decision's journal record and its
+   lifecycle event (T5, T4, or T22) commit in one transaction, and the
+   decision has taken effect only when that transaction commits. **The credential is ruled:
    the existing `PHASE3_ADJUDICATION_TOKEN`.** No new secret —
    `PHASE4_FOUNDER_TOKEN` or otherwise — is created. The enforcing
    configuration surface is `packages/control-plane/src/config.ts`: the
@@ -499,8 +530,78 @@ checks, not memory. The lifecycle guard texts quoted in §7 match
 `packages/contracts/src/transitions.ts` at this repository's base
 `ad23c6e`.
 
+## 12. Open Founder ruling request — terminal semantics for non-dispatch authority acts
+
+**[FOUNDER RULING REQUESTED — drafted, not implemented. The write path
+for decision-act journaling is blocked until this ruling.]**
+
+**The collision.** The §8 ruling requires the Founder plan decision
+journaled before it takes effect. But T5 enters BUILDING and dispatches
+nothing, and §5.3 permits `completed` only after `dispatched` with the
+observed provider, model, and surface present. A successful Founder
+approval therefore has **no legal terminal event** in the closed
+vocabulary — the happy path does not exist. This is a collision between
+the §8 ruling and a vocabulary designed for dispatched commands: an
+authority act that dispatches nothing does not fit a shape built around
+dispatch. **T22 (`founder.cancel`) and T4 (`plan.revision_requested`)
+carry the same defect** — every §8-class Founder decision act dispatches
+nothing, so none can terminate under §5.3 as written; the defect is the
+class, not the one transition the review named.
+
+**Option (a) — a control-plane terminal event.** Add `applied` to the
+closed vocabulary: a terminal for authority acts executed by the control
+plane itself, ordered `journaled` → `applied` (at most once, no
+`dispatched` required, no observed execution identity — element 4 for
+such acts records the control plane as the executing surface, intent
+and observed identical by construction), hash-chained like every event,
+committing atomically with its lifecycle event per §1.4.
+*Consequences:* the §5 closed enum grows by one member; `verify()` and
+rebuild admit a second terminal shape; the element-4 identity rules gain
+a named carve-out for control-plane acts; T5, T4, and T22 all terminate
+via `applied`; the dispatch-command rules of §5.3 are untouched.
+
+**Option (b) — a decision-record class outside the dispatch
+vocabulary.** Journal Founder decision acts as a distinct event class
+(`decision`) on the **same chain**: its own required elements (actor
+`founder`, the decision, `plan_hash`, `authorization_ref`,
+`lifecycle_event_ref`, timestamps), its own projection, with §2's
+elements 4, 8, and 9 not applicable to the class.
+*Consequences:* the dispatched-command vocabulary is untouched; the
+journal carries two event classes on one chain — singularity is
+preserved and must be stated (one canonical journal, two record shapes,
+never a second journal); rebuild projects two record types; the §1.4
+atomic commit boundary applies identically; T5, T4, and T22 are all
+`decision`-class records.
+
+Under either option the §8.2 requirement and the §1.4 atomicity stand
+unchanged. The choice shapes the closed enum, the rebuild model, and the
+identity rules — a contract-shape decision downstream of a Founder
+ruling, reserved to the Founder and not made here.
+
 ## Changelog
 
+- **v0.11 (2026-09-01):** CodeRabbit round at `283fccd` (three Majors,
+  all Founder-confirmed as blocking; the 04:38:24Z Founder merge
+  authorization is void under `DEC-20260801-02` and stands unedited as
+  the audit record). (1) TAKEN, resolved as option (a): a journal event
+  and the lifecycle event created by the same act commit in one Neon
+  transaction — the pair or neither — so the §1.4 mismatch rule becomes
+  defense in depth rather than the happy path's failure mode; §8.2's
+  "before it takes effect" is defined as that atomic commit. Same shape
+  as round 4's chain-head finding: "first" now says "atomically."
+  (2) TAKEN: the chain head is a schema-enforced singleton — fixed
+  `head_id = 1` check constraint, `INSERT`/`DELETE` denied to every
+  application role, migrations own the sole genesis insert — the §3
+  enforcement-by-grant standard applied to the head. (3) ESCALATED, not
+  implemented: §12 drafts both candidate resolutions for the missing
+  terminal of non-dispatch authority acts (T5 approval has no legal
+  terminal; **T4 and T22 carry the same defect**, stated rather than
+  fixing only the named path) — a control-plane `applied` terminal, or
+  a `decision` record class on the same chain — with consequences for
+  the closed enum, verify()/rebuild, and identity rules, as a Founder
+  ruling request. The decision-act write path is blocked until ruled.
+  The step-2 closure assessment is re-derived, not carried forward: see
+  the PR record.
 - **v0.10 (2026-09-01):** Tier-2 round 4 dispositions (CodeRabbit at
   `ab11ae5`, four findings, all Founder-confirmed and TAKEN). (1) MAJOR:
   sole-writer is now enforced by grant to the same standard §3 already
