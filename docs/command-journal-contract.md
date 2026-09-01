@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.13 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.14 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). The two clauses
@@ -156,8 +156,32 @@ T22 `founder.cancel`) are journaled as a distinct `decision` record
 class on the same chain. A decision record is a **single event, terminal
 by construction, with no state machine**: it commits atomically with its
 lifecycle event under §1.4 or it does not happen. Its element set is
-closed: actor `founder`, the decision, `plan_hash`, `authorization_ref`,
-`lifecycle_event_ref`, and timestamps. **§2's elements 4, 8, and 9 are
+closed: actor `founder`, the decision, the **recorded lifecycle state at
+the decision** (the state the act fired from), `plan_hash` **where a
+plan exists at the decision**, `authorization_ref`,
+`lifecycle_event_ref`, and timestamps.
+
+**`plan_hash` conditionality (Founder ruling, 2026-09-01, v0.14).** T4
+and T5 fire only from `PLAN_REVIEW`; a plan always exists at those
+decisions and `plan_hash` is always required. T22 `founder.cancel`
+fires from any non-terminal state, including `ROOM_CREATED`, `SCOPED`,
+and `PLANNING`, where no operative PlanDoc is bound at the decision — a
+plan first exists at T3, whose guard computes `plan_hash`. For a
+decision record, `plan_hash` is **absent** exactly when the recorded
+lifecycle state at the decision is `ROOM_CREATED`, `SCOPED`, or
+`PLANNING`, and **required** in every other state a decision act can
+fire from; in `PLANNING` reached by a T4 return this means the returned
+submission's hash is not carried — the prior PlanDoc is no longer
+operative at the decision. The no-plan condition is carried as a
+**positive verifiable fact — the recorded lifecycle state at the
+decision** — never inferred from the field's absence, and no sentinel
+value ever stands in for an absent hash. The recorded state must agree
+with the lifecycle event named by `lifecycle_event_ref`; a divergence
+is a chain-integrity failure. The ruling declines a pre-plan sub-class:
+there is one `decision` record class, with `plan_hash` presence
+governed by the recorded state.
+
+**§2's elements 4, 8, and 9 are
 not applicable to the class** — stated here rather than left absent by
 omission: a decision record has no execution identity, no
 `dispatch_state`, and no reconciliation path. Element 1's `command_id`
@@ -422,7 +446,14 @@ as written.
    bytes); and (d) the **complete decision-class record row** (Founder
    ruling, 2026-09-01), with exact byte inputs stated for the decision
    shape and **its own golden vector**, chained over the one `seq` space
-   by the same framing. **The record class is an explicit field in the
+   by the same framing; the (d) specification **states the canonical
+   encoding of field presence**, so that a record with `plan_hash`
+   present and one with it legitimately absent (a pre-plan T22
+   cancellation, §2) produce distinct, unambiguous canonical bytes,
+   with golden vectors covering both presence shapes — absence is
+   encoded structurally by the specification, never by a sentinel
+   value, and presence is verified against the recorded lifecycle
+   state (§2), never the reverse. **The record class is an explicit field in the
    canonical byte input to the row hash for both classes** — never
    inferred from absent fields. Two conforming
    implementations must produce byte-identical canonical forms and
@@ -530,6 +561,8 @@ defines the Phase 4 run unit and its per-run-vs-set granularity.
 | §12 conditions: a command record cannot use the decision shape | §2, §6.2 |
 | §12 conditions: a decision record whose lifecycle write fails commits nothing | §1.4, §2 |
 | §12 conditions: rebuild over a mixed chain reproduces both classes and their order | §4, §6.2 |
+| §2 `plan_hash` rule: a pre-plan T22 cancellation record — lifecycle state at the decision recorded, `plan_hash` absent — verifies | §2, §6.2 |
+| §2 `plan_hash` rule: a post-plan decision record missing `plan_hash` fails | §2, §6.2 |
 | 9 fail-closed interruption/ambiguity | §5 |
 | 10 reconstruction without duplicate authority | §4, §5 |
 
@@ -583,7 +616,11 @@ checks, not memory. The lifecycle guard texts quoted in §7 match
 **[RULED by the Founder, 2026-09-01, on this PR: option (b), the
 decision record class. Option (a) is declined. The operative content is
 folded into §§1.2, 2, 5, 6.2, 8.2, and 10; the decision-act write path
-is unblocked. The collision analysis and both option drafts are
+is unblocked. A further Founder ruling of 2026-09-01 (v0.14) amended
+the class's element set: `plan_hash` is conditional per §2 — required
+where a plan exists at the decision, absent where none does. The
+option drafts below predate that amendment and are preserved
+unrevised. The collision analysis and both option drafts are
 preserved below as the record of why this clause exists.]**
 
 **The collision.** The §8 ruling requires the Founder plan decision
@@ -651,6 +688,26 @@ decision-act write path is unblocked by those landings.
 
 ## Changelog
 
+- **v0.14 (2026-09-01):** `plan_hash` in the decision-class element set
+  is now conditional — required where a plan exists at the decision,
+  absent where none does — per the Founder ruling posted on this PR
+  (2026-09-01). Finding credit: **Greptile** (P1 at `244b9b2`,
+  "Pre-plan cancellation lacks representation"): T22 `founder.cancel`
+  fires from any non-terminal state
+  (`packages/contracts/src/transitions.ts`,
+  `anyNonTerminalExcluding('CLOSED_ABANDONED')`), including
+  `ROOM_CREATED`, `SCOPED`, and `PLANNING` where no PlanDoc yet exists,
+  so the previously unconditional `plan_hash` could not be satisfied by
+  a pre-plan cancellation. The element set the finding corrects was
+  fixed by the Founder ruling of 2026-09-01 recorded in §12, not a
+  builder draft; its correction is likewise ruled, not drafted. Landed:
+  §2 (conditional element; the recorded lifecycle state at the decision
+  as the positive verifiable fact; no sentinel; no pre-plan sub-class —
+  the ruling declines one), §6.2(d) (canonical field-presence encoding
+  so present-vs-absent hash unambiguously, vectors for both shapes),
+  §10 (two cases: a pre-plan T22 cancellation verifies; a post-plan
+  decision record missing `plan_hash` fails), §12 header (amendment
+  note; the option drafts are preserved unrevised).
 - **v0.13 (2026-09-01):** four line-level fixes, no new sections, no
   reopened clauses. (1) §6.2 "Three serialization contracts" corrected
   to four — (a) through (d) — found by CodeRabbit. (2) "fixed for all
