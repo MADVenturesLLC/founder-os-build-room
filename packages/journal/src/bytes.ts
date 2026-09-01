@@ -28,7 +28,18 @@ export function u32be(value: number): Uint8Array {
   return out;
 }
 
+/**
+ * UTF-8 bytes of a well-formed Unicode string. A string containing a lone
+ * UTF-16 surrogate is rejected before encoding: TextEncoder replaces every
+ * unpaired surrogate with U+FFFD, so two distinct malformed inputs would
+ * otherwise collapse to identical bytes and share one digest — injectivity
+ * broken. This is the shared choke point: every canonical string in every
+ * spec passes through here, so no encoder can bypass the check.
+ */
 export function utf8(value: string): Uint8Array {
+  if (!value.isWellFormed()) {
+    throw new RangeError('string is not well-formed Unicode: a lone surrogate has no canonical form');
+  }
   return new TextEncoder().encode(value);
 }
 

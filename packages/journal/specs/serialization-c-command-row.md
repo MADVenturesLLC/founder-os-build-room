@@ -34,7 +34,12 @@ condition 2 on the PR 2a derivation plan).
 ## Byte primitives
 
 - `u32be(n)`: 4-byte big-endian unsigned integer.
-- `utf8(s)`: the UTF-8 encoding of string `s`.
+- `utf8(s)`: the UTF-8 encoding of string `s`, which must be well-formed
+  Unicode: a string containing a lone UTF-16 surrogate has no canonical
+  form and is rejected before encoding (an unpaired surrogate would
+  otherwise be replaced by U+FFFD, letting two distinct inputs collapse
+  to one byte sequence and share a digest). Rejected inputs produce no
+  golden vector.
 - `lp(s)`: `u32be(byte length of utf8(s))` followed by `utf8(s)`.
 - `lpb(b)` (length-prefixed raw bytes): `u32be(length of b)` then `b`.
 - String field: `[tag]` `[0x00]` when absent; `[tag]` `[0x01]` `lp(value)`

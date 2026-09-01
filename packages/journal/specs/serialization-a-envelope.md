@@ -33,7 +33,12 @@ to the version that generated them.
 ## Byte primitives
 
 - `u32be(n)`: 4-byte big-endian unsigned integer; `n` in `[0, 2^32 - 1]`.
-- `utf8(s)`: the UTF-8 encoding of string `s`.
+- `utf8(s)`: the UTF-8 encoding of string `s`, which must be well-formed
+  Unicode: a string containing a lone UTF-16 surrogate has no canonical
+  form and is rejected before encoding (an unpaired surrogate would
+  otherwise be replaced by U+FFFD, letting two distinct inputs collapse
+  to one byte sequence and share a digest). Rejected inputs produce no
+  golden vector.
 - `lp(s)` (length-prefixed string): `u32be(byte length of utf8(s))`
   followed by `utf8(s)`.
 - String field: `[tag byte]` `[presence byte]` where presence is `0x00`

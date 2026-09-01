@@ -39,7 +39,10 @@ production hashing path — append protocol, chain head, store — is step
 Identical to spec (c): `u32be`, `utf8`, `lp`, string fields with
 structural presence bytes (`0x00` absent, `0x01` present), and pair
 fields (`[tag]` `[0x01]` `lp(first)` `lp(second)`). Absence is never a
-sentinel value.
+sentinel value. As in spec (c), canonical strings are well-formed
+Unicode: a string containing a lone UTF-16 surrogate has no canonical
+form and is rejected before encoding; rejected inputs produce no
+golden vector.
 
 ## Canonical byte sequence
 

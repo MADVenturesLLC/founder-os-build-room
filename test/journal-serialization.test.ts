@@ -340,6 +340,40 @@ describe('spec (d) — decision-class record row', () => {
   });
 });
 
+describe('well-formed Unicode at the shared bytes layer (all four specs)', () => {
+  const LONE_HIGH = 'goal_\uD800_example';
+  const LONE_LOW = 'goal_\uDC00_example';
+  const ASTRAL_PAIRED = 'goal_😀_example';
+
+  it('rejects a lone high surrogate on every encoder entry surface', () => {
+    assert.throws(() => encodeEnvelope({ ...ENVELOPE, commandKind: LONE_HIGH }), /well-formed/);
+    assert.throws(() => planHash({ value: LONE_HIGH }), /well-formed/);
+    assert.throws(() => planHash({ [LONE_HIGH]: 'value' }), /well-formed/);
+    assert.throws(
+      () => encodeCommandEventRow(journaledRow({ evidenceRefs: [LONE_HIGH] })),
+      /well-formed/,
+    );
+    assert.throws(
+      () => encodeDecisionRecordRow(preplanCancel({ authorizationRef: LONE_HIGH })),
+      /well-formed/,
+    );
+  });
+
+  it('rejects a lone low surrogate the same way', () => {
+    assert.throws(() => encodeEnvelope({ ...ENVELOPE, commandKind: LONE_LOW }), /well-formed/);
+    assert.throws(() => planHash({ value: LONE_LOW }), /well-formed/);
+  });
+
+  it('a valid surrogate pair (astral character) still encodes, deterministically', () => {
+    const first = encodeEnvelope({ ...ENVELOPE, commandKind: ASTRAL_PAIRED });
+    const second = encodeEnvelope({ ...ENVELOPE, commandKind: ASTRAL_PAIRED });
+    assert.equal(hex(first), hex(second));
+    assert.doesNotThrow(() => planHash({ value: ASTRAL_PAIRED }));
+    assert.doesNotThrow(() =>
+      encodeDecisionRecordRow(preplanCancel({ authorizationRef: ASTRAL_PAIRED })));
+  });
+});
+
 describe('chain framing (contract §4.1, §6.2)', () => {
   it('matches the exact byte-input definition from genesis', () => {
     const rowBytes = encodeDecisionRecordRow(preplanCancel());
