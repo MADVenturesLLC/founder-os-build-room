@@ -961,12 +961,22 @@ export class Phase3RunStore {
       throw new Phase3RunConflictError('heartbeat_evidence_invalid');
     }
 
+    /*
+     * The capture window is judged on the database clock, not `acceptedAt`.
+     * `started_at` and `capture_expires_at` were stamped from
+     * `clock_timestamp()` in createAttempt, so comparing them against the
+     * application clock mixes two timelines: any skew between them (a scripted
+     * clock that stood still under CI load, or plain host-vs-database drift in
+     * production) can put `acceptedAt` before `started_at` and silently match
+     * nothing. `acceptedAt` remains the evidence stamp and the freshness input
+     * above; it is the wrong clock only for this boundary comparison.
+     */
     const { rows } = await client.query<AttemptRow>(
       `SELECT * FROM phase3_run_attempts
         WHERE gateway_id = $1 AND state = 'active' AND heartbeat_captured = false
-          AND started_at <= $2 AND capture_expires_at >= $2
+          AND started_at <= clock_timestamp() AND capture_expires_at >= clock_timestamp()
         ORDER BY attempt_seq DESC LIMIT 1 FOR UPDATE`,
-      [evidence.gatewayId, evidence.acceptedAt],
+      [evidence.gatewayId],
     );
     const attempt = rows[0];
     if (attempt === undefined) return false;
