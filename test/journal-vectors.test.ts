@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
+import { COMMAND_EVENT_TYPES } from '../packages/journal/src/index.js';
 import { buildAllVectorFiles, renderVectorFile } from './support/journal-vector-source.js';
 
 const vectorsDir = fileURLToPath(new URL('../../packages/journal/vectors/', import.meta.url));
@@ -29,6 +30,7 @@ interface StandaloneVector {
 interface ChainVectorRow {
   readonly name: string;
   readonly record_class: string;
+  readonly input: { readonly eventType?: string };
   readonly canonical_hex: string;
   readonly row_sha256: string;
   readonly prior_chain_hash: string;
@@ -66,6 +68,26 @@ describe('golden vectors — hashes re-verified against the §6.2 definitions', 
     const absent = parsed.vectors.filter((v) => v.input.planHash === undefined);
     assert.ok(present.length >= 1, 'a plan_hash-present shape is committed');
     assert.ok(absent.length >= 1, 'a plan_hash-absent shape is committed');
+  });
+
+  it('spec (c) vectors live in the mixed chain: every command event type is covered', () => {
+    // There is deliberately no standalone command-row vector file: spec (c)
+    // names packages/journal/vectors/chain.json as its vector home, and the
+    // chain exercises the full closed event vocabulary under real framing.
+    // This assertion is the explicit per-spec coverage floor for (c) — and
+    // for (d)'s chained shape — so the "at least one vector per spec"
+    // obligation (contract §6.2) is tested, not implied.
+    const parsed = JSON.parse(readFileSync(`${vectorsDir}chain.json`, 'utf8')) as {
+      rows: readonly ChainVectorRow[];
+    };
+    const commandRows = parsed.rows.filter((r) => r.record_class === 'command');
+    assert.ok(commandRows.length >= 1, 'at least one spec (c) vector on the chain');
+    const coveredEventTypes = [...new Set(commandRows.map((r) => r.input.eventType))].sort();
+    assert.deepEqual(coveredEventTypes, [...COMMAND_EVENT_TYPES].sort());
+    assert.ok(
+      parsed.rows.some((r) => r.record_class === 'decision'),
+      'at least one spec (d) vector chained by the same framing',
+    );
   });
 
   it('the mixed chain verifies from the 64-zero genesis in seq order', () => {
