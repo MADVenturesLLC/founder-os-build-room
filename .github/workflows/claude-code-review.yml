@@ -50,8 +50,8 @@
 # docs/solutions.md "Automatic PR Code Review" example at
 # anthropics/claude-code-action `main`, read 2026-09-01 — not from memory.
 # Both third-party actions are pinned to the full commit SHA their tags
-# resolved to on that date; fork and Dependabot pull requests are skipped
-# because their runs receive no secrets. The action's own
+# resolved to on that date; fork and bot-authored pull requests are
+# skipped by a guard on the PR author. The action's own
 # `use_sticky_comment` is not used: at the pinned commit it locates the
 # prior comment by the Claude app's bot id, a bot login containing
 # "claude", or the untouched initial body, none of which hold on the
@@ -68,8 +68,18 @@
 
 name: Claude Code Review (advisory)
 
+# `pull_request_target`, not `pull_request`: the workflow DEFINITION then
+# comes from the trusted base branch, so a pull request cannot edit this
+# file to loosen the reviewer's tool allowlist or move the credential into
+# a write-capable job and have that edit run against the secret before any
+# review. The PR is still reviewed at its exact head SHA (checked out
+# below), never executed: the reviewer's shell is `gh pr view` and
+# `gh pr diff` only, and the poster checks nothing out. Consequence: a PR
+# that changes this file runs the base-branch version of it, so a
+# workflow change is exercised only after it merges. (Copilot finding on
+# the PR that introduced this file.)
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize]
 
 # One live review per pull request: a newer push cancels a review still
@@ -83,14 +93,15 @@ permissions: {}
 
 jobs:
   review:
-    # Same-repository, human-authored pull requests only. GitHub withholds
-    # repository secrets from fork and Dependabot pull requests, so the
-    # action could neither authenticate nor produce a review; skipping is
-    # explicit rather than a failed run. (This private repository has no
+    # Same-repository, human-authored pull requests only, gated on the PR
+    # AUTHOR (not `github.actor`, which is whoever pushed the latest
+    # commit). Under `pull_request_target` the credential would otherwise
+    # be available to a fork or bot-authored pull request, so this guard
+    # is the control, not a courtesy. (This private repository has no
     # forks and no Dependabot configuration at the time of writing.)
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
+      github.event.pull_request.user.type == 'User'
     runs-on: ubuntu-latest
     # Read-only: the model holds the credential here, so it holds no write
     # capability anywhere. Publishing happens in `post`.
