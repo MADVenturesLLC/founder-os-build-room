@@ -32,6 +32,14 @@
 # Input names are taken from the action's `action.yml` and its
 # docs/solutions.md "Automatic PR Code Review" example at
 # anthropics/claude-code-action `main`, read 2026-09-01 — not from memory.
+# The action is pinned to the full commit SHA that the `v1` tag resolved to
+# on that date, and the checkout is the exact PR head SHA; fork and
+# Dependabot pull requests are skipped because their runs receive no
+# secrets; and the advisory comment is edited in place on later pushes
+# (`gh pr comment --edit-last --create-if-none`, which edits the last
+# comment by github-actions[bot] on the PR) so superseded findings do not
+# stack beside current ones. These are the Tier-1 review findings on the
+# PR that introduced this file, all taken.
 #
 # The prompt interpolates only trusted, fixed-shape event fields (repository
 # name, PR number, head and base SHAs). PR title, body, and comments are
@@ -60,16 +68,33 @@ permissions:
 
 jobs:
   claude-code-review:
+    # Same-repository, human-authored pull requests only. GitHub withholds
+    # repository secrets from fork and Dependabot pull requests, so the
+    # action could neither authenticate nor post; skipping is explicit
+    # rather than a failed run. (This private repository has no forks and
+    # no Dependabot configuration at the time of writing.)
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pull request head
         uses: actions/checkout@v4
         with:
+          # The exact head commit, not the synthetic merge ref the event
+          # checks out by default, so the tree the reviewer reads is the
+          # HEAD SHA the prompt names.
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
           persist-credentials: false
 
       - name: Advisory review
-        uses: anthropics/claude-code-action@v1
+        # Pinned to the commit `v1` resolved to on 2026-09-01 (tag v1.0.212).
+        # This step receives ANTHROPIC_API_KEY and a pull-requests:write
+        # token; a movable tag could retarget that to unreviewed code.
+        # Updating the pin is a workflow change and follows the founder-
+        # approval rule in the header.
+        uses: anthropics/claude-code-action@781d62e9d5fbd78b24dcdfd42858332d485fe462 # v1.0.212
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -118,8 +143,12 @@ jobs:
 
             OUTPUT RULES:
 
-            - Post exactly one top-level comment with `gh pr comment`. Its
-              first line must be:
+            - Deliver the review as exactly one top-level comment, updated
+              in place across pushes: run
+              `gh pr comment <PR NUMBER> --edit-last --create-if-none --body "..."`,
+              which edits this workflow's previous advisory comment when one
+              exists and otherwise creates it. Never post a second top-level
+              comment. Its first line must be:
               Advisory review (non-blocking) — head <the HEAD SHA above>
               Then state the scope in one sentence, then list findings
               grouped as: Contract divergence / Convention divergence /
