@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.8 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.9 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). The two clauses
@@ -440,6 +440,17 @@ repository's base `ad23c6e`.
 
 ## Changelog
 
+- **v0.9 (2026-09-01):** Founder-found correction to the historical
+  record, builder-applied. The v0.6 changelog entry still asserted, in
+  its own voice and present tense, the false schema premise ("that
+  column carries no uniqueness constraint") that v0.8 removed from the
+  operative text — a false statement about `migrations.ts` standing
+  unmarked in a durable artifact. The entry is **marked, not rewritten**,
+  per the same convention as the §11 omission: the sentence is preserved
+  as the record of what that revision decided and why, with the true
+  constraint named at its source
+  (`build_room_events_event_id_unique UNIQUE (room_id, event_id)`,
+  `migrations.ts` line 85). No operative clause changes.
 - **v0.8 (2026-09-01):** Tier-2 round 3 dispositions (`gemini-3.1-pro`,
   FAIL at `2df2093`, confirmed by two independent executions of the same
   roster reviewer), all four findings TAKEN. (1) MAJOR: the §1.4
@@ -498,7 +509,15 @@ repository's base `ad23c6e`.
   the finding was right that the key was undefined, but its proposed
   `event_id` key is refused: that column carries no uniqueness
   constraint, and constraining it would alter the lifecycle log's schema
-  across this contract's own boundary. Rulings: §3 taken as proposed
+  across this contract's own boundary. **That schema premise was false,
+  and is corrected at v0.8:** the constraint
+  `build_room_events_event_id_unique UNIQUE (room_id, event_id)` is
+  declared at `packages/control-plane/src/migrations.ts` line 85, inside
+  the same `CREATE TABLE` as the primary key. The sentence above is
+  preserved as the record of what this revision decided and why, and
+  marked rather than rewritten — the same convention applied to the §11
+  omission below. Its reasoning rested on a false reading of the schema;
+  v0.8 redefines the key as (`room_id`, `event_id`). Rulings: §3 taken as proposed
   (§1.4 affirmed as ruled text; the `DEC-20260820-01` §6 citation was
   added to §3's inline text — §11 was intended to be updated as well and
   was not, corrected at v0.8); §8.2 taken as
