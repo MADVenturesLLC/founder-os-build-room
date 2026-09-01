@@ -1,10 +1,12 @@
-# Build Room Canonical Command Journal — Contract v0.5 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.6 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
-("establish the command-journal contract and invariants"). Two clauses are
-Founder rulings brought as builder proposals on the `DEC-20260818-01`
-pattern and are marked **[FOUNDER PROPOSAL]**; no write-path or
-approval-path code is implemented before those rulings. Everything else
+("establish the command-journal contract and invariants"). The two clauses
+brought as builder proposals on the `DEC-20260818-01` pattern (§3 store and
+sole writer; §8.2 plan-decision authentication) were **ruled by the Founder
+on 2026-09-01** in the Founder ruling comment on PR #11; both are marked
+**[RULED]** at their clauses and the write and approval paths are
+unblocked by those rulings once this contract merges. Everything else
 binds the implementation once this contract merges under the repository's
 gates and the Founder's SHA-named merge authorization.
 
@@ -73,9 +75,16 @@ Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
    - Where an element appears in both, each store carries it **in its own
      scope**: `build_room_events.actor` is the actor of a transition; the
      journal's `actor_id` is the actor of a command. A journal event that
-     corresponds to a lifecycle transition carries a
-     `lifecycle_event_ref` (`room_id` + that log's event identity) —
-     a reference, never a copy of the lifecycle row's content.
+     corresponds to a lifecycle transition carries a `lifecycle_event_ref`,
+     defined normatively as the pair **(`room_id`, `seq`)** — the lifecycle
+     log's own declared primary key — never a copy of the lifecycle row's
+     content. `event_id` is deliberately **not** the reference key: the
+     live schema places no uniqueness constraint on it, so adopting it
+     would import the very reconciliation ambiguity this boundary exists
+     to prevent, and imposing a new constraint on `build_room_events`
+     would alter the lifecycle log's schema, which this contract's own
+     boundary forbids. The pair's exact shape is part of the canonical
+     event-row encoding (§6.2(c)).
    - A disagreement between the two stores on a shared fact is a
      reconciliation `mismatch`: surfaced, never auto-resolved in either
      direction, and never silently overwritten in either store.
@@ -95,9 +104,10 @@ the command**: a later event for the same `command_id` either omits them or
 must carry byte-identical values — a divergence is a chain-integrity
 failure, not an update. Element 2's identities (`room_id`, `run_id`,
 `execution_id`) are **set-once**: each may be null on `journaled` only
-while that identity does not yet exist, is recorded on the earliest event
-at which it exists, and is immutable from that recording — never
-backfilled with a guess, never changed once set. Element 4 splits by observability: `journaled`
+while that identity does not yet exist, is recorded exactly once — on the
+dedicated one-time `identity_bound` event (§5.2), or on `dispatched` where
+the identity first exists there — and is immutable from that recording,
+never backfilled with a guess, never changed once set. Element 4 splits by observability: `journaled`
 carries the **intended** routing identity, labeled as intent; the
 **observed actual** identity is recorded on `dispatched` (the first event
 at which it can be truthfully observed), is authoritative for element 4,
@@ -124,9 +134,10 @@ reconciled.
 Any change to the elements above after ratification is a contract
 amendment, not a refactor.
 
-## 3. Storage locus and sole writer — [FOUNDER PROPOSAL]
+## 3. Storage locus and sole writer — [RULED]
 
-**Proposal: the journal lives in the Build Room's existing Neon-hosted
+**Ruled by the Founder, 2026-09-01 (PR #11 ruling comment), taken as
+proposed; §1.4 is affirmed as ruled text.** The journal lives in the Build Room's existing Neon-hosted
 Postgres as dedicated append-only journal tables, and the sole writer is
 the Build Room control plane through a single journal module.**
 
@@ -154,9 +165,11 @@ on the MadBridge ledger primitive. Declined in this proposal because the
 governed dispatch decision and the Founder plan decision are recorded at
 the control plane, so a gateway-local journal would make the fail-closed
 pre-dispatch rule depend on the partition state between gateway and control
-plane, and `DEC-20260820-01` clause 7 already declined to authorize the
-local ledger as a custody domain. The Founder may nevertheless rule the
-alternative; this clause takes effect only on the Founder's ruling.
+plane, and `DEC-20260820-01` declines a gateway-local custody domain twice
+over — §6 ("custody selection or a third custody domain ... not authorized
+as a permanent custody domain"), the direct prohibition, carried by clause
+7. Recorded as the alternative considered; the Founder ruled the proposal
+as written.
 
 ## 4. Append-only and tamper evidence
 
@@ -168,6 +181,27 @@ alternative; this clause takes effect only on the Founder's ruling.
    enforcement (no `UPDATE`/`DELETE` for any application role,
    trigger-enforced) and the chain protect the same invariant, and
    reconstruction replays events in `seq` order.
+   **Chain scope, genesis, and append serialization (contract-level, not
+   implementation detail):**
+   - The chain is **one global chain** across all of
+     `command_journal_events`, ordered by `seq` — not partitioned per
+     command, room, or run. A single chain gives `verify()` one
+     deterministic predecessor everywhere and makes cross-command
+     ordering itself tamper-evident.
+   - **Genesis:** the first row's prior-hash input is the constant of 64
+     ASCII `0` characters. `verify()` recomputes from genesis in global
+     `seq` order.
+   - **Append serialization:** every append executes in a single database
+     transaction that acquires an exclusive lock on the single
+     chain-head row (current tail `seq` and chain hash), assigns
+     `seq = head + 1`, computes the chain hash against the locked tail,
+     inserts the event, and advances the head — so concurrent
+     control-plane requests serialize and a fork is impossible by
+     construction, not merely detectable after the fact.
+   - **Uniqueness, enforced in schema:** `seq` primary key; `chain_hash`
+     unique; `(command_id, event_type)` unique for the at-most-once
+     event types (`journaled`, `identity_bound`, `dispatched`,
+     `resolved`); the exactly-one-terminal rule is verified on rebuild.
 2. Primitive reuse: the Build Room `packages/ledger` implementation and the
    consumed MadBridge contracts (`DEC-20260827-01` §5, rows 3.3 and 3.5:
    `Ledger`/`LedgerRow`/`VerifyResult`; `rebuildState`, reconciliation
@@ -191,30 +225,60 @@ alternative; this clause takes effect only on the Founder's ruling.
    `journaled` event is durably committed. Journal write failure, timeout,
    or unavailability means no dispatch — fail closed, never journal-after.
 2. **Closed event vocabulary** (one appended row each): `journaled` (the
-   pre-dispatch record, carrying §2 elements 1–3 and 5–7 plus the intended
-   routing identity), `dispatched` (carrying the observed actual provider,
-   model, and execution surface), then
+   pre-dispatch record, carrying §2 elements 1, 3, and 5–7, any element-2
+   identities that already exist, and the intended routing identity);
+   `identity_bound` (at most once, only between `journaled` and
+   `dispatched`: the one-time binding of element-2 identities that did not
+   yet exist at `journaled` — it carries only those identities, an
+   `identity_bound` with nothing to bind is invalid, and it is chained and
+   hash-covered like every event); `dispatched` (carrying the observed
+   actual provider, model, and execution surface); then
    exactly one of `completed` | `failed` | `unresolved`, and — only after
    `unresolved` — `resolved` (carrying the reconciled terminal
    determination, `completed` or `failed`, with its reconciliation
    evidence under the consumed 3.5 semantics: `reconciled` / `ambiguous` /
    `mismatch`, where `ambiguous` never resolves silently).
 3. **Ordering invariants** (enforced, and verified on rebuild):
-   `journaled` first and exactly once per `command_id`; `dispatched` at
-   most once, only after `journaled`; exactly one of
-   `completed`/`failed`/`unresolved`, where `completed` and `unresolved`
-   require a prior `dispatched`, and `failed` may follow either
-   `dispatched` **or `journaled` directly** — the pre-dispatch failure
-   path: a dispatch attempt that fails before the provider is reached
-   (gateway offline, provider-auth failure, policy rejection, journal
-   available but dispatch impossible) appends `failed` with a failure
-   classification and no observed identity, so it is recorded as failed
-   rather than masquerading as pending; `resolved` only after
-   `unresolved`, at most once; no event after
-   `completed`/`failed`/`resolved`. A sequence violating these is a
-   journal-integrity failure. Observed identity remains mandatory for
-   `completed` (§2); a pre-dispatch `failed` carries the classification
-   instead.
+   `journaled` first and exactly once per `command_id`; `identity_bound`
+   at most once, only after `journaled` and before `dispatched`;
+   `dispatched` at most once, only after `journaled`; exactly one of
+   `completed`/`failed`/`unresolved`; `resolved` only after `unresolved`,
+   at most once; no event after `completed`/`failed`/`resolved`. A
+   sequence violating these is a journal-integrity failure.
+   **The failure and ambiguity paths split on one question: can provider
+   contact be ruled out?**
+   - `completed` requires a prior `dispatched`; observed identity remains
+     mandatory for `completed` (§2).
+   - `failed` may follow `dispatched`, or may follow `journaled` /
+     `identity_bound` directly **only where the attempt provably never
+     left the gateway boundary** — policy rejection, local validation
+     failure, send never attempted. It carries a failure classification;
+     pre-send `failed` carries no observed identity.
+   - Where provider contact **cannot be ruled out** — transport timeout,
+     credential rejection that may have followed a received request,
+     crash mid-send — the command appends `unresolved` (legal after
+     `journaled`, `identity_bound`, or `dispatched`) and reaches a
+     terminal determination only through `resolved` under the
+     reconciliation protocol below. A cannot-rule-out failure never uses
+     the direct `failed` path.
+   **Dispatch idempotency and crash recovery (the journal-to-dispatch
+   boundary):**
+   - `command_id` is the end-to-end idempotency key: the dispatch path
+     presents it to the gateway and adapter, which must enforce
+     at-most-once execution per `command_id`. A retry is safe only
+     because of this binding, and no dispatch integration that cannot
+     honor it is a conforming dispatch path.
+   - On recovery, a command whose latest event is `journaled` or
+     `identity_bound` enters **dispatch-attempt reconciliation before any
+     retry**: the downstream is queried by `command_id`. If the command
+     was accepted, `dispatched` is appended carrying the observed
+     identity from the reconciliation evidence — never a re-execution.
+     If it provably never reached the provider, the command may append
+     pre-send `failed` or proceed to a governed dispatch attempt. If the
+     answer is indeterminate, `unresolved` is appended and the
+     reconciliation protocol owns the outcome. Recovery never
+     re-dispatches on the strength of a missing `dispatched` event alone
+     (stop-gate item 10: reconstruction creates no duplicate dispatch).
 4. **Derived state — the two views cannot disagree by construction.**
    `dispatch_state` is the latest event's type; the command's `outcome` is
    the terminal determination (`completed`/`failed`, directly or via
@@ -287,20 +351,27 @@ alternative; this clause takes effect only on the Founder's ruling.
    the control plane. Neither the CLI (`DEC-20260815-13` clause 2) nor the
    web tier may originate it. Any other origination surface requires a
    separate Founder ruling before implementation.
-2. **[FOUNDER PROPOSAL] Authentication of the Founder at the control plane
-   for the plan decision, stated as a requirement, not a description of
-   current configuration: the plan-decision endpoint shall require a
-   Founder-held control-plane credential — the same class of credential
-   posture the Phase 3 counted runs operated under — and shall
-   additionally require the exact `plan_hash` being decided, with the act
-   journaled (actor `founder`, the decision, the hash, timestamps) before
-   it takes effect.** `DEC-20260815-07`'s step-up authentication remains
-   an unbound proposal and is not activated by this contract.
-   **Alternative considered and not proposed:** a dedicated Founder
-   Ed25519 keypair signing each decision payload (the gateway-identity
-   pattern applied to the Founder). Stronger cryptographic binding, more
-   custody surface; deferred unless the Founder rules it. This clause
-   takes effect only on the Founder's ruling.
+2. **[RULED] Authentication of the Founder at the control plane for the
+   plan decision — ruled by the Founder 2026-09-01 (PR #11 ruling
+   comment), expressly scoped to Phase 4 with Phase 5 named as the
+   revisit point.** The plan-decision endpoint shall require a
+   Founder-held control-plane credential and the exact `plan_hash` being
+   decided, with the act journaled (actor `founder`, the decision, the
+   hash, timestamps) before it takes effect. **The credential is ruled:
+   the existing `PHASE3_ADJUDICATION_TOKEN`.** No new secret —
+   `PHASE4_FOUNDER_TOKEN` or otherwise — is created. The enforcing
+   configuration surface is `packages/control-plane/src/config.ts`, where
+   the token today is optional and resolves to null when absent (minimum
+   32 characters, required distinct from `CONTROL_PLANE_TOKEN`, never
+   echoed): this contract makes it **required for the plan-decision
+   endpoint** as a configuration requirement, not a new credential — with
+   the token unset, the plan-decision endpoint refuses and the approval
+   path is disabled, fail closed; no fallback to `CONTROL_PLANE_TOKEN` or
+   any other credential. `DEC-20260815-07`'s step-up authentication
+   remains an unbound proposal and is not activated by this contract.
+   **Alternative considered, not adopted:** a dedicated Founder Ed25519
+   keypair signing each decision payload — recorded as considered; the
+   Founder ruled the credential binding above.
 
 ## 9. Out of scope
 
@@ -343,6 +414,39 @@ repository's base `ad23c6e`.
 
 ## Changelog
 
+- **v0.6 (2026-09-01):** the two Founder rulings recorded, and the four
+  CodeRabbit Majors (CHANGES_REQUESTED at `cc5e6b9`) plus its follow-up
+  Major at `a4b982c` taken — **which are one theme, not five defects: the
+  event model stated its invariants but did not close them.** Immutability
+  was declared without an identity-binding event to carry a later-arriving
+  identity; the chain was declared without a scope, genesis, or append
+  serialization protocol; fail-closed ordering was declared without a
+  crash-recovery path across the journal-to-dispatch boundary. The
+  identity contradiction's origin is named rather than patched silently:
+  it was introduced by the v0.1→v0.4 conversion to event-sourcing, which
+  added an immutability rule without reconciling it against the
+  pre-existing null-until-it-exists rule — that is what a model change
+  costs. Fixes: `identity_bound` one-time event added to the closed
+  vocabulary with ordering and hash rules; one global chain with a
+  64-zero genesis constant, head-locked transactional appends, and schema
+  uniqueness; `command_id` as the end-to-end dispatch idempotency key
+  with mandatory dispatch-attempt reconciliation before any retry; the
+  direct `journaled`→`failed` path restricted to provably-pre-send
+  failures, with cannot-rule-out-contact cases going to `unresolved`
+  (now legal pre-`dispatched`) and terminal only via `resolved`.
+  `lifecycle_event_ref` is defined normatively as (`room_id`, `seq`) —
+  the finding was right that the key was undefined, but its proposed
+  `event_id` key is refused: that column carries no uniqueness
+  constraint, and constraining it would alter the lifecycle log's schema
+  across this contract's own boundary. Rulings: §3 taken as proposed
+  (§1.4 affirmed as ruled text; the `DEC-20260820-01` citation now names
+  §6, the direct custody prohibition, alongside clause 7); §8.2 taken as
+  proposed, scoped to Phase 4 with Phase 5 the revisit point, credential
+  ruled as the existing `PHASE3_ADJUDICATION_TOKEN` made
+  endpoint-required at `packages/control-plane/src/config.ts` — a
+  configuration requirement, not a new secret. The round-2 Tier-2 PASS
+  bound to `a4b982c` is void on this push; a fresh round is required at
+  this head.
 - **v0.5 (2026-08-31):** Tier-2 round 1 dispositions (`gemini-3.1-pro`,
   FAIL at `cc5e6b9`), all three findings TAKEN. (1) MAJOR: `failed` may
   now follow `journaled` directly for pre-dispatch failures, carrying a
