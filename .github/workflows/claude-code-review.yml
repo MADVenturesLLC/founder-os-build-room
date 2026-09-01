@@ -1,0 +1,145 @@
+# ADVISORY — Claude Code automated review of pull requests.
+#
+# Posts one advisory review comment on every pull request opened against, or
+# pushed to, this repository. The review is scoped to two things only:
+#   1. correctness of the diff against `docs/command-journal-contract.md`;
+#   2. this repository's conventions (AGENTS.md, README.md, the existing
+#      packages, tests, scripts, and workflows).
+#
+# ADVISORY ONLY — NEVER A REQUIRED CHECK. Founder ruling, recorded in the
+# FounderOS decision log at v4.50: the job below MUST NOT be added to the
+# `main` ruleset's required status checks (path-audit, attribution-shape,
+# CodeRabbit, build-and-test at the time of writing). Its comment is input
+# for the author and the Founder to weigh. It is not a Tier-2 review under
+# DEC-20260814-02, not a merge authorization under DEC-20260718-04, and a
+# failed or skipped run blocks nothing.
+#
+# Authentication, stated so nothing is inferred:
+#   - ANTHROPIC_API_KEY is Founder-provisioned as a repository secret. This
+#     file references it only as `secrets.ANTHROPIC_API_KEY`; the value is
+#     never echoed, logged, or committed. If the secret is absent the job
+#     fails and, being non-required, blocks nothing.
+#   - GitHub access uses the workflow's own GITHUB_TOKEN, passed through the
+#     action's `github_token` input and bounded by the `permissions` block
+#     below. The action's default path instead exchanges an OIDC token for a
+#     Claude GitHub App installation token, which requires that app to be
+#     installed on this repository by a repository admin; supplying
+#     `github_token` short-circuits that exchange (action source,
+#     src/github/token.ts: OVERRIDE_GITHUB_TOKEN is returned before any OIDC
+#     request), so no app installation is required for this workflow.
+#     Comments therefore appear as github-actions[bot].
+#
+# Input names are taken from the action's `action.yml` and its
+# docs/solutions.md "Automatic PR Code Review" example at
+# anthropics/claude-code-action `main`, read 2026-09-01 — not from memory.
+#
+# The prompt interpolates only trusted, fixed-shape event fields (repository
+# name, PR number, head and base SHAs). PR title, body, and comments are
+# never interpolated into the prompt; the reviewer reads them through `gh`
+# as data.
+#
+# Changes to this workflow's triggers, permissions, or steps require founder
+# approval before merge (same rule class as DEC-20260718-02 clause 4).
+
+name: Claude Code Review (advisory)
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+# One live review per pull request: a newer push cancels a review still
+# running on a superseded head, so a landed comment names the head it
+# actually reviewed.
+concurrency:
+  group: claude-code-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  claude-code-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Advisory review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            HEAD SHA: ${{ github.event.pull_request.head.sha }}
+            BASE SHA: ${{ github.event.pull_request.base.sha }}
+
+            You are an ADVISORY reviewer for this pull request. Your output
+            is one top-level comment, plus optional inline comments, for the
+            author and the Founder to weigh. You are not a gate: nothing you
+            write blocks, approves, or authorizes anything.
+
+            The PR branch is already checked out in the current working
+            directory. Use `gh pr view` for context and `gh pr diff` for the
+            diff. Read files from the checkout as needed. Do not run build,
+            test, install, or network commands.
+
+            SCOPE — review the diff for exactly two things:
+
+            1. Correctness against `docs/command-journal-contract.md`, read
+               from the checked-out PR head. Where the diff implements,
+               tests, documents, or cites the contract, check it against the
+               contract's own clauses: the record contract and event-sourced
+               row model, storage locus and sole writer, append-only and
+               tamper evidence, command events and derived state and the
+               fail-closed rule, secrets and normalization, planner lifecycle
+               binding, Founder plan-decision authentication, citation basis,
+               and the ruled terminal semantics. If the diff edits the
+               contract itself, review the edit against the contract's
+               authority-derivation preamble and its existing clauses. Name
+               the clause number for every divergence you report.
+
+            2. Repository conventions: AGENTS.md and README.md; the patterns
+               already established under `packages/`, `test/`, `scripts/`,
+               and `.github/workflows/`; commit and PR attribution trailers
+               as AGENTS.md describes them; no secrets, tokens, or other
+               credential material anywhere in the diff.
+
+            OUT OF SCOPE — do not comment on: governance doctrine (it lives
+            in FounderOS), whether the change is authorized, merge
+            readiness, Tier-2 review, Founder authorization, product
+            strategy, or style preferences not backed by an existing
+            repository convention.
+
+            OUTPUT RULES:
+
+            - Post exactly one top-level comment with `gh pr comment`. Its
+              first line must be:
+              Advisory review (non-blocking) — head <the HEAD SHA above>
+              Then state the scope in one sentence, then list findings
+              grouped as: Contract divergence / Convention divergence /
+              Nit. For each finding give the file and line, the clause or
+              convention it diverges from, and what you verified. If you
+              find nothing in scope, say so explicitly in the comment.
+            - Use `mcp__github_inline_comment__create_inline_comment`
+              (with `confirmed: true`) only for findings tied to a specific
+              changed line.
+            - Only post GitHub comments - don't submit review text as
+              messages.
+            - Never emit lines beginning with `Tier2-Verdict:`,
+              `Tier2-Head-Sha:`, `Tier2-Reviewer-Id:`, `Role-Id:`,
+              `Actor-Id:`, or `Execution-Surface:`; those are governed
+              markers reserved for humans and gates. Never write anything
+              that reads as a verdict on merge readiness or as a merge
+              authorization.
+            - Do not edit files, create commits, push, approve, request
+              changes, or submit a formal review.
+
+          claude_args: |
+            --max-turns 40
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
