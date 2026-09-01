@@ -14,7 +14,12 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
-import { COMMAND_EVENT_TYPES } from '../packages/journal/src/index.js';
+import { type State } from '../packages/contracts/src/index.js';
+import {
+  COMMAND_EVENT_TYPES,
+  effectivePlanBearingState,
+  planHashRequired,
+} from '../packages/journal/src/index.js';
 import { buildAllVectorFiles, renderVectorFile } from './support/journal-vector-source.js';
 
 const vectorsDir = fileURLToPath(new URL('../../packages/journal/vectors/', import.meta.url));
@@ -72,13 +77,16 @@ describe('golden vectors — hashes re-verified against the §6.2 definitions', 
 
   it('RECONCILING vectors with a resolved prior_state cover both plan_hash derivation branches', () => {
     // plan_hash presence at RECONCILING is derived from the resolved
-    // prior_state (contract §2): absent when the prior state is in the
-    // no-PlanDoc set, required when it is plan-bearing. Both branches of
-    // that derivation must be witnessed by committed vectors, so this
-    // asserts the derivation, not a single instance.
+    // prior_state (contract §2). Every RECONCILING vector is checked
+    // against the exported derivation itself — presence must equal
+    // planHashRequired(effectivePlanBearingState(...)) — and both
+    // branches of that derivation (required → present, not required →
+    // absent) must each be witnessed by a committed vector, computed
+    // through the same derivation call, never a hand-authored state
+    // list.
     const parsed = JSON.parse(readFileSync(`${vectorsDir}decision-row.json`, 'utf8')) as {
       vectors: readonly (StandaloneVector & {
-        input: { recordedState?: string; priorState?: string; planHash?: string };
+        input: { recordedState?: string; priorState?: State; planHash?: string };
       })[];
     };
     const reconciling = parsed.vectors.filter(
@@ -88,12 +96,21 @@ describe('golden vectors — hashes re-verified against the §6.2 definitions', 
       reconciling.length >= 1,
       'a RECONCILING vector carrying a resolved prior_state is committed',
     );
+    const requiresPlanHash = (v: (typeof reconciling)[number]): boolean =>
+      planHashRequired(effectivePlanBearingState('RECONCILING', v.input.priorState));
+    for (const v of reconciling) {
+      assert.equal(
+        v.input.planHash !== undefined,
+        requiresPlanHash(v),
+        `${v.name}: plan_hash presence must match the derivation over prior_state ${String(v.input.priorState)}`,
+      );
+    }
     assert.ok(
-      reconciling.some((v) => v.input.planHash !== undefined),
+      reconciling.some((v) => requiresPlanHash(v)),
       'missing shape: RECONCILING over a plan-bearing prior_state with plan_hash present',
     );
     assert.ok(
-      reconciling.some((v) => v.input.planHash === undefined),
+      reconciling.some((v) => !requiresPlanHash(v)),
       'missing shape: RECONCILING over a no-PlanDoc prior_state with plan_hash absent',
     );
   });
