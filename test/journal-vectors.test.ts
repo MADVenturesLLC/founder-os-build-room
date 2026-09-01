@@ -70,6 +70,34 @@ describe('golden vectors — hashes re-verified against the §6.2 definitions', 
     assert.ok(absent.length >= 1, 'a plan_hash-absent shape is committed');
   });
 
+  it('RECONCILING vectors with a resolved prior_state cover both plan_hash derivation branches', () => {
+    // plan_hash presence at RECONCILING is derived from the resolved
+    // prior_state (contract §2): absent when the prior state is in the
+    // no-PlanDoc set, required when it is plan-bearing. Both branches of
+    // that derivation must be witnessed by committed vectors, so this
+    // asserts the derivation, not a single instance.
+    const parsed = JSON.parse(readFileSync(`${vectorsDir}decision-row.json`, 'utf8')) as {
+      vectors: readonly (StandaloneVector & {
+        input: { recordedState?: string; priorState?: string; planHash?: string };
+      })[];
+    };
+    const reconciling = parsed.vectors.filter(
+      (v) => v.input.recordedState === 'RECONCILING' && v.input.priorState !== undefined,
+    );
+    assert.ok(
+      reconciling.length >= 1,
+      'a RECONCILING vector carrying a resolved prior_state is committed',
+    );
+    assert.ok(
+      reconciling.some((v) => v.input.planHash !== undefined),
+      'missing shape: RECONCILING over a plan-bearing prior_state with plan_hash present',
+    );
+    assert.ok(
+      reconciling.some((v) => v.input.planHash === undefined),
+      'missing shape: RECONCILING over a no-PlanDoc prior_state with plan_hash absent',
+    );
+  });
+
   it('spec (c) vectors live in the mixed chain: every command event type is covered', () => {
     // There is deliberately no standalone command-row vector file: spec (c)
     // names packages/journal/vectors/chain.json as its vector home, and the
