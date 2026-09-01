@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.4 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.5 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). Two clauses are
@@ -89,11 +89,15 @@ Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
 The journal stores **events** (§5); this section defines the **projection**:
 for every governed command, the set of journal events sharing its
 `command_id`, ordered by `seq`, must establish the eleven ruled
-relationship elements below. Identity-bearing fields for elements 1–3 and 5–7 are
+relationship elements below. Identity-bearing fields for elements 1, 3, and 5–7 are
 carried on the command's first event (`journaled`) and are **immutable for
 the command**: a later event for the same `command_id` either omits them or
 must carry byte-identical values — a divergence is a chain-integrity
-failure, not an update. Element 4 splits by observability: `journaled`
+failure, not an update. Element 2's identities (`room_id`, `run_id`,
+`execution_id`) are **set-once**: each may be null on `journaled` only
+while that identity does not yet exist, is recorded on the earliest event
+at which it exists, and is immutable from that recording — never
+backfilled with a guess, never changed once set. Element 4 splits by observability: `journaled`
 carries the **intended** routing identity, labeled as intent; the
 **observed actual** identity is recorded on `dispatched` (the first event
 at which it can be truthfully observed), is authoritative for element 4,
@@ -198,10 +202,19 @@ alternative; this clause takes effect only on the Founder's ruling.
 3. **Ordering invariants** (enforced, and verified on rebuild):
    `journaled` first and exactly once per `command_id`; `dispatched` at
    most once, only after `journaled`; exactly one of
-   `completed`/`failed`/`unresolved`, only after `dispatched`; `resolved`
-   only after `unresolved`, at most once; no event after
+   `completed`/`failed`/`unresolved`, where `completed` and `unresolved`
+   require a prior `dispatched`, and `failed` may follow either
+   `dispatched` **or `journaled` directly** — the pre-dispatch failure
+   path: a dispatch attempt that fails before the provider is reached
+   (gateway offline, provider-auth failure, policy rejection, journal
+   available but dispatch impossible) appends `failed` with a failure
+   classification and no observed identity, so it is recorded as failed
+   rather than masquerading as pending; `resolved` only after
+   `unresolved`, at most once; no event after
    `completed`/`failed`/`resolved`. A sequence violating these is a
-   journal-integrity failure.
+   journal-integrity failure. Observed identity remains mandatory for
+   `completed` (§2); a pre-dispatch `failed` carries the classification
+   instead.
 4. **Derived state — the two views cannot disagree by construction.**
    `dispatch_state` is the latest event's type; the command's `outcome` is
    the terminal determination (`completed`/`failed`, directly or via
@@ -249,7 +262,7 @@ alternative; this clause takes effect only on the Founder's ruling.
 
 1. States and events are the ratified `DEC-20260815-11` set, unmodified.
    Phase 4 uses T1 `scope.captured`, T2 `task.dispatched.planner`
-   (guard: roles assigned; reviewer ≠ builder; gateway online), T3
+   (guard: roles assigned; reviewer≠builder; gateway online), T3
    `plan.submitted` (PlanDoc schema; plan_hash computed), T4
    `plan.revision_requested`, T5 `plan.approved` (guard: plan_hash match;
    scope paths canonical), T22 `founder.cancel`.
@@ -330,8 +343,22 @@ repository's base `ad23c6e`.
 
 ## Changelog
 
+- **v0.5 (2026-08-31):** Tier-2 round 1 dispositions (`gemini-3.1-pro`,
+  FAIL at `cc5e6b9`), all three findings TAKEN. (1) MAJOR: `failed` may
+  now follow `journaled` directly for pre-dispatch failures, carrying a
+  failure classification and no observed identity, so gateway-offline
+  and provider-auth failures record as failed instead of masquerading
+  as pending; observed identity remains mandatory for `completed`.
+  (2) MAJOR: element 2's identities are set-once (null until the
+  identity exists, immutable from first recording), resolving the
+  contradiction with the elements-1–3 immutability rule; the v0.4
+  changelog's "execution identity" conflation is corrected in place
+  (unmerged document) to name element 4's provider/model/surface.
+  (3) MINOR: the T2 guard quote corrected to the byte-exact
+  `reviewer≠builder`. FOUNDER PROPOSAL clauses unchanged in substance.
 - **v0.4 (2026-08-31):** review-input disposition (Greptile, advisory),
-  TAKEN: execution identity cannot be observed before dispatch, so
+  TAKEN: element 4's provider, model, and surface identity cannot be
+  observed before dispatch, so
   element 4 splits — intended routing identity on `journaled`, labeled as
   intent; observed actual identity on `dispatched`, authoritative and
   immutable once recorded; no `completed` representation without observed
