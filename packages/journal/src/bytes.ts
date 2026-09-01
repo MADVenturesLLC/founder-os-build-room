@@ -116,15 +116,29 @@ export function isCanonicalSeq(value: string): boolean {
 
 /**
  * Canonical `recorded_at`: RFC 3339 UTC with exactly six fractional digits
- * (microseconds) and the literal `Z` designator. The 2b store must reproduce
- * this form byte-identically (named 2b obligation, ruled 2026-09-01).
+ * (microseconds), the literal `Z` designator, and a calendar-valid date —
+ * the day must exist in that month and year under the Gregorian leap-year
+ * rule, checked explicitly rather than through `Date`, whose parsers may
+ * normalize an impossible date to a different day. A calendar-invalid
+ * timestamp has no canonical form. The 2b store must reproduce this form
+ * byte-identically (named 2b obligation, ruled 2026-09-01).
  */
 export const RECORDED_AT_PATTERN =
   /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{6}Z$/;
+
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
 
 export function isCanonicalRecordedAt(value: string): boolean {
   if (!RECORDED_AT_PATTERN.test(value)) {
     return false;
   }
-  return !Number.isNaN(Date.parse(value));
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const maxDay = month === 2 && isLeapYear(year) ? 29 : (DAYS_IN_MONTH[month - 1] as number);
+  return day <= maxDay;
 }

@@ -238,6 +238,26 @@ describe('spec (c) — command-class event row', () => {
       /recorded_at/,
     );
   });
+
+  it('rejects calendar-impossible dates: original bytes must never enter the chain', () => {
+    assert.throws(
+      () => encodeCommandEventRow(journaledRow({ recordedAt: '2027-02-29T12:00:00.000000Z' })),
+      /calendar/,
+    );
+    assert.throws(
+      () => encodeCommandEventRow(journaledRow({ recordedAt: '2026-04-31T12:00:00.000000Z' })),
+      /calendar/,
+    );
+    assert.throws(
+      () => encodeCommandEventRow(journaledRow({ recordedAt: '2100-02-29T12:00:00.000000Z' })),
+      /calendar/,
+    );
+    // Real leap days encode: 2028 is a leap year, 2000 was a century leap year.
+    assert.doesNotThrow(() =>
+      encodeCommandEventRow(journaledRow({ recordedAt: '2028-02-29T12:00:00.000000Z' })));
+    assert.doesNotThrow(() =>
+      encodeCommandEventRow(journaledRow({ recordedAt: '2000-02-29T12:00:00.000000Z' })));
+  });
 });
 
 describe('spec (d) — decision-class record row', () => {
@@ -303,6 +323,13 @@ describe('spec (d) — decision-class record row', () => {
       outcome: 'completed',
     } as unknown as DecisionRecordRow);
     assert.equal(hex(plain), hex(smuggled));
+  });
+
+  it('rejects a calendar-impossible recorded_at on the decision shape too', () => {
+    assert.throws(
+      () => encodeDecisionRecordRow(preplanCancel({ recordedAt: '2027-02-29T12:00:00.000000Z' })),
+      /calendar/,
+    );
   });
 
   it('rejects a command shape passed as a decision', () => {

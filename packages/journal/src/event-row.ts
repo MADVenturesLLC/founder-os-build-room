@@ -224,7 +224,9 @@ function validateRow(row: CommandEventRow): void {
     throw new RangeError(`command_id must use the ${COMMAND_ID_PREFIX} namespace: ${row.commandId}`);
   }
   if (!isCanonicalRecordedAt(row.recordedAt)) {
-    throw new RangeError(`recorded_at is not canonical RFC 3339 UTC microseconds: ${row.recordedAt}`);
+    throw new RangeError(
+      `recorded_at is not the canonical RFC 3339 UTC microsecond form on a valid calendar date: ${row.recordedAt}`,
+    );
   }
 
   const shape = EVENT_SHAPES[row.eventType];

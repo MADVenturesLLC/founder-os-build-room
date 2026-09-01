@@ -108,7 +108,14 @@ exactly once, on `journaled`, `identity_bound`, or `dispatched`
 ## Canonical timestamp and the named 2b obligation
 
 `recorded_at` is RFC 3339 UTC with exactly six fractional digits and
-the literal `Z` designator: `YYYY-MM-DDTHH:MM:SS.ssssssZ`. Named 2b
+the literal `Z` designator: `YYYY-MM-DDTHH:MM:SS.ssssssZ`. The date
+must be calendar-valid: the day exists in that month and year under
+the Gregorian leap-year rule. A calendar-impossible timestamp (for
+example February 29 in a non-leap year) is rejected by the encoder and
+has no canonical form — parsers that normalize such a date to a
+different day must never be given the chance, so validity is checked
+on the string itself. Rejected inputs produce no golden vector:
+invalid inputs have no canonical bytes to record. Named 2b
 obligation (ruled 2026-09-01, condition 3 on the PR 2a derivation
 plan): the step-2b store must reproduce this canonical form
 byte-identically on read — store the canonical string rather than

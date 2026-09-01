@@ -171,7 +171,9 @@ function validateRow(row: DecisionRecordRow): void {
     throw new RangeError('lifecycle_event_ref must carry non-empty room_id and event_id');
   }
   if (!isCanonicalRecordedAt(row.recordedAt)) {
-    throw new RangeError(`recorded_at is not canonical RFC 3339 UTC microseconds: ${row.recordedAt}`);
+    throw new RangeError(
+      `recorded_at is not the canonical RFC 3339 UTC microsecond form on a valid calendar date: ${row.recordedAt}`,
+    );
   }
 }
 

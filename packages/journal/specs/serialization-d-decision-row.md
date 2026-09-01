@@ -87,9 +87,12 @@ a 2b verification obligation; this specification fixes the bytes.
 
 ## Canonical timestamp and the named 2b obligation
 
-As spec (c): the 2b store must reproduce the canonical `recorded_at`
-form byte-identically — store the canonical string rather than
-re-rendering (ruled 2026-09-01, condition 3).
+As spec (c), in full: the timestamp must be calendar-valid (the day
+exists in that month and year under the Gregorian leap-year rule; a
+calendar-impossible timestamp is rejected and has no canonical form),
+and the 2b store must reproduce the canonical `recorded_at` form
+byte-identically — store the canonical string rather than re-rendering
+(ruled 2026-09-01, condition 3).
 
 ## Non-retroactivity
 
