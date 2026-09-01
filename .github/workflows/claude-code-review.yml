@@ -36,10 +36,17 @@
 # on that date, and the checkout is the exact PR head SHA; fork and
 # Dependabot pull requests are skipped because their runs receive no
 # secrets; and the advisory comment is edited in place on later pushes
-# (`gh pr comment --edit-last --create-if-none`, which edits the last
-# comment by github-actions[bot] on the PR) so superseded findings do not
-# stack beside current ones. These are the Tier-1 review findings on the
-# PR that introduced this file, all taken.
+# so superseded findings do not stack beside current ones. The in-place
+# edit is `gh pr comment --edit-last`, which edits the newest comment by
+# the token identity (github-actions[bot]); the prompt therefore first
+# confirms via `gh pr view` that the newest github-actions comment carries
+# this workflow's marker, and otherwise creates a new comment rather than
+# overwrite another automation's. The action's own `use_sticky_comment`
+# is not used: at the pinned commit it locates the prior comment by the
+# Claude app's bot id, a bot login containing "claude", or the untouched
+# initial body, none of which hold on the built-in-token path. These are
+# the Tier-1 review findings on the PR that introduced this file, all
+# taken.
 #
 # The prompt interpolates only trusted, fixed-shape event fields (repository
 # name, PR number, head and base SHAs). PR title, body, and comments are
@@ -79,7 +86,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pull request head
-        uses: actions/checkout@v4
+        # Pinned to the commit `v4` resolved to on 2026-09-01: this step
+        # runs before the review step in a job that holds a
+        # pull-requests:write token, so it is held to the same immutable
+        # pin as the review action.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The exact head commit, not the synthetic merge ref the event
           # checks out by default, so the tree the reviewer reads is the
@@ -143,12 +154,23 @@ jobs:
 
             OUTPUT RULES:
 
-            - Deliver the review as exactly one top-level comment, updated
-              in place across pushes: run
-              `gh pr comment <PR NUMBER> --edit-last --create-if-none --body "..."`,
-              which edits this workflow's previous advisory comment when one
-              exists and otherwise creates it. Never post a second top-level
-              comment. Its first line must be:
+            - Deliver the review as exactly one top-level comment per pull
+              request, updated in place across pushes, using only the tools
+              allowed here:
+              1. Read the newest comment by this workflow's token identity:
+                 `gh pr view <PR NUMBER> --json comments --jq '[.comments[] | select(.author.login | startswith("github-actions"))] | last | .body'`
+              2. If that body begins with the marker line
+                 `<!-- claude-code-review-advisory -->`, it is this
+                 workflow's own advisory comment: update it in place with
+                 `gh pr comment <PR NUMBER> --edit-last --body "..."`.
+              3. Otherwise (no such comment, or the newest github-actions
+                 comment is not this workflow's) create a new one with
+                 `gh pr comment <PR NUMBER> --body "..."`. Never use
+                 `--edit-last` unless step 2's check passed, and never edit
+                 or delete any other comment.
+              The comment body must start with the marker line
+              `<!-- claude-code-review-advisory -->`, followed by the
+              visible first line:
               Advisory review (non-blocking) — head <the HEAD SHA above>
               Then state the scope in one sentence, then list findings
               grouped as: Contract divergence / Convention divergence /
