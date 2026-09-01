@@ -1,0 +1,78 @@
+{
+  "spec": "BRJ:d:1",
+  "generated_by": "test/support/generate-journal-vectors.ts",
+  "vectors": [
+    {
+      "name": "pre-plan T22 cancellation at ROOM_CREATED: plan_hash absent",
+      "input": {
+        "seq": "1",
+        "decision": "founder.cancel",
+        "actorId": "founder",
+        "recordedState": "ROOM_CREATED",
+        "authorizationRef": "auth_example_0011",
+        "lifecycleEventRef": {
+          "roomId": "room_example_0003",
+          "eventId": "evt_example_0001"
+        },
+        "recordedAt": "2026-09-01T12:00:21.000000Z"
+      },
+      "canonical_hex": "0000000742524a3a643a310101000000086465636973696f6e0201000000013103010000000e666f756e6465722e63616e63656c040100000007666f756e64657205010000000c524f4f4d5f4352454154454406000700080100000011617574685f6578616d706c655f30303131090100000011726f6f6d5f6578616d706c655f30303033000000106576745f6578616d706c655f303030310a010000001b323032362d30392d30315431323a30303a32312e3030303030305a",
+      "sha256": "7d93b2f613cb60234225266d7f09ab04717084bd97c8975ec8066d10d72ac960"
+    },
+    {
+      "name": "T5 approval at PLAN_REVIEW: plan_hash present",
+      "input": {
+        "seq": "2",
+        "decision": "plan.approved",
+        "actorId": "founder",
+        "recordedState": "PLAN_REVIEW",
+        "planHash": "090fd814ec8bcae5648980827fb6d3cfcdfcc4bc973dfa1bb181d337d9440f0f",
+        "authorizationRef": "auth_example_0012",
+        "lifecycleEventRef": {
+          "roomId": "room_example_0003",
+          "eventId": "evt_example_0002"
+        },
+        "recordedAt": "2026-09-01T12:00:22.000000Z"
+      },
+      "canonical_hex": "0000000742524a3a643a310101000000086465636973696f6e0201000000013203010000000d706c616e2e617070726f766564040100000007666f756e64657205010000000b504c414e5f524556494557060007010000004030393066643831346563386263616535363438393830383237666236643363666364666363346263393733646661316262313831643333376439343430663066080100000011617574685f6578616d706c655f30303132090100000011726f6f6d5f6578616d706c655f30303033000000106576745f6578616d706c655f303030320a010000001b323032362d30392d30315431323a30303a32322e3030303030305a",
+      "sha256": "b5da512a2de0f419c9c0b51ab3dd9cc667cbefb7b791b14980729a26d467601a"
+    },
+    {
+      "name": "T22 at RECONCILING over prior SCOPED: plan_hash absent",
+      "input": {
+        "seq": "3",
+        "decision": "founder.cancel",
+        "actorId": "founder",
+        "recordedState": "RECONCILING",
+        "priorState": "SCOPED",
+        "authorizationRef": "auth_example_0013",
+        "lifecycleEventRef": {
+          "roomId": "room_example_0004",
+          "eventId": "evt_example_0003"
+        },
+        "recordedAt": "2026-09-01T12:00:23.000000Z"
+      },
+      "canonical_hex": "0000000742524a3a643a310101000000086465636973696f6e0201000000013303010000000e666f756e6465722e63616e63656c040100000007666f756e64657205010000000b5245434f4e43494c494e4706010000000653434f5045440700080100000011617574685f6578616d706c655f30303133090100000011726f6f6d5f6578616d706c655f30303034000000106576745f6578616d706c655f303030330a010000001b323032362d30392d30315431323a30303a32332e3030303030305a",
+      "sha256": "19564809055ddbb5ed82025797e1855ee91a4849bd036b4a36c5dcdd44b3f6ae"
+    },
+    {
+      "name": "T22 at RECONCILING over prior BUILDING: plan_hash present",
+      "input": {
+        "seq": "4",
+        "decision": "founder.cancel",
+        "actorId": "founder",
+        "recordedState": "RECONCILING",
+        "priorState": "BUILDING",
+        "planHash": "090fd814ec8bcae5648980827fb6d3cfcdfcc4bc973dfa1bb181d337d9440f0f",
+        "authorizationRef": "auth_example_0014",
+        "lifecycleEventRef": {
+          "roomId": "room_example_0004",
+          "eventId": "evt_example_0004"
+        },
+        "recordedAt": "2026-09-01T12:00:24.000000Z"
+      },
+      "canonical_hex": "0000000742524a3a643a310101000000086465636973696f6e0201000000013403010000000e666f756e6465722e63616e63656c040100000007666f756e64657205010000000b5245434f4e43494c494e470601000000084255494c44494e4707010000004030393066643831346563386263616535363438393830383237666236643363666364666363346263393733646661316262313831643333376439343430663066080100000011617574685f6578616d706c655f30303134090100000011726f6f6d5f6578616d706c655f30303034000000106576745f6578616d706c655f303030340a010000001b323032362d30392d30315431323a30303a32342e3030303030305a",
+      "sha256": "f4fcef247ddd949b5840f438b17d4e7e617a6d7c98f1e7b8bc003c54f486e97f"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "spec": "BRJ:a:1",
+  "generated_by": "test/support/generate-journal-vectors.ts",
+  "vectors": [
+    {
+      "name": "full envelope with target and scope",
+      "input": {
+        "envelopeVersion": "1",
+        "commandKind": "planner.invoke",
+        "argv": [
+          "--goal",
+          "goal_example_0001",
+          "--mode",
+          "plan"
+        ],
+        "targetRepository": "example-org/example-repo",
+        "scopeRef": "scope_example_0001"
+      },
+      "canonical_hex": "0000000742524a3a613a310101000000013102010000000e706c616e6e65722e696e766f6b65030100000004000000062d2d676f616c00000011676f616c5f6578616d706c655f30303031000000062d2d6d6f646500000004706c616e0401000000186578616d706c652d6f72672f6578616d706c652d7265706f05010000001273636f70655f6578616d706c655f30303031",
+      "sha256": "b289932390ef94fedc14393433930e74160148f754abb5aabd9df0b652ca0641"
+    },
+    {
+      "name": "minimal envelope with empty argv and optionals absent",
+      "input": {
+        "envelopeVersion": "1",
+        "commandKind": "planner.invoke",
+        "argv": []
+      },
+      "canonical_hex": "0000000742524a3a613a310101000000013102010000000e706c616e6e65722e696e766f6b6503010000000004000500",
+      "sha256": "07d9a32ab9d78eca03fba756e247bb37849de60623fe5b162c17e64910da7a2c"
+    }
+  ]
+}

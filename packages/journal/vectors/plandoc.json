@@ -1,0 +1,34 @@
+{
+  "spec": "BRJ:b:1",
+  "generated_by": "test/support/generate-journal-vectors.ts",
+  "vectors": [
+    {
+      "name": "example document exercising every value type and key ordering",
+      "input": {
+        "plan_version": "1",
+        "title": "Example plan document",
+        "approved": false,
+        "step_count": 3,
+        "annotation": null,
+        "steps": [
+          {
+            "id": 1,
+            "action": "read scope"
+          },
+          {
+            "id": 2,
+            "action": "draft plan"
+          },
+          {
+            "id": 3,
+            "action": "submit for review"
+          }
+        ],
+        "zeta": "last-declared, encoded by key order",
+        "alpha": "first by key order"
+      },
+      "canonical_hex": "0000000742524a3a623a31060000000800000005616c70686104000000126669727374206279206b6579206f726465720000000a616e6e6f746174696f6e0000000008617070726f766564010000000c706c616e5f76657273696f6e0400000001310000000a737465705f636f756e740300000001330000000573746570730500000003060000000200000006616374696f6e040000000a726561642073636f7065000000026964030000000131060000000200000006616374696f6e040000000a647261667420706c616e000000026964030000000132060000000200000006616374696f6e04000000117375626d697420666f7220726576696577000000026964030000000133000000057469746c6504000000154578616d706c6520706c616e20646f63756d656e74000000047a65746104000000236c6173742d6465636c617265642c20656e636f646564206279206b6579206f72646572",
+      "sha256": "090fd814ec8bcae5648980827fb6d3cfcdfcc4bc973dfa1bb181d337d9440f0f"
+    }
+  ]
+}
