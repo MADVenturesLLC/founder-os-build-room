@@ -970,11 +970,22 @@ export class Phase3RunStore {
      * production) can put `acceptedAt` before `started_at` and silently match
      * nothing. `acceptedAt` remains the evidence stamp and the freshness input
      * above; it is the wrong clock only for this boundary comparison.
+     *
+     * `statement_timestamp()`, not `clock_timestamp()` or `now()`: it is read
+     * once per statement, so both bounds see the same instant (two
+     * `clock_timestamp()` calls would drift apart by the microseconds between
+     * them and narrow the inclusive window), and it is taken at this
+     * statement's start rather than the transaction's — this runs inside the
+     * heartbeat fence, whose wait can begin before the attempt's own
+     * transaction committed, so a transaction-start `now()` could precede
+     * `started_at`. Statement start is also when READ COMMITTED takes the
+     * visibility snapshot, so any row this statement can see was stamped
+     * before the instant it is compared against.
      */
     const { rows } = await client.query<AttemptRow>(
       `SELECT * FROM phase3_run_attempts
         WHERE gateway_id = $1 AND state = 'active' AND heartbeat_captured = false
-          AND started_at <= clock_timestamp() AND capture_expires_at >= clock_timestamp()
+          AND started_at <= statement_timestamp() AND capture_expires_at >= statement_timestamp()
         ORDER BY attempt_seq DESC LIMIT 1 FOR UPDATE`,
       [evidence.gatewayId],
     );
