@@ -12,6 +12,7 @@
   },
   "include": [
     "packages/contracts/src/**/*.ts",
+    "packages/journal/src/**/*.ts",
     "packages/ledger/src/**/*.ts",
     "packages/gateway-protocol/src/**/*.ts",
     "packages/gateway-registry/src/**/*.ts",
