@@ -1,0 +1,13 @@
+{
+  "name": "@build-room/journal",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build Room command-journal canonical serialization — the four ratified byte contracts and chain framing (command-journal contract v0.17 §6.2). Pure, zero I/O.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@build-room/contracts": "*"
+  }
+}
