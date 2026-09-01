@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.14 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.15 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). The two clauses
@@ -361,25 +361,32 @@ as written.
    **The failure and ambiguity paths split on one question: can provider
    contact be ruled out?**
    - `completed` requires a prior `dispatched`, an observed identity
-     (§2), **and that the observed identity matches the journaled
-     intended routing identity**. An intended-vs-observed divergence bars
-     `completed` and every success representation by the vocabulary
-     itself: a divergent command routes to `failed` or `unresolved`, and
-     may reach a `completed` determination only through `resolved` under
-     the following resolution requirement (Founder ruling, 2026-09-01):
-     reconciliation must **resolve** `authorization_ref` to an
+     (§2), **that the observed identity matches the journaled intended
+     routing identity**, and — on **every** path to a `completed`
+     determination, the direct equal-route path included (Founder
+     ruling, 2026-09-01) — that `authorization_ref` **resolves** to an
      authorization that exists, is valid, and is applicable to the
-     command's repository, scope, and run, and the resolved
-     authorization's granted scope must **cover** the observed
-     `(provider, model, execution_surface)`. Coverage may be by set or
-     roster and need not enumerate the intended-to-observed pair —
-     but **silence is not coverage**: an authorization that does not
-     speak to the observed route does not cover it. Absent that proof,
+     command's repository, scope, and run, whose granted scope
+     **covers** the observed `(provider, model, execution_surface)`.
+     Coverage may be by set or roster and need not enumerate the
+     intended-to-observed pair — but **silence is not coverage**: an
+     authorization that does not speak to the observed route does not
+     cover it. Matching intended and observed identities do not exempt
+     a command from this test. A coverage failure bars `completed`:
      the determination is `failed` where the evidence is sufficient to
-     conclude non-coverage, and stays `unresolved` where the evidence is
-     indeterminate. **A citation alone never reaches `completed`.** This
-     closes §2's identity-mismatch fail-closed condition in the event
-     rules, not only in prose.
+     conclude non-coverage, and stays `unresolved` where the evidence
+     is indeterminate. **A citation alone never reaches `completed`.**
+     This is the one statement of the authorization test; every other
+     clause applies it by reference and never restates it. An
+     intended-vs-observed divergence bars `completed` and every
+     success representation by the vocabulary itself: a divergent
+     command routes to `failed` or `unresolved`, and may reach a
+     `completed` determination only through `resolved`, which
+     **inherits this completion requirement** — a reconciled
+     `completed` applies the test above to the observed identity, the
+     intended-to-observed substitution itself covered by the resolved
+     authorization's granted scope. This closes §2's identity-mismatch
+     fail-closed condition in the event rules, not only in prose.
    - `failed` may follow `dispatched`, or may follow `journaled` /
      `identity_bound` directly **only where the attempt provably never
      left the gateway boundary** — policy rejection, local validation
@@ -563,6 +570,7 @@ defines the Phase 4 run unit and its per-run-vs-set granularity.
 | §12 conditions: rebuild over a mixed chain reproduces both classes and their order | §4, §6.2 |
 | §2 `plan_hash` rule: a pre-plan T22 cancellation record — lifecycle state at the decision recorded, `plan_hash` absent — verifies | §2, §6.2 |
 | §2 `plan_hash` rule: a post-plan decision record missing `plan_hash` fails | §2, §6.2 |
+| §5.3 completion test: matching intended and observed identities with a non-covering authorization does not reach `completed` | §5.3 |
 | 9 fail-closed interruption/ambiguity | §5 |
 | 10 reconstruction without duplicate authority | §4, §5 |
 
@@ -688,6 +696,37 @@ decision-act write path is unblocked by those landings.
 
 ## Changelog
 
+- **v0.15 (2026-09-01):** the resolve-and-cover authorization test
+  moves onto `completed` itself, per the Founder ruling posted on this
+  PR. A command reaches `completed` only with a prior `dispatched`, an
+  observed identity, the observed identity matching the journaled
+  intended identity, **and** `authorization_ref` resolving to a valid,
+  applicable authorization whose granted scope covers the observed
+  `(provider, model, execution_surface)` — on every path, the direct
+  equal-route path included. Coverage rules unchanged: set or roster,
+  no pair enumeration, silence is not coverage; coverage failure bars
+  `completed` (`failed` on proven non-coverage, `unresolved` when
+  indeterminate). Reconciliation **inherits** the test — the `resolved`
+  clause now applies the §5.3 completion requirement to the observed
+  identity, the substitution itself covered, leaving **one copy of the
+  test in one place**; two copies drift, which is how this gap opened.
+  Finding credit: **Greptile** (P1/security at `22d6cc7`, "Direct
+  completion skips authorization coverage"): the direct equal-route
+  path required only prior dispatch, an observed identity, and
+  identity equality, with route coverage required only for mismatch
+  reconciliation. The too-narrow scope came from the Founder ruling of
+  05:42:44Z, which placed the test in the reconciliation path — not a
+  builder draft; its correction is likewise ruled. §10 gains the
+  reproduced case (matching identities, non-covering authorization,
+  no `completed`). **Declined in the same round** (Founder
+  disposition, with evidence): Greptile's standing T22 pre-plan
+  `plan_hash` thread ("Pre-plan cancellation lacks representation",
+  P1 filed at `244b9b2`) — stale at `22d6cc7`: it asserts `plan_hash`
+  is required on every decision record, false since v0.14, whose §2
+  reads "`plan_hash` where a plan exists at the decision" with the
+  absent set enumerated (`ROOM_CREATED`, `SCOPED`, `PLANNING`). It was
+  correct at `244b9b2` and was taken there as v0.14; dispositioned on
+  its thread as already resolved, no revision taken for it.
 - **v0.14 (2026-09-01):** `plan_hash` in the decision-class element set
   is now conditional — required where a plan exists at the decision,
   absent where none does — per the Founder ruling posted on this PR
