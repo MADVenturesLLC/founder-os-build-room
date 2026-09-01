@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.7 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.8 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). The two clauses
@@ -76,15 +76,12 @@ Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
      scope**: `build_room_events.actor` is the actor of a transition; the
      journal's `actor_id` is the actor of a command. A journal event that
      corresponds to a lifecycle transition carries a `lifecycle_event_ref`,
-     defined normatively as the pair **(`room_id`, `seq`)** — the lifecycle
-     log's own declared primary key — never a copy of the lifecycle row's
-     content. `event_id` is deliberately **not** the reference key: the
-     live schema places no uniqueness constraint on it, so adopting it
-     would import the very reconciliation ambiguity this boundary exists
-     to prevent, and imposing a new constraint on `build_room_events`
-     would alter the lifecycle log's schema, which this contract's own
-     boundary forbids. The pair's exact shape is part of the canonical
-     event-row encoding (§6.2(c)).
+     defined normatively as the pair **(`room_id`, `event_id`)** — never a
+     copy of the lifecycle row's content. The pair is constraint-backed in
+     the live schema (`build_room_events_event_id_unique UNIQUE (room_id,
+     event_id)`, alongside the `(room_id, seq)` primary key) and is a
+     stable business identifier rather than a positional one. The pair's
+     exact shape is part of the canonical event-row encoding (§6.2(c)).
    - A disagreement between the two stores on a shared fact is a
      reconciliation `mismatch`: surfaced, never auto-resolved in either
      direction, and never silently overwritten in either store.
@@ -264,8 +261,16 @@ as written.
    sequence violating these is a journal-integrity failure.
    **The failure and ambiguity paths split on one question: can provider
    contact be ruled out?**
-   - `completed` requires a prior `dispatched`; observed identity remains
-     mandatory for `completed` (§2).
+   - `completed` requires a prior `dispatched`, an observed identity
+     (§2), **and that the observed identity matches the journaled
+     intended routing identity**. An intended-vs-observed divergence bars
+     `completed` and every success representation by the vocabulary
+     itself: a divergent command routes to `failed` or `unresolved`, and
+     may reach a `completed` determination only through `resolved`, whose
+     reconciliation evidence must cite the governing authorization for
+     the identity substitution — absent that citation, the reconciled
+     determination is `failed`. This closes §2's identity-mismatch
+     fail-closed condition in the event rules, not only in prose.
    - `failed` may follow `dispatched`, or may follow `journaled` /
      `identity_bound` directly **only where the attempt provably never
      left the gateway boundary** — policy rejection, local validation
@@ -377,14 +382,16 @@ as written.
    hash, timestamps) before it takes effect. **The credential is ruled:
    the existing `PHASE3_ADJUDICATION_TOKEN`.** No new secret —
    `PHASE4_FOUNDER_TOKEN` or otherwise — is created. The enforcing
-   configuration surface is `packages/control-plane/src/config.ts`, where
-   the token today is optional and resolves to null when absent (minimum
-   32 characters, required distinct from `CONTROL_PLANE_TOKEN`, never
-   echoed): this contract makes it **required for the plan-decision
-   endpoint** as a configuration requirement, not a new credential — with
-   the token unset, the plan-decision endpoint refuses and the approval
-   path is disabled, fail closed; no fallback to `CONTROL_PLANE_TOKEN` or
-   any other credential. `DEC-20260815-07`'s step-up authentication
+   configuration surface is `packages/control-plane/src/config.ts`: the
+   plan-decision endpoint **shall require the credential to be configured
+   and present** — a configuration requirement, not a new credential —
+   and the credential shall be at least 32 characters, distinct from
+   `CONTROL_PLANE_TOKEN`, and never echoed. With the token unset, the
+   plan-decision endpoint refuses and the approval path is disabled, fail
+   closed; no fallback to `CONTROL_PLANE_TOKEN` or any other credential.
+   The Founder ruling comment on PR #11 carries the dated observation of
+   the credential's pre-existing optionality; this contract states only
+   the requirement. `DEC-20260815-07`'s step-up authentication
    remains an unbound proposal and is not activated by this contract.
    **Alternative considered, not adopted:** a dedicated Founder Ed25519
    keypair signing each decision payload — recorded as considered; the
@@ -421,8 +428,10 @@ status-check contexts on `main`, read from the rulesets API on 2026-08-31:
 
 The FounderOS decisions this contract relies on in §3 and §8 —
 `DEC-20260815-02` (evidence custody, Option A), `DEC-20260815-08` (the
-two-store split), `DEC-20260820-01` clause 7 (the local ledger not
-authorized as a custody domain), and `DEC-20260815-07` (authentication
+two-store split), `DEC-20260820-01` §6 and §7 (§6's direct custody
+prohibition — "custody selection or a third custody domain ... not
+authorized as a permanent custody domain" — with clause 7 carrying the
+local-ledger limb), and `DEC-20260815-07` (authentication
 proposals unbound) — were read at the pinned controlling FounderOS head
 `6f5f4405da40c90028df0c1efefed2f44da65b1c` on 2026-08-31 (named check:
 files read at that commit, not from memory). The lifecycle guard texts
@@ -431,6 +440,29 @@ repository's base `ad23c6e`.
 
 ## Changelog
 
+- **v0.8 (2026-09-01):** Tier-2 round 3 dispositions (`gemini-3.1-pro`,
+  FAIL at `2df2093`, confirmed by two independent executions of the same
+  roster reviewer), all four findings TAKEN. (1) MAJOR: the §1.4
+  justification for refusing `event_id` — "the live schema places no
+  uniqueness constraint on it" — **was factually wrong about the schema
+  from v0.4 through v0.7**: `build_room_events_event_id_unique UNIQUE
+  (room_id, event_id)` has existed in the live schema throughout. The
+  false sentence is deleted, not softened, and `lifecycle_event_ref` is
+  redefined as **(`room_id`, `event_id`)** — restoring the originally
+  proposed key, constraint-backed and a stable business identifier rather
+  than a positional one. (2) MAJOR: §5.3's completion rule now requires
+  the observed identity to match the journaled intent; a divergence bars
+  `completed` by the vocabulary itself, routing to `failed`/`unresolved`
+  with `completed` reachable only through `resolved` citing the governing
+  authorization for the substitution — closing §2's fail-closed condition
+  in the event rules, not only in prose. (3) MINOR: §11 now names
+  `DEC-20260820-01` §6 alongside §7, and the v0.6 changelog entry is
+  corrected to say what actually happened (§3's inline text was updated;
+  §11 was not) rather than what was intended. (4) MINOR: §8.2's
+  live-configuration phrasing is removed; the contract states the
+  requirement, and the dated observation of pre-existing optionality
+  lives in the Founder ruling comment on PR #11, where dated observations
+  belong.
 - **v0.7 (2026-09-01):** CodeRabbit follow-up Major at `9e3ee44`, TAKEN:
   v0.6 required locking and advancing a chain-head row while §3 admitted
   only append-only journal tables — the head had no defined home. Defined:
@@ -467,8 +499,9 @@ repository's base `ad23c6e`.
   `event_id` key is refused: that column carries no uniqueness
   constraint, and constraining it would alter the lifecycle log's schema
   across this contract's own boundary. Rulings: §3 taken as proposed
-  (§1.4 affirmed as ruled text; the `DEC-20260820-01` citation now names
-  §6, the direct custody prohibition, alongside clause 7); §8.2 taken as
+  (§1.4 affirmed as ruled text; the `DEC-20260820-01` §6 citation was
+  added to §3's inline text — §11 was intended to be updated as well and
+  was not, corrected at v0.8); §8.2 taken as
   proposed, scoped to Phase 4 with Phase 5 the revisit point, credential
   ruled as the existing `PHASE3_ADJUDICATION_TOKEN` made
   endpoint-required at `packages/control-plane/src/config.ts` — a
