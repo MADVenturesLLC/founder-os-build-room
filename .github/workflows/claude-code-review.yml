@@ -16,21 +16,26 @@
 # Two jobs, split so the model never holds a write channel and a secret at
 # the same time (CodeRabbit finding on the PR that introduced this file):
 #
-#   review — runs Claude Code with ANTHROPIC_API_KEY. Its GITHUB_TOKEN is
+#   review — runs Claude Code with the Founder's Claude Code OAuth token.
+#     Its GITHUB_TOKEN is
 #     READ-ONLY (contents: read, pull-requests: read); its only shell
 #     commands are `gh pr view` and `gh pr diff`; it has no comment tool.
 #     The review text leaves the job only as structured output.
-#   post — no model, no API key. Holds pull-requests: write and publishes
+#   post — no model, no credential. Holds pull-requests: write and publishes
 #     the review deterministically: refuses text that matches an API-key
 #     pattern or carries a governed marker line, prepends this workflow's
 #     own marker, and edits the marker-bearing comment in place on later
 #     pushes (or creates it), never touching another automation's comment.
 #
 # Authentication, stated so nothing is inferred:
-#   - ANTHROPIC_API_KEY is Founder-provisioned as a repository secret. This
-#     file references it only as `secrets.ANTHROPIC_API_KEY`; the value is
-#     never echoed, logged, or committed. If the secret is absent the
-#     review job fails and, being non-required, blocks nothing.
+#   - CLAUDE_CODE_OAUTH_TOKEN is Founder-provisioned as a repository
+#     secret: the token `claude setup-token` issues for a Claude
+#     subscription, chosen by the Founder on 2026-09-01 over an API key.
+#     This file references it only as `secrets.CLAUDE_CODE_OAUTH_TOKEN`;
+#     the value is never echoed, logged, or committed. If the secret is
+#     absent the review job fails and, being non-required, blocks nothing.
+#     Switching to an API key later is the one `with:` line below
+#     (`anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}` in its place).
 #   - GitHub access uses the workflow's own GITHUB_TOKEN, passed through the
 #     action's `github_token` input and bounded by each job's `permissions`.
 #     The action's default path instead exchanges an OIDC token for a
@@ -87,7 +92,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
-    # Read-only: the model holds the API key here, so it holds no write
+    # Read-only: the model holds the credential here, so it holds no write
     # capability anywhere. Publishing happens in `post`.
     permissions:
       contents: read
@@ -110,16 +115,16 @@ jobs:
       - name: Advisory review (read-only)
         id: review
         # Pinned to the commit `v1` resolved to on 2026-09-01 (tag v1.0.212).
-        # This step receives ANTHROPIC_API_KEY; a movable tag could retarget
+        # This step receives the OAuth token; a movable tag could retarget
         # that to unreviewed code. Updating the pin is a workflow change and
         # follows the founder-approval rule in the header.
         uses: anthropics/claude-code-action@781d62e9d5fbd78b24dcdfd42858332d485fe462 # v1.0.212
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # No inline comments are produced in this design, so the
-          # post-run classification step (which would receive the API key
-          # again) is switched off.
+          # No inline comments are produced in this design, and the
+          # post-run classification step requires an API key this workflow
+          # does not hold, so it is switched off.
           classify_inline_comments: "false"
           prompt: |
             REPO: ${{ github.repository }}
@@ -196,7 +201,7 @@ jobs:
     if: needs.review.result == 'success' && needs.review.outputs.structured != ''
     runs-on: ubuntu-latest
     # The only job with a write capability; it runs no model and holds no
-    # API key.
+    # credential.
     permissions:
       pull-requests: write
     steps:
