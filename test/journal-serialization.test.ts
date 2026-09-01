@@ -340,6 +340,74 @@ describe('spec (d) — decision-class record row', () => {
   });
 });
 
+describe('runtime shape guards: required fields hold at runtime, not only in types', () => {
+  // CodeRabbit Major at 4450f02, fixed as a class: every required field a
+  // plain-JS caller could omit or mistype rejects with a typed error before
+  // encoding, so no input without a conforming form can produce bytes.
+
+  it('spec (a): absent or mistyped argv rejects instead of encoding non-conforming bytes', () => {
+    assert.throws(
+      () => encodeEnvelope({ ...ENVELOPE, argv: undefined } as unknown as NormalizedCommandEnvelope),
+      /argv must be an array/,
+    );
+    assert.throws(
+      () => encodeEnvelope({ ...ENVELOPE, argv: '--goal' } as unknown as NormalizedCommandEnvelope),
+      /argv must be an array/,
+    );
+    assert.throws(
+      () => encodeEnvelope({ ...ENVELOPE, argv: ['--goal', 7] } as unknown as NormalizedCommandEnvelope),
+      /argv entries must be strings/,
+    );
+    assert.throws(
+      () => encodeEnvelope({ ...ENVELOPE, commandKind: undefined } as unknown as NormalizedCommandEnvelope),
+      /command_kind must be a string/,
+    );
+  });
+
+  it('spec (b): a missing document rejects with the typed root guard', () => {
+    assert.throws(
+      () => encodePlanDoc(undefined as unknown as Parameters<typeof encodePlanDoc>[0]),
+      /root must be a plain object/,
+    );
+  });
+
+  it('spec (c): omitted or mistyped required row fields reject with typed errors', () => {
+    assert.throws(
+      () => encodeCommandEventRow(journaledRow({ evidenceRefs: undefined } as unknown as Partial<CommandEventRow>)),
+      /evidence_refs must be an array/,
+    );
+    assert.throws(
+      () => encodeCommandEventRow(journaledRow({ seq: 1 } as unknown as Partial<CommandEventRow>)),
+      /seq must be a string/,
+    );
+    assert.throws(
+      () => encodeCommandEventRow(journaledRow({ roomId: 7 } as unknown as Partial<CommandEventRow>)),
+      /roomId must be a string/,
+    );
+    assert.throws(
+      () => encodeCommandEventRow(journaledRow({
+        lifecycleEventRef: 'room_example_0001',
+      } as unknown as Partial<CommandEventRow>)),
+      /lifecycle_event_ref\.room_id must be a string/,
+    );
+  });
+
+  it('spec (d): omitted required decision fields reject with typed errors', () => {
+    assert.throws(
+      () => encodeDecisionRecordRow({ ...preplanCancel(), authorizationRef: undefined } as unknown as DecisionRecordRow),
+      /authorization_ref must be a string/,
+    );
+    assert.throws(
+      () => encodeDecisionRecordRow({ ...preplanCancel(), lifecycleEventRef: undefined } as unknown as DecisionRecordRow),
+      /lifecycle_event_ref\.room_id must be a string/,
+    );
+    assert.throws(
+      () => encodeDecisionRecordRow({ ...preplanCancel(), recordedAt: 20260901 } as unknown as DecisionRecordRow),
+      /recorded_at must be a string/,
+    );
+  });
+});
+
 describe('well-formed Unicode at the shared bytes layer (all four specs)', () => {
   const LONE_HIGH = 'goal_\uD800_example';
   const LONE_LOW = 'goal_\uDC00_example';

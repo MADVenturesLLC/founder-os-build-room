@@ -37,10 +37,41 @@ export function u32be(value: number): Uint8Array {
  * spec passes through here, so no encoder can bypass the check.
  */
 export function utf8(value: string): Uint8Array {
+  if (typeof value !== 'string') {
+    throw new RangeError(`only a string has canonical UTF-8 bytes, got ${typeof value}`);
+  }
   if (!value.isWellFormed()) {
     throw new RangeError('string is not well-formed Unicode: a lone surrogate has no canonical form');
   }
   return new TextEncoder().encode(value);
+}
+
+/** Typed runtime guard for a required string field a plain-JS caller could omit or mistype. */
+export function requireString(field: string, value: unknown): asserts value is string {
+  if (typeof value !== 'string') {
+    throw new RangeError(`${field} must be a string, got ${value === null ? 'null' : typeof value}`);
+  }
+}
+
+/** Typed runtime guard for an optional string field: absent is fine, mistyped is not. */
+export function requireOptionalString(field: string, value: unknown): asserts value is string | undefined {
+  if (value !== undefined) {
+    requireString(field, value);
+  }
+}
+
+/** Typed runtime guard for a required array-of-strings field. */
+export function requireStringArray(field: string, value: unknown): asserts value is readonly string[] {
+  if (!Array.isArray(value)) {
+    throw new RangeError(
+      `${field} must be an array of strings, got ${value === null ? 'null' : typeof value}`,
+    );
+  }
+  for (const item of value) {
+    if (typeof item !== 'string') {
+      throw new RangeError(`${field} entries must be strings, got ${item === null ? 'null' : typeof item}`);
+    }
+  }
 }
 
 export function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
@@ -83,12 +114,13 @@ export function bytesField(tag: number, value: Uint8Array | undefined): Uint8Arr
 /**
  * A field carrying an ordered string collection. Order is the recorded order
  * and is never re-sorted (contract §6.2: `evidence_refs` hashed in recorded
- * order). An empty collection is present with count 0 — distinct from absent.
+ * order). An empty collection is present with count 0. No current spec has
+ * an optional array field, so a missing array is a caller error, not an
+ * absence — the absent branch that once lived here let an omitted required
+ * array silently produce non-conforming bytes (CodeRabbit Major at 4450f02).
  */
-export function arrayField(tag: number, values: readonly string[] | undefined): Uint8Array {
-  if (values === undefined) {
-    return Uint8Array.of(tag, ABSENT);
-  }
+export function arrayField(tag: number, values: readonly string[]): Uint8Array {
+  requireStringArray('array field', values);
   return concatBytes([
     Uint8Array.of(tag, PRESENT),
     u32be(values.length),

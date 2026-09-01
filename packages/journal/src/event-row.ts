@@ -21,6 +21,8 @@ import {
   isHex64,
   lpString,
   pairField,
+  requireString,
+  requireStringArray,
   stringField,
 } from './bytes.js';
 import {
@@ -217,6 +219,10 @@ function validateRow(row: CommandEventRow): void {
   if (!(COMMAND_EVENT_TYPES as readonly string[]).includes(row.eventType)) {
     throw new RangeError(`not a command event type: ${String(row.eventType)}`);
   }
+  requireString('seq', row.seq);
+  requireString('command_id', row.commandId);
+  requireString('recorded_at', row.recordedAt);
+  requireStringArray('evidence_refs', row.evidenceRefs);
   if (!isCanonicalSeq(row.seq)) {
     throw new RangeError(`seq is not canonical ASCII decimal >= 1: ${row.seq}`);
   }
@@ -264,15 +270,19 @@ function validateRow(row: CommandEventRow): void {
   }
 
   for (const name of presentNames) {
-    const value = row[name];
-    if (typeof value === 'string') {
-      requireNonEmpty(name, value);
+    if (name === 'commandEnvelope' || name === 'lifecycleEventRef') {
+      continue;
     }
+    const value = row[name];
+    requireString(name, value);
+    requireNonEmpty(name, value);
   }
   for (const ref of row.evidenceRefs) {
     requireNonEmpty('evidence_refs entry', ref);
   }
   if (row.lifecycleEventRef !== undefined) {
+    requireString('lifecycle_event_ref.room_id', row.lifecycleEventRef?.roomId);
+    requireString('lifecycle_event_ref.event_id', row.lifecycleEventRef?.eventId);
     requireNonEmpty('lifecycle_event_ref.room_id', row.lifecycleEventRef.roomId);
     requireNonEmpty('lifecycle_event_ref.event_id', row.lifecycleEventRef.eventId);
   }

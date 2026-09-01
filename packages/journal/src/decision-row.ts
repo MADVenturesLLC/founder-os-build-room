@@ -27,6 +27,7 @@ import {
   isHex64,
   lpString,
   pairField,
+  requireString,
   stringField,
 } from './bytes.js';
 import type { LifecycleEventRef } from './event-row.js';
@@ -126,6 +127,11 @@ function validateRow(row: DecisionRecordRow): void {
   if (!(DECISION_EVENTS as readonly string[]).includes(row.decision)) {
     throw new RangeError(`not a decision event: ${String(row.decision)}`);
   }
+  requireString('seq', row.seq);
+  requireString('authorization_ref', row.authorizationRef);
+  requireString('recorded_at', row.recordedAt);
+  requireString('lifecycle_event_ref.room_id', row.lifecycleEventRef?.roomId);
+  requireString('lifecycle_event_ref.event_id', row.lifecycleEventRef?.eventId);
   if (!isCanonicalSeq(row.seq)) {
     throw new RangeError(`seq is not canonical ASCII decimal >= 1: ${row.seq}`);
   }

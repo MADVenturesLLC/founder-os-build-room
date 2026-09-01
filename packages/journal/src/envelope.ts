@@ -14,6 +14,9 @@ import {
   arrayField,
   concatBytes,
   lpString,
+  requireOptionalString,
+  requireString,
+  requireStringArray,
   sha256Hex,
   stringField,
 } from './bytes.js';
@@ -48,6 +51,11 @@ const TAG_TARGET_REPOSITORY = 0x04;
 const TAG_SCOPE_REF = 0x05;
 
 function validateEnvelope(envelope: NormalizedCommandEnvelope): void {
+  requireString('envelope_version', envelope.envelopeVersion);
+  requireString('command_kind', envelope.commandKind);
+  requireStringArray('argv', envelope.argv);
+  requireOptionalString('target_repository', envelope.targetRepository);
+  requireOptionalString('scope_ref', envelope.scopeRef);
   if (envelope.envelopeVersion !== ENVELOPE_VERSION) {
     throw new RangeError(
       `envelope_version must be '${ENVELOPE_VERSION}' under ${SPEC_ID_A}: ${envelope.envelopeVersion}`,
