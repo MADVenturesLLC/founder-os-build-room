@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.6 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.7 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). The two clauses
@@ -142,7 +142,9 @@ Postgres as dedicated append-only journal tables, and the sole writer is
 the Build Room control plane through a single journal module.**
 
 - Tables: `command_journal_events` (one appended row per command event,
-  §5) plus its hash-chain column(s); no other table or component holds
+  §5) plus its hash-chain column(s), and the singleton
+  `command_journal_chain_head` serialization row (§4.1) — which holds no
+  journal state, only the append latch. No other table or component holds
   journal state.
 - Append-only is enforced at the database layer (no `UPDATE`/`DELETE` for
   any application role on journal tables, trigger-enforced), following the
@@ -198,6 +200,21 @@ as written.
      inserts the event, and advances the head — so concurrent
      control-plane requests serialize and a fork is impossible by
      construction, not merely detectable after the fact.
+   - **Chain-head storage, defined:** the head lives in a dedicated
+     singleton table, `command_journal_chain_head`, in the same Neon
+     Postgres database — exactly one row, initialized once by the schema
+     migration to `seq = 0` and the 64-zero genesis constant, before any
+     event row exists; genesis initialization is a migration act, never
+     an event-append. The head row is **mutable by design and is not
+     journal state**: it is a serialization latch, updatable only by the
+     sole writer inside the append transaction, fully derivable from the
+     event rows, and carrying no authority — `verify()` and rebuild
+     recompute the chain from the events alone and never trust the head;
+     a head that disagrees with the recomputed tail is an integrity
+     finding, surfaced, never adopted. The append-only rule and its
+     database-layer enforcement apply to `command_journal_events`; the
+     head row is the one deliberate, named exception, on its own table
+     with its own grants.
    - **Uniqueness, enforced in schema:** `seq` primary key; `chain_hash`
      unique; `(command_id, event_type)` unique for the at-most-once
      event types (`journaled`, `identity_bound`, `dispatched`,
@@ -414,6 +431,17 @@ repository's base `ad23c6e`.
 
 ## Changelog
 
+- **v0.7 (2026-09-01):** CodeRabbit follow-up Major at `9e3ee44`, TAKEN:
+  v0.6 required locking and advancing a chain-head row while §3 admitted
+  only append-only journal tables — the head had no defined home. Defined:
+  the singleton `command_journal_chain_head` table in the same database,
+  initialized by migration to `seq = 0` and the genesis constant (a
+  migration act, separate from event-append rules), mutable only by the
+  sole writer inside the append transaction, holding no journal state and
+  no authority — `verify()` and rebuild recompute from events alone and a
+  disagreeing head is an integrity finding, never adopted. §3's table
+  list names it as the one deliberate append-only exception, on its own
+  table with its own grants.
 - **v0.6 (2026-09-01):** the two Founder rulings recorded, and the four
   CodeRabbit Majors (CHANGES_REQUESTED at `cc5e6b9`) plus its follow-up
   Major at `a4b982c` taken — **which are one theme, not five defects: the
