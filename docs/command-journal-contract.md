@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.16 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.17 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). The two clauses
@@ -170,10 +170,17 @@ The effective plan-bearing state is the recorded lifecycle state at
 the decision, with `RECONCILING` resolved to the `prior_state` the
 lifecycle machine stores for it (the same value G20 requires for a T20
 return) — `RECONCILING` is a suspension over a prior state, not a
-state that answers this question itself. The resolution is total and
-single-step: T19 stores `prior_state` on entry, G20 fails closed when
-it is null, and T19's own from-set excludes `RECONCILING`, so a stored
-`prior_state` is never itself `RECONCILING` and never terminal.
+state that answers this question itself. The resolution is single-step
+by reachability: T19's own from-set excludes `RECONCILING` and every
+terminal state, so a prior state, where one is available, is never
+itself `RECONCILING` and never terminal — and G20 fails closed when
+none is stored. Availability is a **requirement on the writer, not a
+fact about the machine**: `transitions.ts` is pure and decides over a
+caller-supplied snapshot, and this contract presumes no storage layer.
+If the effective plan-bearing state cannot be resolved — the recorded
+state is `RECONCILING` and no prior state is available — **the
+decision record cannot be written and the act does not take effect**:
+fail closed, per §1.4's atomic commit.
 
 **The derivation:** a PlanDoc first exists at T3, whose guard computes
 `plan_hash`; a T4 return renders the returned submission inoperative
@@ -713,6 +720,19 @@ decision-act write path is unblocked by those landings.
 
 ## Changelog
 
+- **v0.17 (2026-09-01):** claim-versus-requirement correction,
+  **Founder-found**: §2's totality sentence asserted "T19 stores
+  `prior_state` on entry" as a fact about the machine, but
+  `transitions.ts` is pure — it decides over a caller-supplied
+  `LifecycleSnapshot`, and the layer that would store a prior state is
+  unbuilt. The clause is restated as an obligation on the writer: if
+  the effective plan-bearing state cannot be resolved — the recorded
+  state is `RECONCILING` and no prior state is available — the
+  decision record cannot be written and the act does not take effect;
+  fail closed, per §1.4's atomic commit. The reachability reasoning is
+  kept (T19's from-set excludes `RECONCILING` and every terminal
+  state; G20 fails closed without a stored prior state); only the
+  assertion becomes an obligation. One clause, no new sections.
 - **v0.16 (2026-09-01):** the §2 absent-set enumeration is replaced by
   a **derivation rule**, per the Founder ruling posted on this PR
   (07:17:58Z). `plan_hash` is absent exactly when the decision's
