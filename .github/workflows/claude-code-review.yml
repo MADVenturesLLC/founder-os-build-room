@@ -7,21 +7,33 @@
 #      packages, tests, scripts, and workflows).
 #
 # ADVISORY ONLY — NEVER A REQUIRED CHECK. Founder ruling, recorded in the
-# FounderOS decision log at v4.50: the job below MUST NOT be added to the
-# `main` ruleset's required status checks (path-audit, attribution-shape,
-# CodeRabbit, build-and-test at the time of writing). Its comment is input
-# for the author and the Founder to weigh. It is not a Tier-2 review under
+# FounderOS decision log at v4.50: neither job below may be added to the
+# `main` ruleset's required status checks. The comment is input for the
+# author and the Founder to weigh. It is not a Tier-2 review under
 # DEC-20260814-02, not a merge authorization under DEC-20260718-04, and a
 # failed or skipped run blocks nothing.
+#
+# Two jobs, split so the model never holds a write channel and a secret at
+# the same time (CodeRabbit finding on the PR that introduced this file):
+#
+#   review — runs Claude Code with ANTHROPIC_API_KEY. Its GITHUB_TOKEN is
+#     READ-ONLY (contents: read, pull-requests: read); its only shell
+#     commands are `gh pr view` and `gh pr diff`; it has no comment tool.
+#     The review text leaves the job only as structured output.
+#   post — no model, no API key. Holds pull-requests: write and publishes
+#     the review deterministically: refuses text that matches an API-key
+#     pattern or carries a governed marker line, prepends this workflow's
+#     own marker, and edits the marker-bearing comment in place on later
+#     pushes (or creates it), never touching another automation's comment.
 #
 # Authentication, stated so nothing is inferred:
 #   - ANTHROPIC_API_KEY is Founder-provisioned as a repository secret. This
 #     file references it only as `secrets.ANTHROPIC_API_KEY`; the value is
-#     never echoed, logged, or committed. If the secret is absent the job
-#     fails and, being non-required, blocks nothing.
+#     never echoed, logged, or committed. If the secret is absent the
+#     review job fails and, being non-required, blocks nothing.
 #   - GitHub access uses the workflow's own GITHUB_TOKEN, passed through the
-#     action's `github_token` input and bounded by the `permissions` block
-#     below. The action's default path instead exchanges an OIDC token for a
+#     action's `github_token` input and bounded by each job's `permissions`.
+#     The action's default path instead exchanges an OIDC token for a
 #     Claude GitHub App installation token, which requires that app to be
 #     installed on this repository by a repository admin; supplying
 #     `github_token` short-circuits that exchange (action source,
@@ -32,26 +44,19 @@
 # Input names are taken from the action's `action.yml` and its
 # docs/solutions.md "Automatic PR Code Review" example at
 # anthropics/claude-code-action `main`, read 2026-09-01 — not from memory.
-# The action is pinned to the full commit SHA that the `v1` tag resolved to
-# on that date, and the checkout is the exact PR head SHA; fork and
-# Dependabot pull requests are skipped because their runs receive no
-# secrets; and the advisory comment is edited in place on later pushes
-# so superseded findings do not stack beside current ones. The in-place
-# edit is `gh pr comment --edit-last`, which edits the newest comment by
-# the token identity (github-actions[bot]); the prompt therefore first
-# confirms via `gh pr view` that the newest github-actions comment carries
-# this workflow's marker, and otherwise creates a new comment rather than
-# overwrite another automation's. The action's own `use_sticky_comment`
-# is not used: at the pinned commit it locates the prior comment by the
-# Claude app's bot id, a bot login containing "claude", or the untouched
-# initial body, none of which hold on the built-in-token path. These are
-# the Tier-1 review findings on the PR that introduced this file, all
-# taken.
+# Both third-party actions are pinned to the full commit SHA their tags
+# resolved to on that date; fork and Dependabot pull requests are skipped
+# because their runs receive no secrets. The action's own
+# `use_sticky_comment` is not used: at the pinned commit it locates the
+# prior comment by the Claude app's bot id, a bot login containing
+# "claude", or the untouched initial body, none of which hold on the
+# built-in-token path. These are the Tier-1 review findings on the PR that
+# introduced this file, all taken.
 #
-# The prompt interpolates only trusted, fixed-shape event fields (repository
-# name, PR number, head and base SHAs). PR title, body, and comments are
-# never interpolated into the prompt; the reviewer reads them through `gh`
-# as data.
+# The prompt interpolates only trusted, fixed-shape event fields
+# (repository name, PR number, head and base SHAs). PR title, body, and
+# comments are never interpolated into the prompt; the reviewer reads them
+# through `gh` as data.
 #
 # Changes to this workflow's triggers, permissions, or steps require founder
 # approval before merge (same rule class as DEC-20260718-02 clause 4).
@@ -69,28 +74,31 @@ concurrency:
   group: claude-code-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  pull-requests: write
+permissions: {}
 
 jobs:
-  claude-code-review:
+  review:
     # Same-repository, human-authored pull requests only. GitHub withholds
     # repository secrets from fork and Dependabot pull requests, so the
-    # action could neither authenticate nor post; skipping is explicit
-    # rather than a failed run. (This private repository has no forks and
-    # no Dependabot configuration at the time of writing.)
+    # action could neither authenticate nor produce a review; skipping is
+    # explicit rather than a failed run. (This private repository has no
+    # forks and no Dependabot configuration at the time of writing.)
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    # Read-only: the model holds the API key here, so it holds no write
+    # capability anywhere. Publishing happens in `post`.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      structured: ${{ steps.review.outputs.structured_output }}
     steps:
       - name: Checkout pull request head
-        # Pinned to the commit `v4` resolved to on 2026-09-01: this step
-        # runs before the review step in a job that holds a
-        # pull-requests:write token, so it is held to the same immutable
-        # pin as the review action.
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        # Pinned to the commit `v4` resolved to on 2026-09-01 (tag v4.4.0),
+        # so no mutable tag selects code that runs with the workflow token.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The exact head commit, not the synthetic merge ref the event
           # checks out by default, so the tree the reviewer reads is the
@@ -99,28 +107,34 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Advisory review
+      - name: Advisory review (read-only)
+        id: review
         # Pinned to the commit `v1` resolved to on 2026-09-01 (tag v1.0.212).
-        # This step receives ANTHROPIC_API_KEY and a pull-requests:write
-        # token; a movable tag could retarget that to unreviewed code.
-        # Updating the pin is a workflow change and follows the founder-
-        # approval rule in the header.
+        # This step receives ANTHROPIC_API_KEY; a movable tag could retarget
+        # that to unreviewed code. Updating the pin is a workflow change and
+        # follows the founder-approval rule in the header.
         uses: anthropics/claude-code-action@781d62e9d5fbd78b24dcdfd42858332d485fe462 # v1.0.212
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # No inline comments are produced in this design, so the
+          # post-run classification step (which would receive the API key
+          # again) is switched off.
+          classify_inline_comments: "false"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
             HEAD SHA: ${{ github.event.pull_request.head.sha }}
             BASE SHA: ${{ github.event.pull_request.base.sha }}
 
-            You are an ADVISORY reviewer for this pull request. Your output
-            is one top-level comment, plus optional inline comments, for the
-            author and the Founder to weigh. You are not a gate: nothing you
-            write blocks, approves, or authorizes anything.
+            You are an ADVISORY reviewer for this pull request. Your review
+            is delivered as the `review` field of your structured output;
+            a separate, model-free step publishes it as one comment for the
+            author and the Founder to weigh. You are not a gate: nothing
+            you write blocks, approves, or authorizes anything. You cannot
+            post comments yourself and must not try.
 
-            The PR branch is already checked out in the current working
+            The PR head is already checked out in the current working
             directory. Use `gh pr view` for context and `gh pr diff` for the
             diff. Read files from the checkout as needed. Do not run build,
             test, install, or network commands.
@@ -152,45 +166,94 @@ jobs:
             strategy, or style preferences not backed by an existing
             repository convention.
 
-            OUTPUT RULES:
+            OUTPUT RULES for the `review` field (Markdown):
 
-            - Deliver the review as exactly one top-level comment per pull
-              request, updated in place across pushes, using only the tools
-              allowed here:
-              1. Read the newest comment by this workflow's token identity:
-                 `gh pr view <PR NUMBER> --json comments --jq '[.comments[] | select(.author.login | startswith("github-actions"))] | last | .body'`
-              2. If that body begins with the marker line
-                 `<!-- claude-code-review-advisory -->`, it is this
-                 workflow's own advisory comment: update it in place with
-                 `gh pr comment <PR NUMBER> --edit-last --body "..."`.
-              3. Otherwise (no such comment, or the newest github-actions
-                 comment is not this workflow's) create a new one with
-                 `gh pr comment <PR NUMBER> --body "..."`. Never use
-                 `--edit-last` unless step 2's check passed, and never edit
-                 or delete any other comment.
-              The comment body must start with the marker line
-              `<!-- claude-code-review-advisory -->`, followed by the
-              visible first line:
-              Advisory review (non-blocking) — head <the HEAD SHA above>
-              Then state the scope in one sentence, then list findings
-              grouped as: Contract divergence / Convention divergence /
-              Nit. For each finding give the file and line, the clause or
-              convention it diverges from, and what you verified. If you
-              find nothing in scope, say so explicitly in the comment.
-            - Use `mcp__github_inline_comment__create_inline_comment`
-              (with `confirmed: true`) only for findings tied to a specific
-              changed line.
-            - Only post GitHub comments - don't submit review text as
-              messages.
-            - Never emit lines beginning with `Tier2-Verdict:`,
+            - Begin with one sentence stating the scope you reviewed, then
+              list findings grouped as: Contract divergence / Convention
+              divergence / Nit. For each finding give the file and line,
+              the clause or convention it diverges from, and what you
+              verified. If you find nothing in scope, say so explicitly.
+            - Never include lines beginning with `Tier2-Verdict:`,
               `Tier2-Head-Sha:`, `Tier2-Reviewer-Id:`, `Role-Id:`,
               `Actor-Id:`, or `Execution-Surface:`; those are governed
-              markers reserved for humans and gates. Never write anything
+              markers reserved for humans and gates, and the publishing
+              step refuses text that carries them. Never write anything
               that reads as a verdict on merge readiness or as a merge
               authorization.
+            - Never reproduce credential material of any kind, including
+              anything from your own environment; the publishing step
+              refuses text that matches a key pattern.
             - Do not edit files, create commits, push, approve, request
               changes, or submit a formal review.
 
           claude_args: |
             --max-turns 40
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
+            --json-schema '{"type":"object","properties":{"review":{"type":"string"}},"required":["review"]}'
+
+  post:
+    needs: review
+    if: needs.review.result == 'success' && needs.review.outputs.structured != ''
+    runs-on: ubuntu-latest
+    # The only job with a write capability; it runs no model and holds no
+    # API key.
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Publish the advisory comment (create or edit in place)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Untrusted model output: reaches the scripts below only through
+          # this environment variable, never shell interpolation.
+          STRUCTURED: ${{ needs.review.outputs.structured }}
+          MARKER: "<!-- claude-code-review-advisory -->"
+        run: |
+          set -euo pipefail
+          body_file="$RUNNER_TEMP/advisory-review.md"
+
+          # Extract, then refuse rather than sanitize: a key-shaped token or
+          # a governed marker line means the text is not published at all.
+          python3 - "$body_file" <<'PY'
+          import json, os, re, sys
+          out = sys.argv[1]
+          try:
+              text = json.loads(os.environ["STRUCTURED"]).get("review", "")
+          except (ValueError, KeyError) as e:
+              print(f"refusing to post: structured output unreadable ({e})", file=sys.stderr)
+              sys.exit(2)
+          if not isinstance(text, str) or not text.strip():
+              print("refusing to post: review text is empty", file=sys.stderr)
+              sys.exit(2)
+          if re.search(r"sk-ant-[A-Za-z0-9_-]{16,}", text):
+              print("refusing to post: text matches an API-key pattern", file=sys.stderr)
+              sys.exit(3)
+          if re.search(r"^(Tier2-Verdict|Tier2-Head-Sha|Tier2-Reviewer-Id|Role-Id|Actor-Id|Execution-Surface):", text, re.M):
+              print("refusing to post: text carries a governed marker line", file=sys.stderr)
+              sys.exit(4)
+          marker = os.environ["MARKER"]
+          head = os.environ["HEAD_SHA"]
+          run_url = os.environ["RUN_URL"]
+          with open(out, "w", encoding="utf-8") as f:
+              f.write(f"{marker}\n")
+              f.write(f"Advisory review (non-blocking) — head {head}\n\n")
+              f.write(text.rstrip() + "\n\n")
+              f.write("<sub>Advisory only: not a Tier-2 verdict, not a merge "
+                      f"authorization, never a required check. Run: {run_url}</sub>\n")
+          PY
+
+          # This workflow's own comment is the github-actions[bot] comment
+          # that begins with the marker; any other automation's comment is
+          # left alone. Edit in place if found, otherwise create.
+          existing="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq "[.[] | select(.user.login == \"github-actions[bot]\") | select(.body | startswith(\"$MARKER\"))] | first | .id // empty")"
+          if [[ -n "$existing" ]]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$existing" --raw-field "body=@$body_file" > /dev/null
+            echo "advisory comment $existing updated for head $HEAD_SHA"
+          else
+            gh api --method POST "repos/$REPO/issues/$PR_NUMBER/comments" --raw-field "body=@$body_file" > /dev/null
+            echo "advisory comment created for head $HEAD_SHA"
+          fi
