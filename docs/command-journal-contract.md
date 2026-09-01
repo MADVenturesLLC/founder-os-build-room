@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.15 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.16 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). The two clauses
@@ -157,29 +157,46 @@ class on the same chain. A decision record is a **single event, terminal
 by construction, with no state machine**: it commits atomically with its
 lifecycle event under §1.4 or it does not happen. Its element set is
 closed: actor `founder`, the decision, the **recorded lifecycle state at
-the decision** (the state the act fired from), `plan_hash` **where a
-plan exists at the decision**, `authorization_ref`,
+the decision** (the state the act fired from, together with the
+resolved prior state where that state is `RECONCILING`), `plan_hash`
+**where a plan exists at the decision**, `authorization_ref`,
 `lifecycle_event_ref`, and timestamps.
 
-**`plan_hash` conditionality (Founder ruling, 2026-09-01, v0.14).** T4
-and T5 fire only from `PLAN_REVIEW`; a plan always exists at those
-decisions and `plan_hash` is always required. T22 `founder.cancel`
-fires from any non-terminal state, including `ROOM_CREATED`, `SCOPED`,
-and `PLANNING`, where no operative PlanDoc is bound at the decision — a
-plan first exists at T3, whose guard computes `plan_hash`. For a
-decision record, `plan_hash` is **absent** exactly when the recorded
-lifecycle state at the decision is `ROOM_CREATED`, `SCOPED`, or
-`PLANNING`, and **required** in every other state a decision act can
-fire from; in `PLANNING` reached by a T4 return this means the returned
-submission's hash is not carried — the prior PlanDoc is no longer
-operative at the decision. The no-plan condition is carried as a
-**positive verifiable fact — the recorded lifecycle state at the
-decision** — never inferred from the field's absence, and no sentinel
-value ever stands in for an absent hash. The recorded state must agree
-with the lifecycle event named by `lifecycle_event_ref`; a divergence
-is a chain-integrity failure. The ruling declines a pre-plan sub-class:
-there is one `decision` record class, with `plan_hash` presence
-governed by the recorded state.
+**`plan_hash` conditionality (Founder rulings, 2026-09-01 — v0.14,
+amended v0.16).** `plan_hash` presence is **derived, not enumerated**:
+it is absent exactly when the decision's **effective plan-bearing
+state** is one in which no PlanDoc is bound, and required otherwise.
+The effective plan-bearing state is the recorded lifecycle state at
+the decision, with `RECONCILING` resolved to the `prior_state` the
+lifecycle machine stores for it (the same value G20 requires for a T20
+return) — `RECONCILING` is a suspension over a prior state, not a
+state that answers this question itself. The resolution is total and
+single-step: T19 stores `prior_state` on entry, G20 fails closed when
+it is null, and T19's own from-set excludes `RECONCILING`, so a stored
+`prior_state` is never itself `RECONCILING` and never terminal.
+
+**The derivation:** a PlanDoc first exists at T3, whose guard computes
+`plan_hash`; a T4 return renders the returned submission inoperative
+(the standing determination of 2026-09-01, 06:47:17Z: `PLANNING`
+reached by a T4 return remains on the absent side); every state from
+`PLAN_REVIEW` onward is entered only through T3's submission or T5's
+approval and is plan-bearing. Derived against the ratified T1–T22
+table (`DEC-20260815-11`), the no-PlanDoc effective states are
+`ROOM_CREATED`, `SCOPED`, and `PLANNING` — **a derived set, stated
+with its derivation so it can be re-derived against the table rather
+than trusted; where a printed set and the derivation disagree, the
+derivation governs.** T4 and T5 fire only from `PLAN_REVIEW`, so their
+`plan_hash` is always required; T22 fires from any non-terminal state
+and takes whichever side its effective plan-bearing state derives.
+
+The record carries **both positive facts**: the recorded lifecycle
+state at the decision and, where that state is `RECONCILING`, the
+resolved prior state — each checkable against the lifecycle event
+named by `lifecycle_event_ref`, never inferred from a missing field; a
+divergence is a chain-integrity failure. No sentinel value ever stands
+in for an absent hash. The ruling declines a pre-plan sub-class: there
+is one `decision` record class, with `plan_hash` presence governed by
+the derivation above.
 
 **§2's elements 4, 8, and 9 are
 not applicable to the class** — stated here rather than left absent by
@@ -459,7 +476,7 @@ as written.
    cancellation, §2) produce distinct, unambiguous canonical bytes,
    with golden vectors covering both presence shapes — absence is
    encoded structurally by the specification, never by a sentinel
-   value, and presence is verified against the recorded lifecycle
+   value, and presence is verified against the effective plan-bearing
    state (§2), never the reverse. **The record class is an explicit field in the
    canonical byte input to the row hash for both classes** — never
    inferred from absent fields. Two conforming
@@ -696,6 +713,38 @@ decision-act write path is unblocked by those landings.
 
 ## Changelog
 
+- **v0.16 (2026-09-01):** the §2 absent-set enumeration is replaced by
+  a **derivation rule**, per the Founder ruling posted on this PR
+  (07:17:58Z). `plan_hash` is absent exactly when the decision's
+  effective plan-bearing state has no PlanDoc bound, where the
+  effective plan-bearing state is the recorded state with
+  `RECONCILING` resolved to its stored `prior_state` (the value G20
+  requires for a T20 return); the record carries both positive facts.
+  Finding credit: **Greptile** (P1/security at `a127a37`, "Pre-plan
+  reconciliation requires a nonexistent hash"): T19 `recon.opened`
+  fires from any non-terminal state except `RECONCILING`
+  (`transitions.ts:420`), so `ROOM_CREATED` reaches `RECONCILING`
+  with no PlanDoc ever bound, T22 fires from `RECONCILING`, and the
+  v0.14 enumeration — `{ROOM_CREATED, SCOPED, PLANNING}` — did not
+  contain it, leaving a valid pre-plan cancellation unable to produce
+  a conforming record. The defect ruled is **the enumeration itself,
+  not its contents**: a literal state list is correct only if every
+  path into every other state has been checked, and it had not been.
+  The enumeration came from the Founder ruling of 06:21:57Z; its
+  replacement is likewise ruled, not drafted. The 06:47:17Z
+  determination stands: `PLANNING` reached by a T4 return remains on
+  the absent side. §2 now states the derivation alongside the derived
+  set, which is re-derivable against the ratified T1–T22 table and
+  yields to the derivation on any disagreement; §6.2(d)'s presence
+  check now names the effective plan-bearing state. The ruled table
+  walk — every transition with an unbounded `from` (`anyNonTerminal*`:
+  T19 and T22; no others exist, T18's `range` is bounded) checked for
+  decision acts firing from a reachable no-PlanDoc state — was
+  performed against `transitions.ts` and reported in full on this PR's
+  round; it found no case the rule does not handle. Greptile's
+  alternative (barring T19 before a plan exists) is declined by the
+  ruling: `DEC-20260815-11` is ratified and this contract amends no
+  lifecycle transition.
 - **v0.15 (2026-09-01):** the resolve-and-cover authorization test
   moves onto `completed` itself, per the Founder ruling posted on this
   PR. A command reaches `completed` only with a prior `dispatched`, an
