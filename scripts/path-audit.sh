@@ -27,6 +27,16 @@
 # (`MADVenturesLLC/...`, `../FounderOS/...`), npm package specifiers
 # (`@build-room/...`), decision IDs, and bare filenames.
 #
+# Also out of scope: every file under `docs/planning/`, excluded from the audit
+# surface by Founder ruling of 2026-09-01
+# (https://github.com/MADVenturesLLC/founder-os-build-room/pull/15#issuecomment-5503812585),
+# given under `DEC-20260718-02` clause 4 as adopted by `DEC-20260815-18`
+# clause 1. Plans filed there name paths that do not yet exist by design, so
+# auditing them as governed references produces false failures. In exchange, a
+# plan filed under `docs/planning/` must state which of the paths it names do
+# not exist at the base. The audit's rule, its semantics, and its enforcement
+# on every other document are unchanged.
+#
 # No network, no LLM, no external dependencies: bash + grep + sed only.
 
 set -euo pipefail
@@ -38,7 +48,7 @@ cd "$ROOT"
 SURFACE=("README.md" "AGENTS.md")
 while IFS= read -r f; do
   SURFACE+=("${f#./}")
-done < <(find ./docs -name '*.md' 2>/dev/null | sort)
+done < <(find ./docs -path ./docs/planning -prune -o -name '*.md' -print 2>/dev/null | sort)
 
 # Top-level entries a repo-relative reference may start with. A reference that
 # does not start with one of these is out of scope (see SCOPE above).
