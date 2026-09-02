@@ -115,7 +115,7 @@ Applied from `r5worklist-v2.md` revision 3 (sha256 7971d738477e1b8c1de19846dfc7e
 | P3 | B | Architect fails closed: per-task `antigravity` condition in §3.1, conditions in test 10, AC10, no "standing" description of architect | §2.4.2, §2.5.2, §3.1, §9.1, §9.2, §14 |
 | P4 | FR | Four Build Room identities with one role each; no implementation base labelled; path table re-measured at the drafting base | header, §5.3, §8, §11 |
 | P6 | FR | `role_binding_status` admits `accountability-approved`; researcher row not normalized; declaration reconciliation is separate hygiene | §2.3, §2.5.1, §2.7 |
-| P7 | FR | `unresolved` (registry/result layer) and `unknown_outcome` (journal layer), each named once; no `failed` without affirmative no-effect evidence; retry prohibited until reconciliation | §4.2, §9.1 test 12, AC6 |
+| P7 | FR | `unresolved` (Seat Registry / result layer; journal §5 vocabulary unamended: `unresolved` → `resolved`) and `unknown_outcome` (internal Seat Registry / dispatch-policy classification only — explicitly not a journal event, outcome, field, or vocabulary member), each named once; no `failed` without affirmative no-effect evidence; retry prohibited until reconciliation | §4.2, §9.1 test 12, AC6 |
 | P2b | FDEC | r4's own allowlist descriptor and its `grok-build` allowlist locator removed; "no standing routing authority" accurately re-sourced inside the byte-exact `DEC-20260716-02` amendment quotation | §2.4.2, §2.5 |
 | P8 | PTS | the bare failure-count trigger field removed from `DispatchPolicyV1`; failover triggers are `DEC-20260720-03` item 4's exact ELIGIBLE list; INELIGIBLE limb carried | §4 |
 | P9 | PTS | Cap sourced solely to `DEC-20260716-02` item 5; r4 carried no other decision's citation for the cap at the drafting base, and §4 now says so explicitly | §4 |
@@ -652,10 +652,10 @@ The transition function is data over data: it dispatches nothing, contacts no pr
 
 For a transport failure without affirmative evidence that the attempted command had no effect, two layers are named, each once:
 
-- the **Seat Registry / result state** is `unresolved` (surfaced as `DispatchOutcome` kind `seat_unresolved`, which maps to the contract §5 `unresolved` event);
-- the corresponding **command-journal outcome** is `unknown_outcome`.
+- the **Seat Registry / result state** is `unresolved` (surfaced as `DispatchOutcome` kind `seat_unresolved`, which maps to the contract §5 `unresolved` event — the journal's own closed vocabulary, unamended: `unresolved`, then `resolved` on reconciliation);
+- internally, the Seat Registry / dispatch-policy layer classifies this condition as `unknown_outcome` (§4.1's `RetryBudgetEvent`). **`unknown_outcome` is an internal Seat Registry / dispatch-policy classification only. It is explicitly not a journal event, outcome, field, or vocabulary member, and this plan proposes no journal contract amendment to add one.**
 
-Neither may become `failed` without affirmative evidence that the attempted command had no effect. **Retry is prohibited until reconciliation resolves the unknown outcome**, and so is failover (§4.1). The contract's own §5 rule is the same fact from the journal side: "`unresolved` blocks any success claim, any retry, and any representation of completion until `resolved`." This plan adds no §5 event and no element to carry either term.
+Neither may become `failed` without affirmative evidence that the attempted command had no effect. **Retry is prohibited until reconciliation resolves the internal `unknown_outcome` classification**, and so is failover (§4.1). The contract's own §5 rule is the same fact from the journal side, using the journal's own unamended term: "`unresolved` blocks any success claim, any retry, and any representation of completion until `resolved`." This plan adds no §5 event, no journal field, and no element to carry either term.
 
 ---
 
@@ -759,7 +759,7 @@ No test in this suite makes a live provider call, dispatches a command, or reads
 - **AC3** `resolveSeat('researcher')` refuses with the §2.5.1 absence reason, and does not resolve to any other seat's lane.
 - **AC4** `resolveSeat('builder')` refuses every lane as a standing route with the per-task authorization requirement named, and refuses a temporary task assignment offered as lane authority.
 - **AC5** Handoff validator rejects every missing-field case by name.
-- **AC6** Dispatch policy: ≤ 2 retries per deployment within one execution under the §4.1 family and bucket rules; at most one lawful failover, which must change `surface_id` or `model_id`; a new `command_id` per attempt and never a reset by a new `command_id` alone or a relabeled execution; failover only on the `DEC-20260720-03` item 4 ELIGIBLE triggers and never on an INELIGIBLE one; `unresolved` / `unknown_outcome` on transport uncertainty with retry and failover blocked until reconciliation; total §5 mapping; no silent third attempt; no `attempt_id`.
+- **AC6** Dispatch policy: ≤ 2 retries per deployment within one execution under the §4.1 family and bucket rules; at most one lawful failover, which must change `surface_id` or `model_id`; a new `command_id` per attempt and never a reset by a new `command_id` alone or a relabeled execution; failover only on the `DEC-20260720-03` item 4 ELIGIBLE triggers and never on an INELIGIBLE one; the Seat Registry `unresolved` state (journal §5 vocabulary unamended) with the internal `unknown_outcome` dispatch-policy classification (not a journal term) on transport uncertainty, retry and failover blocked until reconciliation; total §5 mapping; no silent third attempt; no `attempt_id`.
 - **AC7** Zero changes outside the seat-registry package (including its vendored fixtures, test 14), its seat-contract directory, and `docs/`. No CLI file is touched. No file on the §8 no-touch list is touched. No test reads another repository at run time.
 - **AC8** The repository suite is still green. **Baseline measured at `5c5fc25`, not asserted:** `npm test` (credential-free acceptance-criteria suite, Node 22, `TMPDIR=/tmp/br`) reports **659 tests, 229 suites, 659 pass, 0 fail, 0 skipped, 0 todo**, exit 0. The r3 figure of "618-baseline" is superseded by this measurement. The storage suite is separate and requires `TEST_DATABASE_URL`.
 - **AC9** No journal contract amendment in V1, and no `seat_id` element proposed or drafted.
