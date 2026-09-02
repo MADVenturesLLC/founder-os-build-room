@@ -1,6 +1,6 @@
 # Seat Registry V1 — Implementation Plan, Revision 4 (Builder Handoff — Build Room)
 
-**Status:** DRAFT r4 — derived from the Founder's FINAL RULING "Seat Registry V1 Reserved Items", issued 2026-09-01 22:20 ET and posted as the first comment on this filing PR. Nothing here is authorized to build. r4 is a planning document filed for compiler pass 3; it is not a DEC and it confers no authority.
+**Status:** DRAFT r4 — derived from the Founder's FINAL RULING "Seat Registry V1 Reserved Items", issued 2026-09-01 22:20 ET and posted as a comment on this filing PR (identified exactly on the Controlling ruling line below). Nothing here is authorized to build. r4 is a planning document filed for compiler pass 3; it is not a DEC and it confers no authority.
 **Supersedes:** `seat-registry-v1-implementation-plan-r3.md` (sha256 bbc71885f2db5f486ec750064c5ad346b5c03d3f48b30c3e920223eecdad7244), which is filed unmodified beside this file. r3 is not taken down and is not edited.
 **Controlling ruling:** posted at `https://github.com/MADVenturesLLC/founder-os-build-room/pull/15#issuecomment-5503747619`, 2026-09-02T03:11:07Z, comment-body sha256 f58b5257c8e58c6356d51296b34e3a13c880844243a8096974028f6dbf615425 (exact stored body, CRLF, 17,216 bytes). Section references of the form "ruling A", "ruling C-3" point into that text.
 **Produced:** 2026-09-02. Basis: full reads of every registry and decision cited below, at the FounderOS working tree, and of the ratified command-journal contract at the Build Room base SHA.
