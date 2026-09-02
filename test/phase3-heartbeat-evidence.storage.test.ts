@@ -135,6 +135,34 @@ describe('Phase 3 heartbeat evidence — accepted and independently repeatable',
     assert.equal(Math.abs(heartbeat.freshnessMs) <= heartbeat.freshnessWindowMs, true);
     assert.equal(exported.events.filter((event) => event.eventType === 'heartbeat_verified').length, 1);
   });
+
+  /*
+   * `started_at` and `capture_expires_at` are stamped from the DATABASE clock
+   * (`clock_timestamp()` in createAttempt). The scripted application clock is
+   * seeded from the database once, at node construction, and then stands
+   * still while promotion, enrolment and session-open consume real time — so
+   * by the time the attempt is created the database is already ahead of it.
+   * On a loaded CI runner that gap exceeded the 100ms clock-gate prime and
+   * `acceptedAt` fell before `started_at`, the capture query matched nothing,
+   * and the first case above failed without any code having changed.
+   *
+   * This case makes that drift deterministic instead of load-dependent: five
+   * seconds behind, every run. The capture window is a claim about the
+   * database's own timeline and must be judged on the database's clock;
+   * `acceptedAt` stays the evidence stamp and the freshness input.
+   */
+  it('captures the beat when the application clock lags the database clock', async () => {
+    const { node, gateway, epoch } = await serving();
+    const runAttemptId = await startAttempt(node, gateway);
+    node.clock.set({ wall: node.clock.wallNow() - 5_000 });
+
+    assert.equal((await node.service.heartbeat(signedBeat(node, gateway, epoch, 1), TEST_IP)).status, 200);
+
+    const exported = await node.surface.phase3Runs.exportAttempt(runAttemptId);
+    assert.ok(exported.heartbeat !== null);
+    assert.equal(exported.heartbeat.sequence, 1);
+    assert.equal(exported.events.filter((event) => event.eventType === 'heartbeat_verified').length, 1);
+  });
 });
 
 describe('Phase 3 heartbeat evidence — refusal paths capture nothing', { skip: STORAGE_SKIP }, () => {

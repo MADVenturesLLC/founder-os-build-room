@@ -961,12 +961,33 @@ export class Phase3RunStore {
       throw new Phase3RunConflictError('heartbeat_evidence_invalid');
     }
 
+    /*
+     * The capture window is judged on the database clock, not `acceptedAt`.
+     * `started_at` and `capture_expires_at` were stamped from
+     * `clock_timestamp()` in createAttempt, so comparing them against the
+     * application clock mixes two timelines: any skew between them (a scripted
+     * clock that stood still under CI load, or plain host-vs-database drift in
+     * production) can put `acceptedAt` before `started_at` and silently match
+     * nothing. `acceptedAt` remains the evidence stamp and the freshness input
+     * above; it is the wrong clock only for this boundary comparison.
+     *
+     * `statement_timestamp()`, not `clock_timestamp()` or `now()`: it is read
+     * once per statement, so both bounds see the same instant (two
+     * `clock_timestamp()` calls would drift apart by the microseconds between
+     * them and narrow the inclusive window), and it is taken at this
+     * statement's start rather than the transaction's — this runs inside the
+     * heartbeat fence, whose wait can begin before the attempt's own
+     * transaction committed, so a transaction-start `now()` could precede
+     * `started_at`. Statement start is also when READ COMMITTED takes the
+     * visibility snapshot, so any row this statement can see was stamped
+     * before the instant it is compared against.
+     */
     const { rows } = await client.query<AttemptRow>(
       `SELECT * FROM phase3_run_attempts
         WHERE gateway_id = $1 AND state = 'active' AND heartbeat_captured = false
-          AND started_at <= $2 AND capture_expires_at >= $2
+          AND started_at <= statement_timestamp() AND capture_expires_at >= statement_timestamp()
         ORDER BY attempt_seq DESC LIMIT 1 FOR UPDATE`,
-      [evidence.gatewayId, evidence.acceptedAt],
+      [evidence.gatewayId],
     );
     const attempt = rows[0];
     if (attempt === undefined) return false;
