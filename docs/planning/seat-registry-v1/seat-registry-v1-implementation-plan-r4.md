@@ -10,6 +10,17 @@
 
 **Derivation rule for this document.** Every routing fact below is read from a controlling registry or decision and carries its citation. No lane, model identifier, provider class, surface, or binding status is asserted, inferred from a nearby value, or carried forward from r3's Hermes-suite draft. Where the corpus establishes nothing, the row reads ABSENT with the reason.
 
+**Named paths that do not exist at the base.** Required of every plan filed under `docs/planning/` by the Founder ruling of 2026-09-01 on path-audit scope. Measured against base SHA `5c5fc25beaf5e3311f7664ab2c6fbae833d6f760`, not asserted:
+
+| Path named in this plan | State at the base | Why it is named |
+|---|---|---|
+| packages/seat-registry | **does not exist** | the deliverable package this plan proposes; it is created only after a ratified DEC and Founder authorization, which these rulings do not grant |
+| contracts/seats/ | **does not exist** | the seat-contract directory this plan proposes, four files, one per seat |
+
+Every other repository path this plan names exists at the base and was checked: `docs/command-journal-contract.md`, `packages/control-plane/src/migrations.ts`, `packages/gateway-cli`, and `scripts/path-audit.sh`. References of the form `00-system/...` and `/04-agents/...` are FounderOS paths, not Build Room paths, and are resolved against that repository.
+
+r3, filed unmodified beside this file, names packages/seat-registry (twice) and contracts/seats/ (three times). Those are the same two non-existent paths, for the same reason. r3 is not edited to change them.
+
 ---
 
 ## 0. Changelog r3 → r4
