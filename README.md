@@ -4,6 +4,12 @@ MAD Ventures OS Build Room — agent orchestration runtime.
 
 Standalone product repository created under `DEC-20260815-01` (ratified `active` 2026-08-15).
 
+> **This README is descriptive documentation. It reflects Founder decisions
+> recorded in FounderOS; it does not create authority of its own.** Where
+> this file and a controlling FounderOS decision disagree, the FounderOS
+> decision governs, and this file is stale until corrected. `AGENTS.md`
+> states the same relationship for repository conventions.
+
 ## Structure
 
 Monorepo. Present today:
@@ -15,6 +21,7 @@ Monorepo. Present today:
 - `packages/cost-meter` — the ratified spend rule as a function. Carries no rate data; the canonical price table lives in `founder-os-console` (`DEC-20260722-01`).
 - `packages/gateway-protocol` — the shared signed-message protocol: canonical bytes, envelope validation, bounds, encodings, and the clock-reliability evaluator. Zero dependencies, so both sides of the wire derive signed bytes from one implementation.
 - `packages/gateway-registry` — the gateway lifecycle vocabulary and the pure projection reducer.
+- `packages/journal` — the four ratified command-journal canonical serialization contracts (envelope, plan digest, command-event row, decision record row) and chain framing, per `docs/command-journal-contract.md` §6.2. Pure, zero I/O.
 
 **Impure by design:**
 
@@ -29,11 +36,13 @@ The web surface is not created (`DEC-20260815-08`), and remains deferred. `DEC-2
 
 **Phase 1 (pure protocol/ledger) — complete.** Founder-confirmed 2026-08-16 at `main@4155761` under `DEC-20260815-17` clause 2.
 
-**Phase 2 (cloud skeleton) — in progress.** Authorized by the Founder **in session on 2026-08-17** as the full arc *provision → wire → run three times → return at the stop gate*, on the bound reduced stack: **Railway** control plane plus **Neon** operational Postgres. The web tier and Redis/queue are deferred and are not authorized.
+**Phase 2 (cloud skeleton) — complete.** Authorized by the Founder **in session on 2026-08-17** as the full arc *provision → wire → run three times → return at the stop gate*, on the bound reduced stack: **Railway** control plane plus **Neon** operational Postgres. The web tier and Redis/queue are deferred and are not authorized. Stop gate confirmed by the Founder 2026-08-18 (`DEC-20260815-17`, *Founder Confirmation — Phase 2 Stop Gate (2026-08-18)*).
 
 > **The workflow record has not been reconciled with that authorization, and that is flagged here rather than smoothed over.** The WF-04 Sentinel record still reads `Ready-to-start` with last activity 2026-07-19, and the last authorization recorded there covers WF-04 Step 3 **Slice 1**, dated 2026-08-16 — no separate full-Phase-2 authorization dated 2026-08-17 appears in it. The sentence above therefore rests on a Founder direction given in session and recorded in this repository, not on the workflow record, and the two disagree.
 >
 > Raised by CodeRabbit on PR #2 against those records. **Reconciling them is a Founder act.** Either the WF-04 record is updated to carry the 2026-08-17 authorization, or this claim is narrowed to what the record holds — and `builder` may do neither: writing an authorization into the record would be manufacturing one, and narrowing a Founder's stated scope would be overriding them. Until it is reconciled, read this line as *what the Founder directed in session* and the WF-04 record as *not yet updated*.
+>
+> **Historical note, added so this paragraph is not read as describing the current phase.** This disagreement concerns Phase 2, which closed its stop gate 2026-08-18. Phase 3 has since closed (2026-08-31) and Phase 4 is authorized (2026-08-31, see below); the reconciliation question above was never revisited and is left as the unreconciled historical record it was when written.
 
 What is built here: the control plane, the cost meter, and the run harness. What is **not** claimed by the code alone — provisioning, deployment, three-run evidence, and the Founder-confirmed stop gate that closes the phase. Architecture §3.17: *"Completing three runs authorizes nothing."*
 
@@ -48,10 +57,43 @@ runner, deterministic data-only fixture adapter, migration
 export. It does not add a sixth `buildroom` verb, change Phase 2 evidence, or
 authorize `Phase3-CR1`; see `docs/phase3-counted-run-harness.md`.
 
-Phases 3 through 7 carry no authorization beyond the pairing mechanism and the
-counted-run harness commission above. Neither authorizes a counted run. Every
-phase carries a stop gate that must be Founder-confirmed before the next begins,
-and no phase ships in the same PR as its predecessor.
+Phases 3 through 7 carried no authorization beyond the pairing mechanism and
+the counted-run harness commission above. That was the state as of the
+counted-run harness commission; it is stated here as a dated historical
+record, not as the current position. Neither mechanism authorized a counted
+run then, and every phase carries a stop gate that must be Founder-confirmed
+before the next begins, and no phase ships in the same PR as its predecessor.
+The later Founder rulings below close Phase 3 (2026-08-31) and authorize
+Phase 4 (2026-08-31, journal-first), superseding this sentence's scope.
+
+**Phase 3 stop gate — durably closed 2026-08-31.** After a 2026-08-27
+reconciliation ruling that rescinded an earlier closure conclusion and named
+three conditions, the Founder ruled the Phase 3 stop gate satisfied on
+2026-08-31 (`DEC-20260815-17`, *Founder Ruling — Phase 3 Stop-Gate Closure
+(2026-08-31)*). The original seven Phase 3 exit criteria and the CR1 → CR2 →
+CR3 passed counted-run sequence remain intact and unaltered. This closure
+authorizes nothing beyond itself — no Phase 4 work, deployment, provisioning,
+or spend followed automatically from it.
+
+**Phase 4 (Planner Loop) — authorized 2026-08-31, journal-first.** The
+Founder authorized Phase 4 the same day, from Build Room `main` at
+`ad23c6ea6117a54bce5be7208a5a5768ec5bfbc9` (`DEC-20260815-17`, *Founder
+Authorization — Phase 4 (Planner Loop) (2026-08-31)*). The implementation
+order is fixed: establish the command-journal contract and invariants first;
+implement and independently test the journal foundation; integrate the
+already-authorized consumed capabilities; implement the governed planner
+loop; test the integrated lifecycle; prepare for separately authorized
+counted runs. No governed Planner command may execute until the journal
+foundation is present and passes its required tests. Journal-first step 1
+(the contract) and step 2 (serialization contracts and golden vectors) are
+both merged to `main` — `docs/command-journal-contract.md` (v0.17, merged
+under a SHA-named Founder merge authorization at exact head `b92889e`) and
+`packages/journal`. The contract document's own header still reads "Status:
+proposed" by its own internal convention (an implementation contract states
+what it fixes for the implementation, not a governance ratification label);
+that it is merged and in force for Phase 4 implementation is recorded here,
+not by editing the contract's own wording. Phase 5 remains unauthorized, and
+the three counted Phase 4 runs require separate Founder entry authorization.
 
 ## Verifying
 
@@ -77,6 +119,7 @@ npm run test:custody:macos
 
 npm run gate:path-audit             # required check
 npm run gate:attribution-selftest   # required check, parser regression cases
+npm run gate:verify-check           # required check — unverified checks count as failing (docs/verify-gate-integrity.md)
 
 # The contract integrity gate. It scans the authorizing contract DOCUMENT,
 # which lives outside this repository, so it takes the path explicitly and is

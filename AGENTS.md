@@ -6,10 +6,22 @@ The `builder` role implements; the `founder` authorizes and reviews. This reposi
 
 ## Context load order
 
-1. The workflow step in `/05-workflows/` that authorized the current session
-2. Relevant decisions in `../FounderOS/07-decisions/` — the Build Room's 18 WF-04 Step 2 decisions (DEC-20260815-01 through -18) and any later ones
-3. The architecture at `../FounderOS/03-products/mad-ventures-os/technical-architecture.md`
-4. This repository's own `README.md`
+FounderOS is a sibling checkout, not a subdirectory of this repository — a
+path like `../FounderOS/...` only resolves if the two repositories happen to
+share a parent directory in a given checkout, and `/05-workflows/` (absolute)
+never resolves inside this repository at all. Load by stable identifier, not
+by a path this repository does not control:
+
+1. The WF-04 (PRD to Build) workflow step that authorized the current
+   session, and WF-17 (Repository Onboarding) — both in FounderOS
+   `05-workflows/`, wherever that checkout lives locally.
+2. Relevant decisions in FounderOS `07-decisions/` — the Build Room's 18
+   WF-04 Step 2 decisions (`DEC-20260815-01` through `-18`) and any later
+   ones, notably `DEC-20260815-17` (phase sequencing and stop gates, current
+   phase authority) and `DEC-20260827-01` (the command-journal ruling).
+3. The architecture at FounderOS `03-products/mad-ventures-os/technical-architecture.md`.
+4. This repository's own `README.md` — descriptive, not authoritative; see
+   its own authority statement.
 
 ## What you may write
 
@@ -52,5 +64,11 @@ Execution-Surface: <surface_id>
 
 - **Control plane:** Node 22 / TypeScript / Express on Railway
 - **Gateway:** macOS-local daemon (Node >= 22 / TypeScript)
-- **Web:** Bun + TanStack Start on Cloudflare Workers
+- **Web:** DEFERRED. `DEC-20260815-08` clause 5 binds only Railway (control
+  plane) and Postgres/Neon for the current phases; Cloudflare Workers and the
+  web tier are explicitly not authorized (`DEC-20260815-08`, `DEC-20260815-17`
+  Phase 2 authorization). "Bun + TanStack Start on Cloudflare Workers" is the
+  pre-ruling planning proposal, not the bound stack — no web package exists
+  and no agent should scaffold one without a separate Founder ruling binding
+  it.
 - **Data:** Postgres (Neon) for operational data; evidence store per `DEC-20260815-02`
