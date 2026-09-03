@@ -120,7 +120,7 @@ jobs:
       # so CI runs it twice.
       - name: Test again (proves the suite is re-runnable, not virgin-only)
         env:
-          TEST_DATABASE_URL: postgresql://postgres:***@127.0.0.1:5432/buildroom_test
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/buildroom_test
         run: npm run test:storage
 
   # WF-17 hygiene: lint, secret scanning (AUTHORIZED), and advisory npm audit
