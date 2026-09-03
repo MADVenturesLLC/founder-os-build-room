@@ -6,7 +6,7 @@
   "description": "MAD Ventures OS Build Room — agent orchestration runtime",
   "license": "UNLICENSED",
   "engines": {
-    "node": "22.x"
+    "node": "^22.13.0"
   },
   "workspaces": [
     "packages/*"
