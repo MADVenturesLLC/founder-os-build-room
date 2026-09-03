@@ -1,8 +1,10 @@
 # Verify-check integrity gate — an unverified check is a failing check
 
-**Status: PROPOSED by `builder` (Hermes, 2026-08-20) — not a Founder ruling.
-Nothing in this document activates the gate. Adoption requires Founder
-approval of the PR that carries it.**
+**Status: ADOPTED.** Founder-merged PR #5 (2026-08-21) added `scripts/verify-check.sh`,
+the `gate:verify-check` npm script, and the CI step below. `npm run
+gate:verify-check` runs today as a required step in the `build-and-test` job
+of `.github/workflows/ci.yml`. The document below is retained as the design
+record; it is no longer a proposal awaiting adoption.
 
 ## The defect it closes
 

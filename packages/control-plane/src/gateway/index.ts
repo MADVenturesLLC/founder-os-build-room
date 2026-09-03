@@ -63,6 +63,10 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
   const phase3Runs = new Phase3RunStore(pool, config);
   const limiter = new RateLimiter(clock);
 
+  // `leadership`'s reconciler closure captures `service` by reference and is
+  // never invoked before line 77 assigns it; `service`'s own constructor
+  // takes `leadership` directly, so neither can be built first as `const`.
+  // eslint-disable-next-line prefer-const -- forward declaration required by mutual construction order
   let service!: GatewaySessionService;
   const leadership = new GatewayLeadership({
     pool,

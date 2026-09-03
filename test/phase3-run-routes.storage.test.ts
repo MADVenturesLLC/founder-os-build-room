@@ -540,8 +540,7 @@ function routeExpectation(input: Phase3AttemptInput): Phase3EvidenceExpectation 
 
 async function runWithPostCommitDemotion(demoteAtCommit: number) {
   let phase3Commits = 0;
-  let fencedNode!: SessionNode;
-  fencedNode = await restartNode({
+  const fencedNode: SessionNode = await restartNode({
     phase3Run: {
       afterCommit: () => {
         phase3Commits += 1;

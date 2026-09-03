@@ -240,7 +240,6 @@ export async function startNodeServer(
 ): Promise<{ url: string; close: () => Promise<void> }> {
   const { createServer } = await import('../packages/control-plane/src/server.js');
   const { PostgresLedgerStore } = await import('../packages/control-plane/src/store.js');
-  const http = await import('node:http');
 
   const app = createServer({
     config: node.config,

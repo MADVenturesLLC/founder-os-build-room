@@ -607,8 +607,7 @@ describe('gateway-session · rotation is fenced and generation-bound', { skip: S
   });
 
   it('rotation:demotion-before-commit-performs-no-swap', async () => {
-    let node!: SessionNode;
-    node = await makeSessionNode(harness!, {
+    const node: SessionNode = await makeSessionNode(harness!, {
       hooks: {
         rotation: {
           beforePreCommitRecheck: () => {
@@ -630,8 +629,7 @@ describe('gateway-session · rotation is fenced and generation-bound', { skip: S
   });
 
   it('rotation:demotion-after-commit-before-swap-performs-no-swap', async () => {
-    let node!: SessionNode;
-    node = await makeSessionNode(harness!, {
+    const node: SessionNode = await makeSessionNode(harness!, {
       hooks: {
         rotation: {
           afterCommit: () => {

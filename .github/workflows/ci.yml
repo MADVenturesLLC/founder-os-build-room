@@ -3,11 +3,14 @@
 # Stands up the WF-17 step 4 baseline that `DEC-20260815-01` clause 3 requires
 # this repository to be onboarded against: locked install, typecheck, tests.
 #
-# NOT YET CONFIGURED, and deliberately not claimed as passing: **lint** and
-# **dependency audit**, the two remaining limbs of WF-17 step 4. No linter is
-# installed and no audit step runs. WF-17 onboarding as a whole is a separate
-# act requiring Founder sign-off per control (step 8), and this workflow does
-# not complete it.
+# Lint and dependency audit are configured, in the `hygiene` job below, which
+# is deliberately NOT a required branch-protection check (adding a required
+# check is a repository security-posture change reserved to the Founder):
+# lint runs and is advisory (continue-on-error) while pre-existing findings
+# remain untriaged; secret scanning runs and is blocking within the `hygiene`
+# job; npm audit runs and is advisory/non-blocking evidence (`|| true`).
+# WF-17 Founder sign-off (control step 8) remains incomplete, and the
+# `hygiene` job does not satisfy it.
 #
 # CI runs credential-free. The unit suite covers pure packages and stubbed
 # I/O; the integration job below runs the storage suite against a Postgres
@@ -30,12 +33,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
       - name: Use Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: npm
@@ -86,12 +89,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
       - name: Use Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: npm
@@ -117,5 +120,53 @@ jobs:
       # so CI runs it twice.
       - name: Test again (proves the suite is re-runnable, not virgin-only)
         env:
-          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/buildroom_test
+          TEST_DATABASE_URL: postgresql://postgres:***@127.0.0.1:5432/buildroom_test
         run: npm run test:storage
+
+  # WF-17 hygiene: lint, secret scanning (AUTHORIZED), and advisory npm audit
+  # (AUTHORIZED AS ADVISORY ONLY). This job is deliberately separate from
+  # build-and-test and storage-integration so neither of those required
+  # checks' names or behavior change, and this job is NOT added to the
+  # branch ruleset's required-status-checks list — adding a required check
+  # is a repository security-posture change reserved to the Founder
+  # (AGENTS.md "Approval gates").
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for the secret scan)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Locked install
+        run: npm ci
+
+      # Lint (WF-17: AUTHORIZED). Non-blocking for now: the initial config
+      # surfaced 27 pre-existing findings across files outside this task's
+      # authorized scope (no unrelated cleanup), so failing the job on them
+      # would treat unrelated legacy debt as a new regression. Reported as
+      # evidence in the job log; making this blocking is a follow-up act
+      # once those findings are triaged and closed on their own PR.
+      - name: Lint (advisory until pre-existing findings are triaged)
+        run: npm run lint
+        continue-on-error: true
+
+      # Secret scanning (WF-17: AUTHORIZED). Blocking within this job: a
+      # genuine finding is a real problem, not something to wave through.
+      # Not added to the branch ruleset's required checks (see job header).
+      - name: Secret scan (gitleaks, redacted output)
+        run: npm run gate:secret-scan
+
+      # npm audit (WF-17: AUTHORIZED AS ADVISORY ONLY). Never fails the
+      # job — `|| true` after capturing output, so this can never become a
+      # required merge gate by construction, and a vulnerability here can
+      # never block CI or trigger an automatic upgrade.
+      - name: npm audit (advisory only — never blocks)
+        run: npm audit || true

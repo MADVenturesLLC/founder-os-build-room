@@ -18,7 +18,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildVerificationEvent,
-  ExternalPlatform,
   performRun,
   type ConditionRecord,
   type Probe,

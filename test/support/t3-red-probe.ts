@@ -27,10 +27,7 @@ const CHILD = fileURLToPath(new URL('./enroll-child.js', import.meta.url));
 const CODE = 'ZmFrZS1jb2RlLWZvci10ZXN0aW5nLW9ubHktbm90LXJlYWw';
 
 const server = createServer((req, res) => {
-  let raw = '';
-  req.on('data', (chunk: Buffer) => {
-    raw += chunk.toString('utf8');
-  });
+  req.resume();
   req.on('end', () => {
     res.writeHead(202, { 'content-type': 'application/json' });
     res.end(

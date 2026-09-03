@@ -214,8 +214,7 @@ describe('gateway-leadership · contention, expiry, and generation', { skip: STO
       canServe: boolean;
     } | null = null;
 
-    let node!: Node;
-    node = makeNode(harness!, {
+    const node: Node = makeNode(harness!, {
       reconciler: async () => {
         duringReconciliation = {
           isLeader: node.leadership.isLeader,
@@ -330,8 +329,7 @@ describe(
 
     it('a demotion between the fence and COMMIT rolls back with zero writes and zero publication', async () => {
       const gatewayId = randomUUID();
-      let node!: Node;
-      node = makeNode(harness!, {
+    const node: Node = makeNode(harness!, {
         hooks: {
           heartbeat: {
             beforePreCommitRecheck: () => {
@@ -369,8 +367,7 @@ describe(
 
     it('a demotion after COMMIT lets the durable write stand and publishes nothing', async () => {
       const gatewayId = randomUUID();
-      let node!: Node;
-      node = makeNode(harness!, {
+    const node: Node = makeNode(harness!, {
         hooks: {
           heartbeat: {
             afterCommit: () => {
@@ -649,9 +646,8 @@ describe(
     beforeEach(resetLease);
 
     it('publishes nothing and releases only the exact generation it acquired', async () => {
-      let node!: Node;
       let demoteOnce = true;
-      node = makeNode(harness!, {
+      const node: Node = makeNode(harness!, {
         hooks: {
           acquisition: {
             afterSql: () => {
@@ -698,9 +694,8 @@ describe(
 
     it('never releases a successor lease — the predicate binds owner and generation', async () => {
       const successorOwner = randomUUID();
-      let node!: Node;
       let once = true;
-      node = makeNode(harness!, {
+      const node: Node = makeNode(harness!, {
         hooks: {
           acquisition: {
             afterSql: async () => {
@@ -719,7 +714,7 @@ describe(
         },
       });
 
-      const attempt = node.leadership.attemptAcquisition();
+      node.leadership.attemptAcquisition();
       await waitFor(
         () => !once,
         'the acquisition SQL to return and the successor to take the lease',
@@ -750,10 +745,9 @@ describe(
     });
 
     it('stays fail-closed when the release itself fails — no publication, no parallel acquisition', async () => {
-      let node!: Node;
       let releasesFailed = 0;
       let once = true;
-      node = makeNode(harness!, {
+      const node: Node = makeNode(harness!, {
         hooks: {
           acquisition: {
             afterSql: () => {
@@ -799,8 +793,7 @@ describe(
 
     it('rolls back with zero writes when demoted before reconciliation COMMIT', async () => {
       const gatewayId = randomUUID();
-      let node!: Node;
-      node = makeNode(harness!, {
+      const node: Node = makeNode(harness!, {
         hooks: {
           reconciliation: {
             beforePreCommitRecheck: () => {
@@ -831,8 +824,7 @@ describe(
 
     it('lets honest went_offline edges stand after COMMIT while publishing nothing', async () => {
       const gatewayId = randomUUID();
-      let node!: Node;
-      node = makeNode(harness!, {
+      const node: Node = makeNode(harness!, {
         hooks: {
           reconciliation: {
             afterCommit: () => {
@@ -1041,8 +1033,7 @@ describe(
       const { makeSessionNode, promoteNode, enrollGateway, openSession, signedBeat, TEST_IP, availabilityRows } =
         await import('./gateway-session-helpers.js');
 
-      let node!: Awaited<ReturnType<typeof makeSessionNode>>;
-      node = await makeSessionNode(harness!, {
+      const node = await makeSessionNode(harness!, {
         hooks: {
           stalenessSweep: {
             afterCommit: () => {

@@ -22,3 +22,6 @@ dist/
 
 # Build artifacts
 *.log
+
+# Local git worktrees (other branches checked out alongside this one)
+.worktrees/
