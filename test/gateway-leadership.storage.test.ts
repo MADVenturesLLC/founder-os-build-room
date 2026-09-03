@@ -329,7 +329,7 @@ describe(
 
     it('a demotion between the fence and COMMIT rolls back with zero writes and zero publication', async () => {
       const gatewayId = randomUUID();
-    const node: Node = makeNode(harness!, {
+      const node: Node = makeNode(harness!, {
         hooks: {
           heartbeat: {
             beforePreCommitRecheck: () => {
@@ -367,7 +367,7 @@ describe(
 
     it('a demotion after COMMIT lets the durable write stand and publishes nothing', async () => {
       const gatewayId = randomUUID();
-    const node: Node = makeNode(harness!, {
+      const node: Node = makeNode(harness!, {
         hooks: {
           heartbeat: {
             afterCommit: () => {

@@ -26,7 +26,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
+cd "$ROOT" || { echo "secret-scan: failed to enter repository root" >&2; exit 2; }
 
 GITLEAKS_VERSION="8.30.1"
 
@@ -51,8 +51,14 @@ else
   URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${ASSET}"
   CHECKSUMS_URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
 
-  curl -sSL -o "$TMP/gitleaks.tar.gz" "$URL"
-  curl -sSL -o "$TMP/checksums.txt" "$CHECKSUMS_URL"
+  curl -sSLf -o "$TMP/gitleaks.tar.gz" "$URL" || {
+    echo "secret-scan: failed to download gitleaks release asset from $URL" >&2
+    exit 2
+  }
+  curl -sSLf -o "$TMP/checksums.txt" "$CHECKSUMS_URL" || {
+    echo "secret-scan: failed to download gitleaks checksums from $CHECKSUMS_URL" >&2
+    exit 2
+  }
 
   expected="$(grep " ${ASSET}\$" "$TMP/checksums.txt" | awk '{print $1}')"
   if [[ -z "$expected" ]]; then
@@ -65,8 +71,14 @@ else
     exit 2
   fi
 
-  tar -xzf "$TMP/gitleaks.tar.gz" -C "$TMP" gitleaks
-  chmod +x "$TMP/gitleaks"
+  tar -xzf "$TMP/gitleaks.tar.gz" -C "$TMP" gitleaks || {
+    echo "secret-scan: failed to extract gitleaks from $TMP/gitleaks.tar.gz" >&2
+    exit 2
+  }
+  chmod +x "$TMP/gitleaks" || {
+    echo "secret-scan: failed to mark $TMP/gitleaks as executable" >&2
+    exit 2
+  }
   BIN="$TMP/gitleaks"
 fi
 
