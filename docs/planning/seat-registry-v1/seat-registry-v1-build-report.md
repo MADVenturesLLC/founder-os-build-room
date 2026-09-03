@@ -20,8 +20,18 @@ Implementation of Seat Registry V1 in `MADVenturesLLC/founder-os-build-room` has
 - **Doctrine fixture pin:** `bd0a9acbdcbcb7e01644feff0e86927bd7dd0dda` (retained unchanged for all 10 fixtures)
 - **Branch:** `builder/seat-registry-v1-implementation`
 - **Worktree:** `/Users/michaeldaley/MADVenturesOPs/worktrees/founder-os-build-room-seat-registry-v1`
-- **Test suite results:** Baseline 659 pass; new suite 701 pass (N = 42 tests across 14 new suites), 0 fail, 0 skipped, three consecutive green runs
+- **Original candidate head:** `ec8d3e8a4a59596f18d26d9893319eb46d1a1048` (historical: 701 tests / 42 Seat Registry tests)
+- **Correction parent:** `462cf6d49db3200180d60503115954bb2d91fdd5`
+- **Corrected test suite results:** 706 tests / 243 suites / 706 passed / 0 failed / 0 skipped (N = 47 Seat Registry tests across 14 suites).
 - **Repository gates:** `gate:path-audit`, `gate:attribution-selftest`, `gate:verify-check` all PASS
+
+### 1.1 Founder Supplemental Correction (2026-09-03)
+
+This candidate incorporates the Founder-authorized S1 and S2 fixes.
+- **S1 correction:** Malformed non-string `produces` values reject cleanly without throwing.
+- **S2 correction:** The thirty-role registrar includes `strategist`, which resolves as `seat_outside_registry`.
+- **S3:** Remains deferred and no workspace/root configuration was added.
+- **Regression tests:** Five additional tests were added representing the S1 and S2 coverages, preserving unknown-role and four-seat behavior.
 
 ---
 
@@ -79,12 +89,14 @@ Captured byte-identical from FounderOS at `bd0a9acbdcbcb7e01644feff0e86927bd7dd0
 5. **Step 5: Resolution & readiness probes:** Implemented `resolve.ts` with fail-closed behavior, registration inspection, and `model-distinctness.ts`. Drove tests 4 and 9 to GREEN.
 6. **Step 6: Dispatch policy:** Implemented `dispatch-policy.ts` with pure `retryBudgetTransition`, transport uncertainty classification (`seat_unresolved`), and carried dispatch obligations. Drove test 12 to GREEN.
 7. **Step 7: Handoff validator:** Implemented `handoff.ts` with non-empty reference validation and terminal-status verification. Drove test 13 to GREEN.
-8. **Step 8: Full suite 3x green:** Ran `npm test` three consecutive times with 701 tests / 243 suites / 0 failures each run.
+8. **Step 8: Full suite 3x green:** Ran `npm test` three consecutive times with 706 tests / 243 suites / 0 failures each run on the correction parent `462cf6d49db3200180d60503115954bb2d91fdd5`.
 9. **Step 9: Build report & draft PR:** Authored this Build Report; ready to commit, push, and open draft PR.
 
 ---
 
 ## 4. Targeted Mutation Evidence (All Guards Proven RED)
+
+> **Note (2026-09-03 Correction):** The mutation evidence below was collected on the original candidate head (`ec8d3e8a4a59596f18d26d9893319eb46d1a1048`) where N = 42 Seat Registry tests. Five additional regression tests were added in the correction parent (`462cf6d49db3200180d60503115954bb2d91fdd5`) which are not represented in this table, preserving evidence chronology truthfully.
 
 | Guard / Test | File Mutated | Mutation Applied | Failure Observed | Result |
 |---|---|---|---|---|
@@ -112,11 +124,13 @@ Captured byte-identical from FounderOS at `bd0a9acbdcbcb7e01644feff0e86927bd7dd0
 Environment: Node `v22.23.2`, macOS, `TMPDIR=/tmp/br`.
 
 ### Three Consecutive Full-Suite Runs (`npm test`):
+> **Note:** The following runs were executed on the correction parent `462cf6d49db3200180d60503115954bb2d91fdd5` prior to this documentation-only update.
+
 ```text
 === RUN 1/3 ===
-# tests 701
+# tests 706
 # suites 243
-# pass 701
+# pass 706
 # fail 0
 # cancelled 0
 # skipped 0
@@ -124,9 +138,9 @@ Environment: Node `v22.23.2`, macOS, `TMPDIR=/tmp/br`.
 # duration_ms 10512.345292
 
 === RUN 2/3 ===
-# tests 701
+# tests 706
 # suites 243
-# pass 701
+# pass 706
 # fail 0
 # cancelled 0
 # skipped 0
@@ -134,9 +148,9 @@ Environment: Node `v22.23.2`, macOS, `TMPDIR=/tmp/br`.
 # duration_ms 10667.031792
 
 === RUN 3/3 ===
-# tests 701
+# tests 706
 # suites 243
-# pass 701
+# pass 706
 # fail 0
 # cancelled 0
 # skipped 0
