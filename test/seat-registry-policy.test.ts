@@ -112,6 +112,51 @@ describe('Test 9 — resolveSeat fail-closed (r7 §9.1 test 9)', () => {
     assert.match(res.reason, /not one of the four Seat Registry V1 seats/);
   });
 
+  it('returns seat_outside_registry for strategist (S2 regression)', () => {
+    const res = resolveSeat('strategist');
+    assert.equal(res.kind, 'refused');
+    assert.equal(res.refusal, 'seat_outside_registry');
+    assert.equal(res.registration, null);
+    assert.match(res.reason, /not one of the four Seat Registry V1 seats/);
+  });
+
+  it('recognizes the complete thirty-role set from the vendored fixture (S2 regression)', () => {
+    // Parse role ids from the vendored role-registry fixture table.
+    const fixture = fixtureContent('role-registry.md');
+    const fixtureRoles = [...fixture.matchAll(/^\| ([a-z0-9-]+) \|/gm)]
+      .map((m) => m[1])
+      .filter((id): id is string => id !== undefined);
+    assert.equal(fixtureRoles.length, 30, 'vendored role-registry fixture carries thirty roles');
+    const canonicalSeats = ['researcher', 'architect', 'builder', 'independent-reviewer'];
+    const seatIds = new Set(canonicalSeats);
+    for (const role of fixtureRoles) {
+      const res = resolveSeat(role);
+      assert.equal(res.kind, 'refused', `${role} must never resolve in V1`);
+      if (seatIds.has(role)) {
+        // The four canonical seats keep their registrations; no fifth seat exists.
+        assert.ok(res.registration !== null, `${role} is a canonical seat and must carry its registration`);
+        assert.notEqual(res.refusal, 'unknown_seat', `${role} must not be classified as unknown`);
+        assert.notEqual(res.refusal, 'seat_outside_registry', `${role} is a seat, not an outside role`);
+      } else {
+        assert.equal(res.refusal, 'seat_outside_registry', `${role} must be classified as outside the four seats`);
+      }
+    }
+    // No fifth seat is created: exactly the four canonical seat ids resolve as seats.
+    assert.deepEqual(
+      [...seatIds].sort(),
+      canonicalSeats.sort(),
+      'the four canonical Seat Registry seat IDs remain unchanged',
+    );
+  });
+
+  it('unknown roles remain unknown_seat (S2 regression)', () => {
+    const res = resolveSeat('not-a-real-role');
+    assert.equal(res.kind, 'refused');
+    assert.equal(res.refusal, 'unknown_seat');
+    assert.equal(res.registration, null);
+    assert.match(res.reason, /not a registered seat id and not a role/);
+  });
+
   it('returns RefusedSeat with temporary_task_assignment_not_lane_authority when presented_authority is supplied', () => {
     const res = resolveSeat('builder', {
       presented_authority: { kind: 'temporary-task-assignment', assignment_ref: 'HO-20260902-01' },
@@ -417,6 +462,24 @@ describe('Test 13 — Handoff validator (r7 §9.1 test 13, AC5)', () => {
     const res = validateHandoff({ ...goldenHandoff, produces: undefined }, 'builder');
     assert.equal(res.valid, false);
     assert.equal(res.field, 'produces');
+  });
+
+  it('rejects non-string produces values cleanly without throwing (S1 regression)', () => {
+    // A shape-validator for untrusted input must reject, never throw.
+    for (const bad of [null, 42, true, ['array'], { object: true }]) {
+      // @ts-expect-error test non-string produces
+      const res = validateHandoff({ ...goldenHandoff, produces: bad }, 'builder');
+      assert.equal(res.valid, false, `produces=${JSON.stringify(bad)} must be rejected`);
+      assert.equal(res.field, 'produces', `produces=${JSON.stringify(bad)} must name produces as the offending field`);
+      assert.match(res.error!, /non-empty string/);
+    }
+  });
+
+  it('rejects empty-string produces', () => {
+    const res = validateHandoff({ ...goldenHandoff, produces: '   ' }, 'builder');
+    assert.equal(res.valid, false);
+    assert.equal(res.field, 'produces');
+    assert.match(res.error!, /non-empty string/);
   });
 
   it('rejects missing terminal_status', () => {

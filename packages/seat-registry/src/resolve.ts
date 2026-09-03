@@ -97,6 +97,7 @@ export interface ResolveOptions {
  * is excluded (activation_status: deferred).
  */
 const ROLE_REGISTRAR: readonly string[] = [
+  'strategist',
   'architect',
   'builder',
   'researcher',

@@ -25,8 +25,11 @@ export function validateHandoff(handoff: SeatHandoff, seat: SeatId): HandoffVali
   if (handoff.receives_from !== null && !isSeatIdValue(handoff.receives_from)) {
     return reject('receives_from', `receives_from must be a seat id or null, got ${JSON.stringify(handoff.receives_from)}`);
   }
-  if (handoff.produces === undefined || handoff.produces.trim() === '') {
+  if (handoff.produces === undefined) {
     return reject('produces', 'missing required field produces');
+  }
+  if (typeof handoff.produces !== 'string' || handoff.produces.trim() === '') {
+    return reject('produces', `produces must be a non-empty string, got ${JSON.stringify(handoff.produces)}`);
   }
   if (handoff.terminal_status === undefined) {
     return reject('terminal_status', 'missing required field terminal_status');
