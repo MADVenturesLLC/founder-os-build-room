@@ -545,6 +545,7 @@ describe('T10 — Builder/reviewer model distinctness (predicate only)', () => {
     const gate = createSeatPolicyGate();
     let distinctSeen = 0;
     let sameModelSeen = 0;
+    let distinctModelOffRosterSeen = 0;
     for (const implLane of builder.routing) {
       for (const reviewLane of reviewer.routing) {
         const expected = isDistinctReviewLane(implLane.model_id, reviewLane);
@@ -554,14 +555,30 @@ describe('T10 — Builder/reviewer model distinctness (predicate only)', () => {
           assert.equal(actual, false, 'same-model pairing is never distinct');
           sameModelSeen += 1;
         } else {
-          assert.equal(actual, true, `distinct-model pairing ${implLane.model_id} × ${reviewLane.model_id} satisfies the requirement`);
-          distinctSeen += 1;
+          // Distinct-model case: the truth is the registry predicate itself,
+          // which requires BOTH a differing model AND a roster-eligible
+          // attestation — asserting true on model difference alone would miss
+          // the roster condition.
+          assert.equal(
+            actual,
+            expected,
+            `distinct-model pairing ${implLane.model_id} × ${reviewLane.model_id}: the gate matches the registry predicate`,
+          );
+          if (expected) {
+            distinctSeen += 1;
+          } else {
+            distinctModelOffRosterSeen += 1;
+          }
         }
       }
     }
-    // Corpus evidence both directions exist at the doctrine pin.
-    assert.ok(distinctSeen > 0, 'at least one distinct pairing exists');
+    // Corpus evidence at the doctrine pin: every reviewer lane is
+    // roster-eligible, so all distinct-model pairings satisfy BOTH conditions
+    // (differing model AND roster attestation); the roster-eligibility
+    // condition is independently covered by the off-roster test below.
+    assert.ok(distinctSeen > 0, 'at least one pairing satisfies distinct-model AND roster-eligibility');
     assert.ok(sameModelSeen > 0, 'same-model pairings exist and are refused');
+    assert.equal(distinctModelOffRosterSeen, 0, 'no reviewer lane at the doctrine pin is off-roster');
   });
 
   it('the same-model case rejects', () => {

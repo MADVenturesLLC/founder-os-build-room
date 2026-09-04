@@ -185,7 +185,13 @@ export function createSeatPolicyGate(options?: SeatPolicyGateOptions): SeatPolic
     // re-derives the resolution from the bound resolver every time; there is
     // no API surface by which a caller presents a resolution (plan T12(a)).
     // A temporary task assignment offered as the authorization_ref is
-    // forwarded to the resolver and refused under its own class.
+    // evaluated by the CANONICAL registry resolver (resolveSeat with
+    // presented_authority) DIRECTLY — it is not forwarded through the
+    // injectable one-argument test resolver seam, whose signature cannot
+    // carry presented authority. The canonical resolver refuses presented
+    // authority under temporary_task_assignment_not_lane_authority
+    // regardless of seat, so this branch preserves fail-closed registry
+    // behavior under every resolver binding (plan §3.2, T12(d)).
     const resolution = presentsTemporaryTaskAssignment(request)
       ? resolveSeat(request.seat_id, {
           presented_authority: { kind: 'temporary-task-assignment', assignment_ref: request.authorization_ref ?? '' },
