@@ -24,3 +24,24 @@ export {
   type RoomView,
 } from './store.js';
 export { main } from './main.js';
+export {
+  createSeatPolicyGate,
+  DISPATCH_AT_MOST_ONCE,
+  DISPATCH_PATH_OBLIGATIONS,
+  DISPATCH_POLICY,
+  MP1_STATEMENT,
+  type DispatchRequest,
+  type DispatchPolicyV1,
+  type FailoverDecision,
+  type RetryBudgetEvent,
+  type RetryBudgetState,
+  type RetryDecision,
+  type SeatPolicyDecision,
+  type SeatPolicyGate,
+  type SeatPolicyGateOptions,
+  type SeatResolver,
+  type SeatResolution,
+  type SeatRoutingLane,
+  type SeatRegistrationV1,
+  type ResolvedSeat,
+} from './seat-policy.js';
