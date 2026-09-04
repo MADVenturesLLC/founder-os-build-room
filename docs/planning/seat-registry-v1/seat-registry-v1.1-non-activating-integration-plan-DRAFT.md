@@ -542,9 +542,14 @@ ruling lists and reopen root-config review).
           refusal: string;   // the RefusalClass or 'malformed_request'
           reason: string;     // the resolver's named reason, verbatim
           requirement: string | null }   // the Founder act a lane needs
-      | { kind: 'allowed'; allowed: true; registration; readiness;
-          note: string }   // reachable ONLY via a resolver that returns
-                          // 'resolved' — the real one never does (F2)
+      | {
+          kind: 'allowed';
+          allowed: true;
+          registration: SeatRegistrationV1;
+          readiness: readonly LaneReadiness[];
+          note: string;
+        }   // reachable ONLY via a resolver that returns
+            // 'resolved' — the real one never does (F2)
 
     RetryDecision / FailoverDecision = the retryBudgetTransition decision
       plus requires_new_command_id: boolean — true for retry and failover
@@ -1158,8 +1163,8 @@ ruling lists and reopen root-config review).
   → branch → tests RED → gate GREEN → mutation evidence → suite 3x →
   gates → build report → advisory review → Tier-2 exact-head review →
   SHA-named Founder merge authorization → builder merges → post-merge
-  verification (the PR #20 pattern: merge SHA, parents, path set, recom-
-  puted identities, suite + gates on the merged tree).
+  verification (the PR #20 pattern: merge SHA, parents, path set,
+  recomputed identities, suite + gates on the merged tree).
 
   No step in this tranche depends on: any provider, any credential, any
   deployment target, any external repository at run time, any Lab
@@ -1270,7 +1275,7 @@ ruling lists and reopen root-config review).
       standing; MP-1 activates): STOP — the plan's premises are void.
 
 --------------------------------------------------------------------------
-18. CLAIMS EXPLICITLY NOT PROVEN IN V1.1 (ACTIVATION-TRANSCHE LIMITS)
+18. CLAIMS EXPLICITLY NOT PROVEN IN V1.1 (ACTIVATION-TRANCHE LIMITS)
 --------------------------------------------------------------------------
 
   1. No end-to-end dispatch occurs or is proven possible on a standing
