@@ -141,7 +141,7 @@ B8. Does integration make any lane eligible or standing?
 
 B9. May the tranche wire the gate into a live dispatch route?
     Controlling: r7 §3 (seat resolution belongs on the governed Phase 4
-    dispatch path at the control plane); the journal contract §1
+    dispatch path at the control plane); the journal contract §5
     (command_id idempotency owned by the dispatch path); F11 (no
     dispatch path exists).
     Answer: The gate is BUILT consumable but deliberately UNWIRED. No

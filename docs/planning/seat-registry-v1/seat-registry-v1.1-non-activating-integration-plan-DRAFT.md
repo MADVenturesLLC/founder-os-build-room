@@ -105,7 +105,7 @@ deployment, activation, provider access, credentials, or spend.
      task execution do not need a decision entry."
 
   G. Command journal contract v0.17 (docs/command-journal-contract.md),
-     §1 dispatch-idempotency clause: "command_id is the end-to-end
+     §5 dispatch-idempotency clause: "command_id is the end-to-end
      idempotency key: the dispatch path presents it to the gateway and
      adapter, which must enforce at-most-once execution per command_id. A
      retry is safe only because of this binding, and no dispatch
@@ -600,7 +600,7 @@ ruling lists and reopen root-config review).
 
   decideRetry / decideFailover delegate to retryBudgetTransition and add
   the command_id discipline:
-    - a retry is a NEW command_id (journal contract §1: command_id is the
+    - a retry is a NEW command_id (journal contract §5: command_id is the
       end-to-end idempotency key; a retry is safe only because each
       attempt is its own command record);
     - a failover is a NEW command_id and must change surface_id or
@@ -894,7 +894,7 @@ ruling lists and reopen root-config review).
 
   T9  Failover increments/rebinds command_id exactly as controlling
       authority requires.
-       Journal contract §1 + dispatch-policy header: retry and failover
+       Journal contract §5 + dispatch-policy header: retry and failover
        each require a NEW command_id (requires_new_command_id: true);
        lost_response_replay requires NONE (false), consumes nothing,
        opens no bucket, resolves to the same logical command;
