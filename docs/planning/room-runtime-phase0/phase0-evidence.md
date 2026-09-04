@@ -29,10 +29,16 @@ All under nvm Node 22.23.2 (the Founder-confirmed proof runtime):
 
 - `npm run build` — exit 0.
 - `node --test dist/test/phase0-*.test.js` — 19 tests, 19 pass, 0 fail.
-- Full suite `npm test` — 725 tests, 725 pass, 0 fail, 0 skipped (one
-  earlier run showed 6 transient subtest failures under parallel-load
-  contention; two subsequent full runs were clean 725/725 — the flaky
-  run is disclosed here honestly rather than hidden).
+- Full suite `npm test` — 725 tests, 725 pass, 0 fail (one earlier run
+  showed 6 transient subtest failures under parallel-load contention;
+  two subsequent full runs were clean 725/725 — that transient event was
+  not reproduced in the independent verification run and is not
+  established as a candidate defect; it is disclosed here honestly
+  rather than hidden). The independent run additionally emitted 87
+  environment-gated `# SKIP` diagnostics associated with
+  Postgres/Gateway/Keychain-gated conditions — those gated paths did
+  NOT execute in this environment and are not claimed as executed; the
+  725/725 result covers the tests that ran.
 - `npm run typecheck` — exit 0.
 - `npm run lint` — 32 pre-existing errors in files this tranche does not
   touch (out of scope; no unrelated cleanup is authorized) and 0 errors
@@ -68,14 +74,24 @@ The Prerequisite C inventory/load proof runs against the TUI's broker and
 ledger entry points (r4 §9 names that repository's subset) and is recorded
 in the TUI proof record. BR-side Node 22 load of the Gateway's own
 packages is proven by this tranche itself: the full BR test suite
-(including all Phase 0 proofs) ran green under Node 22.23.2.
+(including all Phase 0 proofs) ran green under Node 22.23.2 — "green"
+meaning the 725 tests that ran all passed, with the 87
+Postgres/Gateway/Keychain-gated `# SKIP` diagnostics disclosed in §3 and
+§7 (gated paths not executed, not claimed as covered).
 
 ## 7. Environment-gated or skipped coverage (item 19)
 
 - `phase0-occupancy-lock.test.ts` (O_EXLOCK) is darwin-gated and ran
   locally on this host; BR CI (ubuntu-only) will skip it. Reported as
   environment-gated, not as CI-passed.
-- No other skips.
+- `O_EXLOCK` remains the Phase 0 proof mechanism only (Founder
+  confirmation boundary 1); a successful proof does not select the
+  production occupancy-lock implementation.
+- The full-suite runs additionally emitted 87 environment-gated
+  `# SKIP` diagnostics associated with Postgres/Gateway/Keychain-gated
+  conditions (test-database URL, local Gateway, Keychain availability).
+  Those gated tests did not execute here and their paths are not
+  claimed as covered.
 
 ## 8. Known residuals (item 20)
 
