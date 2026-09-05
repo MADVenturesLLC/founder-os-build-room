@@ -21,6 +21,7 @@
     "packages/run-harness/src/**/*.ts",
     "packages/gateway-daemon/src/**/*.ts",
     "packages/gateway-cli/src/**/*.ts",
+    "packages/worker-supervisor/src/**/*.ts",
     "test/**/*.ts"
   ]
 }
