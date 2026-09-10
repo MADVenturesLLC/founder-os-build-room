@@ -94,6 +94,24 @@ export {
 } from './lanes.js';
 
 export { RING_CAPACITY, RingBuffer, type RingEntry } from './ring-buffer.js';
+
+/**
+ * Room Runtime Phase 1 (fixture occupancy only) — the Gateway-side room
+ * runtime and its stop-class errors.
+ */
+export {
+  ExecutionCardinalityError,
+  FIXTURE_RING_PATCHES,
+  RoomRuntime,
+  RoomRuntimeError,
+  VIEWER_QUEUE_BYTES,
+  VIEWER_QUEUE_FRAMES,
+  type OutFrame,
+  type RoomNack,
+  type RoomOutcome,
+  type RoomResult,
+  type RoomRuntimeDeps,
+} from './room-runtime.js';
 export { IpcServer, ipcRequest, type IpcHandlers, type IpcRequest, type IpcStatus } from './ipc.js';
 export { createDaemonClock } from './clock.js';
 export { GatewayDaemon, type GatewayDaemonDeps } from './daemon.js';

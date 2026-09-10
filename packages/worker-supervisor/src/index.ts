@@ -1,17 +1,29 @@
 // packages/worker-supervisor/src/index.ts
 //
-// BOUNDED PREREQUISITE-C REMEDIATION IMPLEMENTATION — NOT WIRED TO
-// PRODUCTION GATEWAY.
+// GATEWAY HALF OF THE FDR-C C2 BOUNDARY — Phase 1 fixture-gated wiring.
 //
-// Authorized by the Founder-confirmed R4 changed-path manifest
-// (2026-09-04) under the Prerequisite C remediation commission. This
-// package is a bounded proof implementation of the Gateway half of the
+// Originally authorized by the Founder-confirmed R4 changed-path manifest
+// (2026-09-04) under the Prerequisite C remediation commission as a bounded
+// proof implementation, NOT wired to production. Room Runtime Phase 1
+// (Commission Final r3, 2026-09-10, row `packages/worker-supervisor/src/**`
+// REQUIRED — capabilities B, H) adds the fixture-gated wiring below:
+//
+//   B — the ExecutionStreamRegistry: canonical owner of the exactly-two
+//       execution-stream-identity contract (r3 §13 semantic matrix:
+//       stream identity → Gateway(worker-supervisor)). A third active
+//       execution stream identity is a stop-class error, never silent.
+//   H — C2RoomBinding: connects a room's fixture execution facts to the
+//       subordinate C2 worker's durable ledger through the EXISTING
+//       bounded worker ops. STRICT FIXTURE GATE: binding refuses any
+//       occupancy key that is not fixture-scoped; it is not a production
+//       start path and certifies no runtime.
+//
+// The package remains a bounded implementation of the Gateway half of the
 // FDR-C C2 boundary:
 //
 //   COHESIVE SOCKETLESS SUPERVISED BUN BROKER/LEDGER WORKER
 //
-// It is NOT imported by gateway-daemon or any production path, it mints
-// no authority, and it authorizes no Phase 1 functionality.
+// It mints no authority. The production `start` gate is untouched.
 //
 // TRANSPORT — truthful characterization per the Founder clarification
 // (SHA 6a5dd5aeee056deb18c4ea49912565b9fd5d5063402f166dce2e2adbf8ed0f43):
@@ -50,7 +62,8 @@
 // CREDENTIAL BOUNDARY: WORKER CREDENTIAL ACCESS: NONE. The worker's
 // environment carries exactly one variable (PREREQC_WORKER_DB_PATH). No
 // provider credential or Founder secret enters argv, environment,
-// frames, logs, or persistence.
+// frames, logs, or persistence. The Phase 1 C2RoomBinding carries only
+// fixture room/execution identifiers and scrubbed fact strings.
 //
 // DEPENDENCY TRUTHFULNESS: this file imports ONLY node: builtins.
 // Per the Founder workspace/lockfile ruling (2026-09-05) the package
@@ -543,5 +556,223 @@ export class C2WorkerSupervisor extends EventEmitter {
         resolve(code ?? -1);
       });
     });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Room Runtime Phase 1 — capability B: execution-stream-identity registry.
+//
+// r3 §13 semantic matrix: "stream identity → Gateway(worker-supervisor)".
+// r4 §7.7: "Exactly two PTY streams exist." This registry is the canonical
+// Gateway-side owner of that contract for Phase 1 fixture rooms:
+//
+//   - a room registers AT MOST two execution stream identities;
+//   - a third registration raises ExecutionStreamLimitError — a stop-class
+//     observable (r3 stop 12), never a silent third stream;
+//   - viewers are NOT execution identities: viewer registration is a
+//     separate namespace and never counts toward the limit;
+//   - presentation surfaces mint no execution identity.
+//
+// The RoomRuntime (gateway-daemon) mirrors the same limit for its own
+// fixtures; this registry is the named canonical owner the r3 matrix binds.
+// ---------------------------------------------------------------------------
+
+/** Exactly two execution stream identities (r4 §7.7). */
+export const MAX_EXECUTION_STREAMS = 2;
+
+export class ExecutionStreamLimitError extends Error {
+  constructor(roomId: string, attempted: string) {
+    super(
+      `room ${roomId}: exactly ${String(MAX_EXECUTION_STREAMS)} execution stream identities are authorized; refused '${attempted}' (a third stream is a stop condition, not a soft error)`,
+    );
+    this.name = 'ExecutionStreamLimitError';
+  }
+}
+
+export interface ExecutionStreamRegistration {
+  readonly roomId: string;
+  readonly executionId: string;
+  readonly registeredAt: string;
+}
+
+export class ExecutionStreamRegistry {
+  private readonly byRoom = new Map<string, Map<string, ExecutionStreamRegistration>>();
+
+  /** Register an execution stream identity. Raises on a third identity. */
+  register(roomId: string, executionId: string, nowIso: string): ExecutionStreamRegistration {
+    let streams = this.byRoom.get(roomId);
+    if (streams === undefined) {
+      streams = new Map();
+      this.byRoom.set(roomId, streams);
+    }
+    const existing = streams.get(executionId);
+    if (existing !== undefined) return existing; // idempotent re-registration
+    if (streams.size >= MAX_EXECUTION_STREAMS) {
+      throw new ExecutionStreamLimitError(roomId, executionId);
+    }
+    const registration: ExecutionStreamRegistration = { roomId, executionId, registeredAt: nowIso };
+    streams.set(executionId, registration);
+    return registration;
+  }
+
+  /** Active execution stream identities for a room (0..2). */
+  streamsFor(roomId: string): readonly ExecutionStreamRegistration[] {
+    const streams = this.byRoom.get(roomId);
+    return streams === undefined ? [] : [...streams.values()];
+  }
+
+  /** True when the room holds its full pair. */
+  atLimit(roomId: string): boolean {
+    return this.streamsFor(roomId).length >= MAX_EXECUTION_STREAMS;
+  }
+
+  release(roomId: string, executionId: string): void {
+    this.byRoom.get(roomId)?.delete(executionId);
+  }
+
+  releaseRoom(roomId: string): void {
+    this.byRoom.delete(roomId);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Room Runtime Phase 1 — capability H: fixture-gated C2 worker wiring.
+//
+// Connects a Phase 1 FIXTURE room's execution facts to the subordinate C2
+// worker's durable ledger through the EXISTING bounded worker ops
+// (appendEvent / rowsSince / verify). Strict fixture gate (r3 §12 row:
+// "BR C2 worker wiring under strict fixture gates"):
+//
+//   - the occupancy key MUST be fixture-scoped (`fixture:` prefix) or the
+//     binding refuses to construct; there is no production path here;
+//   - the Worker remains subordinate: it is spawned/supervised by the
+//     C2WorkerSupervisor (Gateway) over the socketless private transport and
+//     cannot restart itself;
+//   - non-authoritative: the binding records FACTS into the worker's ledger;
+//     it mints no generation, no occupancy, no authority. The Gateway-minted
+//     supervisor generation remains an opaque correlation value;
+//   - credential-free by default: events carry only fixture room/execution
+//     identifiers and scrubbed fact strings — never a provider credential,
+//     never a secret, never raw PTY payload bytes.
+//
+// Receipt honesty: every event this binding appends is a `message`-type
+// FIXTURE FACT at rung `executed` ceiling semantics — it is evidence that a
+// fixture fact was durably recorded, and NOT evidence of verification,
+// review, CI, merge, occupancy, or activation (r4 AT-R4-18/25; the TUI-side
+// @mad/claim-boundary is the semantic authority for that ladder).
+// ---------------------------------------------------------------------------
+
+export class C2BindingError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'C2BindingError';
+    this.code = code;
+  }
+}
+
+/** The occupancy-key shape the fixture gate accepts. */
+export const FIXTURE_OCCUPANCY_PREFIX = 'fixture:';
+
+export interface C2RoomBindingOptions {
+  /** Fixture room id this binding records facts for. */
+  readonly roomId: string;
+  /** MUST start with `fixture:` — the strict fixture gate. */
+  readonly occupancyKey: string;
+  /** The supervisor (already constructed with the same fixture occupancy key). */
+  readonly supervisor: C2WorkerSupervisor;
+  /** Opaque id factory (production: crypto.randomUUID). */
+  readonly newId: () => string;
+  /** Timestamp factory (production: () => new Date().toISOString()). */
+  readonly now: () => string;
+}
+
+const GENESIS_HASH = '0'.repeat(64);
+const ZERO_FINGERPRINT = {
+  kind: 'commit',
+  sha256: GENESIS_HASH,
+  git_sha: '0'.repeat(40),
+} as const;
+
+export class C2RoomBinding {
+  readonly roomId: string;
+  private readonly supervisor: C2WorkerSupervisor;
+  private readonly newId: () => string;
+  private readonly now: () => string;
+  private lastEventId: string | null = null;
+
+  constructor(options: C2RoomBindingOptions) {
+    // STRICT FIXTURE GATE: refuse any non-fixture occupancy key at
+    // construction. This wiring is never a production start path.
+    if (!options.occupancyKey.startsWith(FIXTURE_OCCUPANCY_PREFIX)) {
+      throw new C2BindingError(
+        'fixture_gate_refused',
+        `C2RoomBinding requires a fixture-scoped occupancy key ('${FIXTURE_OCCUPANCY_PREFIX}...'); got '${options.occupancyKey}' — production wiring is not authorized by Phase 1`,
+      );
+    }
+    if (options.supervisor.occupancyKey !== options.occupancyKey) {
+      throw new C2BindingError(
+        'occupancy_key_mismatch',
+        'binding and supervisor must share one fixture occupancy key',
+      );
+    }
+    this.roomId = options.roomId;
+    this.supervisor = options.supervisor;
+    this.newId = options.newId;
+    this.now = options.now;
+  }
+
+  /**
+   * Record one scrubbed fixture fact into the worker's durable ledger
+   * (real append; ack only after COMMIT — the worker's existing semantics).
+   * The fact string must be scrubbed by the caller; this binding adds no
+   * payload bytes, no credentials, and no raw PTY content.
+   */
+  async recordFixtureFact(executionId: string, kind: string, fact: Record<string, unknown>): Promise<void> {
+    const event = {
+      protocol_version: 'madbridge-protocol/v1',
+      event_id: this.newId(),
+      session_id: `fixture-room-${this.roomId}`,
+      parent_event_id: this.lastEventId,
+      sender_execution_id: `gateway-room-${this.roomId}`,
+      receiver_execution_id: executionId,
+      sender_role: 'builder',
+      sender_surface: 'gateway-phase1-fixture',
+      sender_model: 'none',
+      sender_provider: 'none',
+      task_envelope_hash: GENESIS_HASH,
+      repository_fingerprint: { ...ZERO_FINGERPRINT },
+      event_type: 'message',
+      payload_hash: '',
+      payload: { room_runtime: 'phase1-fixture', fact_kind: kind, ...fact },
+      created_at: this.now(),
+      previous_event_hash: GENESIS_HASH,
+    };
+    const response = await this.supervisor.request('appendEvent', { event });
+    if (!response.ok) {
+      throw new C2BindingError(
+        response.error?.code ?? 'append_failed',
+        `fixture fact '${kind}' was not durably recorded: ${response.error?.message ?? 'unknown worker error'}`,
+      );
+    }
+    this.lastEventId = event.event_id;
+  }
+
+  /** Read back the durable rows (Gateway-side verification of the worker ledger). */
+  async rowsSince(sequence: number): Promise<unknown> {
+    const response = await this.supervisor.request('rowsSince', { since: sequence });
+    if (!response.ok) {
+      throw new C2BindingError(response.error?.code ?? 'rows_failed', response.error?.message ?? 'rowsSince failed');
+    }
+    return response.result;
+  }
+
+  /** Verify the worker ledger chain (real verify op). */
+  async verify(): Promise<unknown> {
+    const response = await this.supervisor.request('verify', {});
+    if (!response.ok) {
+      throw new C2BindingError(response.error?.code ?? 'verify_failed', response.error?.message ?? 'verify failed');
+    }
+    return response.result;
   }
 }

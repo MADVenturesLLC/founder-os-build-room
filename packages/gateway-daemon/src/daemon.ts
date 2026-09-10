@@ -12,6 +12,7 @@
  * the primary lane, and the staging lane returns to `INACTIVE`.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { Clock } from '../../gateway-protocol/src/index.js';
 import type { Custody } from './custody.js';
 import { StagingLockBusy, acquireStagingLock, type StagingOperation } from './staging-lock.js';
@@ -20,6 +21,7 @@ import { PrimaryLane, StagingLane, type StagingOutcome } from './lanes.js';
 import type { GatewayPaths } from './paths.js';
 import { RingBuffer } from './ring-buffer.js';
 import { IpcServer } from './ipc.js';
+import { RoomRuntime } from './room-runtime.js';
 import { GatewayStateStore, type GatewayState } from './state.js';
 import { privateKeyFromSecret, publicMembersOf, type GatewayIdentity } from './signing.js';
 
@@ -33,6 +35,13 @@ export interface GatewayDaemonDeps {
 
 export class GatewayDaemon {
   readonly ring = new RingBuffer();
+  /**
+   * Room Runtime Phase 1 (FIXTURE OCCUPANCY ONLY). Born empty: no room
+   * exists until a fixture surface creates one, and nothing here is a
+   * production start path. The Gateway is the sole authority owner of this
+   * runtime (r3 §7); projectors attach over IPC v2 and mint nothing.
+   */
+  readonly rooms: RoomRuntime;
   readonly primary: PrimaryLane;
   readonly staging: StagingLane;
   private readonly state: GatewayStateStore;
@@ -46,12 +55,14 @@ export class GatewayDaemon {
     this.primary = new PrimaryLane(deps.client, deps.clock, null);
     this.staging = new StagingLane(deps.client, deps.clock);
     this.state = new GatewayStateStore(deps.paths);
+    this.rooms = new RoomRuntime({ newId: () => randomUUID() });
     this.ipc = new IpcServer(deps.paths, {
       status: () => ({
         primary: { lane: this.primary.laneState, epoch: this.primary.currentEpoch !== null },
         staging: { lane: this.staging.laneState },
       }),
       ring: () => this.ring,
+      rooms: () => this.rooms,
     });
   }
 
