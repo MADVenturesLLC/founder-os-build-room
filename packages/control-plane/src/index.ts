@@ -15,6 +15,18 @@
 export { loadConfig, ConfigError, type Config } from './config.js';
 export { createPool, probe, type ProbeResult } from './db.js';
 export { migrate, MIGRATIONS, type Migration, type MigrationResult } from './migrations.js';
+export {
+  schemaPreflight,
+  auditRuntimePrivileges,
+  SchemaPreflightError,
+  REQUIRED_MIGRATION_IDS,
+  FORBIDDEN_ROLE_ATTRIBUTES,
+  FORBIDDEN_MEMBERSHIP_ROLES,
+  FORBIDDEN_PREDEFINED_ROLE_PREFIXES,
+  type PrivilegeAudit,
+  type PrivilegeAuditStatus,
+  type SchemaPreflightReport,
+} from './schema-preflight.js';
 export { createServer, type ServerDeps } from './server.js';
 export {
   PostgresLedgerStore,

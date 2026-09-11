@@ -88,8 +88,10 @@ export interface ProbeResult {
  * A readiness probe against the real database.
  *
  * `SELECT 1` proves the socket and the session; it does not prove the schema.
- * The schema is proved at boot by the migrator, which fails the boot if it
- * cannot run — so readiness does not re-assert it on every probe.
+ * The schema is asserted at boot by the read-only preflight
+ * (`schema-preflight.ts`), which fails the boot if the required
+ * `schema_migrations` ids are absent and never migrates or repairs — so
+ * readiness does not re-assert it on every probe.
  */
 export async function probe(pool: Pool, timeoutMs: number): Promise<ProbeResult> {
   const started = Date.now();
