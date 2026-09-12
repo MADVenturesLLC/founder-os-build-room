@@ -29,7 +29,8 @@
     "test:custody:macos": "npm run build && BUILDROOM_CUSTODY_MACOS=1 node --test dist/test/custody-macos.test.js",
     "gate:integrity": "bash scripts/contract-integrity-scan.sh",
     "vectors:journal": "npm run build && node dist/test/support/generate-journal-vectors.js",
-    "smoke:gateway": "npm run build && bash scripts/gateway-smoke.sh"
+    "smoke:gateway": "npm run build && bash scripts/gateway-smoke.sh",
+    "phase1:fixture": "npm run build && node dist/test/support/phase1-acceptance-gateway.js"
   },
   "devDependencies": {
     "@types/express": "5.0.0",
