@@ -145,6 +145,7 @@ async function installDdlObservation(harness: GatewayHarness): Promise<void> {
        LANGUAGE plpgsql AS $$
        BEGIN
          INSERT INTO preflight_ddl_observation (tag) VALUES (tg_tag);
+         RAISE WARNING 'ddl_observation:%', tg_tag;
        END
        $$`,
   );
@@ -435,5 +436,308 @@ describe('schema preflight — a compatible schema passes read-only (GREEN contr
     assert.ok(report.migrationsPresent.includes(REQUIRED_ID_TO_REMOVE));
     const tags = await observedDdlTags(harness);
     assert.deepEqual(tags, [], 'a passing preflight issues no DDL either');
+  });
+});
+
+/*
+ * F2 (mirrored control, this suite's own trigger): the non-transactional
+ * client-notice channel must also survive rollback on the
+ * `preflight_ddl_observation` trigger — the commission names both trigger
+ * sites, and a mutation removing THIS file's RAISE must go RED here, not
+ * only in boot-no-ddl.
+ */
+interface PgNotice {
+  readonly severity: string;
+  readonly message: string;
+}
+
+/** pg's PoolClient typing does not declare the `notice` event; bind it. */
+function onNotice(client: PoolClient, collect: (n: PgNotice) => void): void {
+  (client as unknown as { on(event: 'notice', fn: (n: PgNotice) => void): unknown }).on(
+    'notice',
+    collect,
+  );
+}
+
+function offNotice(client: PoolClient, collect: (n: PgNotice) => void): void {
+  (client as unknown as { removeListener(event: 'notice', fn: (n: PgNotice) => void): unknown })
+    .removeListener('notice', collect);
+}
+
+describe('preflight DDL observation survives rollback (F2 mirror)', { skip: STORAGE_SKIP ? STORAGE_SKIP : false }, () => {
+  it('a failed DDL and a rolled-back DDL are both observed through the non-transactional channel', async (t) => {
+    const harness = await fixture('preflight-f2-mirror');
+    await installDdlObservation(harness);
+    const client = await harness.pool.connect();
+    try {
+      const notices: string[] = [];
+      const collect = (n: { severity: string; message: string }): void => {
+        notices.push(`${n.severity}:${n.message}`);
+      };
+      onNotice(client, collect);
+
+      // Case 1: failing DDL (duplicate name).
+      await client.query(`CREATE TABLE f2_mirror_marker (x int)`).catch(() => undefined);
+      const failed = await client
+        .query(`CREATE TABLE f2_mirror_marker (x int)`)
+        .then(() => false, () => true);
+      t.diagnostic(`mirror case-1 (failed DDL): ${String(failed)}`);
+
+      // Case 2: successful DDL inside an explicit transaction, rolled back.
+      await client.query('BEGIN');
+      await client.query(`CREATE TABLE f2_mirror_tx (y int)`);
+      await client.query('ROLLBACK');
+
+      offNotice(client, collect);
+      const ddlNotices = notices.filter((m) => m.includes('ddl_observation:'));
+      t.diagnostic(`mirror non-transactional channel: ${JSON.stringify(ddlNotices)}`);
+      assert.ok(
+        ddlNotices.length >= 2,
+        'both the failed and the rolled-back DDL must be observed through the client-notice channel',
+      );
+      assert.ok(ddlNotices.some((m) => m.includes('CREATE TABLE')), 'failed DDL observed');
+      assert.ok(
+        ddlNotices.filter((m) => m.includes('CREATE TABLE')).length >= 2,
+        'rolled-back DDL observed too (two CREATE TABLE notices minimum)',
+      );
+      const { rows } = await client.query<{ r: string | null }>(
+        `SELECT to_regclass('public.f2_mirror_tx') AS r`,
+      );
+      assert.equal(rows[0]?.r, null, 'the rolled-back table must not exist');
+      // Table channel scope: committed DDL only. The one committed row is
+      // this case's own setup CREATE (f2_mirror_marker); NEITHER aborted
+      // case reaches this channel — that asymmetry is F2 being pinned.
+      const tableChannel = await client.query<{ tag: string }>(
+        'SELECT tag FROM preflight_ddl_observation ORDER BY seq',
+      );
+      t.diagnostic(`mirror table channel (committed only): ${JSON.stringify(tableChannel.rows)}`);
+      assert.equal(
+        tableChannel.rows.length,
+        1,
+        'only the committed setup DDL reaches the table channel; the failed and rolled-back DDL do not',
+      );
+    } finally {
+      client.release();
+    }
+  });
+});
+
+/*
+ * F1 — the membership walk must not be silently depth-capped (correction
+ * commission §2 F1). The production recursive term historically carried
+ * `WHERE e.depth < 16`, so a forbidden role reachable only at depth 17+ was
+ * never reported and nothing signalled the truncation.
+ *
+ * Fixture shape (Class 1, discovery §5 "F1 synthetic-relation fixture"):
+ * synthetic `pg_roles` / `pg_auth_members` relations in a dedicated schema of
+ * the suite's own disposable `TEST_DATABASE_URL` database, placed ahead of
+ * `pg_catalog` on the search_path of ONE dedicated test connection only.
+ * They represent role ids and membership edges; they create no PostgreSQL
+ * roles and grant no memberships. The production `auditRuntimePrivileges`
+ * SQL then executes UNMODIFIED against them.
+ *
+ * What this proves and what it does not: it proves SQL traversal correctness
+ * of the production walk (depth, convergence, direct edges, sentinels). It
+ * does NOT prove actual PostgreSQL grant or SET ROLE behavior — no role is
+ * ever created, granted, or entered here.
+ */
+const F1_SCHEMA = 'br_f1_fixture';
+
+/** Exact column shape the production queries reference. */
+async function installF1SyntheticCatalog(client: PoolClient): Promise<void> {
+  await client.query(`CREATE SCHEMA ${F1_SCHEMA}`);
+  await client.query(
+    `CREATE TABLE ${F1_SCHEMA}.pg_roles (
+       rolname name NOT NULL,
+       rolsuper boolean NOT NULL,
+       rolcreaterole boolean NOT NULL,
+       rolcreatedb boolean NOT NULL,
+       rolbypassrls boolean NOT NULL,
+       rolreplication boolean NOT NULL,
+       oid oid NOT NULL
+     )`,
+  );
+  await client.query(`CREATE TABLE ${F1_SCHEMA}.pg_auth_members (member oid NOT NULL, roleid oid NOT NULL)`);
+}
+
+interface F1RoleRow {
+  readonly rolname: string;
+  readonly oid: number;
+}
+
+async function insertF1Roles(client: PoolClient, rows: readonly F1RoleRow[]): Promise<void> {
+  for (const row of rows) {
+    await client.query(
+      `INSERT INTO ${F1_SCHEMA}.pg_roles
+         (rolname, rolsuper, rolcreaterole, rolcreatedb, rolbypassrls, rolreplication, oid)
+       VALUES ($1, false, false, false, false, false, $2)`,
+      [row.rolname, row.oid],
+    );
+  }
+}
+
+async function insertF1Edge(client: PoolClient, member: number, roleid: number): Promise<void> {
+  await client.query(`INSERT INTO ${F1_SCHEMA}.pg_auth_members (member, roleid) VALUES ($1, $2)`, [
+    member,
+    roleid,
+  ]);
+}
+
+describe('privilege audit walk — any depth, never silently capped (F1)', { skip: STORAGE_SKIP ? STORAGE_SKIP : false }, () => {
+  let harness: GatewayHarness | undefined;
+  let client: PoolClient | undefined;
+  let savedSearchPath = '';
+
+  before(async () => {
+    if (STORAGE_SKIP) return;
+    harness = await fixture('preflight-f1-walk');
+    client = await harness.pool.connect();
+  });
+
+  after(async () => {
+    if (client !== undefined) {
+      // Restore the connection's catalog resolution exactly as found.
+      await client.query(`SELECT set_config('search_path', $1, false)`, [savedSearchPath]).catch(() => undefined);
+      client.release();
+      client = undefined;
+    }
+  });
+
+  it('detects a forbidden role reachable only deeper than the old depth-16 cap', async (t) => {
+    assert.ok(harness !== undefined && client !== undefined);
+    await installF1SyntheticCatalog(client);
+    savedSearchPath = (
+      await client.query<{ sp: string }>('SHOW search_path')
+    ).rows[0]?.sp ?? '';
+    await client.query(`SELECT set_config('search_path', $1, false)`, [`${F1_SCHEMA}, pg_catalog`]);
+
+    const liveUser = (await client.query<{ cu: string }>('SELECT current_user AS cu')).rows[0]?.cu ?? '';
+    t.diagnostic(`F1 fixture running as ${liveUser} with search_path ${F1_SCHEMA} ahead of pg_catalog`);
+
+    // The production audit requires a pg_roles row for the live current_user.
+    const oidOf = (n: number): number => n;
+    const chain: F1RoleRow[] = [{ rolname: liveUser, oid: oidOf(1000) }];
+    for (let i = 1; i <= 16; i += 1) chain.push({ rolname: `f1_d${i}`, oid: oidOf(2000 + i) });
+    // Forbidden targets: depth 1 (direct), depth 2 (sentinel + converging), depth 17 (deep).
+    chain.push({ rolname: 'neon_superuser', oid: oidOf(3001) });
+    chain.push({ rolname: 'br_journal_owner', oid: oidOf(3002) });
+    chain.push({ rolname: 'command_journal_writer', oid: oidOf(3003) });
+    chain.push({ rolname: 'f1_conv_a', oid: oidOf(3004) });
+    chain.push({ rolname: 'f1_conv_b', oid: oidOf(3005) });
+    chain.push({ rolname: 'f1_conv_c', oid: oidOf(3006) });
+    chain.push({ rolname: 'neondb_owner', oid: oidOf(3007) });
+    await insertF1Roles(client, chain);
+
+    // Deep control: current_user -> f1_d1 -> ... -> f1_d16 -> neondb_owner (depth 17).
+    await insertF1Edge(client, 1000, 2001);
+    for (let i = 1; i <= 15; i += 1) await insertF1Edge(client, 2000 + i, 2000 + i + 1);
+    await insertF1Edge(client, 2016, 3007);
+    // Direct control: current_user -> neon_superuser (depth 1).
+    await insertF1Edge(client, 1000, 3001);
+    // Converging control: command_journal_writer reachable at depth 2 AND depth 3.
+    await insertF1Edge(client, 1000, 3004);
+    await insertF1Edge(client, 3004, 3003);
+    await insertF1Edge(client, 1000, 3005);
+    await insertF1Edge(client, 3005, 3006);
+    await insertF1Edge(client, 3006, 3003);
+    // Anti-vacuity sentinel: br_journal_owner exists ONLY in the synthetic relation.
+    await insertF1Edge(client, 3004, 3002);
+
+    const audit = await auditRuntimePrivileges(client);
+    t.diagnostic(`F1 audit findings: ${JSON.stringify(audit)}`);
+
+    // Sentinel FIRST: proves the walk read the synthetic relations at all.
+    assert.ok(
+      audit.forbiddenMemberships.some((m) => m.startsWith('br_journal_owner@depth')),
+      'anti-vacuity sentinel: a forbidden role existing only in the synthetic relation must be found',
+    );
+    // Deep control — the F1 defect: this is what the depth-16 cap silently missed.
+    assert.ok(
+      audit.forbiddenMemberships.some((m) => m.startsWith('neondb_owner@depth17')),
+      'a forbidden role reachable only at depth 17 must be detected (F1)',
+    );
+    // Direct control.
+    assert.ok(
+      audit.forbiddenMemberships.some((m) => m.startsWith('neon_superuser@depth1')),
+      'a direct forbidden membership at depth 1 must be detected',
+    );
+    // Converging control: same target by two paths, reported once at min depth.
+    assert.ok(
+      audit.forbiddenMemberships.some((m) => m.startsWith('command_journal_writer@depth2')),
+      'converging paths must report the target once at the minimum depth',
+    );
+    assert.equal(
+      audit.forbiddenMemberships.filter((m) => m.startsWith('command_journal_writer@')).length,
+      1,
+      'a converging target must not be reported twice',
+    );
+    // No false positives: the non-forbidden chain roles are traversed but not reported.
+    assert.ok(
+      !audit.forbiddenMemberships.some((m) => m.startsWith('f1_')),
+      'non-forbidden traversal roles must not appear as findings',
+    );
+  });
+
+  it('reports no forbidden membership when the synthetic catalog holds none', async (t) => {
+    assert.ok(harness !== undefined && client !== undefined);
+    // "No membership" control on its own fixture database: only the
+    // current_user row exists; the walk must return empty findings without
+    // claiming compliance (status stays pending_cutover).
+    const bare = await fixture('preflight-f1-none');
+    const bareClient = await bare.pool.connect();
+    try {
+      await installF1SyntheticCatalog(bareClient);
+      const bareSp = (await bareClient.query<{ sp: string }>('SHOW search_path')).rows[0]?.sp ?? '';
+      await bareClient.query(`SELECT set_config('search_path', $1, false)`, [`${F1_SCHEMA}, pg_catalog`]);
+      const liveUser = (await bareClient.query<{ cu: string }>('SELECT current_user AS cu')).rows[0]?.cu ?? '';
+      await insertF1Roles(bareClient, [{ rolname: liveUser, oid: 1000 }]);
+      const audit = await auditRuntimePrivileges(bareClient);
+      t.diagnostic(`F1 no-membership audit: ${JSON.stringify(audit)}`);
+      assert.deepEqual(audit.forbiddenMemberships, [], 'no synthetic edges means no findings');
+      assert.equal(audit.status, 'pending_cutover');
+      await bareClient.query(`SELECT set_config('search_path', $1, false)`, [bareSp]);
+    } finally {
+      bareClient.release();
+    }
+  });
+
+  it('fails loudly when the walk hits its cycle guard instead of silently truncating', async (t) => {
+    assert.ok(harness !== undefined && client !== undefined);
+    // Truncation-signal control: a chain deeper than the walk's cycle guard
+    // must REJECT (fail closed with a named truncation), never return a
+    // silently shortened findings list.
+    const deep = await fixture('preflight-f1-truncation');
+    const deepClient = await deep.pool.connect();
+    try {
+      await installF1SyntheticCatalog(deepClient);
+      const deepSp = (await deepClient.query<{ sp: string }>('SHOW search_path')).rows[0]?.sp ?? '';
+      await deepClient.query(`SELECT set_config('search_path', $1, false)`, [`${F1_SCHEMA}, pg_catalog`]);
+      const liveUser = (await deepClient.query<{ cu: string }>('SELECT current_user AS cu')).rows[0]?.cu ?? '';
+      const rows: F1RoleRow[] = [{ rolname: liveUser, oid: 1000 }];
+      for (let i = 1; i <= 120; i += 1) rows.push({ rolname: `f1_t${i}`, oid: 5000 + i });
+      rows.push({ rolname: 'neondb_owner', oid: 6001 });
+      await insertF1Roles(deepClient, rows);
+      await insertF1Edge(deepClient, 1000, 5001);
+      for (let i = 1; i <= 119; i += 1) await insertF1Edge(deepClient, 5000 + i, 5000 + i + 1);
+      await insertF1Edge(deepClient, 5120, 6001);
+
+      const error = await auditRuntimePrivileges(deepClient).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+      t.diagnostic(`F1 truncation result: ${String(error)}`);
+      assert.ok(
+        error instanceof SchemaPreflightError,
+        'a walk that hits the cycle guard must reject, not return silently truncated findings',
+      );
+      assert.match(
+        error instanceof Error ? error.message : String(error),
+        /deeper than this audit proves/i,
+        'the truncation rejection must name the truncation',
+      );
+      await deepClient.query(`SELECT set_config('search_path', $1, false)`, [deepSp]);
+    } finally {
+      deepClient.release();
+    }
   });
 });

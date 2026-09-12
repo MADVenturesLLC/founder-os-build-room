@@ -72,6 +72,19 @@ export const FORBIDDEN_MEMBERSHIP_ROLES = [
 /** `pg_read_all_data` / `pg_write_all_data`-class predefined roles (r6 §3.2). */
 export const FORBIDDEN_PREDEFINED_ROLE_PREFIXES = ['pg_write_all_data', 'pg_read_all_data'] as const;
 
+/**
+ * Cycle-guard depth for the recursive membership walk (F1 correction).
+ *
+ * This is a resource bound against cyclic or adversarial `pg_auth_members`
+ * graphs, NOT an authority limit: real membership depth is bounded by the
+ * number of roles in the cluster, far below this. The old `WHERE depth < 16`
+ * silently dropped anything deeper with no truncation signal (correction
+ * commission §2 F1) — a forbidden role reachable only at depth 17+ was
+ * never reported. The guard now rides every result row, and reaching it
+ * REJECTS the audit instead of truncating it (see auditRuntimePrivileges).
+ */
+export const MEMBERSHIP_WALK_GUARD_DEPTH = 100;
+
 /** The staged-enforcement status of the privilege audit. */
 export type PrivilegeAuditStatus = 'pending_cutover';
 
@@ -170,8 +183,20 @@ export async function auditRuntimePrivileges(target: Queryable): Promise<Privile
      * depth — R-1 proved a single-level lookup misses the SET-ROLE path.
      * `pg_read_all_data` / `pg_write_all_data`-class predefined roles are
      * matched by prefix on the target role name.
+     *
+     * Depth handling (F1 correction): the walk carries a cycle guard
+     * (MEMBERSHIP_WALK_GUARD_DEPTH), but the guard is NEVER a silent cap.
+     * A guard that merely stopped emitting rows hid forbidden roles beyond
+     * it without any truncation signal (correction commission §2 F1). The
+     * guard flag rides every result row; if the walk ever reaches the
+     * guard, this audit REJECTS below — it never reports a silently
+     * shortened findings list.
      */
-    const members = await target.query<{ member_role: string; depth: number }>(
+    const members = await target.query<{
+      member_role: string;
+      depth: number;
+      truncated: boolean;
+    }>(
       `WITH RECURSIVE edges AS (
          SELECT m.member, m.roleid, 1 AS depth
            FROM pg_auth_members m
@@ -181,14 +206,36 @@ export async function auditRuntimePrivileges(target: Queryable): Promise<Privile
          SELECT m.member, m.roleid, e.depth + 1
            FROM pg_auth_members m
            JOIN edges e ON e.roleid = m.member
-          WHERE e.depth < 16
+          WHERE e.depth < ${MEMBERSHIP_WALK_GUARD_DEPTH}
+       ),
+       aggregated AS (
+         SELECT gr.rolname AS member_role, min(e.depth) AS depth
+           FROM edges e
+           JOIN pg_roles gr ON gr.oid = e.roleid
+          GROUP BY gr.rolname
+       ),
+       guard AS (
+         SELECT count(*) > 0 AS truncated
+           FROM edges
+          WHERE depth >= ${MEMBERSHIP_WALK_GUARD_DEPTH}
        )
-       SELECT DISTINCT gr.rolname AS member_role, min(e.depth) AS depth
-         FROM edges e
-         JOIN pg_roles gr ON gr.oid = e.roleid
-        GROUP BY gr.rolname
-        ORDER BY gr.rolname`,
+       SELECT a.member_role, a.depth, g.truncated
+         FROM aggregated a CROSS JOIN guard g
+        ORDER BY a.member_role`,
     );
+
+    if (members.rows.some((row) => row.truncated)) {
+      /*
+       * Fail closed on truncation (F1): a role graph deeper than the guard
+       * means this audit cannot PROVE the absence of forbidden memberships.
+       * Report that fact; never return a findings list that looks complete.
+       */
+      throw new SchemaPreflightError(
+        'privilege audit membership walk reached its cycle-guard depth: the ' +
+          'role graph is deeper than this audit proves; refusing to report a ' +
+          'silently truncated findings list',
+      );
+    }
 
     const forbiddenTargets = new Set<string>(FORBIDDEN_MEMBERSHIP_ROLES);
     forbiddenMemberships = members.rows
