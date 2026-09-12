@@ -23,10 +23,17 @@
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { PoolClient } from 'pg';
+import pgDefault from 'pg';
+import type { Pool, PoolClient } from 'pg';
+
+const { Pool: PgPool } = pgDefault;
+import { migrate } from '../packages/control-plane/src/migrations.js';
 import {
   STORAGE_SKIP,
   createGatewayHarness,
@@ -155,6 +162,7 @@ before(async () => {
        BEGIN
          INSERT INTO boot_ddl_observation (tag) VALUES (tg_tag);
          RAISE WARNING 'ddl_observation:%', tg_tag;
+         RAISE LOG 'ddl_observation:%', tg_tag;
        END
        $$`,
   );
@@ -170,8 +178,15 @@ after(async () => {
   harness = undefined;
 });
 
+// CHANNEL SCOPE (F2 correction §6, receipt narrowing clause): the
+// boot_ddl_observation TABLE channel proves only COMMITTED DDL on the boot
+// connection — its rows live inside the firing statement's transaction, so a
+// failed or rolled-back DDL is invisible to it. The rollback-surviving
+// channel for the spawned boot child (the disposable instance's server log)
+// is asserted separately in the local-only section below; in CI (no server
+// binaries) that section skips with a named reason.
 describe('boot issues no DDL (A-R2 / PC-21)', { skip: STORAGE_SKIP ? STORAGE_SKIP : false }, () => {
-  it('boots to listening against an already-migrated schema, recording zero DDL on the boot connection', async (t) => {
+  it('boots to listening; the boot connection records zero COMMITTED DDL on the table channel (rollback-surviving channel: local-only section below)', async (t) => {
     assert.ok(harness !== undefined, 'fixture harness was created');
     const port = await freePort();
     const run = await runBoot(harness.config.databaseUrl, port);
@@ -311,3 +326,404 @@ describe('DDL observation survives rollback (F2, Class 1)', { skip: STORAGE_SKIP
     }
   });
 });
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * F2 boot-child half — the disposable-instance server-log channel (local-only).
+ *
+ * This section closes the remaining F2 defect the independent reviewer scored
+ * (addendum b7432dda… §1): the spawned boot child was observed only through
+ * TRANSACTIONAL rows (`boot_ddl_observation`), which cannot see a failed or
+ * rolled-back DDL. The commission (§6) names the retrieval path for the spawned
+ * child: "the disposable instance's log". The shared TEST_DATABASE_URL server
+ * cannot serve that path — its log is not test-owned and (measured) it runs
+ * `logging_collector=off`, and CI's Postgres is a service container whose log
+ * is not job-readable (established limitation). The only truthful
+ * implementation of the named path is an instance this test owns end to end:
+ *
+ *   initdb → pg_ctl start (logging_collector=on, one log file, prefix
+ *   `%m [%p] %d `) → fixture DB + migration + trigger → REAL compiled boot
+ *   child spawned against it → the log read back and correlated to the child.
+ *
+ * Channel semantics (measured): `RAISE WARNING` goes to the client as a notice
+ * and is not written to the server log; `RAISE LOG` is written to the server
+ * log on every firing regardless of who the client is. The trigger therefore
+ * emits BOTH: WARNING keeps the in-process client-notice channel above intact,
+ * LOG opens the rollback-surviving server-log channel the boot child is
+ * actually scored on.
+ *
+ * Correlation, excluding fixture setup and unrelated activity: the instance is
+ * created fresh by this run, so no unrelated activity can exist on it; fixture
+ * setup (migration, trigger installation) completes BEFORE the before-marker,
+ * and each window is delimited by unique `RAISE LOG` marker statements (no
+ * clock arithmetic). Within a window, an `ddl_observation:` LOG line counts as
+ * child-attributed only when its `[pid]` is NOT the suite's own marker client
+ * pid (the only suite backend active in the window). The synthetic-violation
+ * child control proves this attribution rule DETECTS a child's aborted DDL;
+ * the real boot child is then asserted to produce none through the same rule —
+ * non-vacuously, because the control ran green on the identical reader.
+ *
+ * Coverage classification (receipt "observation-channel retrieval" clause):
+ *   local — full coverage: two-case channel-capability proof, a
+ *     synthetic-violation child control, and the real boot child asserted
+ *     against the channel.
+ *   CI — NOT available: the storage job has no PostgreSQL server binaries and
+ *     its service-container log is not job-readable; this section skips with
+ *     this named reason. The in-process client-notice cases above and the
+ *     table-channel A-R2 remain CI-covered.
+ *
+ * Fixture class (commission §5): no roles, no grants, no SET ROLE; a
+ * throwaway cluster directory under the OS temp dir, stopped and removed at
+ * teardown.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/** Local runtime probe: PostgreSQL server binaries present (CI: absent)? */
+function serverBinaries(): { initdb: string; pgCtl: string } | undefined {
+  const initdb = process.env['PR27_F2_INITDB'];
+  const pgCtl = process.env['PR27_F2_PG_CTL'];
+  if (initdb !== undefined && initdb !== '' && pgCtl !== undefined && pgCtl !== '') {
+    return { initdb, pgCtl };
+  }
+  const probe = spawnSync('pg_ctl', ['--version'], { timeout: 10_000 });
+  if (probe.error !== undefined || probe.status !== 0) return undefined;
+  return { initdb: 'initdb', pgCtl: 'pg_ctl' };
+}
+
+/** The local-only section's skip reason, or false when it can run. */
+const LOG_CHANNEL_SKIP: string | false = (() => {
+  if (STORAGE_SKIP) return STORAGE_SKIP;
+  return serverBinaries() === undefined
+    ? 'F2 boot-child log channel: PostgreSQL server binaries (initdb/pg_ctl) not available — the disposable logged instance runs local-only; CI covers the in-process client-notice cases and the table channel'
+    : false;
+})();
+
+interface MarkerWindow {
+  readonly before: string;
+  readonly after: string;
+  readonly suitePid: number;
+}
+
+/**
+ * Child-attributed DDL tags observed through the server-log channel inside a
+ * delimited window: `ddl_observation:` LOG lines between the window markers
+ * whose `[pid]` is not the suite's own marker client. Everything else —
+ * fixture setup (before the before-marker), other suites, other databases —
+ * is excluded by construction (fresh single-purpose instance, unique tokens).
+ */
+function childDdlTagsInWindow(logText: string, window: MarkerWindow): string[] {
+  const lines = logText.split('\n');
+  let startIdx = -1;
+  let endIdx = lines.length;
+  lines.forEach((line, index) => {
+    if (startIdx === -1 && line.includes(window.before)) startIdx = index;
+    else if (startIdx !== -1 && endIdx === lines.length && line.includes(window.after)) {
+      endIdx = index;
+    }
+  });
+  const pidPattern = /\[(\d+)\]/;
+  const tags: string[] = [];
+  lines.forEach((line, index) => {
+    if (index <= startIdx || index >= endIdx) return;
+    if (!line.includes('LOG:') || !line.includes('ddl_observation:')) return;
+    const pidMatch = pidPattern.exec(line);
+    if (pidMatch === null || Number(pidMatch[1]) === window.suitePid) return;
+    const tag = /ddl_observation:(.*)$/.exec(line)?.[1]?.trim();
+    if (tag !== undefined && tag.length > 0) tags.push(tag);
+  });
+  return tags;
+}
+
+/** Marker statement: a DO block writing one unique LOG line (no clock math). */
+async function windowMarker(client: PoolClient, label: string): Promise<string> {
+  const token = `f2_window.${label}.${process.pid}.${Date.now()}.${Math.floor(Math.random() * 1e9)}`;
+  // Token charset is [A-Za-z0-9.] — safe for single-quoted interpolation.
+  await client.query(`DO $$ BEGIN RAISE LOG '${token}'; END $$;`);
+  return token;
+}
+
+/** Read a file for an error message, never throwing over the real error. */
+function safeRead(path: string): string {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return '(unreadable)';
+  }
+}
+
+/** One concatenated read of the instance's collected log file(s). */
+function readInstanceLog(logDir: string): string {
+  const parts: string[] = [];
+  for (const name of readdirSync(logDir)) {
+    parts.push(readFileSync(join(logDir, name), 'utf8'));
+  }
+  return parts.join('\n');
+}
+
+/**
+ * The same trigger definition the shared fixture installs in this file
+ * (table INSERT + WARNING notice + LOG server line), created on the
+ * disposable instance so the boot child is scored against the same trigger
+ * the in-process cases exercise, not a private variant.
+ */
+const OBSERVATION_TRIGGER_SQL = [
+  `CREATE TABLE boot_ddl_observation (
+     seq bigserial PRIMARY KEY,
+     tag text NOT NULL,
+     observed_at timestamptz NOT NULL DEFAULT now()
+   )`,
+  `CREATE FUNCTION boot_ddl_observation_record() RETURNS event_trigger
+     LANGUAGE plpgsql AS $$
+     BEGIN
+       INSERT INTO boot_ddl_observation (tag) VALUES (tg_tag);
+       RAISE WARNING 'ddl_observation:%', tg_tag;
+       RAISE LOG 'ddl_observation:%', tg_tag;
+     END
+     $$`,
+  `CREATE EVENT TRIGGER boot_ddl_observation
+     ON ddl_command_start
+     EXECUTE FUNCTION boot_ddl_observation_record()`,
+];
+
+interface LoggedInstance {
+  readonly url: string;
+  readonly rootDir: string;
+  readonly logDir: string;
+  readonly pgCtl: string;
+  readonly clusterDir: string;
+}
+
+/** initdb + start a throwaway cluster with a test-owned collected log. */
+function createDisposableLoggedInstance(port: number): LoggedInstance {
+  const bins = serverBinaries();
+  assert.ok(bins !== undefined, 'server binaries were probed present');
+  const rootDir = mkdtempSync(join(tmpdir(), 'pr27-f2-log-'));
+  const clusterDir = join(rootDir, 'cluster');
+  const logDir = join(rootDir, 'log');
+  const serverOut = join(rootDir, 'server-startup.log');
+
+  const init = spawnSync(
+    bins.initdb,
+    ['-D', clusterDir, '--auth=trust', '--username=postgres', '--no-sync'],
+    { timeout: 120_000, encoding: 'utf8' },
+  );
+  assert.equal(init.status, 0, `initdb failed:\n${String(init.stdout)}\n${String(init.stderr)}`);
+
+  // Server settings go into a conf fragment INSIDE the cluster directory —
+  // pg_ctl's -o quoting around spaces (log_line_prefix) is fragile across
+  // shells, and this file is exactly where postgres looks next.
+  const socketDir = join(rootDir, 'sock');
+  const fragment = [
+    `port = ${port}`,
+    `unix_socket_directories = '${socketDir}'`,
+    'logging_collector = on',
+    'log_destination = stderr',
+    `log_directory = '${logDir}'`,
+    "log_filename = 'instance.log'",
+    'log_rotation_age = 0',
+    "log_line_prefix = '%m [%p] %d '",
+    'log_truncate_on_rotation = off',
+    "listen_addresses = '127.0.0.1'",
+  ].join('\n');
+  appendFileSync(join(clusterDir, 'postgresql.conf'), `\n# pr27-f2 local-only fixture\n${fragment}\n`);
+  mkdirSync(socketDir, { recursive: true });
+
+  const start = spawnSync(
+    bins.pgCtl,
+    ['-D', clusterDir, '-l', serverOut, 'start', '-w', '-t', '60'],
+    { timeout: 120_000, encoding: 'utf8' },
+  );
+  assert.equal(
+    start.status,
+    0,
+    `pg_ctl start failed:\n${String(start.stdout)}\n${String(start.stderr)}\n--- startup out ---\n${safeRead(serverOut)}\n--- collected log ---\n${existsSync(logDir) ? readInstanceLog(logDir) : '(log directory not created)'}`,
+  );
+
+  return {
+    url: `postgresql://postgres@127.0.0.1:${port}/f2log`,
+    rootDir,
+    logDir,
+    pgCtl: bins.pgCtl,
+    clusterDir,
+  };
+}
+
+/** Stop the throwaway cluster and delete its directory tree. */
+function destroyLoggedInstance(instance: LoggedInstance | undefined): void {
+  if (instance === undefined) return;
+  spawnSync(instance.pgCtl, ['-D', instance.clusterDir, 'stop', '-m', 'immediate', '-w'], {
+    timeout: 60_000,
+  });
+  spawnSync('rm', ['-rf', instance.rootDir], { timeout: 60_000 });
+}
+
+let loggedInstance: LoggedInstance | undefined;
+let loggedPool: Pool | undefined;
+
+describe('boot-child DDL observation via the disposable instance log (F2, local-only)', { skip: LOG_CHANNEL_SKIP ? LOG_CHANNEL_SKIP : false }, () => {
+  before(async () => {
+    if (LOG_CHANNEL_SKIP) return;
+    const port = await freePort();
+    loggedInstance = createDisposableLoggedInstance(port);
+    const adminPool = new PgPool({
+      connectionString: `postgresql://postgres@127.0.0.1:${port}/postgres`,
+      max: 1,
+    });
+    try {
+      await adminPool.query('CREATE DATABASE f2log');
+    } finally {
+      await adminPool.end();
+    }
+    loggedPool = new PgPool({ connectionString: loggedInstance.url, max: 4 });
+    await migrate(loggedPool);
+    for (const sql of OBSERVATION_TRIGGER_SQL) {
+      await loggedPool.query(sql);
+    }
+  });
+
+  after(async () => {
+    if (loggedPool !== undefined) {
+      await loggedPool.end();
+      loggedPool = undefined;
+    }
+    destroyLoggedInstance(loggedInstance);
+    loggedInstance = undefined;
+  });
+
+  it('the server-log channel observes a FAILED DDL and a ROLLED-BACK DDL (channel capability, two-case)', async (t) => {
+    assert.ok(loggedPool !== undefined, 'logged instance pool was created');
+    const client = await loggedPool.connect();
+    try {
+      const suitePid = (
+        await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
+      ).rows[0]?.pid;
+      assert.ok(suitePid !== undefined, 'suite backend pid resolved');
+
+      const before = await windowMarker(client, 'capability-before');
+      // Case 1 — failed DDL: duplicate CREATE TABLE.
+      await client.query('CREATE TABLE f2log_failed_case (x int)');
+      const failed = await client
+        .query('CREATE TABLE f2log_failed_case (x int)')
+        .then(() => undefined, (caught: unknown) => caught);
+      t.diagnostic(`failed-DDL case error: ${String(failed)}`);
+      assert.ok(failed instanceof Error, 'the duplicate CREATE TABLE must fail');
+      // Case 2 — successful DDL inside an explicitly rolled-back transaction.
+      await client.query('BEGIN');
+      await client.query('CREATE TABLE f2log_rollback_case (y int)');
+      await client.query('ROLLBACK');
+      const after = await windowMarker(client, 'capability-after');
+
+      const logText = readInstanceLog(loggedInstance?.logDir ?? '');
+      const tags = childDdlTagsInWindow(logText, { before, after, suitePid });
+      t.diagnostic(`server-log channel, child-attributed tags (suite pid ${suitePid} excluded): ${JSON.stringify(tags)}`);
+      // NOTE: this capability case is issued by the suite's own client, so its
+      // trigger lines carry the SUITE pid and are excluded by the child rule —
+      // the assertion here reads ALL in-window ddl_observation LOG lines.
+      const allInWindow = countAllDdlObservationLogLines(logText, before, after);
+      t.diagnostic(`server-log channel, all in-window ddl_observation LOG lines: ${allInWindow}`);
+      assert.ok(
+        allInWindow >= 2,
+        'the server-log channel must record BOTH the failed and the rolled-back DDL (RAISE LOG survives rollback; this is the channel the boot child is scored on)',
+      );
+      const tableRows = await client.query<{ tag: string }>(
+        'SELECT tag FROM boot_ddl_observation ORDER BY seq',
+      );
+      t.diagnostic(`table channel (committed only): ${JSON.stringify(tableRows.rows)}`);
+    } finally {
+      client.release();
+    }
+  });
+
+  it('a synthetic-violation CHILD issuing an aborted DDL is detected through the log channel (attribution control)', async (t) => {
+    assert.ok(loggedPool !== undefined && loggedInstance !== undefined);
+    const client = await loggedPool.connect();
+    try {
+      const suitePid = (
+        await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
+      ).rows[0]?.pid;
+      assert.ok(suitePid !== undefined);
+      const before = await windowMarker(client, 'synthetic-before');
+
+      // A separate process (not the suite's client) issues a failing DDL.
+      const script =
+        "const {Pool}=require('pg');const p=new Pool({connectionString:process.env.DATABASE_URL,max:1});" +
+        "p.query('CREATE TABLE synthetic_violation (x int)').then(()=>p.query('CREATE TABLE synthetic_violation (x int)')).catch(()=>{}).finally(()=>p.end());";
+      const child = spawn(process.execPath, ['-e', script], {
+        env: { ...process.env, DATABASE_URL: loggedInstance.url },
+        stdio: 'ignore',
+      });
+      await new Promise<void>((resolve) => {
+        child.on('close', () => resolve());
+      });
+      const after = await windowMarker(client, 'synthetic-after');
+
+      const logText = readInstanceLog(loggedInstance.logDir);
+      const tags = childDdlTagsInWindow(logText, { before, after, suitePid });
+      t.diagnostic(`synthetic child attributed tags: ${JSON.stringify(tags)}`);
+      assert.ok(
+        tags.some((tag) => tag.includes('CREATE TABLE')),
+        'an aborted DDL issued by a CHILD process must be attributed through the server-log channel — this control proves the reader detects child-origin DDL, so the boot child zero assertion below is non-vacuous',
+      );
+    } finally {
+      client.release();
+    }
+  });
+
+  it('the REAL boot child issues no DDL observable through the rollback-surviving log channel', async (t) => {
+    assert.ok(loggedPool !== undefined && loggedInstance !== undefined);
+    const client = await loggedPool.connect();
+    try {
+      const suitePid = (
+        await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
+      ).rows[0]?.pid;
+      assert.ok(suitePid !== undefined);
+      const before = await windowMarker(client, 'boot-before');
+
+      const port = await freePort();
+      const run = await runBoot(loggedInstance.url, port);
+      assert.equal(
+        run.reachedListening,
+        true,
+        `boot never reached listening.\n--- stdout ---\n${run.stdout}\n--- stderr ---\n${run.stderr}`,
+      );
+      assert.equal(run.exitCode, 0, `clean SIGTERM shutdown must exit 0.\n--- stdout ---\n${run.stdout}\n--- stderr ---\n${run.stderr}`);
+
+      const after = await windowMarker(client, 'boot-after');
+      const logText = readInstanceLog(loggedInstance.logDir);
+      const tags = childDdlTagsInWindow(logText, { before, after, suitePid });
+      t.diagnostic(`boot-child attributed ddl_observation LOG tags: ${JSON.stringify(tags)}`);
+      assert.deepEqual(
+        tags,
+        [],
+        'the real boot child must issue zero DDL observable through the rollback-surviving server-log channel (PC-21: no DDL, and no attempted-and-aborted DDL either)',
+      );
+      // The table channel's committed rows in this window must contain
+      // nothing beyond this suite's own fixture/capability statements — no
+      // row can be attributed to the boot child (diagnostic; the channel's
+      // blind half is exactly what the log channel above covers).
+      const tableRows = await client.query<{ tag: string }>(
+        'SELECT tag FROM boot_ddl_observation ORDER BY seq',
+      );
+      t.diagnostic(`table channel, all committed rows on this instance: ${JSON.stringify(tableRows.rows)}`);
+    } finally {
+      client.release();
+    }
+  });
+});
+
+/** All in-window `ddl_observation:` LOG lines, regardless of pid. */
+function countAllDdlObservationLogLines(logText: string, before: string, after: string): number {
+  const lines = logText.split('\n');
+  let startIdx = -1;
+  let endIdx = lines.length;
+  lines.forEach((line, index) => {
+    if (startIdx === -1 && line.includes(before)) startIdx = index;
+    else if (startIdx !== -1 && endIdx === lines.length && line.includes(after)) endIdx = index;
+  });
+  let count = 0;
+  lines.forEach((line, index) => {
+    if (index <= startIdx || index >= endIdx) return;
+    if (line.includes('LOG:') && line.includes('ddl_observation:')) count += 1;
+  });
+  return count;
+}
