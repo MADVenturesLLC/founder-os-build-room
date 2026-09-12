@@ -26,6 +26,7 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
+import type { PoolClient } from 'pg';
 import {
   STORAGE_SKIP,
   createGatewayHarness,
@@ -153,6 +154,7 @@ before(async () => {
        LANGUAGE plpgsql AS $$
        BEGIN
          INSERT INTO boot_ddl_observation (tag) VALUES (tg_tag);
+         RAISE WARNING 'ddl_observation:%', tg_tag;
        END
        $$`,
   );
@@ -196,5 +198,116 @@ describe('boot issues no DDL (A-R2 / PC-21)', { skip: STORAGE_SKIP ? STORAGE_SKI
       [],
       'the boot path must issue zero DDL statements (PC-21)',
     );
+  });
+});
+
+/*
+ * F2 — the DDL observation channel must survive rollback (correction
+ * commission §2 F2). The original `ddl_command_start` trigger inserted the
+ * observed tag into a table INSIDE the transaction of the statement that
+ * fired it, so a FAILED DDL or an explicitly-ROLLED-BACK DDL discarded its
+ * own observation row: `assert.deepEqual(tags, [])` could not distinguish
+ * "no DDL" from "DDL attempted and aborted".
+ *
+ * Corrected mechanism (discovery §6): the trigger additionally emits the tag
+ * through a NON-TRANSACTIONAL channel — `RAISE WARNING` client notice —
+ * delivered to the issuing client before commit/abort, so rollback does not
+ * erase it. The table channel is RETAINED for positive committed detection;
+ * each channel's proof scope is stated where it is asserted.
+ *
+ * Retrieval paths, stated per case (required by the receipt):
+ *   - in-process cases (this suite's own connections): client `notice` event;
+ *   - spawned boot child: the disposable instance's server log (NOT retrievable
+ *     in the CI storage job, whose Postgres is a service container whose log
+ *     is not job-readable — disclosed limitation; the in-process client-notice
+ *     cases below ARE CI-retrievable).
+ */
+interface PgNotice {
+  readonly severity: string;
+  readonly message: string;
+}
+
+/** pg's PoolClient typing does not declare the `notice` event; bind it. */
+function onNotice(client: PoolClient, collect: (n: PgNotice) => void): void {
+  (client as unknown as { on(event: 'notice', fn: (n: PgNotice) => void): unknown }).on(
+    'notice',
+    collect,
+  );
+}
+
+function offNotice(client: PoolClient, collect: (n: PgNotice) => void): void {
+  (client as unknown as { removeListener(event: 'notice', fn: (n: PgNotice) => void): unknown })
+    .removeListener('notice', collect);
+}
+
+describe('DDL observation survives rollback (F2, Class 1)', { skip: STORAGE_SKIP ? STORAGE_SKIP : false }, () => {
+  it('a failed DDL is still observed through the non-transactional channel', async (t) => {
+    assert.ok(harness !== undefined);
+    const client = await harness.pool.connect();
+    try {
+      const notices: string[] = [];
+      const collect = (n: PgNotice): void => {
+        notices.push(`${n.severity}:${n.message}`);
+      };
+      onNotice(client, collect);
+
+      await client.query(`CREATE TABLE f2_case_marker (x int)`).catch(() => undefined);
+      const observed = await client
+        .query(`CREATE TABLE f2_case_marker (x int)`) // fails: already exists
+        .then(() => undefined, (caught: unknown) => caught);
+      t.diagnostic(`failed-DDL case error: ${String(observed)}`);
+      assert.ok(observed instanceof Error, 'the duplicate CREATE TABLE must fail');
+
+      offNotice(client, collect);
+      const ddlNotices = notices.filter((m) => m.includes('ddl_observation:'));
+      t.diagnostic(`non-transactional channel: ${JSON.stringify(ddlNotices)}`);
+      assert.ok(
+        ddlNotices.some((m) => m.includes('CREATE TABLE')),
+        'a FAILED DDL must still be observed through the client-notice channel',
+      );
+      // The transactional table channel legitimately records nothing for the
+      // failed statement — that blindness is exactly F2; the table channel's
+      // scope remains "committed DDL only" and is asserted as such elsewhere.
+      const tableChannel = await client.query<{ tag: string }>(
+        'SELECT tag FROM boot_ddl_observation ORDER BY seq',
+      );
+      t.diagnostic(`table channel (committed only): ${JSON.stringify(tableChannel.rows)}`);
+    } finally {
+      client.release();
+    }
+  });
+
+  it('a DDL rolled back inside an explicit transaction is still observed through the non-transactional channel', async (t) => {
+    assert.ok(harness !== undefined);
+    const client = await harness.pool.connect();
+    try {
+      const notices: string[] = [];
+      const collect = (n: PgNotice): void => {
+        notices.push(`${n.severity}:${n.message}`);
+      };
+      onNotice(client, collect);
+
+      await client.query('BEGIN');
+      const created = await client
+        .query(`CREATE TABLE f2_rollback_case (y int)`)
+        .then(() => true, () => false);
+      await client.query('ROLLBACK');
+      t.diagnostic(`rolled-back DDL succeeded inside tx: ${String(created)}`);
+
+      offNotice(client, collect);
+      const ddlNotices = notices.filter((m) => m.includes('ddl_observation:'));
+      t.diagnostic(`non-transactional channel: ${JSON.stringify(ddlNotices)}`);
+      assert.ok(
+        ddlNotices.some((m) => m.includes('ddl_observation:') && m.includes('CREATE TABLE')),
+        'a ROLLED-BACK DDL must still be observed through the client-notice channel',
+      );
+      // And the rolled-back table must not exist (the rollback worked).
+      const { rows } = await client.query<{ r: string | null }>(
+        `SELECT to_regclass('public.f2_rollback_case') AS r`,
+      );
+      assert.equal(rows[0]?.r, null, 'the rolled-back table must not exist');
+    } finally {
+      client.release();
+    }
   });
 });
