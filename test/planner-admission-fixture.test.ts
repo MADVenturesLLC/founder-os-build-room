@@ -343,8 +343,14 @@ function findWorktreeRoot(): string {
  * production entry points (everything under packages/run-harness/src
  * EXCEPT planner-admission-fixture.ts itself). Tests and docs are
  * excluded — they are the fixture's legitimate consumers.
+ *
+ * Returns the violations plus the list of files actually scanned, so the
+ * caller can assert the scan was non-vacuous (a mis-resolved root must
+ * fail loudly, not pass silently with an empty file set).
  */
-function findForbiddenFixtureReferences(worktreeRoot: string): string[] {
+function findForbiddenFixtureReferences(
+  worktreeRoot: string,
+): { violations: string[]; checked: string[] } {
   const violations: string[] = [];
   const forbiddenRoots = [
     join(worktreeRoot, 'packages/control-plane/src'),
@@ -352,71 +358,156 @@ function findForbiddenFixtureReferences(worktreeRoot: string): string[] {
     join(worktreeRoot, 'packages/gateway-cli/src'),
   ];
   // Run-harness production entry points: every .ts under src except the
-  // fixture module itself.
+  // fixture module itself (matched by EXACT path, so a same-basename file
+  // in another production root is still scanned).
   const harnessSrc = join(worktreeRoot, 'packages/run-harness/src');
+  const fixturePath = join(harnessSrc, 'planner-admission-fixture.ts');
   const checked: string[] = [];
   for (const root of [...forbiddenRoots, harnessSrc]) {
     for (const file of tsFilesUnder(root)) {
-      if (file.endsWith('planner-admission-fixture.ts')) continue;
+      if (file === fixturePath) continue;
       checked.push(file);
       const text = readFileSync(file, 'utf8');
-      // Runtime reference = an import/export-from that is NOT type-only.
-      // A `import type` (or `export type`) reference is erased at runtime
-      // and does not put the fixture on a production module graph.
-      const lines = text.split('\n');
-      lines.forEach((line, i) => {
-        const isImportLine = /^\s*import\b/.test(line) || /^\s*export\b.*\bfrom\b/.test(line);
-        if (!isImportLine) return;
-        if (!line.includes('planner-admission-fixture')) return;
-        const typeOnly = /^\s*import\s+type\b/.test(line) || /^\s*export\s+type\b/.test(line);
-        if (!typeOnly) {
-          violations.push(`${relative(worktreeRoot, file)}:${i + 1}: ${line.trim()}`);
-        }
-      });
+      for (const hit of runtimeFixtureReferences(text)) {
+        violations.push(`${relative(worktreeRoot, file)}: ${hit}`);
+      }
     }
   }
-  return violations;
+  return { violations, checked };
+}
+
+/**
+ * Find RUNTIME references to the fixture module in TypeScript source
+ * text. Matching is whole-text (not line-anchored) so wrapped/multi-line
+ * import statements and mid-line dynamic forms cannot evade it:
+ *
+ *   import { x } from '…/planner-admission-fixture.js'   (static)
+ *   export { x } from '…/planner-admission-fixture.js'   (re-export)
+ *   const m = await import('…/planner-admission-fixture.js')  (dynamic)
+ *   const m = require('…/planner-admission-fixture.js')       (CJS)
+ *
+ * A type-only import (`import type`/`export type`) is erased at runtime
+ * and does not put the fixture on a production module graph, so it is
+ * exempt. Line-level exemption is decided on the whole statement text
+ * surrounding the match: the specifier's enclosing `import`/`export`
+ * clause must not be `type`-qualified.
+ */
+function runtimeFixtureReferences(text: string): string[] {
+  const hits: string[] = [];
+  // Strip block and line comments so commented-out code cannot be (mis)-
+  // counted and comment prose cannot mask a real statement.
+  const stripped = text
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/^[ \t]*\/\/.*$/gm, ' ');
+  const specifier = /['"][^'"]*planner-admission-fixture[^'"]*['"]/g;
+  for (const match of stripped.matchAll(specifier)) {
+    const idx = match.index ?? 0;
+    // Reject type-only specifiers: `import type ... '<spec>'` /
+    // `export type ... '<spec>'`. Walk back to the statement start.
+    const before = stripped.slice(0, idx);
+    const stmtStart = Math.max(
+      before.lastIndexOf('import'),
+      before.lastIndexOf('export'),
+    );
+    const clause = stmtStart >= 0 ? before.slice(stmtStart) : '';
+    const typeOnly =
+      /^import\s+type\b/.test(clause) || /^export\s+type\b/.test(clause);
+    if (!typeOnly) {
+      const lineNo = stripped.slice(0, idx).split('\n').length;
+      hits.push(`line ${lineNo}: …${match[0]}…`);
+    }
+  }
+  return hits;
 }
 
 describe('A1 import-boundary detector', () => {
   const worktreeRoot = findWorktreeRoot();
 
-  it('9a. no production location runtime-imports the fixture (scan is empty)', () => {
-    const violations = findForbiddenFixtureReferences(worktreeRoot);
+  it('9a. no production location runtime-imports the fixture (scan is empty AND non-vacuous)', () => {
+    const { violations, checked } = findForbiddenFixtureReferences(worktreeRoot);
     assert.deepEqual(violations, []);
+    // The scan must have actually covered the production sources: assert
+    // known production files are in the scanned set, so a mis-resolved or
+    // renamed root fails loudly instead of passing vacuously.
+    const relChecked = checked.map((f) => relative(worktreeRoot, f));
+    for (const anchor of [
+      'packages/control-plane/src/server.ts',
+      'packages/run-harness/src/cli.ts',
+      'packages/gateway-daemon/src/main.ts',
+      'packages/gateway-cli/src/index.ts',
+    ]) {
+      assert.ok(relChecked.includes(anchor), `scan must cover ${anchor}`);
+    }
+    assert.ok(checked.length >= 60, `scan covered suspiciously few files: ${checked.length}`);
   });
 
-  it('9b. CONTROL: the detector itself detects a synthetic forbidden import', () => {
+  it('9b. CONTROL: the detector itself detects synthetic forbidden imports (static, wrapped, dynamic, require; type-only and same-basename exempt)', () => {
     // Feed the detector a synthetic production-like source tree containing
-    // a runtime (non-type-only) import of the fixture. An empty scan alone
+    // every runtime reference form of the fixture. An empty scan alone
     // would be insufficient proof that the detector works. Built under the
     // OS temp dir so nothing ever touches the tracked tree.
     const syntheticRoot = join(tmpdir(), `bga-import-detector-control-${process.pid}`);
-    const violatingDir = join(syntheticRoot, 'packages', 'control-plane', 'src');
-    const violatingFile = join(violatingDir, 'synthetic-production-file.ts');
-    const cleanDir = join(syntheticRoot, 'packages', 'run-harness', 'src');
-    const cleanFile = join(cleanDir, 'clean-file.ts');
-    const typeOnlyFile = join(cleanDir, 'type-only-file.ts');
+    const cpDir = join(syntheticRoot, 'packages', 'control-plane', 'src');
+    const harnessDir = join(syntheticRoot, 'packages', 'run-harness', 'src');
+    const daemonDir = join(syntheticRoot, 'packages', 'gateway-daemon', 'src');
+    const cliDir = join(syntheticRoot, 'packages', 'gateway-cli', 'src');
 
-    mkdirRecursive(violatingDir);
-    mkdirRecursive(cleanDir);
+    mkdirRecursive(cpDir);
+    mkdirRecursive(harnessDir);
+    mkdirRecursive(daemonDir);
+    mkdirRecursive(cliDir);
+
+    // 1. single-line static value import (control-plane)
     writeFileSyncUtf8(
-      violatingFile,
+      join(cpDir, 'synthetic-static-import.ts'),
       "import { runPlannerAdmissionFixture } from '../../run-harness/src/planner-admission-fixture.js';\nexport const x = runPlannerAdmissionFixture;\n",
     );
-    writeFileSyncUtf8(cleanFile, 'export const y = 1;\n');
-    // A type-only import is erased at runtime and must NOT count.
+    // 2. wrapped/multi-line import — the specifier sits on its own line
+    //    (gateway-daemon); a line-anchored detector would miss it.
     writeFileSyncUtf8(
-      typeOnlyFile,
-      "import type { AdmissionFixtureResult } from '../src/planner-admission-fixture.js';\nexport type Z = AdmissionFixtureResult | null;\n",
+      join(daemonDir, 'synthetic-wrapped-import.ts'),
+      "import {\n  runPlannerAdmissionFixture,\n} from '../../run-harness/src/planner-admission-fixture.js';\nexport const y = runPlannerAdmissionFixture;\n",
+    );
+    // 3. mid-line dynamic import() (gateway-cli)
+    writeFileSyncUtf8(
+      join(cliDir, 'synthetic-dynamic-import.ts'),
+      "export async function load(): Promise<unknown> {\n  return import('../../run-harness/src/planner-admission-fixture.js');\n}\n",
+    );
+    // 4. require() form (run-harness production sibling)
+    writeFileSyncUtf8(
+      join(harnessDir, 'synthetic-require.ts'),
+      "export const z = require('../src/planner-admission-fixture.js');\n",
+    );
+    // EXEMPT: type-only import is erased at runtime and must NOT count.
+    writeFileSyncUtf8(
+      join(harnessDir, 'type-only-file.ts'),
+      "import type { AdmissionFixtureResult } from './planner-admission-fixture.js';\nexport type Z = AdmissionFixtureResult | null;\n",
+    );
+    // EXEMPT: a DIFFERENT file that merely shares the fixture's basename is
+    // still a production source and must be scanned — but this one is
+    // clean, so it must not appear in violations.
+    writeFileSyncUtf8(
+      join(daemonDir, 'planner-admission-fixture.ts'),
+      'export const unrelated = 1;\n',
     );
 
     try {
-      const violations = findForbiddenFixtureReferences(syntheticRoot);
-      assert.equal(violations.length, 1, `exactly the synthetic violation: ${violations.join(' | ')}`);
-      const first = violations[0];
-      assert.ok(first !== undefined && first.includes('synthetic-production-file.ts'));
-      assert.ok(first !== undefined && !first.includes('type-only-file.ts'));
+      const { violations, checked } = findForbiddenFixtureReferences(syntheticRoot);
+      const names = violations.map((v) => v.split(':')[0]);
+      assert.deepEqual(names.sort(), [
+        'packages/control-plane/src/synthetic-static-import.ts',
+        'packages/gateway-cli/src/synthetic-dynamic-import.ts',
+        'packages/gateway-daemon/src/synthetic-wrapped-import.ts',
+        'packages/run-harness/src/synthetic-require.ts',
+      ].sort());
+      // The same-basename file in a production root WAS scanned (not
+      // skipped) and produced no violation.
+      const relChecked = checked.map((f) => relative(syntheticRoot, f));
+      assert.ok(
+        relChecked.includes('packages/gateway-daemon/src/planner-admission-fixture.ts'),
+        'same-basename production file must be scanned, not skipped',
+      );
+      assert.ok(!names.includes('packages/run-harness/src/type-only-file.ts'));
     } finally {
       rmRecursive(syntheticRoot);
     }
