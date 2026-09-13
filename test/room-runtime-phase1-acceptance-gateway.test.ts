@@ -791,3 +791,62 @@ describe('Slice E — prohibited mechanisms and existing regressions', () => {
     assert.deepEqual(Object.keys(manifest.devDependencies).sort(), BASELINE_DEV_DEPENDENCIES, 'no dev dependency was added');
   });
 });
+
+// ---------------------------------------------------------------------------
+// R5 GATEWAY CORRECTION — RED-first slices (design R5 §6–§11; amendments P1–P3)
+//
+// Every test here is written against frozen H's behavior and FAILS there:
+// H delivers nothing passively (slice A), drains the whole outbox per request
+// and drops the suffix after write(false) (slice B), executes a decoded batch
+// to completion regardless of backpressure (slice C), has no explicit capacity
+// accounting for adapter-held output / retained input (slice D), lets a
+// terminal condition wait on 'drain' forever (slice E), has no event
+// notification at all (slice F), lets an old socket's close detach a
+// replacement viewer (slice G), encodes outbound frames with no size check
+// (slice H), and tracks no connection completions through stop() (slice I).
+// ---------------------------------------------------------------------------
+
+describe('R5 correction — Slice A — passive live delivery', () => {
+  it('XA1 a joined passive viewer receives newly generated slot-a/slot-b output without any further request (real IPC)', async () => {
+    await withGateway(async (gateway) => {
+      await gateway.boot();
+      const client = await connectV2(gateway.paths.socketPath);
+      try {
+        client.send({ op: 'Hello', ipc_version: 2 });
+        await client.next();
+        client.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'xa1', viewer_caps: 'read' });
+        const join = await nextOp(client, 'JoinRoom');
+        assert.equal(join['ok'], true);
+        // Drain join-time frames (JoinAck + catch-up RoomDelta etc.).
+        await sleep(100);
+        // NEW fixture output, emitted after attachment with NO further request.
+        gateway.daemon.rooms.emitFixturePatch(FIXTURE_ROOM_ID, 'slot-a', 'xa1 slot-a live tick');
+        gateway.daemon.rooms.emitFixturePatch(FIXTURE_ROOM_ID, 'slot-b', 'xa1 slot-b live tick');
+        const patchA = await nextPatch(client, 'slot-a');
+        assert.equal(patchA.text, 'xa1 slot-a live tick');
+        const patchB = await nextPatch(client, 'slot-b');
+        assert.equal(patchB.text, 'xa1 slot-b live tick');
+      } finally {
+        client.socket.destroy();
+      }
+    });
+  });
+});
+
+/** Await the next VT patch for `executionId`, skipping other frames. */
+async function nextPatch(client: V2Client, executionId: string, max = 40): Promise<{ seq: number; text: string }> {
+  for (let i = 0; i < max; i++) {
+    const frame = await client.next();
+    if (frame.type === FRAME_TYPE_VT_PATCH) {
+      const patch = JSON.parse(JSON.stringify(frame.body)) as {
+        execution_id?: string;
+        pty_output_seq?: number;
+        checkpoint_or_patch?: { kind?: string; text?: string };
+      };
+      if (patch.execution_id === executionId && patch.checkpoint_or_patch?.kind === 'patch') {
+        return { seq: patch.pty_output_seq ?? -1, text: patch.checkpoint_or_patch.text ?? '' };
+      }
+    }
+  }
+  throw new Error(`no ${executionId} patch within ${String(max)} frames`);
+}

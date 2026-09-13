@@ -226,6 +226,19 @@ export class RoomRuntime {
 
   constructor(private readonly deps: RoomRuntimeDeps) {}
 
+  /**
+   * R5 §7 — explicit delivery-callback registration. The ADAPTER (IpcServer)
+   * registers itself at start(); the runtime only invokes the callback after
+   * fan-out-relevant mutations. The runtime owns no sockets and no timers;
+   * the callback must not synchronously perform socket writes while the
+   * runtime is mid-mutation. Re-registration replaces; one callback only.
+   */
+  registerRoomEventCallback(callback: (roomId: string) => void): void {
+    this.roomEventCallback = callback;
+  }
+
+  private roomEventCallback: ((roomId: string) => void) | null = null;
+
   // -------------------------------------------------------------------------
   // Fixture room construction (test/fixture surface; never a projector op)
   // -------------------------------------------------------------------------
@@ -339,6 +352,7 @@ export class RoomRuntime {
     }
     execution.durableCommittedSeq = execution.ptyOutputSeq;
     this.fanoutPatch(room, patch);
+    this.notifyRoom(room.roomId);
   }
 
   /**
@@ -373,6 +387,7 @@ export class RoomRuntime {
       checkpoint_or_patch: { kind: 'checkpoint', cells: execution.checkpoint.cells, cursor: execution.checkpoint.cursor },
     };
     this.fanoutPatch(room, frame);
+    this.notifyRoom(room.roomId);
   }
 
   /** Interrupt fixture occupancy: OCCUPIED → INTERRUPTED (viewer detach ≠ this). */
@@ -395,12 +410,8 @@ export class RoomRuntime {
       fixture: true,
       block_reason: reason,
     });
-    this.broadcastDelta(room, {
-      occupancy: room.occupancy,
-      block_reason: room.blockReason,
-      input_authority: room.inputAuthority,
-      executions: this.executionFacts(room),
-    });
+    this.broadcastDelta(room, { occupancy: room.occupancy, block_reason: room.blockReason, input_authority: room.inputAuthority, executions: this.executionFacts(room) });
+    this.notifyRoom(room.roomId);
   }
 
   /** Close: INTERRUPTED → CLOSED (r4 §7.15: close/Founder abort). */
@@ -421,6 +432,7 @@ export class RoomRuntime {
       viewer.pendingDisconnect = 'occupancy_closed';
     }
     this.broadcastDelta(room, { occupancy: room.occupancy });
+    this.notifyRoom(room.roomId);
   }
 
   // -------------------------------------------------------------------------
@@ -569,6 +581,7 @@ export class RoomRuntime {
     room.idempotency.set(idempotencyKey, { payloadHash, outcome });
     this.bumpRoomSeq(room);
     this.broadcastDelta(room, { viewers: this.viewerFacts(room) });
+    this.notifyRoom(room.roomId);
     return outcome;
   }
 
@@ -604,6 +617,7 @@ export class RoomRuntime {
     room.idempotency.set(idempotencyKey, { payloadHash, outcome });
     this.bumpRoomSeq(room);
     this.broadcastDelta(room, { viewers: this.viewerFacts(room), input_authority: room.inputAuthority });
+    this.notifyRoom(room.roomId);
     return outcome;
   }
 
@@ -664,6 +678,7 @@ export class RoomRuntime {
       input_epoch: room.inputEpoch,
     });
     this.broadcastDelta(room, { input_authority: room.inputAuthority, viewers: this.viewerFacts(room) });
+    this.notifyRoom(room.roomId);
     return {
       ok: true,
       body: { op: 'TakeoverInput', ok: true, room_id: roomId, viewer_id: viewer.viewerId, input_epoch: room.inputEpoch },
@@ -741,6 +756,7 @@ export class RoomRuntime {
     }
     this.bumpRoomSeq(room);
     this.broadcastDelta(room, { executions: this.executionFacts(room) });
+    this.notifyRoom(room.roomId);
     return { ok: true, body: { op: 'ResizeFrame', ok: true, room_id: roomId, cols, rows, resize_epochs: this.executionFacts(room).map((e) => ({ execution_id: e.execution_id, resize_epoch: e.cursors.resizeEpoch })) } };
   }
 
@@ -763,6 +779,7 @@ export class RoomRuntime {
     }
     this.bumpRoomSeq(room);
     this.broadcastDelta(room, { viewers: this.viewerFacts(room), input_authority: room.inputAuthority });
+    this.notifyRoom(room.roomId);
   }
 
   // -------------------------------------------------------------------------
@@ -777,6 +794,58 @@ export class RoomRuntime {
     const frames = viewer.outbox.splice(0, viewer.outbox.length);
     viewer.outboxBytes = 0;
     return frames;
+  }
+
+  /**
+   * R5 §6 — borrowed synchronous view of the next frames awaiting delivery.
+   * No asynchronous task may retain it as authoritative state.
+   */
+  peekOutbox(roomId: string, viewerId: string): readonly OutFrame[] {
+    const room = this.rooms.get(roomId);
+    const viewer = room?.viewers.get(viewerId);
+    if (viewer === undefined) return [];
+    return viewer.outbox;
+  }
+
+  /**
+   * R5 §6 — exact-prefix incremental dequeue. `count` frames and EXACTLY
+   * their encoded byte total (payload + 5-byte framing overhead per frame)
+   * leave the queue. Validation completes before any mutation: an invalid
+   * count or byte total mutates nothing; accounting never goes negative.
+   */
+  commitOutbox(roomId: string, viewerId: string, count: number, expectedBytesTotal: number): void {
+    if (!Number.isInteger(count) || count < 0) {
+      throw new RoomRuntimeError('invalid_commit', 'count must be a finite integer >= 0');
+    }
+    const room = this.rooms.get(roomId);
+    const viewer = room?.viewers.get(viewerId);
+    if (viewer === undefined) {
+      if (count !== 0) throw new RoomRuntimeError('invalid_commit', 'unknown viewer; only 0 is committable');
+      if (expectedBytesTotal !== 0) throw new RoomRuntimeError('invalid_commit', 'count 0 requires 0 expected bytes');
+      return;
+    }
+    if (count === 0) {
+      if (expectedBytesTotal !== 0) {
+        throw new RoomRuntimeError('invalid_commit', 'count 0 requires 0 expected bytes');
+      }
+      return;
+    }
+    if (count > viewer.outbox.length) {
+      throw new RoomRuntimeError('invalid_commit', `count ${String(count)} exceeds queued ${String(viewer.outbox.length)}`);
+    }
+    let bytes = 0;
+    for (let i = 0; i < count; i++) {
+      bytes += viewer.outbox[i]!.payload.byteLength + 5;
+    }
+    if (bytes !== expectedBytesTotal) {
+      throw new RoomRuntimeError(
+        'invalid_commit',
+        `expected-bytes mismatch: exact prefix is ${String(bytes)}, caller supplied ${String(expectedBytesTotal)}`,
+      );
+    }
+    // Validation complete — mutate.
+    viewer.outbox.splice(0, count);
+    viewer.outboxBytes -= bytes; // exact-prefix; never negative by construction
   }
 
   /** The disconnect the adapter must apply after draining (or null). */
@@ -811,6 +880,13 @@ export class RoomRuntime {
   // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------
+
+  private notifyRoom(roomId: string): void {
+    // R5 §7: fire-and-forget AFTER the mutation completed; adapter-side
+    // scheduling is deferred (setImmediate there), never synchronous here.
+    const callback = this.roomEventCallback;
+    if (callback !== null) callback(roomId);
+  }
 
   private requireRoom(roomId: string): Room {
     const room = this.rooms.get(roomId);
@@ -889,6 +965,7 @@ export class RoomRuntime {
       viewer.pendingDisconnect = 'viewer_backpressure';
       this.bumpRoomSeq(room);
       this.broadcastDelta(room, { viewers: this.viewerFacts(room) });
+      this.notifyRoom(room.roomId);
     }
   }
 

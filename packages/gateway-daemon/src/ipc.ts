@@ -26,6 +26,7 @@
 
 import { createServer, type Server, type Socket } from 'node:net';
 import { chmod, mkdir, unlink } from 'node:fs/promises';
+import { setImmediate } from 'node:timers';
 import { DIRECTORY_MODE, FILE_MODE, type GatewayPaths } from './paths.js';
 import type { RingBuffer } from './ring-buffer.js';
 import {
@@ -39,12 +40,14 @@ import {
   looksLikeV2Hello,
   parseControlPayload,
   type DisconnectReason,
+  type V2Frame,
 } from '../../gateway-protocol/src/ipc-v2.js';
 import {
   RoomRuntime,
   RoomRuntimeError,
   VIEWER_QUEUE_FRAMES,
   type OutFrame,
+  type RoomResult,
 } from './room-runtime.js';
 
 export interface IpcStatus {
@@ -61,6 +64,12 @@ export interface IpcHandlers {
    * fail-closed (`internal_error`) rather than half-served.
    */
   rooms?(): RoomRuntime;
+  /**
+   * R5 §7 — the RoomRuntime's fan-out notification. Invoked after each
+   * enqueue-relevant mutation; the adapter schedules coalesced, token-guarded
+   * delivery. The runtime never owns sockets or timers.
+   */
+  onRoomEvent?(roomId: string): void;
 }
 
 export type IpcRequest = { readonly op: 'status' } | { readonly op: 'tail'; readonly limit?: number };
@@ -72,13 +81,72 @@ export type IpcRequest = { readonly op: 'status' } | { readonly op: 'tail'; read
  */
 const MAX_REQUEST_BYTES = 64 * 1024;
 
+// ---------------------------------------------------------------------------
+// R5 capacity/boundary constants (design §4 R5-02, §6 R5-01; amendments P2/P3)
+// ---------------------------------------------------------------------------
+
+/** P2: the canonical 256 KiB v2 payload limit applies OUTBOUND as well. */
+const MAX_ENCODED_V2_FRAME_BYTES = MAX_V2_FRAME_BYTES + 5; // 262,149
+/** R5-02 bound 3: retained decoded input awaiting dispatch, fail-closed over. */
+const MAX_RETAINED_INPUT_BYTES = MAX_V2_FRAME_BYTES; // 262,144
+/** R5-02 bound 4: backpressure threshold for adapter accounting. */
+const OUTBOUND_HIGH_WATER_BYTES = 16_384;
+/** R5-02 bound 5: bounded terminal-notification allowance (one disconnect frame). */
+const TERMINAL_ALLOWANCE_BYTES = 128;
+/** R5 §8: graceful shutdown interval before owned-socket destruction. */
+const SHUTDOWN_GRACE_MS = 500;
+
+/** P2 enforcement: never encode or submit an oversized outbound frame. */
+function encodeV2FrameChecked(type: number, payload: Buffer): Buffer {
+  if (payload.byteLength > MAX_V2_FRAME_BYTES) {
+    throw new Error(
+      `outbound v2 payload ${String(payload.byteLength)} exceeds MAX_V2_FRAME_BYTES ${String(MAX_V2_FRAME_BYTES)}`,
+    );
+  }
+  return encodeV2Frame(type, payload);
+}
+
 export class IpcServer {
   private server: Server | null = null;
+  /** R5 §7: coalesced room-delivery scheduling, keyed by room id. */
+  private readonly roomSchedules = new Map<string, boolean>();
+  /** R5 §8: every accepted connection, tracked for stop() completion. */
+  private readonly connections = new Set<ConnectionState>();
+  /** R5 §8 step 1: one shared stop completion. */
+  private stopPromise: Promise<void> | null = null;
+  /** R5 §8 step 2: STOPPING rejects new connections and invalidates scheduled work. */
+  private stopping = false;
 
   constructor(
     private readonly paths: GatewayPaths,
     private readonly handlers: IpcHandlers,
   ) {}
+
+  /**
+   * R5 §7 — schedule coalesced, bounded, non-reentrant delivery for a room.
+   * Called from the RoomRuntime notification (after the mutation completed)
+   * and after events that make progress possible (drain, commit).
+   */
+  scheduleRoomDelivery(roomId: string): void {
+    if (this.stopping) return; // STOPPING invalidates pending scheduling.
+    if (this.roomSchedules.has(roomId)) return; // coalesced: one task per room
+    this.roomSchedules.set(roomId, true);
+    setImmediate(() => {
+      this.roomSchedules.delete(roomId);
+      if (this.stopping) return;
+      this.deliverRoom(roomId);
+    });
+  }
+
+  /** One bounded delivery turn for every live v2 connection bound to `roomId`. */
+  private deliverRoom(roomId: string): void {
+    const rooms = this.handlers.rooms?.();
+    if (rooms === undefined) return;
+    for (const connection of [...this.connections]) {
+      if (connection.roomId !== roomId) continue;
+      connection.pump(BUDGET_FRAMES_PER_TURN);
+    }
+  }
 
   async start(): Promise<void> {
     await mkdir(this.paths.directory, { recursive: true, mode: DIRECTORY_MODE });
@@ -95,250 +163,90 @@ export class IpcServer {
     // 0600: the socket is as sensitive as the state file it reports on.
     await chmod(this.paths.socketPath, FILE_MODE);
     this.server = server;
+    // R5 §7: the adapter registers itself as the runtime's delivery
+    // notifier at start() — the explicit registration seam (the runtime
+    // owns no sockets/timers; it only invokes this after mutations).
+    this.handlers.rooms?.()?.registerRoomEventCallback((roomId) => this.scheduleRoomDelivery(roomId));
   }
 
-  async stop(): Promise<void> {
-    const server = this.server;
-    this.server = null;
-    if (server === null) return;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    await unlink(this.paths.socketPath).catch(() => undefined);
+  /**
+   * R5 §8 — exact shutdown completion. One shared stopPromise; STOPPING;
+   * reject new connections; stop delivery scheduling; track every accepted
+   * connection; server.close(); graceful socket.end(); 500 ms grace; destroy
+   * remaining owned connections; await server closure AND every connection's
+   * finalizer; clear the grace timer; remove scheduled work; unlink the owned
+   * socket path; resolve.
+   */
+  stop(): Promise<void> {
+    if (this.stopPromise !== null) return this.stopPromise;
+    this.stopPromise = (async () => {
+      this.stopping = true; // (2) STOPPING
+      const server = this.server;
+      this.server = null;
+      this.roomSchedules.clear(); // (4) stop new normal delivery scheduling
+      for (const connection of this.connections) connection.stopScheduling(); // invalidate pending work
+      if (server !== null) {
+        const closed = new Promise<void>((resolve) => server.close(() => resolve())); // (6)
+        for (const connection of this.connections) connection.beginShutdown(); // (7) graceful end
+        let graceTimer: NodeJS.Timeout | null = null;
+        const grace = new Promise<void>((resolve) => {
+          graceTimer = setTimeout(resolve, SHUTDOWN_GRACE_MS); // (8)
+        });
+        await Promise.race([Promise.allSettled([...this.connections].map((c) => c.done)), grace]);
+        if (graceTimer !== null) clearTimeout(graceTimer); // (11) clear the grace timer
+        for (const connection of this.connections) connection.forceClose(); // (9) after deadline
+        await closed; // (10a) server closure
+      }
+      await Promise.allSettled([...this.connections].map((c) => c.done)); // (10b) every finalizer
+      // (11) grace timer: the race already bounded it; nothing to clear beyond it.
+      this.roomSchedules.clear(); // (12) remove scheduled work
+      await unlink(this.paths.socketPath).catch(() => undefined); // (13) owned path only
+    })();
+    return this.stopPromise;
   }
 
   private serve(socket: Socket): void {
-    // Explicit `Buffer` (not the Buffer<ArrayBuffer> inferred from alloc) so
-    // subarray-derived rests assign cleanly under Node 22 typings.
-    let buffered: Buffer = Buffer.alloc(0);
-    let v2 = false;
-    // v2 session identity, established only by a successful Hello answer.
-    let v2RoomId: string | null = null;
-    let v2ViewerId: string | null = null;
-
-    const writeV2 = (type: number, body: unknown): void => {
-      socket.write(encodeV2Frame(type, Buffer.from(JSON.stringify(body), 'utf8')));
-    };
-    const nack = (reason: string, detail?: string): void => {
-      writeV2(FRAME_TYPE_CONTROL, detail === undefined ? { op: 'Nack', reason } : { op: 'Nack', reason, detail });
-    };
-    const disconnect = (reason: DisconnectReason): void => {
-      writeV2(FRAME_TYPE_CONTROL, { op: 'Disconnect', reason });
+    // (3) STOPPING rejects new connections.
+    if (this.stopping) {
       socket.destroy();
-    };
-    const drainViewer = (): void => {
-      if (v2RoomId === null || v2ViewerId === null) return;
-      const rooms = this.handlers.rooms?.();
-      if (rooms === undefined) return;
-      const frames: OutFrame[] = rooms.takeOutbox(v2RoomId, v2ViewerId);
-      for (const frame of frames) socket.write(encodeV2Frame(frame.type, frame.payload));
-      const pending = rooms.pendingDisconnect(v2RoomId, v2ViewerId);
-      if (pending !== null) disconnect(pending);
-    };
+      return;
+    }
+    const connection = new ConnectionState(socket, this, this.handlers);
+    this.connections.add(connection);
+    connection.begin();
+  }
 
-    const serveV2Frame = (type: number, payload: Buffer): void => {
-      const rooms = this.handlers.rooms?.();
-      if (rooms === undefined) {
-        disconnect('internal_error');
-        return;
-      }
-      if (type !== FRAME_TYPE_CONTROL) {
-        // Projectors send control only; anything else (including reserved
-        // 0x03) is unknown_frame_type → destroy THIS viewer socket (r4.1 §3).
-        nack('unknown_frame_type', `frame type 0x${type.toString(16).padStart(2, '0')} is not 0x01 control`);
-        disconnect('internal_error');
-        return;
-      }
-      const parsed = parseControlPayload(payload);
-      if (!parsed.ok) {
-        nack(parsed.reason, parsed.detail);
-        if (parsed.reason === 'invalid_request' || parsed.reason === 'unknown_op') return;
-        disconnect('internal_error');
-        return;
-      }
-      const record = parsed.value;
-      const op = record['op'];
-      if (typeof op === 'string' && isProjectorForbiddenOp(op)) {
-        // AT-R4-16: recognized authority-minting attempts are REFUSED as
-        // claim_rejected — observable, never silently unknown, never served.
-        nack('claim_rejected', `${op} is not a projector API; the Gateway mints all authority`);
-        return;
-      }
-      if (op === 'Hello') {
-        // Version negotiation on the first frame (r4 §7.7).
-        const requested = record['ipc_version'];
-        if (typeof requested !== 'number' || !SUPPORTED_IPC_VERSIONS.includes(requested) || requested !== IPC_V2_VERSION) {
-          // AT-R4-32: unsupported version → the v1-shaped error answer then
-          // close. Never a PTY stream, never a half-negotiated session.
-          socket.write(`${JSON.stringify({ error: 'ipc_version_unsupported', supported: [...SUPPORTED_IPC_VERSIONS] })}\n`);
-          socket.destroy();
-          return;
-        }
-        writeV2(FRAME_TYPE_CONTROL, {
-          op: 'Hello',
-          ok: true,
-          ipc_version: IPC_V2_VERSION,
-          supported: [...SUPPORTED_IPC_VERSIONS],
-          limits: { max_frame_bytes: MAX_V2_FRAME_BYTES, viewer_queue_frames: VIEWER_QUEUE_FRAMES },
-        });
-        return;
-      }
-      if (op === 'JoinRoom') {
-        const roomId = record['room_id'];
-        const idempotencyKey = record['idempotency_key'];
-        if (typeof roomId !== 'string' || typeof idempotencyKey !== 'string') {
-          nack('invalid_request', 'JoinRoom requires room_id and idempotency_key strings');
-          return;
-        }
-        const capability = typeof record['viewer_capability'] === 'string' ? record['viewer_capability'] : undefined;
-        const caps = record['viewer_caps'] === 'read+input' ? 'read+input' : 'read';
-        const result = rooms.joinRoom(roomId, idempotencyKey, capability, caps);
-        if (!result.ok) {
-          nack(result.reason, result.detail);
-          return;
-        }
-        // A connection that already joined another room is a protocol error;
-        // Phase 1 serves one viewer session per connection.
-        if (v2ViewerId !== null && v2ViewerId !== String(result.body['viewer_id'])) {
-          nack('invalid_request', 'one viewer session per connection; leave before rejoining');
-          return;
-        }
-        v2RoomId = roomId;
-        v2ViewerId = String(result.body['viewer_id']);
-        writeV2(FRAME_TYPE_CONTROL, result.body);
-        drainViewer();
-        return;
-      }
-      if (op === 'LeaveRoom') {
-        const roomId = record['room_id'];
-        const idempotencyKey = record['idempotency_key'];
-        const capability = record['viewer_capability'];
-        if (typeof roomId !== 'string' || typeof idempotencyKey !== 'string' || typeof capability !== 'string') {
-          nack('invalid_request', 'LeaveRoom requires room_id, idempotency_key, viewer_capability strings');
-          return;
-        }
-        const result = rooms.leaveRoom(roomId, idempotencyKey, capability);
-        if (!result.ok) {
-          nack(result.reason, result.detail);
-          return;
-        }
-        writeV2(FRAME_TYPE_CONTROL, result.body);
-        drainViewer();
-        // `leave` ≠ `occupancy_closed`: the viewer detaches, the room lives on.
-        disconnect('leave');
-        return;
-      }
-      if (op === 'FollowRoom') {
-        const target = record['target'];
-        if (typeof target !== 'string') {
-          nack('invalid_request', 'FollowRoom requires a target string ("rooms" or a room_id)');
-          return;
-        }
-        const capability = typeof record['viewer_capability'] === 'string' ? record['viewer_capability'] : undefined;
-        const result = rooms.followRoom(target, capability);
-        if (!result.ok) {
-          nack(result.reason, result.detail);
-          return;
-        }
-        writeV2(FRAME_TYPE_CONTROL, result.body);
-        return;
-      }
-      if (op === 'TakeoverInput' || op === 'InputFrame' || op === 'ResizeFrame') {
-        const roomId = record['room_id'];
-        const capability = record['viewer_capability'];
-        if (typeof roomId !== 'string' || typeof capability !== 'string') {
-          nack('invalid_request', `${String(op)} requires room_id and viewer_capability strings`);
-          return;
-        }
-        let result;
-        if (op === 'TakeoverInput') {
-          result = rooms.takeoverInput(roomId, capability);
-        } else if (op === 'InputFrame') {
-          const epoch = record['input_epoch'];
-          const data = record['data_b64'];
-          if (typeof epoch !== 'number' || typeof data !== 'string') {
-            nack('invalid_request', 'InputFrame requires input_epoch number and data_b64 string');
-            return;
-          }
-          result = rooms.inputFrame(roomId, capability, epoch, data);
-        } else {
-          const epoch = record['input_epoch'];
-          const cols = record['cols'];
-          const rows = record['rows'];
-          if (typeof epoch !== 'number' || typeof cols !== 'number' || typeof rows !== 'number') {
-            nack('invalid_request', 'ResizeFrame requires input_epoch, cols, rows numbers');
-            return;
-          }
-          result = rooms.resizeFrame(roomId, capability, epoch, cols, rows);
-        }
-        if (!result.ok) {
-          nack(result.reason, result.detail);
-          if (result.reason === 'stale_viewer' && op === 'InputFrame') {
-            // AT-R4-30: a revoked viewer's InputFrame ends the session.
-            disconnect('stale_viewer');
-            return;
-          }
-          return;
-        }
-        writeV2(FRAME_TYPE_CONTROL, result.body);
-        drainViewer();
-        return;
-      }
-      nack('unknown_op', `op ${String(op)} is not in the closed projector vocabulary`);
-    };
+  /** Ownership bookkeeping (R5 §5): the connection that currently speaks for a viewer. */
+  private readonly viewerOwners = new Map<string, ConnectionState>();
 
-    socket.on('data', (chunk: Buffer) => {
-      buffered = Buffer.concat([buffered, chunk]);
-      if (!v2) {
-        // First-frame family detection (r4 §7.7): a structurally valid v2
-        // Hello switches THIS connection to the mux for its lifetime. Any
-        // other first bytes are v1, exactly as before.
-        if (looksLikeV2Hello(buffered)) {
-          v2 = true;
-          const step = decodeV2Frames(buffered);
-          buffered = step.rest;
-          if (step.oversized) {
-            socket.destroy();
-            return;
-          }
-          for (const frame of step.frames) serveV2Frame(frame.type, frame.payload);
-          return;
-        }
-        if (buffered.byteLength > MAX_REQUEST_BYTES) {
-          socket.destroy();
-          return;
-        }
-        let text = buffered.toString('utf8');
-        let newline = text.indexOf('\n');
-        while (newline !== -1) {
-          const line = text.slice(0, newline);
-          text = text.slice(newline + 1);
-          socket.write(`${JSON.stringify(this.answer(line))}\n`);
-          newline = text.indexOf('\n');
-        }
-        buffered = Buffer.from(text, 'utf8');
-        return;
-      }
-      const step = decodeV2Frames(buffered);
-      buffered = step.rest;
-      if (step.oversized) {
-        // r4 §7.7: oversized → destroy the VIEWER socket; occupancy continues.
-        disconnect('frame_too_large');
-        return;
-      }
-      for (const frame of step.frames) serveV2Frame(frame.type, frame.payload);
-    });
-    socket.on('error', () => socket.destroy());
-    socket.on('close', () => {
-      // AT-R4-01: the viewer dying detaches the VIEWER only — occupancy and
-      // executions are untouched, receipts keep appending.
-      if (v2RoomId !== null && v2ViewerId !== null) {
-        try {
-          this.handlers.rooms?.().viewerQuit(v2RoomId, v2ViewerId);
-        } catch (error) {
-          if (!(error instanceof RoomRuntimeError)) throw error;
-          // room_unknown on close is benign (the room closed first).
-        }
-      }
-    });
+  private static viewerKey(roomId: string, viewerId: string): string {
+    return `${roomId}\u0000${viewerId}`;
+  }
+
+  claimViewer(roomId: string, viewerId: string, connection: ConnectionState): void {
+    this.viewerOwners.set(IpcServer.viewerKey(roomId, viewerId), connection);
+  }
+
+  ownerOf(roomId: string, viewerId: string): ConnectionState | undefined {
+    return this.viewerOwners.get(IpcServer.viewerKey(roomId, viewerId));
+  }
+
+  releaseViewer(roomId: string, viewerId: string, connection: ConnectionState): void {
+    const key = IpcServer.viewerKey(roomId, viewerId);
+    if (this.viewerOwners.get(key) === connection) this.viewerOwners.delete(key);
+  }
+
+  forgetConnection(connection: ConnectionState): void {
+    this.connections.delete(connection);
+  }
+
+  /** R5 §8 step 7/9 partner: graceful end / forced destroy of one owned connection. */
+  isStopping(): boolean {
+    return this.stopping;
+  }
+
+  answerV1(line: string): Record<string, unknown> {
+    return this.answer(line);
   }
 
   private answer(line: string): Record<string, unknown> {
@@ -383,6 +291,393 @@ export class IpcServer {
       return { error: 'internal_error' };
     }
   }
+}
+
+/** R5 §7: bounded delivery work per event-loop turn (reschedules if work remains). */
+const BUDGET_FRAMES_PER_TURN = VIEWER_QUEUE_FRAMES;
+
+/**
+ * R5 connection state — one per accepted socket, carrying the explicit
+ * OUTBOUND_BLOCKED state, incremental dequeue, bounded retained input, and
+ * token-guarded cleanup. Wave 1: preserves H's request semantics while adding
+ * the notification pump; later waves add the blocked/terminal machinery.
+ */
+class ConnectionState {
+  readonly roomId: string | null = null;
+  private viewerId: string | null = null;
+  /** R5 §8: resolves after this connection's local cleanup/finalizer completes. */
+  readonly done: Promise<void>;
+  private resolveDone!: () => void;
+  /** Monotonic token; guards stale scheduled work after close/replace (R5 §7). */
+  private token = 0;
+  private closed = false;
+  /** P3/R5-02: explicit blocked state; ordinary writes stop while true. */
+  private outboundBlocked = false;
+
+  constructor(
+    private readonly socket: Socket,
+    private readonly server: IpcServer,
+    private readonly handlers: IpcHandlers,
+  ) {
+    this.done = new Promise<void>((resolve) => {
+      this.resolveDone = resolve;
+    });
+  }
+
+  begin(): void {
+    // Explicit `Buffer` (not the Buffer<ArrayBuffer> inferred from alloc) so
+    // subarray-derived rests assign cleanly under Node 22 typings.
+    let buffered: Buffer = Buffer.alloc(0);
+    let v2 = false;
+
+    const writeV2 = (type: number, body: unknown): void => {
+      this.submit(type, Buffer.from(JSON.stringify(body), 'utf8'));
+    };
+    const nack = (reason: string, detail?: string): void => {
+      writeV2(FRAME_TYPE_CONTROL, detail === undefined ? { op: 'Nack', reason } : { op: 'Nack', reason, detail });
+    };
+    const disconnect = (reason: DisconnectReason): void => {
+      writeV2(FRAME_TYPE_CONTROL, { op: 'Disconnect', reason });
+      this.socket.destroy();
+    };
+
+    const serveV2Frame = (type: number, payload: Buffer): void => {
+      const rooms = this.handlers.rooms?.();
+      if (rooms === undefined) {
+        disconnect('internal_error');
+        return;
+      }
+      if (type !== FRAME_TYPE_CONTROL) {
+        nack('unknown_frame_type', `frame type 0x${type.toString(16).padStart(2, '0')} is not 0x01 control`);
+        disconnect('internal_error');
+        stopAfterTerminal();
+        return;
+      }
+      const parsed = parseControlPayload(payload);
+      if (!parsed.ok) {
+        nack(parsed.reason, parsed.detail);
+        if (parsed.reason === 'invalid_request' || parsed.reason === 'unknown_op') return;
+        disconnect('internal_error');
+        stopAfterTerminal();
+        return;
+      }
+      const record = parsed.value;
+      const op = record['op'];
+      if (typeof op === 'string' && isProjectorForbiddenOp(op)) {
+        nack('claim_rejected', `${op} is not a projector API; the Gateway mints all authority`);
+        return;
+      }
+      if (op === 'Hello') {
+        const requested = record['ipc_version'];
+        if (typeof requested !== 'number' || !SUPPORTED_IPC_VERSIONS.includes(requested) || requested !== IPC_V2_VERSION) {
+          this.socket.write(`${JSON.stringify({ error: 'ipc_version_unsupported', supported: [...SUPPORTED_IPC_VERSIONS] })}\n`);
+          this.socket.destroy();
+          stopAfterTerminal();
+          return;
+        }
+        writeV2(FRAME_TYPE_CONTROL, {
+          op: 'Hello',
+          ok: true,
+          ipc_version: IPC_V2_VERSION,
+          supported: [...SUPPORTED_IPC_VERSIONS],
+          limits: { max_frame_bytes: MAX_V2_FRAME_BYTES, viewer_queue_frames: VIEWER_QUEUE_FRAMES },
+        });
+        return;
+      }
+      if (op === 'JoinRoom') {
+        const roomId = record['room_id'];
+        const idempotencyKey = record['idempotency_key'];
+        if (typeof roomId !== 'string' || typeof idempotencyKey !== 'string') {
+          nack('invalid_request', 'JoinRoom requires room_id and idempotency_key strings');
+          return;
+        }
+        const capability = typeof record['viewer_capability'] === 'string' ? record['viewer_capability'] : undefined;
+        const caps = record['viewer_caps'] === 'read+input' ? 'read+input' : 'read';
+        const result = rooms.joinRoom(roomId, idempotencyKey, capability, caps);
+        if (!result.ok) {
+          nack(result.reason, result.detail);
+          return;
+        }
+        const newViewerId = String(result.body['viewer_id']);
+        if (this.viewerId !== null && this.viewerId !== newViewerId) {
+          nack('invalid_request', 'one viewer session per connection; leave before rejoining');
+          return;
+        }
+        this.bindViewer(roomId, newViewerId);
+        // R5 §3 ordering: admission → terminal reconciliation → response →
+        // catch-up/live registration. The runtime's join already enqueued
+        // catch-up; submit the JoinRoom response FIRST, then pump.
+        writeV2(FRAME_TYPE_CONTROL, result.body);
+        this.pump(BUDGET_FRAMES_PER_TURN);
+        return;
+      }
+      if (op === 'LeaveRoom') {
+        const roomId = record['room_id'];
+        const idempotencyKey = record['idempotency_key'];
+        const capability = record['viewer_capability'];
+        if (typeof roomId !== 'string' || typeof idempotencyKey !== 'string' || typeof capability !== 'string') {
+          nack('invalid_request', 'LeaveRoom requires room_id, idempotency_key, viewer_capability strings');
+          return;
+        }
+        const result = rooms.leaveRoom(roomId, idempotencyKey, capability);
+        if (!result.ok) {
+          nack(result.reason, result.detail);
+          return;
+        }
+        writeV2(FRAME_TYPE_CONTROL, result.body);
+        this.pump(BUDGET_FRAMES_PER_TURN);
+        disconnect('leave');
+        stopAfterTerminal();
+        return;
+      }
+      if (op === 'FollowRoom') {
+        const target = record['target'];
+        if (typeof target !== 'string') {
+          nack('invalid_request', 'FollowRoom requires a target string ("rooms" or a room_id)');
+          return;
+        }
+        const capability = typeof record['viewer_capability'] === 'string' ? record['viewer_capability'] : undefined;
+        const result = rooms.followRoom(target, capability);
+        if (!result.ok) {
+          nack(result.reason, result.detail);
+          return;
+        }
+        writeV2(FRAME_TYPE_CONTROL, result.body);
+        return;
+      }
+      if (op === 'TakeoverInput' || op === 'InputFrame' || op === 'ResizeFrame') {
+        const roomId = record['room_id'];
+        const capability = record['viewer_capability'];
+        if (typeof roomId !== 'string' || typeof capability !== 'string') {
+          nack('invalid_request', `${String(op)} requires room_id and viewer_capability strings`);
+          return;
+        }
+        let result: RoomResult;
+        if (op === 'TakeoverInput') {
+          result = rooms.takeoverInput(roomId, capability);
+        } else if (op === 'InputFrame') {
+          const epoch = record['input_epoch'];
+          const data = record['data_b64'];
+          if (typeof epoch !== 'number' || typeof data !== 'string') {
+            nack('invalid_request', 'InputFrame requires input_epoch number and data_b64 string');
+            return;
+          }
+          result = rooms.inputFrame(roomId, capability, epoch, data);
+        } else {
+          const epoch = record['input_epoch'];
+          const cols = record['cols'];
+          const rows = record['rows'];
+          if (typeof epoch !== 'number' || typeof cols !== 'number' || typeof rows !== 'number') {
+            nack('invalid_request', 'ResizeFrame requires input_epoch, cols, rows numbers');
+            return;
+          }
+          result = rooms.resizeFrame(roomId, capability, epoch, cols, rows);
+        }
+        if (!result.ok) {
+          nack(result.reason, result.detail);
+          if (result.reason === 'stale_viewer' && op === 'InputFrame') {
+            disconnect('stale_viewer');
+            stopAfterTerminal();
+            return;
+          }
+          return;
+        }
+        writeV2(FRAME_TYPE_CONTROL, result.body);
+        this.pump(BUDGET_FRAMES_PER_TURN);
+        return;
+      }
+      nack('unknown_op', `op ${String(op)} is not in the closed projector vocabulary`);
+    };
+
+    /** P3: frames decoded from the current chunk, executed in order, halting on backpressure. */
+    const executeDecoded = (frames: readonly V2Frame[]): void => {
+      for (let i = 0; i < frames.length; i++) {
+        if (this.closed || this.outboundBlocked) {
+          // Retain the unexecuted remainder (original order), bounded (P3).
+          this.retainInput(frames.slice(i));
+          return;
+        }
+        serveV2Frame(frames[i]!.type, frames[i]!.payload);
+      }
+    };
+
+    /** P3: stop-after-terminal helper for disconnect paths inside frame serving. */
+    const stopAfterTerminal = (): void => {
+      // The disconnect already destroyed the socket; nothing further may execute.
+      executing = false;
+    };
+    let executing = true;
+
+    this.socket.on('data', (chunk: Buffer) => {
+      if (this.closed) return;
+      buffered = Buffer.concat([buffered, chunk]);
+      if (!v2) {
+        if (looksLikeV2Hello(buffered)) {
+          v2 = true;
+          const step = decodeV2Frames(buffered);
+          buffered = step.rest;
+          if (step.oversized) {
+            this.socket.destroy();
+            return;
+          }
+          executeDecoded(step.frames);
+          return;
+        }
+        if (buffered.byteLength > MAX_REQUEST_BYTES) {
+          this.socket.destroy();
+          return;
+        }
+        let text = buffered.toString('utf8');
+        let newline = text.indexOf('\n');
+        while (newline !== -1) {
+          const line = text.slice(0, newline);
+          text = text.slice(newline + 1);
+          this.socket.write(`${JSON.stringify(this.server.answerV1(line))}\n`);
+          newline = text.indexOf('\n');
+        }
+        buffered = Buffer.from(text, 'utf8');
+        return;
+      }
+      const step = decodeV2Frames(buffered);
+      buffered = step.rest;
+      if (step.oversized) {
+        disconnect('frame_too_large');
+        return;
+      }
+      executeDecoded(step.frames);
+    });
+    this.socket.on('error', () => this.socket.destroy());
+    this.socket.on('close', () => this.finalize());
+  }
+
+  /** R5 §5: bind this connection as the owner of the viewer binding. */
+  private bindViewer(roomId: string, viewerId: string): void {
+    const previous = this.roomId;
+    if (previous !== null && previous !== roomId) {
+      this.server.releaseViewer(previous, this.viewerId ?? '', this);
+    }
+    (this as { roomId: string | null }).roomId = roomId;
+    this.viewerId = viewerId;
+    this.server.claimViewer(roomId, viewerId, this);
+  }
+
+  /**
+   * R5 §7 — one bounded delivery turn: JoinRoom-response-first ordering is the
+   * caller's job; here we drain incrementally (peek/commit), stop on a false
+   * write, and reschedule if work remains.
+   */
+  pump(budget: number): void {
+    if (this.closed || this.server.isStopping()) return;
+    const rooms = this.handlers.rooms?.();
+    if (rooms === undefined) return;
+    const roomId = this.roomId;
+    const viewerId = this.viewerId;
+    if (roomId === null || viewerId === null) return;
+    const myToken = this.token;
+    let sent = 0;
+    while (sent < budget) {
+      // Token/stopping guard: a replace/close during delivery invalidates this turn.
+      if (this.closed || this.server.isStopping() || this.token !== myToken) return;
+      const peek = rooms.peekOutbox(roomId, viewerId);
+      if (peek.length === 0) break;
+      const frame = peek[0]!;
+      if (this.submit(frame.type, frame.payload)) {
+        rooms.commitOutbox(roomId, viewerId, 1, expectedBytes(frame));
+        sent += 1;
+      } else {
+        // OUTBOUND_BLOCKED: the suffix stays queued, exact-prefix retained.
+        this.outboundBlocked = true;
+        break;
+      }
+    }
+    // Reschedule when work remains (R5 §7) — unless blocked (drain sweeps) or stopping.
+    if (!this.outboundBlocked && rooms.peekOutbox(roomId, viewerId).length > 0 && !this.server.isStopping()) {
+      this.server.scheduleRoomDelivery(roomId);
+    }
+  }
+
+  /**
+   * Submit one frame. Returns false when the write backpressured (the caller
+   * enters OUTBOUND_BLOCKED); the frame itself was submitted exactly once.
+   */
+  private submit(type: number, payload: Buffer): boolean {
+    if (this.terminal || this.closed) return false;
+    const encoded = encodeV2FrameChecked(type, payload);
+    const ok = this.socket.write(encoded);
+    if (!ok) this.onWriteFalse();
+    return ok;
+    // NOTE wave 2: OUTBOUND_BLOCKED stops later ordinary writes entirely.
+  }
+
+  private onWriteFalse(): void {
+    // Wave 2: state transition + drain listener + decoded-batch halt.
+    this.outboundBlocked = true;
+  }
+
+  /** P3: retain unexecuted decoded input, bounded; over-bound fails closed. */
+  private retainInput(frames: readonly V2Frame[]): void {
+    for (const frame of frames) {
+      this.retainedInput.push(frame);
+      this.retainedInputBytes += 5 + frame.payload.byteLength;
+    }
+    if (this.retainedInputBytes > MAX_RETAINED_INPUT_BYTES) {
+      // Fail closed: destroy; nothing silently dropped.
+      this.socket.destroy();
+    }
+  }
+
+  private readonly retainedInput: V2Frame[] = [];
+  private retainedInputBytes = 0;
+
+  /** P1: a terminal condition never waits for 'drain'. */
+  terminal = false;
+
+  /** R5 §8 partners. */
+  stopScheduling(): void {
+    this.token += 1; // invalidate in-flight scheduled work
+  }
+
+  beginShutdown(): void {
+    this.token += 1;
+    try {
+      this.socket.end();
+    } catch {
+      /* already closed */
+    }
+  }
+
+  forceClose(): void {
+    this.token += 1;
+    this.socket.destroy();
+  }
+
+  private finalize(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.token += 1;
+    const roomId = this.roomId;
+    const viewerId = this.viewerId;
+    this.socket.removeAllListeners('data');
+    this.socket.removeAllListeners('drain');
+    if (roomId !== null && viewerId !== null) {
+      this.server.releaseViewer(roomId, viewerId, this);
+      // R5 §5 replacement: only the OWNER's close detaches this viewer.
+      if (this.server.ownerOf(roomId, viewerId) === undefined) {
+        try {
+          this.handlers.rooms?.().viewerQuit(roomId, viewerId);
+        } catch (error) {
+          if (!(error instanceof RoomRuntimeError)) throw error;
+        }
+      }
+    }
+    this.server.forgetConnection(this);
+    this.resolveDone();
+  }
+}
+
+/** Exact-prefix byte cost of one frame (payload + 5-byte header). */
+function expectedBytes(frame: OutFrame): number {
+  return frame.payload.byteLength + 5;
 }
 
 /** Send one request to a running daemon, or report that none is listening. */
