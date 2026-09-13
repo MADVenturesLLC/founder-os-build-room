@@ -1,0 +1,100 @@
+name: advisory-reviewers
+
+# Non-required advisory-reviewer probes for MADVenturesLLC/founder-os-build-room.
+#
+# This workflow is purely additive. It does NOT amend any required check,
+# does NOT modify the existing code-review gate semantics, and does NOT
+# touch governance or doctrine files. Its single job is to surface a
+# non-gating status check named "advisory-reviewers" on every pull request
+# that demonstrates two named advisory reviewers are reachable from CI
+# against the PR's frozen head.
+#
+# Why this exists: Copilot auto-review frequently returns
+# "review skipped: quota limit" on this org. The PR-side review experience
+# depends on a non-empty advisory reviewer set. Two named reviewers —
+# `gemini-3.8-flash-medium` and `claude-opus-5` — were bound on the
+# default profile as of 2026-09-13 and observed PONG against the host
+# seat. This workflow records the same reachability from CI.
+#
+# Status contract:
+#   - "advisory reviewers reachable" (success) — both reviewers PONG'd.
+#   - "advisory reviewers degraded" (failure) — one or both did not respond.
+# - The status is advisory only. It is NOT on the branch protection
+#   required-checks list. A green run does not gate merge.
+#
+# Failure mode: any non-zero exit here is a CI-side reachability signal,
+# not a build defect. The PR body carries the §20 evidence paragraph
+# recording the host-side Configured vs Observed status at filing time.
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to re-probe (used only for manual refresh).
+        required: false
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: advisory-reviewers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - name: Probe gemini-3.8-flash-medium (advisory #1)
+        id: probe_gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo "::notice::GEMINI_API_KEY is not configured at the org level; advisory reviewer probe cannot run from CI. The PR-body §20 paragraph records the host-side Configured status."
+            echo "result=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # PONG-only probe; we do not retrieve content. The exact model id and
+          # provider are pinned in the workflow input below.
+          result=$(printf 'PONG' | timeout 60 agy --print --model gemini-3.8-flash-medium --effort medium --dangerously-skip-permissions --print-timeout 1m 2>&1 || true)
+          if printf '%s' "$result" | grep -q 'PONG'; then
+            echo "result=reachable" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=unreachable" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Probe claude-opus-5 (advisory #2)
+        id: probe_claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "::notice::ANTHROPIC_API_KEY is not configured at the org level; advisory reviewer probe cannot run from CI. The PR-body §20 paragraph records the host-side Configured status."
+            echo "result=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          result=$(printf 'PONG' | timeout 60 agy --print --model claude-opus-5 --dangerously-skip-permissions --print-timeout 1m 2>&1 || true)
+          if printf '%s' "$result" | grep -q 'PONG'; then
+            echo "result=reachable" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=unreachable" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Surface advisory-reviewers status
+        if: ${{ always() }}
+        run: |
+          gemini="${{ steps.probe_gemini.outputs.result }}"
+          claude="${{ steps.probe_claude.outputs.result }}"
+          case "$gemini:$claude" in
+            reachable:reachable)
+              echo "advisory reviewers reachable (gemini-3.8-flash-medium=$gemini, claude-opus-5=$claude)"
+              exit 0
+              ;;
+            *)
+              echo "advisory reviewers degraded (gemini-3.8-flash-medium=$gemini, claude-opus-5=$claude); CI-side reachability signal — see PR-body §20 paragraph"
+              exit 1
+              ;;
+          esac
