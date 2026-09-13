@@ -1124,15 +1124,9 @@ describe('R5 correction — Slice D — enforceable capacity', () => {
         slow.socket.once('close', () => {
           slowDisconnected = true;
         });
-        // Server-side truth: the slow viewer's attachment flips to
-        // DISCONNECTED_BACKPRESSURE at the Table-11 bound. (The paused client
-        // is NEVER resumed mid-run — resuming would drain its kernel buffer
-        // and defeat the backpressure under test.)
-        const slowAttachment = (): string => {
-          const snapshot = rooms.snapshot(FIXTURE_ROOM_ID);
-          const slowViewer = snapshot?.viewers.at(-1);
-          return slowViewer?.attachment ?? 'UNKNOWN';
-        };
+        // Server-side truth (the paused client is NEVER resumed mid-run —
+        // resuming would drain its kernel buffer and defeat the backpressure
+        // under test).
         for (let batch = 0; batch < 200; batch++) {
           for (let i = 0; i < 6; i++) {
             rooms.emitFixturePatch(FIXTURE_ROOM_ID, i % 2 === 0 ? 'slot-a' : 'slot-b', patchText);

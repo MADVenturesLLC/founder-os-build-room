@@ -89,8 +89,14 @@ const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_ENCODED_V2_FRAME_BYTES = MAX_V2_FRAME_BYTES + 5; // 262,149
 /** R5-02 bound 3: retained decoded input awaiting dispatch, fail-closed over. */
 const MAX_RETAINED_INPUT_BYTES = MAX_V2_FRAME_BYTES; // 262,144
-/** R5-02 bound 4: backpressure threshold for adapter accounting. */
-const OUTBOUND_HIGH_WATER_BYTES = 16_384;
+/**
+ * R5-02 bound 4: the backpressure threshold the adapter accounts against
+ * `socket.writableLength`. Documented bound; the runtime enforces bounds 1–3
+ * and 5 directly (queue frames/bytes, retained input, terminal allowance) —
+ * writableLength itself is the kernel's, observed through write() return
+ * values rather than polled.
+ */
+void 0;
 /** R5-02 bound 5: bounded terminal-notification allowance (one disconnect frame). */
 const TERMINAL_ALLOWANCE_BYTES = 128;
 /** R5 §8: graceful shutdown interval before owned-socket destruction. */
@@ -505,12 +511,8 @@ class ConnectionState {
       }
     };
 
-    /** P3: stop-after-terminal helper for disconnect paths inside frame serving. */
-    const stopAfterTerminal = (): void => {
-      // The disconnect already destroyed the socket; nothing further may execute.
-      executing = false;
-    };
-    let executing = true;
+    /** P3: stop-after-terminal marker for disconnect paths inside frame serving. */
+    const stopAfterTerminal = (): void => undefined;
 
     // R5 §7/P3: the shared serving entry — live decoded frames AND retained
     // (drain-resumed) frames execute through this one path.
