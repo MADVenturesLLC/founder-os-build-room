@@ -61,6 +61,7 @@ import {
   FIXTURE_VT_CODEC_VERSION,
   FRAME_TYPE_CONTROL,
   FRAME_TYPE_VT_PATCH,
+  MAX_V2_FRAME_BYTES,
   type BlockReason,
   type DisconnectReason,
   type ExecutionCursors,
@@ -343,6 +344,18 @@ export class RoomRuntime {
       vt_codec_version: FIXTURE_VT_CODEC_VERSION,
       checkpoint_or_patch: { kind: 'patch', text },
     };
+    // P2 (Founder amendment): the canonical 256 KiB v2 payload limit binds
+    // OUTBOUND GENERATION, not just inbound decoding. Validation happens
+    // BEFORE any mutation — an oversized emission fails closed here and the
+    // ring/cursor/outbox are left untouched.
+    const patchBuffer = controlBuffer(patch);
+    if (patchBuffer.byteLength > MAX_V2_FRAME_BYTES) {
+      execution.ptyOutputSeq -= 1; // validation-before-mutation: no cursor drift
+      throw new RoomRuntimeError(
+        'frame_too_large',
+        `emitted patch payload ${String(patchBuffer.byteLength)} exceeds MAX_V2_FRAME_BYTES ${String(MAX_V2_FRAME_BYTES)}`,
+      );
+    }
     // Fixture durable ring: committed synchronously, so the watermark equals
     // the output seq. Wrap sets the OWNER-ring fact history_truncated.
     execution.ring.push(patch);
@@ -351,7 +364,7 @@ export class RoomRuntime {
       execution.historyTruncated = true;
     }
     execution.durableCommittedSeq = execution.ptyOutputSeq;
-    this.fanoutPatch(room, patch);
+    this.fanoutPatch(room, patch, patchBuffer);
     this.notifyRoom(room.roomId);
   }
 
@@ -923,11 +936,12 @@ export class RoomRuntime {
     }
   }
 
-  private fanoutPatch(room: Room, patch: VtPatchPayload): void {
+  private fanoutPatch(room: Room, patch: VtPatchPayload, patchBuffer?: Buffer): void {
+    const buffer = patchBuffer ?? controlBuffer(patch);
     for (const viewer of room.viewers.values()) {
       if (!viewer.subscribed) continue;
       if (viewer.attachment === 'DISCONNECTED_BACKPRESSURE') continue;
-      this.pushToViewer(room, viewer, { type: FRAME_TYPE_VT_PATCH, payload: controlBuffer(patch) });
+      this.pushToViewer(room, viewer, { type: FRAME_TYPE_VT_PATCH, payload: buffer });
       viewer.lastDelivered.set(patch.execution_id, patch.pty_output_seq);
     }
   }

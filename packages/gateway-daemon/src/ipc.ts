@@ -330,15 +330,19 @@ class ConnectionState {
     let buffered: Buffer = Buffer.alloc(0);
     let v2 = false;
 
-    const writeV2 = (type: number, body: unknown): void => {
-      this.submit(type, Buffer.from(JSON.stringify(body), 'utf8'));
+    const writeV2 = (type: number, body: unknown): boolean => {
+      // R5-02: no ordinary output is submitted while OUTBOUND_BLOCKED. The
+      // caller treats a refusal as "not sent now"; the response is regenerated
+      // when the retained request re-executes after drain.
+      if (this.outboundBlocked && !this.terminal) return false;
+      return this.submit(type, Buffer.from(JSON.stringify(body), 'utf8'));
     };
     const nack = (reason: string, detail?: string): void => {
       writeV2(FRAME_TYPE_CONTROL, detail === undefined ? { op: 'Nack', reason } : { op: 'Nack', reason, detail });
     };
     const disconnect = (reason: DisconnectReason): void => {
-      writeV2(FRAME_TYPE_CONTROL, { op: 'Disconnect', reason });
-      this.socket.destroy();
+      // P1: terminal handling overrides blocked delivery — never wait for drain.
+      this.beginTerminal(reason);
     };
 
     const serveV2Frame = (type: number, payload: Buffer): void => {
@@ -508,10 +512,27 @@ class ConnectionState {
     };
     let executing = true;
 
+    // R5 §7/P3: the shared serving entry — live decoded frames AND retained
+    // (drain-resumed) frames execute through this one path.
+    this.serveFrame = serveV2Frame;
+
     this.socket.on('data', (chunk: Buffer) => {
       if (this.closed) return;
       buffered = Buffer.concat([buffered, chunk]);
       if (!v2) {
+        // R5/P2 boundary completeness: a LARGE valid Hello (up to the
+        // canonical 256 KiB payload) legitimately arrives in multiple chunks.
+        // A partial v2 candidate (declared length in bounds, frame not yet
+        // complete) must WAIT, not fall through to the 64 KiB v1 cap, which
+        // would destroy a canonical-boundary Hello mid-arrival. A genuine v1
+        // line starts with '{' (0x7b), so its u32be length prefix is always
+        // far above MAX_V2_FRAME_BYTES — the wait never delays v1.
+        if (buffered.byteLength >= 5) {
+          const declared = buffered.readUInt32BE(0);
+          if (declared <= MAX_V2_FRAME_BYTES && buffered.byteLength < 5 + declared) {
+            return; // incomplete v2 candidate: wait for the remainder
+          }
+        }
         if (looksLikeV2Hello(buffered)) {
           v2 = true;
           const step = decodeV2Frames(buffered);
@@ -567,33 +588,120 @@ class ConnectionState {
    * write, and reschedule if work remains.
    */
   pump(budget: number): void {
-    if (this.closed || this.server.isStopping()) return;
+    if (this.closed || this.terminal || this.server.isStopping()) return;
     const rooms = this.handlers.rooms?.();
     if (rooms === undefined) return;
     const roomId = this.roomId;
     const viewerId = this.viewerId;
     if (roomId === null || viewerId === null) return;
+    // P1 ordering: a terminal condition overrides ordinary blocked delivery —
+    // check pendingDisconnect BEFORE any write attempt, so a blocked peer is
+    // never left waiting for 'drain' to learn its session ended.
+    const pendingNow = rooms.pendingDisconnect(roomId, viewerId);
+    if (pendingNow !== null) {
+      this.beginTerminal(pendingNow);
+      return;
+    }
     const myToken = this.token;
     let sent = 0;
     while (sent < budget) {
       // Token/stopping guard: a replace/close during delivery invalidates this turn.
-      if (this.closed || this.server.isStopping() || this.token !== myToken) return;
+      if (this.closed || this.terminal || this.server.isStopping() || this.token !== myToken) return;
       const peek = rooms.peekOutbox(roomId, viewerId);
       if (peek.length === 0) break;
       const frame = peek[0]!;
+      if (frame.payload.byteLength > MAX_V2_FRAME_BYTES) {
+        // P2: internally generated oversized outbound payload — fail closed;
+        // it is NEVER emitted. (The 1 MiB viewer queue is capacity, not size.)
+        this.beginTerminal('frame_too_large');
+        return;
+      }
       if (this.submit(frame.type, frame.payload)) {
         rooms.commitOutbox(roomId, viewerId, 1, expectedBytes(frame));
         sent += 1;
       } else {
         // OUTBOUND_BLOCKED: the suffix stays queued, exact-prefix retained.
-        this.outboundBlocked = true;
-        break;
+        this.enterOutboundBlocked();
+        return;
       }
     }
-    // Reschedule when work remains (R5 §7) — unless blocked (drain sweeps) or stopping.
+    // Terminal reconciliation: a pending disconnect is delivered after drain.
+    const pending = rooms.pendingDisconnect(roomId, viewerId);
+    if (pending !== null) {
+      this.beginTerminal(pending);
+      return;
+    }
+    // Reschedule when work remains (R5 §7) — unless blocked or stopping.
     if (!this.outboundBlocked && rooms.peekOutbox(roomId, viewerId).length > 0 && !this.server.isStopping()) {
       this.server.scheduleRoomDelivery(roomId);
     }
+  }
+
+  /** R5-02: the explicit OUTBOUND_BLOCKED transition. */
+  private enterOutboundBlocked(): void {
+    if (this.outboundBlocked || this.terminal || this.closed) return;
+    this.outboundBlocked = true;
+    // P1/P3: resume on drain — exactly once, token-guarded.
+    const myToken = this.token;
+    this.socket.once('drain', () => {
+      if (this.closed || this.terminal || this.token !== myToken) return;
+      this.outboundBlocked = false;
+      // P3: drain resumes at exactly the first unexecuted retained request.
+      const retained = this.retainedInput.splice(0, this.retainedInput.length);
+      this.retainedInputBytes = 0;
+      this.executeRetained(retained);
+      // Pending outbox work sweeps naturally on the next pump.
+      this.pump(BUDGET_FRAMES_PER_TURN);
+    });
+  }
+
+  /** P3: execute retained decoded requests in original order (drain-resume path). */
+  private executeRetained(frames: readonly V2Frame[]): void {
+    for (let i = 0; i < frames.length; i++) {
+      if (this.closed || this.terminal) return;
+      if (this.outboundBlocked) {
+        // Blocked again mid-resume: retain the remainder again, in order.
+        this.retainInput(frames.slice(i));
+        return;
+      }
+      this.serveRetainedFrame(frames[i]!);
+    }
+  }
+
+  private serveRetainedFrame(frame: V2Frame): void {
+    // Re-enter the same serving path the live decoder uses. The frame serving
+    // closure is retained for the connection's lifetime.
+    this.serveFrame?.(frame.type, frame.payload);
+  }
+
+  /** Set by begin(): the frame-serving entry (shared by live and retained paths). */
+  private serveFrame: ((type: number, payload: Buffer) => void) | null = null;
+
+  /**
+   * P1 — terminal handling overrides ordinary blocked delivery. A terminal
+   * condition NEVER waits for 'drain': ordinary delivery stops, pending work
+   * is invalidated, ONE bounded terminal notification (≤ TERMINAL_ALLOWANCE)
+   * is attempted, the owned connection is destroyed, and token-guarded
+   * cleanup finishes. Peer receipt is NOT claimed.
+   */
+  beginTerminal(reason: DisconnectReason): void {
+    if (this.terminal || this.closed) return;
+    this.terminal = true;
+    this.outboundBlocked = false;
+    this.token += 1; // invalidate ordinary pending delivery work
+    // One bounded terminal notification, attempted once, never resent.
+    try {
+      const notice = encodeV2FrameChecked(
+        FRAME_TYPE_CONTROL,
+        Buffer.from(JSON.stringify({ op: 'Disconnect', reason }), 'utf8'),
+      );
+      if (notice.byteLength <= TERMINAL_ALLOWANCE_BYTES + MAX_ENCODED_V2_FRAME_BYTES) {
+        this.socket.write(notice);
+      }
+    } catch {
+      /* the notification is best-effort and bounded; receipt not claimed */
+    }
+    this.socket.destroy();
   }
 
   /**
@@ -604,14 +712,8 @@ class ConnectionState {
     if (this.terminal || this.closed) return false;
     const encoded = encodeV2FrameChecked(type, payload);
     const ok = this.socket.write(encoded);
-    if (!ok) this.onWriteFalse();
+    if (!ok) this.enterOutboundBlocked();
     return ok;
-    // NOTE wave 2: OUTBOUND_BLOCKED stops later ordinary writes entirely.
-  }
-
-  private onWriteFalse(): void {
-    // Wave 2: state transition + drain listener + decoded-batch halt.
-    this.outboundBlocked = true;
   }
 
   /** P3: retain unexecuted decoded input, bounded; over-bound fails closed. */
