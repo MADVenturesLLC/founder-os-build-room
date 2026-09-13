@@ -1074,3 +1074,157 @@ describe('R5 correction — Slice H — canonical frame limit', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// R5 correction — Slice D — enforceable capacity (integration)
+// ---------------------------------------------------------------------------
+
+describe('R5 correction — Slice D — enforceable capacity', () => {
+  it('XD1 a non-reading peer is disconnected at the viewer-queue bound (256 frames / 1 MiB), not served unboundedly; a healthy viewer keeps progressing', async () => {
+    await withGateway(async (gateway) => {
+      await gateway.boot();
+      const rooms = gateway.daemon.rooms;
+
+      // Healthy viewer (reads).
+      const healthy = await connectV2(gateway.paths.socketPath);
+      // Non-reading viewer.
+      const slow = await connectV2(gateway.paths.socketPath);
+      try {
+        for (const client of [healthy, slow]) {
+          client.send({ op: 'Hello', ipc_version: 2 });
+          await client.next();
+        }
+        healthy.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'xd1-h', viewer_caps: 'read' });
+        await nextOp(healthy, 'JoinRoom');
+        slow.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'xd1-s', viewer_caps: 'read' });
+        await nextOp(slow, 'JoinRoom');
+        slow.socket.pause(); // stops reading
+
+        // Flood fixture output in waves with LARGE patches (~4 KiB each), so
+        // the slow viewer's kernel/socket buffers fill, its server-side writes
+        // return false (OUTBOUND_BLOCKED), and its RUNTIME queue then grows to
+        // the Table-11 bound (256 frames / 1 MiB) → Gap + backpressure
+        // disconnect. The healthy viewer is drained between waves so its own
+        // queue stays under the bound.
+        // Flood the slow viewer with SMALL patches in bounded batches. The
+        // slow viewer never reads: its server socket blocks (write→false,
+        // OUTBOUND_BLOCKED, no drain), so its RUNTIME queue grows batch after
+        // batch until it crosses the Table-11 bound (256 frames / 1 MiB) →
+        // Gap + backpressure disconnect. The healthy viewer is drained between
+        // batches and its own queue never approaches the bound (6 × ~8 KiB).
+        const patchText = 'd'.repeat(8 * 1_024);
+        let healthyPatches = 0;
+        const drainHealthy = async (budget: number): Promise<void> => {
+          for (let i = 0; i < budget; i++) {
+            const frame = await healthy.next(1_500);
+            if (frame.type === FRAME_TYPE_VT_PATCH) healthyPatches += 1;
+          }
+        };
+        let slowDisconnected = false;
+        slow.socket.once('close', () => {
+          slowDisconnected = true;
+        });
+        // Server-side truth: the slow viewer's attachment flips to
+        // DISCONNECTED_BACKPRESSURE at the Table-11 bound. (The paused client
+        // is NEVER resumed mid-run — resuming would drain its kernel buffer
+        // and defeat the backpressure under test.)
+        const slowAttachment = (): string => {
+          const snapshot = rooms.snapshot(FIXTURE_ROOM_ID);
+          const slowViewer = snapshot?.viewers.at(-1);
+          return slowViewer?.attachment ?? 'UNKNOWN';
+        };
+        for (let batch = 0; batch < 200; batch++) {
+          for (let i = 0; i < 6; i++) {
+            rooms.emitFixturePatch(FIXTURE_ROOM_ID, i % 2 === 0 ? 'slot-a' : 'slot-b', patchText);
+          }
+          await drainHealthy(10).catch(() => undefined);
+        }
+        // The Table-11 bound fired: the slow viewer holds a durable
+        // viewer_backpressure disconnect (the attachment may already read
+        // DETACHED once the adapter's terminal close settles).
+        const slowPending = rooms.pendingDisconnect(
+          FIXTURE_ROOM_ID,
+          rooms.snapshot(FIXTURE_ROOM_ID)?.viewers.at(-1)?.viewer_id ?? '',
+        );
+        assert.equal(slowPending, 'viewer_backpressure', 'the non-reading viewer hit the viewer-queue bound');
+        slow.socket.resume();
+        await sleep(300);
+        // Final drain: read everything until a full second of idleness.
+        for (;;) {
+          try {
+            const frame = await healthy.next(1_000);
+            if (frame.type === FRAME_TYPE_VT_PATCH) healthyPatches += 1;
+          } catch {
+            break;
+          }
+        }
+        assert.ok(slowDisconnected, 'the slow peer observed the server-side closure after resuming');
+        assert.ok(healthyPatches >= 200, `the healthy viewer progressed (${String(healthyPatches)} patches) while the slow one stalled`);
+      } finally {
+        healthy.socket.destroy();
+        slow.socket.destroy();
+      }
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R5 correction — Slice G — connection replacement and selective rejoin (real IPC)
+// ---------------------------------------------------------------------------
+
+describe('R5 correction — Slice G — replacement and selective rejoin', () => {
+  it('XG1 a replacement connection keeps authority; the old socket closing never detaches it', async () => {
+    await withGateway(async (gateway) => {
+      await gateway.boot();
+      const first = await connectV2(gateway.paths.socketPath);
+      let capability = '';
+      try {
+        first.send({ op: 'Hello', ipc_version: 2 });
+        await first.next();
+        first.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'xg1', viewer_caps: 'read' });
+        const join = await nextOp(first, 'JoinRoom');
+        capability = String(join['viewer_capability']);
+      } finally {
+        // The OLD socket dies WITHOUT a clean leave.
+        first.socket.destroy();
+      }
+      await sleep(150); // let the server see the old close
+      // The replacement presents the SAME capability (Surviving join).
+      const replacement = await connectV2(gateway.paths.socketPath);
+      try {
+        replacement.send({ op: 'Hello', ipc_version: 2 });
+        await replacement.next();
+        replacement.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'xg1b', viewer_capability: capability, viewer_caps: 'read' });
+        const rejoin = await nextOp(replacement, 'JoinRoom');
+        assert.equal(rejoin['ok'], true, 'the surviving viewer rejoins');
+        // Live delivery flows to the replacement…
+        gateway.daemon.rooms.emitFixturePatch(FIXTURE_ROOM_ID, 'slot-a', 'xg1 replacement tick');
+        const patch = await nextPatch(replacement, 'slot-a');
+        assert.equal(patch.text, 'xg1 replacement tick');
+      } finally {
+        replacement.socket.destroy();
+      }
+    });
+  });
+
+  it('XG2 occupancy_closed stays truthfully closed: a rejoin after close receives the closed state, never live occupancy', async () => {
+    await withGateway(async (gateway) => {
+      await gateway.boot();
+      gateway.daemon.rooms.interruptFixtureRoom(FIXTURE_ROOM_ID);
+      gateway.daemon.rooms.closeFixtureRoom(FIXTURE_ROOM_ID);
+      const client = await connectV2(gateway.paths.socketPath);
+      try {
+        client.send({ op: 'Hello', ipc_version: 2 });
+        await client.next();
+        client.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'xg2', viewer_caps: 'read' });
+        const join = await nextOp(client, 'JoinRoom');
+        assert.equal(join['ok'], true);
+        const snapshot = join['snapshot'] as { occupancy: string };
+        assert.equal(snapshot.occupancy, 'CLOSED', 'closed occupancy remains CLOSED on rejoin');
+        assert.equal(join['recovery_kind'], 'RECONSTRUCTION', 'never LIVE for a closed room');
+      } finally {
+        client.socket.destroy();
+      }
+    });
+  });
+});
