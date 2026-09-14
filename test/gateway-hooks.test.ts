@@ -363,7 +363,10 @@ describe('gateway-hooks · policy bundles', () => {
 
 describe('gateway-hooks · a seat-registry deny prevents dispatch', () => {
   it('production binding: the V1 resolver refuses every seat, the hook blocks with the resolver\'s own refusal, dispatcher count stays 0', async () => {
-    const interceptor = new ToolCallInterceptor({ pre: [seatPolicyHook()] });
+    // The production binding is composed HERE: the real V1.1 gate with no
+    // options over the real V1 resolver. The hook module itself imports
+    // nothing from control-plane (see the static test below).
+    const interceptor = new ToolCallInterceptor({ pre: [seatPolicyHook(createSeatPolicyGate())] });
     const d = countingDispatcher();
     for (const seat of ['researcher', 'architect', 'builder', 'independent-reviewer']) {
       const expected: SeatResolution = resolveSeat(seat);
@@ -477,17 +480,23 @@ describe('gateway-hooks · static locks', () => {
     }
   });
 
-  it('hook imports are bounded: node type utilities, sibling hook modules, the Lane A entry, the seat-registry entry, and the V1.1 gate module only', () => {
+  it('hook imports are bounded: sibling hook modules, the Lane A entry, and the seat-registry entry only — never control-plane', () => {
     for (const file of tsFiles(HOOKS_SRC)) {
-      for (const specifier of specifiers(readFileSync(file, 'utf8'))) {
+      const source = readFileSync(file, 'utf8');
+      for (const specifier of specifiers(source)) {
         const ok =
           /^\.\/[a-z-]+\.js$/.test(specifier) ||
           specifier === '../../../seat-output-schema/src/index.js' ||
-          specifier === '../../../seat-registry/src/index.js' ||
-          specifier === '../../../control-plane/src/seat-policy.js';
+          specifier === '../../../seat-registry/src/index.js';
         assert.ok(ok, `${relative(REPO_ROOT, file)} imports ${specifier}`);
+        assert.ok(!specifier.includes('control-plane'), `${relative(REPO_ROOT, file)} takes a dependency edge onto the control-plane workspace member`);
       }
     }
+  });
+
+  it('seatPolicyHook has no default gate: a missing or malformed gate throws before any call is judged', () => {
+    assert.throws(() => seatPolicyHook(undefined as never), TypeError);
+    assert.throws(() => seatPolicyHook({} as never), TypeError);
   });
 
   it('the daemon manifest declares no new dependency, and the hooks are reachable from the daemon entry', () => {

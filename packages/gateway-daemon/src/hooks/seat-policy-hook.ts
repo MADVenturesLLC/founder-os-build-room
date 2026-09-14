@@ -12,14 +12,16 @@
  * blocked; `allowed` is reachable only through the gate's test seam. That
  * is the intended state of the world until a Founder act stands a lane up.
  *
- * Import boundary: the gate lives in
- * `packages/control-plane/src/seat-policy.ts` and is imported as that one
- * module (not the control-plane package entry, which would pull the
- * Postgres and HTTP surfaces into the daemon). The module itself imports
- * only the Seat Registry public entry and node type utilities.
+ * Import boundary: this module declares the `SeatDispatchGate` contract and
+ * imports nothing from `packages/control-plane`. The V1.1 gate
+ * (`createSeatPolicyGate` in `packages/control-plane/src/seat-policy.ts`)
+ * satisfies the contract structurally and is SUPPLIED by whoever composes
+ * the interceptor — today only the test suite, which binds the real gate
+ * over the real V1 resolver. The daemon package therefore takes no
+ * dependency edge onto the control-plane workspace member, declared or
+ * undeclared (advisory review finding on PR #36, taken).
  */
 
-import { createSeatPolicyGate } from '../../../control-plane/src/seat-policy.js';
 import type { PreHook, PreHookDecision, ToolCall } from './tool-call-hooks.js';
 
 /** The slice of the V1.1 gate this hook needs; structurally satisfied by `SeatPolicyGate`. */
@@ -34,8 +36,16 @@ export const SEAT_HOOK_CODES = {
   seat_policy_refused: 'seat_policy_refused',
 } as const;
 
-/** Default binding: the real V1.1 gate over the real V1 resolver — no options, no seam. */
-export function seatPolicyHook(gate: SeatDispatchGate = createSeatPolicyGate(), name = 'seat-policy'): PreHook {
+/**
+ * Build the hook over a supplied gate. There is deliberately no default:
+ * a composition root must name the gate it binds (production: the V1.1
+ * `createSeatPolicyGate()` with no options), so the binding is visible at
+ * the call site rather than hidden in a cross-package default.
+ */
+export function seatPolicyHook(gate: SeatDispatchGate, name = 'seat-policy'): PreHook {
+  if (gate === null || typeof gate !== 'object' || typeof gate.evaluateDispatch !== 'function') {
+    throw new TypeError('seatPolicyHook requires a SeatDispatchGate; there is no default binding');
+  }
   return {
     name,
     run(call: ToolCall): PreHookDecision {
