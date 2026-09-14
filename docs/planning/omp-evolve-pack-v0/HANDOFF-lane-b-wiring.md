@@ -128,11 +128,18 @@ Mapping to the act's tests:
   `packages/redaction/src/` match their SHA-256 at `6ef7d12`; none reads
   the process environment.
 - **T5** — full suite and lockfile, above.
-- **T6** — darwin acceptance with the real Keychain item: **not performed**;
-  F1 (the mint) has not been reported as done. Record here when it is: host,
-  timestamp, key fingerprint (per correction 7), `find-generic-password`
-  exit 0, one Phase 2 fixture run with the evidence file present and the
-  token absent.
+- **T6** — darwin acceptance with the real Keychain item: **performed by
+  the Founder on `MikeMacBook.local`, 2026-09-14T10:40:34Z**, from a
+  worktree of `main` at `61f4bc4` (the wiring merge). Fixture-only writer
+  acceptance, not a counted Phase 2 run: `CONTROL_PLANE_URL` pointed at a
+  closed local port, a throwaway `fixture-<random>` value as
+  `CONTROL_PLANE_TOKEN` and inside `PHASE2_ENVIRONMENT`, one attempt,
+  1 ms windows. Observed: the boundary opened under the real Keychain item
+  (no refusal line); exit 1 (gate unsatisfied, as expected with no control
+  plane); one evidence file written; `grep -c` of the fixture value in the
+  file = 0; `grep -c 'REDACTED:CONTROL_PLANE_TOKEN'` = 1; the stdout
+  summary printed the environment already redacted. Pasted into the
+  session by the Founder; recorded here from that paste.
 
 ## Fail-closed contract, as built
 
@@ -167,10 +174,23 @@ Mapping to the act's tests:
   invocation exits 1 with the bundle written. Unchanged behaviour, noted
   because the first version of T1 tripped on it.
 
+## F1 — custody record
+
+- Act: `security add-generic-password -a hmac-v1 -s mad.redaction.hmac -w "$(openssl rand -hex 32)"`,
+  performed by the Founder (`Actor-Id: founder`) on `MikeMacBook.local`,
+  reported in session on 2026-09-14 shortly before 10:40Z; the exact mint
+  timestamp was not captured. The T6 run at 10:40:34Z is the live check
+  that the item existed and decoded to a 32-byte key at that time.
+- Key fingerprint (first 8 hex of SHA-256 over the decoded 32 raw bytes,
+  per correction 7): `db68febb`. Cite this fingerprint in prose in any
+  decision record that hashes evidence written under this key (rotation
+  ruling (a)).
+- The value was never printed, copied, or seen by the agent; only the
+  fingerprint was reported.
+
 ## Open items
 
-- **F1** — mint `mad.redaction.hmac` / `hmac-v1` on the darwin gateway host
-  (Founder custody act), then T6.
+- ~~F1 and T6~~ — done, above.
 - Journal wiring when a journal store exists.
 - A package revision adding a plain-text stderr path to `HarnessLogSink`.
 - Merge is a separate exact-SHA Founder act; this file asserts none.
