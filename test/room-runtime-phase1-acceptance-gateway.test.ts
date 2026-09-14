@@ -38,6 +38,7 @@ import {
   defaultGatewayDirectory,
   ipcRequest,
   type OutFrame,
+  type RoomRuntime,
 } from '../packages/gateway-daemon/src/index.js';
 import { FRAME_TYPE_CONTROL, FRAME_TYPE_VT_PATCH, decodeV2Frames, encodeV2Frame } from '../packages/gateway-protocol/src/index.js';
 import {
@@ -559,12 +560,16 @@ describe('Slice D — lifecycle cleanup', () => {
       const status = await ipcRequest(socketPath, { op: 'status' });
       assert.equal(status.ok, true);
 
-      // Two synthetic streams are flowing through the real daemon.
-      await sleep(FIXTURE_INTERVAL_MS + 200);
+      // Two synthetic streams flow through the real daemon once a viewer is
+      // ATTACHED (Run 02 harness correction: synthetic output is
+      // viewer-presence gated; a FollowRoom read alone mints no viewer).
       const client = await connectV2(socketPath);
       try {
         client.send({ op: 'Hello', ipc_version: 2 });
         await client.next();
+        client.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 't13', viewer_caps: 'read' });
+        await nextOp(client, 'JoinRoom');
+        await sleep(FIXTURE_INTERVAL_MS + 200);
         client.send({ op: 'FollowRoom', target: FIXTURE_ROOM_ID });
         const follow = await nextOp(client, 'FollowRoom');
         const snapshot = follow['snapshot'] as { executions: { execution_id: string; cursors: { ptyOutputSeq: number } }[] };
@@ -1220,5 +1225,284 @@ describe('R5 correction — Slice G — replacement and selective rejoin', () =>
         client.socket.destroy();
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AE-01 RUN02 HARNESS CORRECTION — RED-first slices (Founder act, 2026-09-13:
+// viewer-presence-gated synthetic output). Synthetic fixture output must not
+// accumulate while zero viewers are ATTACHED; each interval inspects the
+// public projection (`snapshot(roomId).viewers[].attachment`) and emits one
+// tick per execution only when at least one viewer is ATTACHED. The producer
+// stays non-blocking; Gateway backpressure semantics are untouched (H6 keeps
+// the real bound; a slow attached viewer still gets viewer_backpressure).
+// ---------------------------------------------------------------------------
+
+/** The two pty_output_seq values (slot-a, slot-b) via the public projection. */
+function seqsOf(rooms: RoomRuntime): [number, number] {
+  const snapshot = rooms.snapshot(FIXTURE_ROOM_ID);
+  assert.ok(snapshot !== null, 'fixture room exists');
+  const seqOf = (id: string): number => {
+    const execution = snapshot.executions.find((candidate) => candidate.execution_id === id);
+    assert.ok(execution !== undefined, `execution ${id} exists`);
+    return execution.cursors.ptyOutputSeq;
+  };
+  return [seqOf('slot-a'), seqOf('slot-b')];
+}
+
+/** Viewers currently ATTACHED, via the public projection (act §7). */
+function attachedViewerCount(rooms: RoomRuntime): number {
+  const snapshot = rooms.snapshot(FIXTURE_ROOM_ID);
+  assert.ok(snapshot !== null, 'fixture room exists');
+  return snapshot.viewers.filter((viewer) => viewer.attachment === 'ATTACHED').length;
+}
+
+/** Poll until `predicate` holds, or fail with `what` after `timeoutMs`. */
+async function waitForCondition(predicate: () => Promise<boolean> | boolean, timeoutMs: number, what: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await predicate()) return;
+    if (Date.now() > deadline) throw new Error(`condition not reached within ${String(timeoutMs)}ms: ${what}`);
+    await sleep(50);
+  }
+}
+
+describe('AE-01 Run02 correction — viewer-presence-gated synthetic output', () => {
+  it('H1 the synthetic producer emits nothing while zero viewers are attached (no pre-viewer backlog)', async (t) => {
+    // Wait substantially longer than the window that produced Run 02's
+    // 601-frame overflow. Run 02 idled ~5 minutes (601 ticks × 500ms); six
+    // minutes of mock-idle time at the same cadence is a materially longer
+    // idle window than the one that overflowed Run 02.
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    await withGateway(async (gateway) => {
+      const rooms = gateway.daemon.rooms;
+      const errors: unknown[] = [];
+      const output = beginFixtureOutput(rooms, (error) => errors.push(error));
+      try {
+        assert.equal(attachedViewerCount(rooms), 0, 'no viewer is attached at start');
+        t.mock.timers.tick(6 * 60 * 1_000);
+        assert.equal(output.ticks(), 0, 'no tick was emitted at all');
+        assert.deepEqual(seqsOf(rooms), [0, 0], 'no sequence increment while zero viewers attached');
+        assert.deepEqual(errors, []);
+        // Ties H1 to H2: once a viewer attaches, output begins.
+        const joined = rooms.joinRoom(FIXTURE_ROOM_ID, 'h1-after', undefined, 'read');
+        assert.equal(joined.ok, true);
+        t.mock.timers.tick(2_000);
+        assert.ok(output.ticks() >= 1, 'output begins once a viewer is attached');
+        assert.deepEqual(seqsOf(rooms), [output.ticks(), output.ticks()], 'both executions in lockstep with ticks');
+      } finally {
+        output.halt();
+      }
+    });
+  });
+
+  it('H2 attaching a real IPC v2 read-only viewer starts synthetic output for both executions — no control request beyond the join', async () => {
+    const signals = new EventEmitter();
+    const handle = runAcceptance({ signals, stdout: () => undefined, stderr: () => undefined, exit: () => undefined });
+    try {
+      const gateway = await handle.ready;
+      const client = await connectV2(gateway.paths.socketPath);
+      try {
+        client.send({ op: 'Hello', ipc_version: 2 });
+        await client.next();
+        client.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'h2', viewer_caps: 'read' });
+        await nextOp(client, 'JoinRoom');
+        // No further control request: the JOIN alone is the presence signal.
+        await sleep(FIXTURE_INTERVAL_MS * 3 + 300);
+        const seqs = seqsOf(gateway.daemon.rooms);
+        assert.ok(seqs[0] >= 1, `slot-a began (seq ${String(seqs[0])})`);
+        assert.ok(seqs[1] >= 1, `slot-b began (seq ${String(seqs[1])})`);
+      } finally {
+        client.socket.destroy();
+      }
+    } finally {
+      signals.emit('SIGINT');
+      await handle.done;
+    }
+  });
+
+  it('H3 output pauses when the only attached viewer detaches; sequences do not advance while zero viewers are attached', async () => {
+    const signals = new EventEmitter();
+    const handle = runAcceptance({ signals, stdout: () => undefined, stderr: () => undefined, exit: () => undefined });
+    try {
+      const gateway = await handle.ready;
+      const rooms = gateway.daemon.rooms;
+      const client = await connectV2(gateway.paths.socketPath);
+      try {
+        client.send({ op: 'Hello', ipc_version: 2 });
+        await client.next();
+        client.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'h3', viewer_caps: 'read' });
+        await nextOp(client, 'JoinRoom');
+        await waitForCondition(() => seqsOf(rooms)[0] >= 1, 5_000, 'attached viewer saw output begin');
+      } finally {
+        client.socket.destroy(); // abrupt close → adapter viewerQuit → DETACHED
+      }
+      await waitForCondition(() => attachedViewerCount(rooms) === 0, 5_000, 'viewer detached after socket close');
+      const frozen = seqsOf(rooms);
+      await sleep(FIXTURE_INTERVAL_MS * 4 + 200);
+      assert.deepEqual(seqsOf(rooms), frozen, 'sequences do not advance while zero viewers are attached');
+      assert.ok(frozen[0] >= 1, 'output had begun before the pause (precondition)');
+    } finally {
+      signals.emit('SIGINT');
+      await handle.done;
+    }
+  });
+
+  it('H4 output resumes monotonically on reattach — no reset, no duplicate tick', async () => {
+    const signals = new EventEmitter();
+    const handle = runAcceptance({ signals, stdout: () => undefined, stderr: () => undefined, exit: () => undefined });
+    try {
+      const gateway = await handle.ready;
+      const rooms = gateway.daemon.rooms;
+      let capability = '';
+      const first = await connectV2(gateway.paths.socketPath);
+      try {
+        first.send({ op: 'Hello', ipc_version: 2 });
+        await first.next();
+        first.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'h4', viewer_caps: 'read' });
+        const join = await nextOp(first, 'JoinRoom');
+        capability = String(join['viewer_capability']);
+        await waitForCondition(() => seqsOf(rooms)[0] >= 1, 5_000, 'output began');
+      } finally {
+        first.socket.destroy();
+      }
+      await waitForCondition(() => attachedViewerCount(rooms) === 0, 5_000, 'detached');
+      const frozen = seqsOf(rooms);
+      await sleep(FIXTURE_INTERVAL_MS * 2 + 100);
+      assert.deepEqual(seqsOf(rooms), frozen, 'paused while detached');
+      // Reattach: a surviving join presenting the SAME Gateway-minted capability.
+      const re = await connectV2(gateway.paths.socketPath);
+      try {
+        re.send({ op: 'Hello', ipc_version: 2 });
+        await re.next();
+        re.send({
+          op: 'JoinRoom',
+          room_id: FIXTURE_ROOM_ID,
+          idempotency_key: 'h4-re',
+          viewer_capability: capability,
+          viewer_caps: 'read',
+        });
+        await nextOp(re, 'JoinRoom');
+        await sleep(FIXTURE_INTERVAL_MS * 2 + 200);
+        const after = seqsOf(rooms);
+        assert.ok(after[0] > frozen[0], `slot-a advanced monotonically (${String(frozen[0])} -> ${String(after[0])})`);
+        assert.ok(after[1] > frozen[1], `slot-b advanced monotonically (${String(frozen[1])} -> ${String(after[1])})`);
+        assert.equal(after[0], after[1], 'both executions remain in lockstep');
+      } finally {
+        re.socket.destroy();
+      }
+    } finally {
+      signals.emit('SIGINT');
+      await handle.done;
+    }
+  });
+
+  it('H5 with two attached viewers the producer still emits once per interval globally — two viewers do not double the rate', async (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    await withGateway(async (gateway) => {
+      const rooms = gateway.daemon.rooms;
+      const errors: unknown[] = [];
+      const output = beginFixtureOutput(rooms, (error) => errors.push(error));
+      try {
+        for (const key of ['h5-a', 'h5-b']) {
+          const joined = rooms.joinRoom(FIXTURE_ROOM_ID, key, undefined, 'read');
+          assert.equal(joined.ok, true, `viewer ${key} joined`);
+        }
+        assert.equal(attachedViewerCount(rooms), 2, 'two viewers are attached');
+        t.mock.timers.tick(5_000);
+        assert.equal(output.ticks(), 10, 'exactly window/interval ticks with two viewers (5000/500)');
+        assert.deepEqual(seqsOf(rooms), [10, 10]);
+        t.mock.timers.tick(5_000);
+        assert.equal(output.ticks(), 10 + 10, 'still one emission per interval globally after another window');
+        assert.deepEqual(errors, []);
+      } finally {
+        output.halt();
+      }
+    });
+  });
+
+  it('H6 a genuinely non-reading attached viewer still hits the normal Gateway viewer-queue bound and viewer_backpressure disconnect', async () => {
+    await withGateway(async (gateway) => {
+      await gateway.boot();
+      const rooms = gateway.daemon.rooms;
+      const healthy = await connectV2(gateway.paths.socketPath);
+      const slow = await connectV2(gateway.paths.socketPath);
+      try {
+        for (const client of [healthy, slow]) {
+          client.send({ op: 'Hello', ipc_version: 2 });
+          await client.next();
+        }
+        healthy.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'h6-h', viewer_caps: 'read' });
+        await nextOp(healthy, 'JoinRoom');
+        slow.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'h6-s', viewer_caps: 'read' });
+        await nextOp(slow, 'JoinRoom');
+        slow.socket.pause();
+        // The 500ms cadence alone would need >2 minutes to cross 256 frames;
+        // drive the real bound directly through the same authorized harness
+        // surface XD1 uses (emitFixturePatch), then assert the backpressure
+        // outcome is unchanged by the correction.
+        for (let i = 0; i < 300; i++) {
+          rooms.emitFixturePatch(FIXTURE_ROOM_ID, i % 2 === 0 ? 'slot-a' : 'slot-b', `h6 flood ${String(i)}`);
+        }
+        const slowViewerId = rooms.snapshot(FIXTURE_ROOM_ID)!.viewers.at(-1)!.viewer_id;
+        const slowPending = rooms.pendingDisconnect(FIXTURE_ROOM_ID, slowViewerId);
+        assert.equal(slowPending, 'viewer_backpressure', 'non-reading viewer hit the queue bound');
+      } finally {
+        healthy.socket.destroy();
+        slow.socket.destroy();
+      }
+    });
+  });
+
+  it('H7 the real runner (npm run phase1:fixture shape) stays quiet while no viewer is attached, then cleans up correctly on SIGINT', async () => {
+    const runner = launchRunner();
+    try {
+      const { socketPath, sessionPath, tempRoot } = await runner.ready();
+      // Mirror Run 02 exactly: a FollowRoom read (which mints no viewer) and
+      // an idle wait substantially longer than Run 02's overflow window.
+      const client = await connectV2(socketPath);
+      try {
+        client.send({ op: 'Hello', ipc_version: 2 });
+        await client.next();
+        client.send({ op: 'FollowRoom', target: FIXTURE_ROOM_ID });
+        await nextOp(client, 'FollowRoom');
+      } finally {
+        client.socket.destroy();
+      }
+      // Idle wait: 3s real time is 6 fixture intervals with zero attached
+      // viewers (Run 02 overflowed after ~5 idle minutes; this is the same
+      // mechanism proven exhaustively by H1's six-minute mock window). Three
+      // real seconds keep the suite inside CI bounds while exercising the
+      // exact Run-02 command sequence.
+      await sleep(3_000);
+      const snapshotResponse = await ipcRequest(socketPath, { op: 'status' });
+      assert.equal(snapshotResponse.ok, true);
+      // Read the sequences through a real v2 FollowRoom read (no viewer).
+      const probe = await connectV2(socketPath);
+      try {
+        probe.send({ op: 'Hello', ipc_version: 2 });
+        await probe.next();
+        probe.send({ op: 'FollowRoom', target: FIXTURE_ROOM_ID });
+        const follow = await nextOp(probe, 'FollowRoom');
+        const snapshot = follow['snapshot'] as { executions: { execution_id: string; cursors: { ptyOutputSeq: number } }[] };
+        assert.deepEqual(
+          snapshot.executions.map((execution) => execution.cursors.ptyOutputSeq),
+          [0, 0],
+          'the real runner emitted nothing while no viewer was attached',
+        );
+      } finally {
+        probe.socket.destroy();
+      }
+      writeFileSync(sessionPath, '{}\n');
+      runner.child.kill('SIGINT');
+      assert.equal(await exitWithin(runner), 0, `clean exit; stderr: ${runner.stderr()}`);
+      assert.equal(existsSync(socketPath), false, 'socket removed');
+      assert.equal(existsSync(sessionPath), false, 'the session file is removed');
+      assert.equal(existsSync(tempRoot), false, 'temporary root removed');
+      assert.match(runner.stderr(), /cleanup settled/);
+      assert.doesNotMatch(runner.stderr(), /FAILED/);
+    } finally {
+      runner.cleanup();
+    }
   });
 });
