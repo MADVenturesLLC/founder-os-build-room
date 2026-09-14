@@ -1,137 +1,92 @@
 name: advisory-reviewers
 
-# Real reviewer-invocation workflow for MADVenturesLLC/founder-os-build-room.
+# Identity-only advisory reviewers for MADVenturesLLC/founder-os-build-room.
 #
 # Each PR against `main` runs two advisory reviewers on the diff and posts
-# each review via the GitHub API so the sidebar shows real review state
-# (`APPROVED` / `CHANGES_REQUESTED` / `COMMENTED`). The reviewers are
-# backed by Claude and Gemini models reachable from CI; the workflow does
-# NOT substitute a PONG for a review. If a reviewer fails to produce a
-# review, the workflow exits non-zero and surfaces a degraded-status check,
-# but the check is non-gating by design — merge does not depend on it.
+# each review via the GitHub API under a distinct App bot actor. The model
+# invocation lives in this workflow; the Apps provide only the bot identity
+# (no model binding, no model-hosting responsibility).
 #
-# Why a separate file:
-#   - This repo has no existing code-review workflow, so there is nothing
-#     to amend.
-#   - Founder rule: each reviewer invocation must be a real review, not a
-#     reachability probe. The previous PONG-probe workflow (PR #31) was
-#     closed in favor of this version.
+# This workflow is purely additive. It does NOT amend any required check,
+# does NOT modify the existing `code-review` workflow, does NOT gate merge,
+# and does NOT change governance. It fails closed (exit 1 with ::error::)
+# if either reviewer fails to produce a review.
 #
-# Per-reviewer contract:
-#   - Inputs: PR head SHA, PR base SHA, PR title, PR body, diff text (capped
-#     at ~200 KB to keep the model call bounded).
-#   - Output: a single review on the PR with `event: 'COMMENT'`, body
-#     naming the reviewer model id and the verdict enum, and zero or more
-#     line-anchored comments pointing at file:line citations in the diff.
-#   - Timeout: 6 minutes per reviewer. Past that, the reviewer is marked
-#     `FAILED` and the workflow continues with the other reviewer.
-#
-# Identity model:
-#   - The two reviewers post under the GitHub Actions bot identity
-#     (`github-actions[bot]`). The review body carries the served-model
-#     id verbatim so the §20 evidence lane records who actually reviewed.
-#   - The Tier-2 roster per `DEC-20260814-02` clause 4 is unchanged.
-#
-# Failure modes:
-#   - Both reviewers succeed: status `success`, description
-#     `advisory reviews posted (gemini-3.8-flash-medium=posted,
-#     claude-opus-5=posted)`.
-#   - One reviewer succeeds, one fails: status `success` with a degraded
-#     note in the description; the PR still gets one real review.
-#   - Both reviewers fail: status `failure`; the check is non-gating so
-#     merge is not blocked, but the PR body §20 paragraph records the
-#     gap so the next manual pass addresses it.
+# Bots produced:
+#   - gemini-3.8-flash-medium  -> reviews post under gemini-reviewer-madventures[bot]
+#   - claude-opus-5            -> reviews post under claude-reviewer-madventures[bot]
 
 on:
   pull_request:
-    branches:
-      - main
+    branches: [main]
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
-    inputs:
-      pr_number:
-        description: PR number to re-review (manual refresh).
-        required: false
-        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write   # required by actions/create-github-app-token@v1
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number || github.run_id }}
+  group: advisory-reviewers-${{ github.event.pull_request.head.ref }}
   cancel-in-progress: true
 
 jobs:
   review:
-    name: advisory-reviewers
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      pull-requests: write
+    runs-on: ubuntu-latest
     steps:
-      - name: Resolve PR number and head SHA
+      - uses: actions/checkout@v4
+
+      - name: Resolve PR identities
         id: resolve
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          if [ -n "${{ inputs.pr_number }}" ]; then
-            PR_NUMBER="${{ inputs.pr_number }}"
-          else
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-          fi
-          HEAD_SHA=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq '.head.sha')
-          BASE_SHA=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq '.base.sha')
-          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
-          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
 
-      - name: Fetch diff (capped at ~200 KB)
+      - name: Pull PR diff (read-only)
         id: diff
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          DIFF=$(gh api "repos/${{ github.repository }}/pulls/${{ steps.resolve.outputs.pr_number }}" -H "Accept: application/vnd.github.v3.diff" -q '.')
-          # Cap at 200,000 bytes (around 50 KB of typical diff text; 200 KB
-          # is the upper limit the model clients accept cleanly).
-          printf '%s' "$DIFF" | head -c 200000 > /tmp/pr.diff
-          echo "diff_bytes=$(wc -c < /tmp/pr.diff)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup CLI for model invocations
-        id: tools
-        run: |
-          set -euo pipefail
-          # We do NOT install agy via apt/npm; the runner image ships agy as
-          # a pre-installed binary in the standard image. If the binary is
-          # missing, both reviewer steps will fail and the workflow will
-          # surface the gap.
-          if command -v agy >/dev/null 2>&1; then
-            echo "agy_present=yes" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::agy CLI not found in runner image; advisory-reviewers cannot run from CI."
-            echo "agy_present=no" >> "$GITHUB_OUTPUT"
+          gh api "repos/${{ github.repository }}/pulls/${{ steps.resolve.outputs.pr_number }}" \
+            -H "Accept: application/vnd.github.v3.diff" > /tmp/pr.diff
+          if [ ! -s /tmp/pr.diff ]; then
+            echo "::error::empty diff"
             exit 1
           fi
+
+      # ---- gemini reviewer ----
+
+      - name: Mint gemini reviewer installation token
+        id: gemini-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GEMINI_REVIEWER_APP_ID }}
+          private-key: ${{ secrets.GEMINI_REVIEWER_APP_PRIVATE_KEY }}
 
       - name: Review as gemini-3.8-flash-medium
         id: gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.gemini-token.outputs.token }}
           PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
           HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
-          BASE_SHA: ${{ steps.resolve.outputs.base_sha }}
         run: |
           set -euo pipefail
           if [ -z "${GEMINI_API_KEY:-}" ]; then
-            echo "::notice::GEMINI_API_KEY missing; gemini reviewer step skipped."
-            echo "status=skipped" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::GEMINI_API_KEY missing; gemini reviewer cannot run"
+            exit 1
           fi
           PROMPT=$(printf 'You are gemini-3.8-flash-medium, an advisory code reviewer for MADVenturesLLC/founder-os-build-room. Review the following PR diff. Output a single review body with: (1) one of PASS / PASS-WITH-ADVISORIES / FAIL / REQUEST_CHANGES as the first line, (2) a 1-3 sentence rationale, (3) zero or more bullet-pointed findings with file:line citations when applicable. The diff is:\n\n---\n%s\n---' "$(cat /tmp/pr.diff)")
-          REVIEW=$(printf '%s' "$PROMPT" | timeout 360 agy --print --model gemini-3.8-flash-medium --effort medium --dangerously-skip-permissions --print-timeout 5m 2>&1 || true)
+          REVIEW=$(printf '%s' "$PROMPT" \
+            | timeout 360 agy --print --model gemini-3.8-flash-medium \
+              --effort medium --dangerously-skip-permissions \
+              --print-timeout 5m 2>&1)
           if [ -z "$REVIEW" ]; then
-            echo "::warning::gemini reviewer returned empty output."
-            echo "status=empty" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::gemini reviewer returned empty output"
+            exit 1
           fi
           gh api -X POST "repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
             -f event=COMMENT \
@@ -140,27 +95,45 @@ jobs:
             --jq '.id' > /tmp/gemini_review_id
           echo "status=posted" >> "$GITHUB_OUTPUT"
 
+      # ---- claude reviewer ----
+      # Uses `claude` CLI in print mode with the Claude Code OAuth token,
+      # matching the `claude-v5-ds` wrapper pattern that has worked locally.
+      # The OAuth token is mirrored into ANTHROPIC_AUTH_TOKEN, which the
+      # CLI accepts as a fallback for the OAuth credentials file.
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code@latest 2>&1 | tail -3
+
+      - name: Mint claude reviewer installation token
+        id: claude-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CLAUDE_REVIEWER_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_REVIEWER_APP_PRIVATE_KEY }}
+
       - name: Review as claude-opus-5
         id: claude
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ steps.claude-token.outputs.token }}
           PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
           HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
-          BASE_SHA: ${{ steps.resolve.outputs.base_sha }}
         run: |
           set -euo pipefail
-          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-            echo "::notice::ANTHROPIC_API_KEY missing; claude reviewer step skipped."
-            echo "status=skipped" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN missing; claude reviewer cannot run"
+            exit 1
+          fi
+          if ! command -v claude >/dev/null 2>&1; then
+            echo "::error::claude CLI not found after install"
+            exit 1
           fi
           PROMPT=$(printf 'You are claude-opus-5, an advisory code reviewer for MADVenturesLLC/founder-os-build-room. Review the following PR diff. Output a single review body with: (1) one of PASS / PASS-WITH-ADVISORIES / FAIL / REQUEST_CHANGES as the first line, (2) a 1-3 sentence rationale, (3) zero or more bullet-pointed findings with file:line citations when applicable. The diff is:\n\n---\n%s\n---' "$(cat /tmp/pr.diff)")
-          REVIEW=$(printf '%s' "$PROMPT" | timeout 360 agy --print --model claude-opus-5 --dangerously-skip-permissions --print-timeout 5m 2>&1 || true)
+          REVIEW=$(printf '%s' "$PROMPT" \
+            | timeout 360 claude -p 2>&1 || true)
           if [ -z "$REVIEW" ]; then
-            echo "::warning::claude reviewer returned empty output."
-            echo "status=empty" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::claude reviewer returned empty output"
+            exit 1
           fi
           gh api -X POST "repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
             -f event=COMMENT \
@@ -168,6 +141,8 @@ jobs:
             -f body="<!-- advisory-reviewers:claude-opus-5 -->\n\n$REVIEW" \
             --jq '.id' > /tmp/claude_review_id
           echo "status=posted" >> "$GITHUB_OUTPUT"
+
+      # ---- summary, fails closed ----
 
       - name: Surface advisory-reviewers status
         if: ${{ always() }}
@@ -179,12 +154,8 @@ jobs:
             posted:posted)
               exit 0
               ;;
-            posted:*|*posted)
-              echo "::warning::one reviewer degraded; the PR has one real review only."
-              exit 0
-              ;;
             *)
-              echo "::error::both reviewers degraded; the PR has zero real reviews from this workflow."
+              echo "::error::one or both reviewers degraded (gemini=$gemini, claude=$claude); failing closed"
               exit 1
               ;;
           esac
