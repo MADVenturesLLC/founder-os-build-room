@@ -1,0 +1,257 @@
+FOUNDER RULING — PR 2b GATE III / TRANCHE B
+COMPLETE REPLACEMENT SOURCE AND DRAFTING AUTHORIZATION
+
+I, Michael Alberto Daley, issue the following prospective plan rulings.
+
+This message is self-contained. It replaces the missing ruling-block
+reference in my earlier approval and clarification messages. Those messages
+remain preserved as historical evidence; no missing source is reconstructed,
+and this message is not represented as a verbatim copy of an earlier block.
+
+These rulings govern preparation of a successor to:
+
+DRAFT-founder-authorization-pr2b-gate3-trancheB-journal-authority-20260913.md
+SHA-256:
+4fee6482420b95062e5133f0c575f8a377ff73ec951ba806194095bb6be2e4eb
+
+The frozen draft remains unchanged.
+
+EFFECT AND EXECUTION BOUNDARY
+
+These plan rulings take effect upon my posting this message in the receiving
+conversation. That conversation is the governance thread for this act;
+a GitHub posting is not required. Record its actual session-store message
+identifier and timestamp separately, with their source semantics.
+
+These rulings authorize preparation and independent document review only.
+All operational permissions described below remain conditional on a separate
+Gate III implementation issuance after that review.
+
+No code implementation, fixture SQL, execution dispatch, repository mutation,
+GitHub write, ready transition, merge, deployment, or A2 work is authorized
+by this message.
+
+FD-B1 — CODE VERSUS GOVERNED MIGRATION EXECUTION
+
+Resolve the C-3 §9 table versus §9.1 conflict as follows:
+
+Gate IV completion is required before migration 0006 executes against a
+governed database. It is not required before Tranche-B code and tests are
+authorized, independently reviewed, or separately authorized for merge.
+
+The future Gate III implementation act may authorize:
+- migration 0006 source;
+- the administrative migration runner and migrate:admin script;
+- the authorized Tranche-B tests and bounded CI changes;
+- migration and runner execution inside verified disposable acceptance
+  fixtures, including selection, refusal, and evidence-output tests.
+
+It must not authorize governed, shared, staging, production, or Neon database
+execution, production administrative credentials, runtime cutover, rotation,
+or protected-plane execution.
+
+Governed migration execution remains subject to Gate IV, FD-2, the ratified
+protected GitHub environment route, and a separate Founder-named commit
+on main. No Railway pre-deploy substitute is permitted.
+
+The reviewed/merged code SHA and the Founder-authorized execution SHA serve
+different purposes but may identify the same commit.
+
+Gate III implementation ends at the draft PR and execution handoff.
+Ready transition and merge require separate authorization.
+
+FD-B2 — DISPOSABLE FIXTURE AUTHORITY
+
+In the successor draft, permit the original §7.3 items 1–17 only to the
+extent consistent with this ruling, plus the B-R8 probe below.
+
+Permitted fixture operations include:
+- Create br_journal_owner and command_journal_writer as NOLOGIN roles
+  without passwords.
+- Create br_app_runtime as a LOGIN role with a per-run ephemeral password.
+- Create the two journal tables, immutable trigger function, triggers,
+  append function, and singleton genesis row required by the plan.
+- Assign ownership exactly as required by the plan.
+- Revoke PUBLIC access and apply the enumerated writer and runtime grants.
+- Connect as br_app_runtime to exercise the authority matrix.
+- Remove this run's fixture objects, grants, memberships, and roles.
+
+The append function is SECURITY DEFINER, owned by command_journal_writer,
+with search_path pinned to pg_catalog, pg_temp. The table-owner and
+writer-authority roles remain separate.
+
+No membership may be granted to br_app_runtime in any form.
+
+The successor must enumerate exact SQL permissions and cleanup operations.
+It must not infer unrestricted ALTER ROLE authority from a prohibition
+against altering other roles.
+
+EXCLUSIVE DISPOSABLE OWNERSHIP
+
+Before creating or removing fixture state, establish externally verifiable,
+run-specific provisioning of the instance.
+
+A TEST_DATABASE_URL value, familiar role name, or sentinel written inside
+the database is insufficient by itself.
+
+Acceptable evidence includes the CI job's own service-container lifecycle
+and identity, or a locally provisioned disposable instance's run-specific
+identity and lifecycle. The instance must be exclusive to the qualification
+run and scheduled for destruction afterward.
+
+Unexpected pre-existing fixture roles, objects, or dependencies require
+SCOPE DECISION REQUIRED. Do not pre-drop unidentified state or use
+DROP OWNED BY to erase it.
+
+Coordinate fixture users within the exclusive run so concurrent tests do
+not race over cluster-wide role names.
+
+CLEANUP AND CREDENTIAL HANDLING
+
+Explicitly enumerate and remove only this run's objects and grants before
+dropping its roles. Remove probe memberships before dropping the probe.
+Assert every fixture role is absent from pg_roles before successful
+completion. Setup, assertion, or teardown failure fails qualification.
+
+A second storage-suite invocation must not silently clean residue left by
+the first invocation.
+
+Generate the runtime fixture password in process memory and supply it
+through a non-persistent, non-logged connection mechanism. Do not place it
+in evidence, source, repository/environment secrets, workflow files,
+persistent configuration, shell history, or process arguments.
+
+Use correct SQL literal handling when assigning the password. Prevent
+credential-bearing SQL from appearing in server or harness logs, including
+error paths. The probe role has no password.
+
+FD-B2(a) — B-R8 POSITIVE DETECTION CONTROLS
+
+Permit one uniquely named, ephemeral NON-LOGIN probe role, with no password
+or administrative role attributes, inside the same exclusive fixture.
+
+The probe is never br_app_runtime or a production role name.
+Its membership target is a fixture-created br_journal_owner or
+command_journal_writer role.
+
+Permit these sequential membership controls:
+1. Plain membership.
+2. WITH INHERIT FALSE.
+3. WITH SET FALSE.
+4. Both modifiers false.
+
+For each case:
+- Use the identical recursive detection query parameterized by probe identity.
+- Assert the actual stored inherit_option and set_option values.
+- Assert that the forbidden membership is detected.
+- Revoke the membership and verify absence before the next case.
+
+Also execute a no-membership control expecting zero findings.
+
+Maintain the separate real-runtime assertion: br_app_runtime has no
+forbidden direct or transitive memberships and no prohibited role attributes.
+
+Remove every probe membership and the probe role in the same run and assert
+absence from pg_roles. Permission does not constitute proof: B-R8 passes
+only after successful execution and review of the required evidence.
+
+If any required control cannot execute within these limits, stop with
+SCOPE DECISION REQUIRED. Do not weaken the test or grant memberships to
+br_app_runtime.
+
+FD-B3 — BOUNDED STARTING-BASE ALLOWANCE
+
+For Tranche B only, permit a starting origin/main newer than the issuance's
+reference main, subject to the assessment below. This is a narrow exception
+to r1 §15 stop condition 1.
+
+Before worktree creation or editing:
+- Verify PR #27 merge f21693e0c9c5d063b8cd150346477d0e49dc183e is an
+  ancestor of the actual starting main.
+- Record reference and actual starting commit/tree identities.
+- Enumerate all intervening commits and changed paths.
+- Assess scope, controlling artifacts, dependencies, scripts, compiler
+  coverage, workflows, storage-job shape, and acceptance assumptions.
+- Re-hash the controlling stack at the actual base.
+- Verify migration 0006 remains unused and MIGRATIONS ends at
+  0005_phase3_run_evidence.
+- Apply the standing safe-tree advisory.
+- Bind the selected starting SHA/tree in writing.
+
+Ancestry and zero direct path overlap alone are insufficient.
+
+Material drift requires:
+REVIEW TARGET DRIFT — FOUNDER DECISION REQUIRED
+
+Once selected, preserve the bound base. Do not silently rebase, merge, or
+cherry-pick later main advances. Report subsequent advances for the later
+integration/merge decision.
+
+Other stop conditions remain applicable. The protected-plane execution
+stop concerns governed execution and does not prohibit the expressly
+authorized disposable migration and runner tests.
+
+FD-B4 — MIGRATION PLACEMENT
+
+Migration 0006 implements C-3 §6.1 steps 1–13. Steps 4–13 remain atomic
+as required by C-3 §6.2. Verify the existing migrator provides the required
+transaction boundary; do not merely assume it.
+
+Move step 15's default-privilege review to its assigned B-R11 test.
+Move step 16's recursive membership assertion to B-R8, including the
+positive detection controls above. Preserve their full acceptance strength.
+
+Defer step 14's enumerated non-journal operational grants to Tranche D,
+where the controlling cutover plan places them. Preserve PO-3 and its
+downstream verification requirement. No blanket ALL grant, guessed grant,
+or stub grant is permitted.
+
+In Tranche B, br_app_runtime receives only the planned append-routine
+EXECUTE and journal-table SELECT privileges.
+
+FD-B5 AND FD-B6 — DELEGATED CHOICES
+
+The append signature and return type remain the Builder's implementation
+choice under PO-6, subject to the contract and independent review.
+Creation, grants, revocations, and catalog assertions must identify the
+same exact function. Record the final signature and return type.
+
+B-T1, test/journal-authority.storage.test.ts, carries its assigned denial,
+positive-path, and hash-binding assertions within the existing file map.
+
+Neither choice is an additional Founder issuance prerequisite.
+
+PRESERVED HISTORY AND A2 BOUNDARY
+
+Preserve all historical execution-authority findings, the successor-session
+9319f3 gap, the placeholder-receipt findings, and prospective retention
+disposition:
+2aab0196a1d2841ba76443d90fb5214790e72205347453a013a4c7907c1666a2
+
+Nothing here retroactively authorizes prior execution.
+
+FD-B7 remains non-blocking. A2 remains unauthorized. Tranche B does not
+inherit authority to implement an out-of-scope recovery consumer or
+production dispatch.
+
+AUTHORIZED DRAFTING AND CUSTODY ACTIONS
+
+1. Preserve this complete message verbatim as a NEW off-repository file in:
+   /Users/michaeldaley/MADVenturesOPs/hermes-profile-suite/
+2. Record its actual message identifier and session-store posting timestamp
+   separately. Do not substitute an assistant clock or alter the text.
+3. Return its path, SHA-256, bytes, lines, and trailing-newline status.
+4. Preserve the frozen draft, earlier brief, qualification receipt, and
+   earlier Founder messages unchanged.
+5. Incorporate these rulings once into a new successor Gate III draft.
+6. Prepare the exact-artifact independent document-review handoff for
+   profile br-operator.
+
+Off-repository custody writes are expressly authorized for this task.
+No git commit or push is required or authorized for those files.
+
+Return the successor draft and review-handoff identities. Do not stop
+because the earlier missing ruling block remains unavailable: this message
+is its complete replacement source.
+
+Signed: Michael Alberto Daley
