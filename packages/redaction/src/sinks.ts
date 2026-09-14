@@ -167,7 +167,11 @@ export interface HarnessStreams {
   err(text: string): void;
 }
 
-/** Harness / fixture log and error paths. Both paths redact; the error path also flattens the error. */
+/**
+ * Harness / fixture log and error paths. Every path redacts: `log` is plain
+ * text to the out stream, `err` is plain text to the err stream (v0.1), and
+ * `error` flattens an error onto the err stream.
+ */
 export class HarnessLogSink {
   constructor(
     private readonly boundary: RedactionBoundary,
@@ -177,6 +181,13 @@ export class HarnessLogSink {
   log(text: string): Promise<void> {
     return guarded(this.boundary, async (redactor) => {
       this.inner.out(redactor.redactString(text));
+    });
+  }
+
+  /** Redacted plain text to the err stream — guarded exactly like `log`. */
+  err(text: string): Promise<void> {
+    return guarded(this.boundary, async (redactor) => {
+      this.inner.err(redactor.redactString(text));
     });
   }
 

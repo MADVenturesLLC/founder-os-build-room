@@ -447,7 +447,7 @@ describe('static boundaries (T4)', () => {
     }
   });
 
-  it('the redaction package is byte-pinned at the Lane B merge (6ef7d12) and reads no process environment', async () => {
+  it('the redaction package is byte-pinned at redaction v0.1 (stderr path act, base d052cb4) and reads no process environment', async () => {
     // Parallel arrays, not a name→digest map: a file name containing "key"
     // next to a hex digest reads as a credential to the secret scanner.
     const pinnedFiles = ['index.ts', 'key-custody.ts', 'redactor.ts', 'registry.ts', 'sinks.ts'];
@@ -456,7 +456,7 @@ describe('static boundaries (T4)', () => {
       '4d62f9d792a28f268ebad4953101455a08bcac0f13a6b6f0d422990417f28151',
       'a3b108aedb6d162fd8e9fe51cf87ab943b085f28c26026a9c07e940e90610b2d',
       '86db125565c92d80f5ba57a69cde713d7598c6be2999b751bdd7fa6a24b049a3',
-      '4c6c7f34db531ee53b473e00891fefc9f45272a91d164e208392303ab2c1e4fb',
+      'ccc06b573140db5b7d2d3a1f2bfb4cc139527196890fb927166571e7107ef1d6',
     ];
     const forbidden = ['process', 'env'].join('.');
     for (const [index, name] of pinnedFiles.entries()) {

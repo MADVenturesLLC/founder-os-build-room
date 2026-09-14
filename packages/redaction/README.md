@@ -16,7 +16,7 @@ stays the verification layer; neither is the sole control.
 | `generateFixturePassword` | `src/registry.ts` | mints and registers in one call; refuses and discards anything under 16 characters |
 | `createRedactor` | `src/redactor.ts` | `replace` mode: `[REDACTED:<name>:<hmac16>]`, deterministic under the key, one-way. `obfuscate` is declared and **not wired** — construction throws |
 | `KeychainHmacKeyCustody` | `src/key-custody.ts` | read-only custody of the HMAC key in its own item, service `mad.redaction.hmac`, account `hmac-v1` |
-| `RedactionBoundary` + sinks | `src/sinks.ts` | journal append, evidence bundle, harness log + error paths — writers, not call sites; refuse every write when the boundary is not ready |
+| `RedactionBoundary` + sinks | `src/sinks.ts` | journal append, evidence bundle, harness log + plain-text stderr (v0.1) + flattened-error paths — writers, not call sites; refuse every write when the boundary is not ready |
 
 ## Fail-closed, by construction
 

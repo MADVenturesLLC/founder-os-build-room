@@ -124,11 +124,7 @@ export function isRedactionRefusal(error: unknown): error is RedactionRefusedErr
 export interface RedactedHarnessStreams {
   /** Redacted text to stdout, through the package's `HarnessLogSink`. */
   log(text: string): Promise<void>;
-  /**
-   * Redacted plain text to stderr. `HarnessLogSink` v0 has a flattened-error
-   * path but no plain-text stderr path, so this goes through the boundary's
-   * redactor directly; the package is pinned and is not changed by this lane.
-   */
+  /** Redacted plain text to stderr, through `HarnessLogSink.err` (package v0.1). */
   err(text: string): Promise<void>;
   /** A flattened, redacted error to stderr, through `HarnessLogSink.error`. */
   error(error: unknown): Promise<RedactedError>;
@@ -141,9 +137,7 @@ export function redactedHarnessStreams(
   const sink = boundary.harnessLogSink(streams);
   return {
     log: (text) => sink.log(text),
-    err: async (text) => {
-      streams.err(boundary.require().redactString(text));
-    },
+    err: (text) => sink.err(text),
     error: (error) => sink.error(error),
   };
 }
