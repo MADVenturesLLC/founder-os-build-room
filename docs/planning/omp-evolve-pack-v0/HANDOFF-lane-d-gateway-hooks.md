@@ -18,8 +18,8 @@ tests.
 | Branch | `build/gateway-hooks-v0` — **stacked on Lane A** |
 | Stack base | Lane A head `fc8d187d7a1bf88ba64410010b612010b058de7b` (`build/seat-output-schema-v0`) |
 | Base pin (`origin/main` at act time) | `736b12b33a20dd055d88ba0ec1e30621797cc959` |
-| Implementation commit | `8fe942f24f57cf019d89d972dfb9eb60a1662776` |
-| Head SHA | the commit that adds this file (branch head; reported in the session handoff) |
+| Implementation commits | `8fe942f24f57cf019d89d972dfb9eb60a1662776` (hooks), plus the review-disposition commit that amends this file (removes the daemon → control-plane import; see "Review disposition") |
+| Head SHA | the branch head after the review-disposition commit (reported in the session handoff and the PR body) |
 | Actor | `session:claude-code/session_01KbHPzSthh2gKc8TtsG4QRp`, surface `claude-code`, role `builder` |
 
 The act's dependency clause reads "prefer depend on A"; this branch takes
@@ -42,7 +42,7 @@ Not changed: `daemon.ts`, `ipc.ts`, `room-runtime.ts`, `custody.ts`,
 `lanes.ts`, `signing.ts`, `state.ts` (every existing daemon module);
 `packages/gateway-daemon/package.json` (dependencies still exactly
 `@build-room/gateway-protocol`); `packages/seat-registry/**`;
-`packages/control-plane/**` (the V1.1 gate is imported, not edited);
+`packages/control-plane/**` (neither edited nor imported by the daemon);
 `package.json`, `package-lock.json`, `tsconfig.json`, CI.
 
 Paths named in this file that do not exist at the base: everything under
@@ -56,8 +56,9 @@ Lane A package this branch stacks on.
   (`tool-call-hooks.ts`). Timeouts block; out-of-enum decisions block;
   identity fields are never taken from a revise; an empty gate cannot be
   built.
-- Seat-registry policy through hooks → `seatPolicyHook` consumes the V1.1
-  `createSeatPolicyGate`; a refusal is a block.
+- Seat-registry policy through hooks → `seatPolicyHook(gate)` consumes a
+  `SeatDispatchGate`; the V1.1 `createSeatPolicyGate` satisfies it and is
+  bound by the composition root (today: the suite); a refusal is a block.
 - Approval tiers → policy bundles → `PolicyBundleSet` / `policyBundleHook`
   (`gate | tranche` tiers, read/write/exec rules, per-tool patterns,
   grants per scope; deny wins; default deny).
@@ -67,8 +68,10 @@ Lane A package this branch stacks on.
 ## Evidence that a seat-registry deny prevents dispatch (not log-only)
 
 `test/gateway-hooks.test.ts`, "a seat-registry deny prevents dispatch":
-the interceptor is built with the PRODUCTION binding (`seatPolicyHook()`
-with no options) and a dispatcher that counts invocations. For each of the
+the interceptor is built with the PRODUCTION binding
+(`seatPolicyHook(createSeatPolicyGate())`, the real V1.1 gate with no
+options over the real V1 resolver) and a dispatcher that counts
+invocations. For each of the
 four seats the resolver's own refusal (`resolveSeat(seat)`) is compared to
 the hook's block code and reason; for an unknown seat, an unbound seat,
 and a temporary-task-assignment authorization the block codes are
@@ -83,15 +86,18 @@ Focused:
 
 ```
 npm run build && node --test dist/test/gateway-hooks.test.js
-# tests 19 · pass 19 · fail 0
+# tests 20 · pass 20 · fail 0    (19 at 8fe942f; +1 no-default-gate test in the disposition commit)
 ```
 
 Full suite on this branch (`npm test`, credential-free; storage cases
 self-skip as on `main`):
 
 ```
-# tests 902 · suites 328 · pass 902 · fail 0
-# = Lane A head 883 + 19 Lane D tests   (main baseline: 855 / 316 / 855 / 0)
+# at 8fe942f (hooks commit): 902 / 328 / 902 / 0
+# at the disposition head: expected 903 (= Lane A 883 + 20); the local run was
+# still executing when this commit was cut at Founder direction, so the
+# binding evidence for this head is CI build-and-test on PR #36 at this
+# exact SHA, plus the local result reported in the session handoff.
 ```
 
 Gates run locally on the implementation commit: `npm run typecheck` PASS,
@@ -105,13 +111,10 @@ regression pins (T17/T18) pass unchanged within the full suite.
   No existing export changed. The AE-01 runner (`test/support/
   phase1-acceptance-gateway.ts`) imports this entry read-only; its T17
   import assertion still passes (verified in the full suite).
-- New import boundary: `hooks/seat-policy-hook.ts` →
-  `packages/control-plane/src/seat-policy.ts` (that one module; it imports
-  only the Seat Registry public entry). The control-plane package ENTRY is
-  not imported, so no Postgres/HTTP module enters the daemon graph.
-  Alternative considered and not taken: duplicating the gate in the daemon
-  (drift risk) or moving `seat-policy.ts` to a shared package (edits the
-  V1.1 surface, outside this act).
+- No import boundary onto `packages/control-plane`. The hook declares the
+  `SeatDispatchGate` contract and takes the gate as a required argument;
+  the daemon graph gains no dependency edge, declared or undeclared, onto
+  the control-plane workspace member (see "Review disposition").
 - New import boundary: `hooks/output-schema-hook.ts` →
   `packages/seat-output-schema/src/index.js` (Lane A public entry).
 - Runtime wiring: none. No daemon code path calls the interceptor; nothing
@@ -128,6 +131,27 @@ regression pins (T17/T18) pass unchanged within the full suite.
   results as blocks; the no-empty-gate rule; segment-wise tool patterns
   with deny-wins/default-deny and construction-time refusal of malformed
   bundles; binding the V1.1 seat gate as a hook; the Lane A post-hook.
+
+## Review disposition
+
+The advisory review on PR #36 (head `fcbbe54`) found one convention
+divergence: `hooks/seat-policy-hook.ts` imported
+`packages/control-plane/src/seat-policy.ts` while
+`packages/gateway-daemon/package.json` declared no dependency on
+`@build-room/control-plane`, unlike every other workspace member that
+reaches a sibling workspace package by relative path. **Taken**, by
+removing the edge rather than declaring it: declaring it would change
+`package-lock.json` (pinned by AE-01 T18) and would formally couple the
+macOS-local daemon to the cloud control-plane package, which is the wrong
+dependency direction. `seatPolicyHook` now requires a `SeatDispatchGate`
+argument and has no default binding; the suite composes the real V1.1 gate
+explicitly, and a new static test asserts that no hooks module imports
+control-plane. This is the only source change after `8fe942f`.
+
+The `storage-integration` failure on `fcbbe54` (one Phase 3 run-routes
+test, code this lane does not touch; the same job passed on the Lane E
+superset head in the same minute) is recorded on PR #36 as not this PR's;
+the disposition push re-runs every check on the new head.
 
 ## Open items / decisions
 
