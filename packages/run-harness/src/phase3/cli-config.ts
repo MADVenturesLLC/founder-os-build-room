@@ -1,6 +1,8 @@
 import { constants } from 'node:fs';
 import { open, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from 'node:path';
+import type { HmacKeyCustody, RedactionBoundary } from '../../../redaction/src/index.js';
+import { openHarnessRedactionBoundary } from '../redaction-boundary.js';
 import type { Phase3AttemptPlan } from './model.js';
 import { validatePhase3Plan } from './plan.js';
 import { resolveRepositoryRoot } from './repository.js';
@@ -17,11 +19,21 @@ export interface Phase3CliConfig {
   readonly evidencePath: string;
   readonly evidenceReservation: Phase3EvidenceReservation;
   readonly plan: Phase3AttemptPlan;
+  /** Opened before the plan is read and before the evidence file is reserved; always ready here. */
+  readonly redaction: RedactionBoundary;
+}
+
+export interface Phase3CliConfigOptions {
+  /** Custody override — a test seam; production passes nothing (Lane B wiring). */
+  readonly keyCustody?: HmacKeyCustody;
+  /** Reservation override — a test seam, so a refusal can be shown to reserve nothing. */
+  readonly reserveEvidenceFile?: typeof reservePhase3EvidenceFile;
 }
 
 export async function loadPhase3CliConfig(
   environment: Readonly<Record<string, string | undefined>>,
   buildRoomPath = process.cwd(),
+  options: Phase3CliConfigOptions = {},
 ): Promise<Phase3CliConfig> {
   if (environment['PHASE3_ADJUDICATION_TOKEN'] !== undefined) {
     throw new Error(
@@ -78,6 +90,16 @@ export async function loadPhase3CliConfig(
       'PHASE3_EVIDENCE_PATH must be outside FounderOS, Build Room, and fixture repositories',
     );
   }
+  // The secret boundary opens HERE: after every pure validation above (so a
+  // misconfigured plan is still reported on a keyless host) and before the
+  // first side effect below — the evidence directory, the reservation, and,
+  // in the CLI, any client. A refusal throws RedactionRefusedError; nothing
+  // below has run, so no counted run is consumed and no file is reserved.
+  const redaction = await openHarnessRedactionBoundary(environment, {
+    ...(options.keyCustody === undefined ? {} : { keyCustody: options.keyCustody }),
+  });
+  redaction.require();
+
   const evidenceDirectoryIdentity = await securePhase3EvidenceDirectory(canonicalEvidencePath);
   if (
     evidenceDirectoryIdentity.realPath !== canonicalEvidencePath ||
@@ -89,7 +111,8 @@ export async function loadPhase3CliConfig(
       'PHASE3_EVIDENCE_PATH must be outside FounderOS, Build Room, and fixture repositories',
     );
   }
-  const evidenceReservation = await reservePhase3EvidenceFile(
+  const reserve = options.reserveEvidenceFile ?? reservePhase3EvidenceFile;
+  const evidenceReservation = await reserve(
     evidenceDirectoryIdentity,
     plan.value.label,
     plan.value.runAttemptId,
@@ -102,6 +125,7 @@ export async function loadPhase3CliConfig(
     evidencePath: canonicalEvidencePath,
     evidenceReservation,
     plan: plan.value,
+    redaction,
   };
 }
 

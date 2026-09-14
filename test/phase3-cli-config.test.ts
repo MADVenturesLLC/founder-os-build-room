@@ -9,6 +9,12 @@ import {
   loadPhase3CliConfig,
   readPhase3PlanFile,
 } from '../packages/run-harness/src/phase3/cli-config.js';
+import { InMemoryHmacKeyCustody } from '../packages/redaction/src/index.js';
+
+// Lane B wiring: the loader opens the secret boundary before it reserves the
+// evidence file. These tests reach that point, so they carry fixture custody;
+// the ones that fail validation earlier never do and are unchanged.
+const FIXTURE_CUSTODY = { keyCustody: new InMemoryHmacKeyCustody(Buffer.alloc(32, 7)) };
 
 const directories: string[] = [];
 const execute = promisify(execFile);
@@ -99,7 +105,7 @@ describe('Phase 3 CLI configuration', () => {
       PHASE3_BUILD_VERIFIED_SHA: '2'.repeat(40),
       PHASE3_PLAN_PATH: planPath,
       PHASE3_EVIDENCE_PATH: evidencePath,
-    });
+    }, undefined, FIXTURE_CUSTODY);
 
     assert.equal(config.plan.runAttemptId, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
     assert.equal(config.evidencePath, await realpath(evidencePath));
@@ -279,7 +285,7 @@ describe('Phase 3 CLI configuration', () => {
     const regularFile = join(root, 'regular-file');
     await writeFile(regularFile, 'not a directory\n', 'utf8');
     await assert.rejects(
-      loadPhase3CliConfig({ ...base, PHASE3_EVIDENCE_PATH: regularFile }),
+      loadPhase3CliConfig({ ...base, PHASE3_EVIDENCE_PATH: regularFile }, undefined, FIXTURE_CUSTODY),
       /EEXIST|real directory/,
     );
 
@@ -287,15 +293,15 @@ describe('Phase 3 CLI configuration', () => {
     await mkdir(unwritable, { mode: 0o500 });
     await chmod(unwritable, 0o500);
     await assert.rejects(
-      loadPhase3CliConfig({ ...base, PHASE3_EVIDENCE_PATH: unwritable }),
+      loadPhase3CliConfig({ ...base, PHASE3_EVIDENCE_PATH: unwritable }, undefined, FIXTURE_CUSTODY),
       /mode 0700/,
     );
 
     const reserved = join(root, 'reserved');
-    const first = await loadPhase3CliConfig({ ...base, PHASE3_EVIDENCE_PATH: reserved });
+    const first = await loadPhase3CliConfig({ ...base, PHASE3_EVIDENCE_PATH: reserved }, undefined, FIXTURE_CUSTODY);
     await first.evidenceReservation.handle.close();
     await assert.rejects(
-      loadPhase3CliConfig({ ...base, PHASE3_EVIDENCE_PATH: reserved }),
+      loadPhase3CliConfig({ ...base, PHASE3_EVIDENCE_PATH: reserved }, undefined, FIXTURE_CUSTODY),
       /EEXIST/,
     );
   });
