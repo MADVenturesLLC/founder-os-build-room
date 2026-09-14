@@ -115,3 +115,10 @@ export {
 export { IpcServer, ipcRequest, type IpcHandlers, type IpcRequest, type IpcStatus } from './ipc.js';
 export { createDaemonClock } from './clock.js';
 export { GatewayDaemon, type GatewayDaemonDeps } from './daemon.js';
+
+/**
+ * OMP→MAD Evolve Pack v0, Lane D — cancelable pre/post tool-call hooks,
+ * policy bundles, the seat-policy hook, and the output-schema post-hook.
+ * The minimal intercept surface; wired to nothing live.
+ */
+export * from './hooks/index.js';

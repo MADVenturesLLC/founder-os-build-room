@@ -1,0 +1,95 @@
+{
+  "seat_id": "builder",
+  "handoff": {
+    "receives_from": "architect",
+    "produces": "Build Report",
+    "terminal_status": "BUILD_READY_FOR_INDEPENDENT_VERIFICATION",
+    "committed_sha": "0123456789abcdef0123456789abcdef01234567",
+    "authorization_refs": ["FOUNDER-ACT-2026-09-13-OMP-EVOLVE-PACK-V0"]
+  },
+  "output_schema": {
+    "type": "object",
+    "additional_properties": false,
+    "required": ["work_id", "plan", "repository", "branch", "base_sha", "head_sha", "changed_paths", "commands", "acceptance", "unresolved_issues", "next_role", "claims"],
+    "properties": {
+      "work_id": { "type": "string", "min_length": 1, "max_length": 200 },
+      "plan": {
+        "type": "object",
+        "additional_properties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": { "type": "string", "min_length": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      },
+      "repository": { "type": "string", "min_length": 1 },
+      "branch": { "type": "string", "min_length": 1, "max_length": 200 },
+      "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+      "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+      "changed_paths": { "type": "array", "min_items": 1, "items": { "type": "string", "min_length": 1 } },
+      "commands": {
+        "type": "array",
+        "min_items": 1,
+        "items": {
+          "type": "object",
+          "additional_properties": false,
+          "required": ["command", "exit_code", "result"],
+          "properties": {
+            "command": { "type": "string", "min_length": 1 },
+            "exit_code": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "result": { "type": "string", "min_length": 1 }
+          }
+        }
+      },
+      "acceptance": {
+        "type": "array",
+        "min_items": 1,
+        "items": {
+          "type": "object",
+          "additional_properties": false,
+          "required": ["criterion", "status", "evidence"],
+          "properties": {
+            "criterion": { "type": "string", "min_length": 1 },
+            "status": { "type": "string", "enum": ["met", "unmet", "not_verified"] },
+            "evidence": { "type": "string", "min_length": 1 }
+          }
+        }
+      },
+      "unresolved_issues": { "type": "array", "items": { "type": "string", "min_length": 1 } },
+      "next_role": { "type": "string", "enum": ["independent-reviewer"] },
+      "claims": {
+        "type": "object",
+        "additional_properties": false,
+        "required": ["merge_authorized", "production", "provider_execution"],
+        "properties": {
+          "merge_authorized": { "type": "boolean", "const": false },
+          "production": { "type": "boolean", "const": false },
+          "provider_execution": { "type": "boolean", "const": false }
+        }
+      }
+    }
+  },
+  "schema_mode": "strict",
+  "output": {
+    "work_id": "FIXTURE-LANE-A-DOGFOOD",
+    "plan": {
+      "path": "docs/planning/omp-evolve-pack-v0/HANDOFF-lane-a-seat-output-schema.md",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "repository": "MADVenturesLLC/founder-os-build-room",
+    "branch": "build/seat-output-schema-v0",
+    "base_sha": "736b12b33a20dd055d88ba0ec1e30621797cc959",
+    "head_sha": "0123456789abcdef0123456789abcdef01234567",
+    "changed_paths": ["packages/seat-output-schema/src/index.ts", "test/seat-output-schema.test.ts"],
+    "commands": [
+      { "command": "node --test dist/test/seat-output-schema.test.js", "exit_code": 0, "result": "fixture: all focused tests pass" }
+    ],
+    "acceptance": [
+      { "criterion": "strict rejects an invalid output", "status": "met", "evidence": "test 'strict mode rejects'" },
+      { "criterion": "permissive flags an invalid output", "status": "met", "evidence": "test 'permissive mode flags'" }
+    ],
+    "unresolved_issues": [],
+    "next_role": "independent-reviewer",
+    "claims": { "merge_authorized": false, "production": false, "provider_execution": false }
+  }
+}
