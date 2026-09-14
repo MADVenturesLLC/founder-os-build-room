@@ -43,15 +43,31 @@ authorization; until it exists, the boundary refuses to write. Fixture
 custody classes (`InMemoryHmacKeyCustody`, `UnavailableHmacKeyCustody`)
 exist for tests and controlled fixtures only.
 
-## Not wired (deliberate, recorded)
+## Wired under the run-harness (v0, Lane B wiring act of 2026-09-14)
 
-The sinks are the writers; they are **not** yet installed under the
-run-harness evidence CLI, the (still unimplemented) journal store, or the
-AE-01 fixture runner. Installing them without a provisioned key would make
-those paths refuse every write — a live behaviour change outside this act.
-The next step needs a Founder decision on key provisioning (Keychain on the
-darwin gateway host; some non-Keychain source or a documented refusal for
-the ubuntu CI and Railway runtimes). See the lane handoff.
+The sinks are installed under the two evidence writers that exist:
+
+- Phase 2 bundle write — `packages/run-harness/src/cli.ts` writes through
+  `EvidenceBundleWriter`; its stdout, stderr, and runner log go through the
+  boundary (`HarnessLogSink` for stdout and flattened errors).
+- Phase 3 evidence — `packages/run-harness/src/phase3/redacted-evidence.ts`
+  redacts the evidence tree before `writePhase3Evidence` (reservation,
+  closed-shape check, byte read-back untouched); the CLI's stdout and stderr
+  go through the boundary.
+
+The registry, custody choice, and refusal line live in one place,
+`packages/run-harness/src/redaction-boundary.ts`: `CONTROL_PLANE_TOKEN` is
+named by a manifest and excluded from the heuristic scan (one registration,
+never two), every value is trimmed to match what the client sends, and the
+key comes from Keychain on darwin only. Every other platform refuses in v1.
+A refused boundary makes either harness exit **3** with one line,
+`redaction refused: <code>`, before any request, reservation, or write.
+There is no switch that turns the boundary off.
+
+Still not wired: `JournalAppendSink` (no journal store exists yet;
+`packages/journal/src/envelope.ts` defers redaction to write path 2b).
+The Keychain item `mad.redaction.hmac` / `hmac-v1` is a Founder custody act;
+until it exists on the gateway host, the wired harnesses refuse there.
 
 ## Known limits (v0)
 

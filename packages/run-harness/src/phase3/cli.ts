@@ -14,13 +14,26 @@ import {
   gatewayPaths,
 } from '../../../gateway-daemon/src/index.js';
 import { runDoctor } from '../../../gateway-cli/src/doctor.js';
+import type { HarnessStreams, HmacKeyCustody } from '../../../redaction/src/index.js';
+import {
+  REDACTION_REFUSED_EXIT,
+  isRedactionRefusal,
+  processHarnessStreams,
+  redactedHarnessStreams,
+  redactionRefusalLine,
+} from '../redaction-boundary.js';
 import { Phase3AbortError, Phase3ControlPlaneClient } from './client.js';
-import { loadPhase3CliConfig, type Phase3CliConfig } from './cli-config.js';
+import {
+  loadPhase3CliConfig,
+  type Phase3CliConfig,
+  type Phase3CliConfigOptions,
+} from './cli-config.js';
 import {
   PHASE3_LOCAL_FAILURE_AUTHORIZES,
   disposePhase3EvidenceReservation,
-  writePhase3Evidence,
+  reservePhase3EvidenceFile,
 } from './evidence.js';
+import { writeRedactedPhase3Evidence } from './redacted-evidence.js';
 import {
   DeterministicFixtureAdapter,
   loadFixtureDefinition,
@@ -36,24 +49,79 @@ import {
   type Phase3FixturePort,
 } from './runner.js';
 
-export async function main(environment: NodeJS.ProcessEnv = process.env): Promise<number> {
+/** The collaborators the counted run talks to. Constructed only once the boundary is ready. */
+export interface Phase3Clients {
+  readonly paths: ReturnType<typeof gatewayPaths>;
+  readonly gatewayClient: GatewayControlPlaneClient;
+  readonly runClient: Phase3ControlPlaneClient;
+  readonly custody: Custody;
+  readonly state: GatewayStateStore;
+}
+
+export function defaultPhase3Clients(config: Phase3CliConfig): Phase3Clients {
+  const paths = gatewayPaths();
+  return {
+    paths,
+    gatewayClient: new GatewayControlPlaneClient(config.controlPlaneUrl),
+    runClient: new Phase3ControlPlaneClient(config.controlPlaneUrl, config.controlPlaneToken),
+    custody: new Custody(new SecurityCommandRunner()),
+    state: new GatewayStateStore(paths),
+  };
+}
+
+/** Test seams (Lane B wiring). The entrypoint passes none of them. */
+export interface Phase3MainOptions {
+  readonly keyCustody?: HmacKeyCustody;
+  readonly streams?: HarnessStreams;
+  readonly reserveEvidenceFile?: typeof reservePhase3EvidenceFile;
+  readonly clients?: (config: Phase3CliConfig) => Phase3Clients;
+  readonly buildRoomPath?: string;
+}
+
+export async function main(
+  environment: NodeJS.ProcessEnv = process.env,
+  options: Phase3MainOptions = {},
+): Promise<number> {
+  const streams = options.streams ?? processHarnessStreams();
   // Required configuration and the strict nonsecret plan are read before any
-  // Keychain, daemon, HTTP, or database collaborator is constructed.
-  const config = await loadPhase3CliConfig(environment);
+  // Keychain, daemon, HTTP, or database collaborator is constructed. The
+  // secret boundary opens inside the loader, before the plan is read and
+  // before the evidence file is reserved; a refusal ends the run here.
+  let config: Phase3CliConfig;
   try {
-    return await runConfiguredPhase3(config);
+    const loaderOptions: Phase3CliConfigOptions = {
+      ...(options.keyCustody === undefined ? {} : { keyCustody: options.keyCustody }),
+      ...(options.reserveEvidenceFile === undefined
+        ? {}
+        : { reserveEvidenceFile: options.reserveEvidenceFile }),
+    };
+    config = await loadPhase3CliConfig(
+      environment,
+      options.buildRoomPath ?? process.cwd(),
+      loaderOptions,
+    );
+  } catch (error) {
+    if (isRedactionRefusal(error)) {
+      streams.err(redactionRefusalLine(error.code));
+      return REDACTION_REFUSED_EXIT;
+    }
+    throw error;
+  }
+  try {
+    return await runConfiguredPhase3(config, streams, options.clients ?? defaultPhase3Clients);
   } finally {
     await disposePhase3EvidenceReservation(config.evidenceReservation);
   }
 }
 
-async function runConfiguredPhase3(config: Phase3CliConfig): Promise<number> {
+async function runConfiguredPhase3(
+  config: Phase3CliConfig,
+  streams: HarnessStreams,
+  clients: (config: Phase3CliConfig) => Phase3Clients,
+): Promise<number> {
   const plan = config.plan;
-  const paths = gatewayPaths();
-  const gatewayClient = new GatewayControlPlaneClient(config.controlPlaneUrl);
-  const runClient = new Phase3ControlPlaneClient(config.controlPlaneUrl, config.controlPlaneToken);
-  const custody = new Custody(new SecurityCommandRunner());
-  const state = new GatewayStateStore(paths);
+  const out = redactedHarnessStreams(config.redaction, streams);
+  const { paths, gatewayClient, runClient, custody, state } = clients(config);
 
   let verifiedFixture: VerifiedFixtureRepository | null = null;
   let verifiedDefinition: FixtureDefinition | null = null;
@@ -163,11 +231,12 @@ async function runConfiguredPhase3(config: Phase3CliConfig): Promise<number> {
         signal,
       }),
     );
-    const path = await writePhase3Evidence(
+    const path = await writeRedactedPhase3Evidence(
+      config.redaction,
       config.evidenceReservation,
       result.evidence,
     );
-    process.stdout.write(`Phase 3 attempt: ${result.outcome}\nevidence written to ${path}\n`);
+    await out.log(`Phase 3 attempt: ${result.outcome}\nevidence written to ${path}\n`);
     return result.outcome === 'awaiting_adjudication' ? 2 : 1;
   } catch (error) {
     const unresolved = isCommitOutcomeUnresolved(error);
@@ -186,19 +255,20 @@ async function runConfiguredPhase3(config: Phase3CliConfig): Promise<number> {
           authorizes: PHASE3_LOCAL_FAILURE_AUTHORIZES,
         };
     try {
-      const path = await writePhase3Evidence(
+      const path = await writeRedactedPhase3Evidence(
+        config.redaction,
         config.evidenceReservation,
         fallback,
       );
-      process.stderr.write(
+      await out.err(
         `Phase 3 attempt ${unresolved ? 'unresolved' : 'failed'}; evidence written to ${path}\n`,
       );
     } catch {
-      process.stderr.write(
+      await out.err(
         `Phase 3 attempt ${unresolved ? 'unresolved' : 'failed'} and evidence could not be written\n`,
       );
     }
-    process.stderr.write(`${describe(error)}\n`);
+    await out.err(`${describe(error)}\n`);
     return 1;
   }
 }

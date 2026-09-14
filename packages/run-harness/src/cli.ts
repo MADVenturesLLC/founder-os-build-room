@@ -24,13 +24,28 @@
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { buildBundle, serializeBundle, summarizeBundle } from './evidence.js';
+import type { HarnessStreams, HmacKeyCustody } from '../../redaction/src/index.js';
+import { buildBundle, summarizeBundle } from './evidence.js';
 import { CommandPlatform, ExternalPlatform, type Platform } from './platform.js';
-import { DEFAULT_RUNNER_CONFIG, defaultDeps, performRun, type RunnerConfig } from './runner.js';
+import {
+  REDACTION_REFUSED_EXIT,
+  openHarnessRedactionBoundary,
+  processHarnessStreams,
+  redactedHarnessStreams,
+  redactionRefusalLine,
+  type HarnessEnvironment,
+} from './redaction-boundary.js';
+import {
+  DEFAULT_RUNNER_CONFIG,
+  defaultDeps,
+  performRun,
+  type RunnerConfig,
+  type RunnerDeps,
+} from './runner.js';
 import { appendRun, emptySequence, gateStatus, type RunSequence } from './sequence.js';
 
-function required(name: string): string {
-  const value = process.env[name];
+function required(environment: HarnessEnvironment, name: string): string {
+  const value = environment[name];
   if (value === undefined || value.trim() === '') {
     throw new Error(`${name} is required and was not set`);
   }
@@ -47,14 +62,14 @@ function required(name: string): string {
  * nothing — and empty `environment`, `roleId` and `executionSurface` values
  * into the bundle. Raised by CodeRabbit on PR #2.
  */
-function text(name: string, fallback: string): string {
-  const raw = process.env[name];
+function text(environment: HarnessEnvironment, name: string, fallback: string): string {
+  const raw = environment[name];
   if (raw === undefined || raw.trim() === '') return fallback;
   return raw.trim();
 }
 
-function integer(name: string, fallback: number): number {
-  const raw = process.env[name];
+function integer(environment: HarnessEnvironment, name: string, fallback: number): number {
+  const raw = environment[name];
   if (raw === undefined || raw.trim() === '') return fallback;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -63,11 +78,25 @@ function integer(name: string, fallback: number): number {
   return parsed;
 }
 
-export async function main(): Promise<number> {
-  const baseUrl = required('CONTROL_PLANE_URL');
-  const token = required('CONTROL_PLANE_TOKEN');
-  const attempts = integer('PHASE2_RUNS', 3);
-  const evidencePath = text('PHASE2_EVIDENCE_PATH', 'evidence');
+/** Test seams (Lane B wiring). The entrypoint passes none of them. */
+export interface Phase2MainOptions {
+  readonly keyCustody?: HmacKeyCustody;
+  readonly streams?: HarnessStreams;
+  /** The inner bundle writer the redacting sink wraps; defaults to `writeFile`. */
+  readonly writeBundle?: (path: string, content: string) => Promise<void>;
+  /** Runner collaborators; defaults to `defaultDeps`. Never called when the boundary refuses. */
+  readonly deps?: (config: RunnerConfig, platform: Platform, token: string) => RunnerDeps;
+}
+
+export async function main(
+  environment: HarnessEnvironment = process.env,
+  options: Phase2MainOptions = {},
+): Promise<number> {
+  const streams = options.streams ?? processHarnessStreams();
+  const baseUrl = required(environment, 'CONTROL_PLANE_URL');
+  const token = required(environment, 'CONTROL_PLANE_TOKEN');
+  const attempts = integer(environment, 'PHASE2_RUNS', 3);
+  const evidencePath = text(environment, 'PHASE2_EVIDENCE_PATH', 'evidence');
 
   /*
    * Every required value is read HERE, before a single run executes.
@@ -80,24 +109,36 @@ export async function main(): Promise<number> {
    * Raised by CodeRabbit on PR #2.
    */
   const attribution = {
-    roleId: text('PHASE2_ROLE_ID', 'builder'),
-    actorId: required('PHASE2_ACTOR_ID'),
-    actualModel: required('PHASE2_ACTUAL_MODEL'),
-    executionSurface: text('PHASE2_EXECUTION_SURFACE', 'claude-code'),
+    roleId: text(environment, 'PHASE2_ROLE_ID', 'builder'),
+    actorId: required(environment, 'PHASE2_ACTOR_ID'),
+    actualModel: required(environment, 'PHASE2_ACTUAL_MODEL'),
+    executionSurface: text(environment, 'PHASE2_EXECUTION_SURFACE', 'claude-code'),
   };
-  const environment = text('PHASE2_ENVIRONMENT', 'unknown');
+  const bundleEnvironment = text(environment, 'PHASE2_ENVIRONMENT', 'unknown');
 
   const config: RunnerConfig = {
     ...DEFAULT_RUNNER_CONFIG,
     baseUrl,
-    dwellMs: integer('PHASE2_DWELL_MS', DEFAULT_RUNNER_CONFIG.dwellMs),
-    sampleIntervalMs: integer('PHASE2_SAMPLE_INTERVAL_MS', DEFAULT_RUNNER_CONFIG.sampleIntervalMs),
-    restartTimeoutMs: integer('PHASE2_RESTART_TIMEOUT_MS', DEFAULT_RUNNER_CONFIG.restartTimeoutMs),
-    deployTimeoutMs: integer('PHASE2_DEPLOY_TIMEOUT_MS', DEFAULT_RUNNER_CONFIG.deployTimeoutMs),
+    dwellMs: integer(environment, 'PHASE2_DWELL_MS', DEFAULT_RUNNER_CONFIG.dwellMs),
+    sampleIntervalMs: integer(
+      environment,
+      'PHASE2_SAMPLE_INTERVAL_MS',
+      DEFAULT_RUNNER_CONFIG.sampleIntervalMs,
+    ),
+    restartTimeoutMs: integer(
+      environment,
+      'PHASE2_RESTART_TIMEOUT_MS',
+      DEFAULT_RUNNER_CONFIG.restartTimeoutMs,
+    ),
+    deployTimeoutMs: integer(
+      environment,
+      'PHASE2_DEPLOY_TIMEOUT_MS',
+      DEFAULT_RUNNER_CONFIG.deployTimeoutMs,
+    ),
   };
 
-  const restartCommand = text('PHASE2_RESTART_COMMAND', '');
-  const deployCommand = text('PHASE2_DEPLOY_COMMAND', '');
+  const restartCommand = text(environment, 'PHASE2_RESTART_COMMAND', '');
+  const deployCommand = text(environment, 'PHASE2_DEPLOY_COMMAND', '');
   const platform: Platform =
     restartCommand === ''
       ? new ExternalPlatform('requested outside this process (Railway API or dashboard)')
@@ -106,37 +147,79 @@ export async function main(): Promise<number> {
           ...(deployCommand === '' ? {} : { deployCommand }),
         });
 
-  const deps = defaultDeps(config, platform, token);
-
-  let sequence: RunSequence = emptySequence();
-  let commit = 'unknown';
-
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    console.log(`\n=== Phase 2 run attempt ${attempt} of ${attempts} ===`);
-    const draft = await performRun(config, deps);
-    const appended = appendRun(sequence, draft);
-    sequence = appended.sequence;
-    if (draft.commit !== 'unknown') commit = draft.commit;
-    console.log(`--- run #${appended.run.seq}: ${appended.run.verdict.toUpperCase()}`);
-  }
-
-  const bundle = buildBundle(sequence, {
-    assembledAt: new Date().toISOString(),
-    commit,
-    baseUrl,
-    environment,
-    platformKind: platform.kind,
-    attribution,
+  /*
+   * The secret boundary opens HERE — after the configuration is read and
+   * before any collaborator exists. A refused boundary ends the harness with
+   * one line naming the refusal code and exit 3: no run is performed, no
+   * request is sent, no evidence file is written. There is no switch that
+   * turns this off (Lane B wiring act, 2026-09-14).
+   */
+  const boundary = await openHarnessRedactionBoundary(environment, {
+    ...(options.keyCustody === undefined ? {} : { keyCustody: options.keyCustody }),
   });
+  if (boundary.state.kind === 'refused') {
+    streams.err(redactionRefusalLine(boundary.state.code));
+    return REDACTION_REFUSED_EXIT;
+  }
+  const out = redactedHarnessStreams(boundary, streams);
+  const writer = boundary.evidenceBundleWriter(
+    options.writeBundle ?? ((path, content) => writeFile(path, content, 'utf8')),
+  );
 
-  await mkdir(evidencePath, { recursive: true });
-  const file = join(evidencePath, `phase2-runs-${bundle.context.assembledAt.replace(/[:.]/g, '-')}.json`);
-  await writeFile(file, serializeBundle(bundle), 'utf8');
+  // The runner logs synchronously; the sink writes synchronously under a ready
+  // boundary, so ordering holds. A sink failure is kept and surfaced at the end
+  // rather than swallowed.
+  let sinkFailure: unknown = null;
+  const log = (message: string): void => {
+    out.log(`${message}\n`).catch((error: unknown) => {
+      sinkFailure ??= error;
+    });
+  };
 
-  console.log(`\n${summarizeBundle(bundle)}`);
-  console.log(`\nevidence written to ${file}`);
+  try {
+    const deps: RunnerDeps = {
+      ...(options.deps?.(config, platform, token) ?? defaultDeps(config, platform, token)),
+      log,
+    };
 
-  return gateStatus(sequence).satisfied ? 0 : 1;
+    let sequence: RunSequence = emptySequence();
+    let commit = 'unknown';
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      log(`\n=== Phase 2 run attempt ${attempt} of ${attempts} ===`);
+      const draft = await performRun(config, deps);
+      const appended = appendRun(sequence, draft);
+      sequence = appended.sequence;
+      if (draft.commit !== 'unknown') commit = draft.commit;
+      log(`--- run #${appended.run.seq}: ${appended.run.verdict.toUpperCase()}`);
+    }
+
+    const bundle = buildBundle(sequence, {
+      assembledAt: new Date().toISOString(),
+      commit,
+      baseUrl,
+      environment: bundleEnvironment,
+      platformKind: platform.kind,
+      attribution,
+    });
+
+    await mkdir(evidencePath, { recursive: true });
+    const file = join(evidencePath, `phase2-runs-${bundle.context.assembledAt.replace(/[:.]/g, '-')}.json`);
+    // The sink redacts the bundle tree and serializes it exactly as
+    // `serializeBundle` does (`JSON.stringify(bundle, null, 2)` + newline).
+    await writer.write(file, bundle);
+
+    log(`\n${summarizeBundle(bundle)}`);
+    log(`\nevidence written to ${file}`);
+    if (sinkFailure !== null) throw sinkFailure;
+
+    return gateStatus(sequence).satisfied ? 0 : 1;
+  } catch (error) {
+    // Post-boundary failures leave through the redacting error path; the
+    // pre-boundary ones above carry variable names only and never reach here.
+    await out.error(error);
+    return 1;
+  }
 }
 
 if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
