@@ -22,6 +22,7 @@
     "packages/gateway-daemon/src/**/*.ts",
     "packages/gateway-cli/src/**/*.ts",
     "packages/worker-supervisor/src/**/*.ts",
+    "packages/redaction/src/**/*.ts",
     "test/**/*.ts"
   ]
 }
