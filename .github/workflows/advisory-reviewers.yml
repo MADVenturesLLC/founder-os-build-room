@@ -1,0 +1,161 @@
+name: advisory-reviewers
+
+# Identity-only advisory reviewers for MADVenturesLLC/founder-os-build-room.
+#
+# Each PR against `main` runs two advisory reviewers on the diff and posts
+# each review via the GitHub API under a distinct App bot actor. The model
+# invocation lives in this workflow; the Apps provide only the bot identity
+# (no model binding, no model-hosting responsibility).
+#
+# This workflow is purely additive. It does NOT amend any required check,
+# does NOT modify the existing `code-review` workflow, does NOT gate merge,
+# and does NOT change governance. It fails closed (exit 1 with ::error::)
+# if either reviewer fails to produce a review.
+#
+# Bots produced:
+#   - gemini-3.8-flash-medium  -> reviews post under gemini-reviewer-madventures[bot]
+#   - claude-opus-5            -> reviews post under claude-reviewer-madventures[bot]
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write   # required by actions/create-github-app-token@v1
+
+concurrency:
+  group: advisory-reviewers-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve PR identities
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Pull PR diff (read-only)
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/pulls/${{ steps.resolve.outputs.pr_number }}" \
+            -H "Accept: application/vnd.github.v3.diff" > /tmp/pr.diff
+          if [ ! -s /tmp/pr.diff ]; then
+            echo "::error::empty diff"
+            exit 1
+          fi
+
+      # ---- gemini reviewer ----
+
+      - name: Mint gemini reviewer installation token
+        id: gemini-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GEMINI_REVIEWER_APP_ID }}
+          private-key: ${{ secrets.GEMINI_REVIEWER_APP_PRIVATE_KEY }}
+
+      - name: Review as gemini-3.8-flash-medium
+        id: gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ${{ steps.gemini-token.outputs.token }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo "::error::GEMINI_API_KEY missing; gemini reviewer cannot run"
+            exit 1
+          fi
+          PROMPT=$(printf 'You are gemini-3.8-flash-medium, an advisory code reviewer for MADVenturesLLC/founder-os-build-room. Review the following PR diff. Output a single review body with: (1) one of PASS / PASS-WITH-ADVISORIES / FAIL / REQUEST_CHANGES as the first line, (2) a 1-3 sentence rationale, (3) zero or more bullet-pointed findings with file:line citations when applicable. The diff is:\n\n---\n%s\n---' "$(cat /tmp/pr.diff)")
+          REVIEW=$(printf '%s' "$PROMPT" \
+            | timeout 360 agy --print --model gemini-3.8-flash-medium \
+              --effort medium --dangerously-skip-permissions \
+              --print-timeout 5m 2>&1)
+          if [ -z "$REVIEW" ]; then
+            echo "::error::gemini reviewer returned empty output"
+            exit 1
+          fi
+          gh api -X POST "repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
+            -f event=COMMENT \
+            -f commit_id="$HEAD_SHA" \
+            -f body="<!-- advisory-reviewers:gemini-3.8-flash-medium -->\n\n$REVIEW" \
+            --jq '.id' > /tmp/gemini_review_id
+          echo "status=posted" >> "$GITHUB_OUTPUT"
+
+      # ---- claude reviewer ----
+      # Uses `claude` CLI in print mode with the Claude Code OAuth token,
+      # matching the `claude-v5-ds` wrapper pattern that has worked locally.
+      # The OAuth token is mirrored into ANTHROPIC_AUTH_TOKEN, which the
+      # CLI accepts as a fallback for the OAuth credentials file.
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code@latest 2>&1 | tail -3
+
+      - name: Mint claude reviewer installation token
+        id: claude-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CLAUDE_REVIEWER_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_REVIEWER_APP_PRIVATE_KEY }}
+
+      - name: Review as claude-opus-5
+        id: claude
+        env:
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ steps.claude-token.outputs.token }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN missing; claude reviewer cannot run"
+            exit 1
+          fi
+          if ! command -v claude >/dev/null 2>&1; then
+            echo "::error::claude CLI not found after install"
+            exit 1
+          fi
+          PROMPT=$(printf 'You are claude-opus-5, an advisory code reviewer for MADVenturesLLC/founder-os-build-room. Review the following PR diff. Output a single review body with: (1) one of PASS / PASS-WITH-ADVISORIES / FAIL / REQUEST_CHANGES as the first line, (2) a 1-3 sentence rationale, (3) zero or more bullet-pointed findings with file:line citations when applicable. The diff is:\n\n---\n%s\n---' "$(cat /tmp/pr.diff)")
+          REVIEW=$(printf '%s' "$PROMPT" \
+            | timeout 360 claude -p 2>&1)
+          if [ -z "$REVIEW" ]; then
+            echo "::error::claude reviewer returned empty output"
+            exit 1
+          fi
+          gh api -X POST "repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
+            -f event=COMMENT \
+            -f commit_id="$HEAD_SHA" \
+            -f body="<!-- advisory-reviewers:claude-opus-5 -->\n\n$REVIEW" \
+            --jq '.id' > /tmp/claude_review_id
+          echo "status=posted" >> "$GITHUB_OUTPUT"
+
+      # ---- summary, fails closed ----
+
+      - name: Surface advisory-reviewers status
+        if: ${{ always() }}
+        run: |
+          gemini="${{ steps.gemini.outputs.status }}"
+          claude="${{ steps.claude.outputs.status }}"
+          echo "advisory-reviewers: gemini-3.8-flash-medium=$gemini, claude-opus-5=$claude"
+          case "$gemini:$claude" in
+            posted:posted)
+              exit 0
+              ;;
+            *)
+              echo "::error::one or both reviewers degraded (gemini=$gemini, claude=$claude); failing closed"
+              exit 1
+              ;;
+          esac
