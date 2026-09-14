@@ -184,6 +184,24 @@ describe('redaction · error paths are write paths', () => {
     assert.ok(err[0]!.includes(token));
   });
 
+  it('the harness plain-text stderr path (v0.1) redacts when ready and refuses before the inner call when not', async () => {
+    const ready = await readyBoundary();
+    const err: string[] = [];
+    const sink = ready.harnessLogSink({ out: () => undefined, err: (t) => err.push(t) });
+    await sink.err(`restart failed for ${SECRET}\n`);
+    const token = ready.require().token('FIXTURE_PASSWORD', SECRET);
+    assert.deepEqual(err, [`restart failed for ${token}\n`]);
+
+    const refused = await RedactionBoundary.open({ registry: registryWith(), keyCustody: new InMemoryHmacKeyCustody(null) });
+    let innerCalls = 0;
+    const refusing = refused.harnessLogSink({ out: () => { innerCalls += 1; }, err: () => { innerCalls += 1; } });
+    await assert.rejects(
+      () => refusing.err(SECRET),
+      (error: unknown) => error instanceof RedactionRefusedError && error.code === 'key_absent',
+    );
+    assert.equal(innerCalls, 0, 'the inner err stream was never invoked');
+  });
+
   it('an inner writer that throws with the secret in its message surfaces a REDACTED SinkWriteError', async () => {
     const boundary = await readyBoundary();
     const sink = boundary.journalAppendSink(async () => {
