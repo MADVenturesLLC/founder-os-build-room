@@ -56,17 +56,18 @@ on:
   # read-only from the API, and it reaches the models as data only.
   pull_request_target:
     branches: [main]
-    # `opened` and `reopened` only, deliberately NOT `synchronize`. Every push
-    # used to re-run both advisory legs, and PR #50's fifteen commits produced
-    # nine rounds and twenty review bodies re-listing the same findings — the
-    # churn this lane existed to add value against. This trigger gives ONE
-    # independent advisory look, at the state the PR was opened in, and no
-    # more. It does NOT review the state at merge: claude-code-review.yml
-    # re-reviews every push and does see the final state, so a later
-    # substantive change is not left unseen, it is just not re-litigated by
-    # two more models each time. A label-gated re-trigger is the named
-    # extension if a second look at a later state is ever wanted.
-    types: [opened, reopened]
+    # `opened`, `reopened` and `ready_for_review` only, deliberately NOT
+    # `synchronize`. Every push used to re-run both advisory legs, and PR #50's
+    # fifteen commits produced nine rounds and twenty review bodies re-listing
+    # the same findings — the churn this lane existed to add value against.
+    # This trigger gives ONE independent advisory look per state transition:
+    # at open, and again when a draft is made ready (so a draft-first PR does
+    # not spend its only look on a deliberately incomplete state). It does NOT
+    # review every later commit: claude-code-review.yml re-reviews every push
+    # and does see the final state, so a later substantive change is not left
+    # unseen, it is just not re-litigated by two more models each time. A
+    # label-gated re-trigger is the named extension for a third look.
+    types: [opened, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -191,6 +192,13 @@ jobs:
           resolved=0
           unresolved=0
           omitted=0
+          seen=0
+          # A per-run file cap, with the same "named rather than dropped"
+          # treatment the byte caps get. Without it, a PR touching a few
+          # hundred files spends the whole 5-minute step budget on sequential
+          # API calls, gets killed, and loses the ENTIRE context instead of
+          # degrading to partial.
+          MAX_FILES=60
           # Built aside and moved into place only after the closing tag. A partial
           # file left by a timeout or a mid-loop failure would otherwise EXIST, and
           # the review step's `-f` check cannot tell it from a complete one — so the
@@ -213,10 +221,11 @@ jobs:
           # so such a path is reported unresolved rather than silently misread.
           #
           # Deletions are NOT matched (`+++ /dev/null`): there is no content at
-          # the head to fetch for a file this PR removes. Binary files and
-          # mode-only changes also produce no `+++` line and are absent AND
-          # unnamed — the second class of absence this step knows about, next
-          # to truncation, and named here rather than silently. Admitting the line
+          # the head to fetch for a file this PR removes. Binary files,
+          # mode-only changes and pure 100%-similarity renames also produce no
+          # `+++` line and are absent AND unnamed — the further classes of
+          # absence this step knows about, next to truncation, named here
+          # rather than silently. Admitting the line
           # would leave a phantom path literally named `+++ /dev/null` after
           # the sed (neither expression strips that prefix), and on a
           # deletion-only PR that phantom would trip the all-unresolved guard
@@ -238,6 +247,11 @@ jobs:
           }
           while IFS= read -r path; do
             [ -n "$path" ] || continue
+            seen=$((seen + 1))
+            if [ "$seen" -gt "$MAX_FILES" ]; then
+              omitted=$((omitted + 1))
+              continue
+            fi
             # The file contents are tag-stripped below; so is the path when it
             # appears in a context HEADER. A path literally containing the
             # closing tag would otherwise close the untrusted region from the
@@ -316,7 +330,21 @@ jobs:
             printf '\n' >> /tmp/context.partial
             rm -f /tmp/context.one /tmp/context.err
           done < /tmp/context.paths
+          if [ "$seen" -gt "$MAX_FILES" ]; then
+            printf '(fetched the first %s files; %s more were not fetched — the per-run file cap is reached and they are not listed)\n' "$MAX_FILES" "$((seen - MAX_FILES))" >> /tmp/context.partial
+            echo "::warning::context: file cap reached; $((seen - MAX_FILES)) file(s) not fetched"
+          fi
           printf '</file-context>\n' >> /tmp/context.partial
+          # Written to its own file so the gemini step can trust it: it never
+          # receives PR content. Derived here from the same material the
+          # context was built from.
+          CTX_STATE="full"
+          if [ ! -s /tmp/context.paths ]; then
+            CTX_STATE="no-paths"
+          elif tail -n1 /tmp/pr.diff | grep -qF '[diff truncated at'; then
+            CTX_STATE="truncated"
+          fi
+          printf '%s\n' "$CTX_STATE" > /tmp/context.state
           # `declared_bytes` is the API's .size for the files INCLUDED; the written
           # count below is larger by whatever the tag-stripping added. They are
           # reported as two figures rather than one, because they do not measure
@@ -338,12 +366,15 @@ jobs:
       - name: Review as gemini reviewer (model and effort from env)
         if: ${{ !cancelled() && steps.diff.outcome == 'success' }}
         id: gemini
-        timeout-minutes: 20
+        timeout-minutes: 40
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
         run: |
           set -euo pipefail
+          # Same guard as the context step: an empty SHA would print a bare
+          # `head=` marker and label the review as having reviewed nothing.
+          : "${HEAD_SHA:?head sha not resolved}"
           umask 077
           if [ -z "${GEMINI_API_KEY:-}" ]; then
             echo "::error::GEMINI_API_KEY missing; gemini reviewer cannot run"
@@ -361,15 +392,17 @@ jobs:
           # this, the degraded-path correction lived only inside <file-context>,
           # which the prompt itself tells the model to treat as untrusted — so
           # the trusted channel asserted it had every file when it did not,
-          # exactly in the run where that mattered most. Derived from the
-          # context file so the two cannot disagree.
-          CTX_STATE="full"
-          if grep -qF 'was not fetched for this run' /tmp/context.md; then
-            CTX_STATE="none"
-          elif grep -qF 'no file paths could be parsed out of the diff' /tmp/context.md; then
-            CTX_STATE="no-paths"
-          elif grep -qF 'truncated at its byte cap' /tmp/context.md; then
-            CTX_STATE="truncated"
+          # exactly in the run where that mattered most.
+          #
+          # The state comes from /tmp/context.state, written by the context
+          # step, which never receives PR content. An earlier version derived
+          # the state by grepping /tmp/context.md itself — a file that HOLDS
+          # PR-head file text — so a reviewed file containing a sentinel phrase
+          # could downgrade the trusted description. Degradation-only, but the
+          # claimed invariant did not hold.
+          CTX_STATE="none"
+          if [ -f /tmp/context.state ]; then
+            CTX_STATE="$(cat /tmp/context.state)"
           fi
           build_req() {
             # Built per call from the pair actually being sent. One SYSTEM built
@@ -448,8 +481,9 @@ jobs:
           if [ "$GEMINI_MODEL" != "$FALLBACK_MODEL" ] || [ "$GEMINI_EFFORT" != "$FALLBACK_EFFORT" ]; then
             PAIR_IS_UPGRADE=yes
           fi
-          # Retry 429 / 5xx / transport failure with backoff (15s, 30s);
-          # 3 x 300s plus backoff is about 16 minutes, inside the step cap.
+          # Retry 429 / 5xx / transport failure with backoff (15s, 30s).
+          # Worst case is 3 primary attempts plus up to 2 fallback attempts:
+          # about 26 minutes, inside the 40-minute step cap.
           attempt=0
           HTTP=000
           while :; do
@@ -479,7 +513,12 @@ jobs:
                   # The fallback request deserves its own retry budget. Without
                   # the reset, transport failures that ate the primary's
                   # attempts would leave the fallback with exactly one shot.
-                  attempt=0
+                  # Reset to 1, not 0: 3 primary + 3 fallback attempts at up to
+                  # 300s each plus backoff is ~32 minutes, past the step cap
+                  # and back to a red check with no review. Reset to 1 gives
+                  # the fallback attempts 2 and 3, ~26 minutes worst case,
+                  # inside the 40-minute cap.
+                  attempt=1
                   continue
                 fi
                 break ;;
