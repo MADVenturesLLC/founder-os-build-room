@@ -302,12 +302,15 @@ run_selftest() {
     "inline pin on sample.txt" \
     "printf '\\nPinned: docs/planning/command-journal/custody/sample.txt\\n  sha256: %s\\n' \"\$(sha256sum docs/planning/command-journal/custody/sample.txt | cut -d\" \" -f1)\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
 
-  # The blank lines are load-bearing: they put the pin outside the four-line
-  # lookback by construction rather than by however long the fixture happens to
-  # be, so adding a line to selftest_fixture cannot silently invert this case.
+  # The six leading newlines are load-bearing: they put the pin more than four
+  # lines below the fixture's last path, so the isolation is a property of this
+  # mutation rather than of however long selftest_fixture happens to be. An
+  # earlier version of this comment claimed that padding while the mutation
+  # still had a single newline — the margin was exactly one line, and removing
+  # a line from the fixture would have inverted the case.
   selftest_case "an inline pin with no path nearby is noted, not counted, not failed" 0 \
     "not verified, not counted" \
-    "printf '\\nSuperseded revision:\\n  sha256 %s\\n' \"\$(printf '1%.0s' {1..64})\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+    "printf '\\n\\n\\n\\n\\n\\nSuperseded revision:\\n  sha256 %s\\n' \"\$(printf '1%.0s' {1..64})\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
 
   echo
   if (( selftest_failures )); then
