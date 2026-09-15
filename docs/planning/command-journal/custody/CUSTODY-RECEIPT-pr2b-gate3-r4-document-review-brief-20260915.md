@@ -11,15 +11,26 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `6c3fdc4f0acc649ac10f077dcaeb9754bf8c23c4` |
-| SHA-256 | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f` |
-| Bytes | 6142 |
-| Lines | 110 (`wc -l`) |
+| Git blob id (as landed) | `dd0af5920ba382e2a0bb48ac09844f55f5e69d45` |
+| SHA-256 (as landed) | `9c369e1722a577b3dd923836656a85594065fccf46ec2a072c40d13031b7e1d3` |
+| Bytes / lines (as landed) | 7103 bytes, 125 lines |
+| SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat in session, 2026-09-15, at Founder direction ("write the document review brief") |
 | Dispatched | the Founder reports sending this text to the operator before it was landed |
 
-The Founder reports that the file holds the dispatched text verbatim;
+The landed file is the dispatched text preceded by a supersession
+banner added at landing, so a reader opening it alone is not misled by
+defects the addendum corrects. The banner is marked as not part of the
+dispatched text, and the dispatched bytes remain recoverable and
+checkable:
+
+```
+sed -n '/^INDEPENDENT DOCUMENT REVIEW BRIEF$/,$p' <file> | sha256sum
+# 3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
+```
+
+The Founder reports that those bytes are the dispatched text verbatim;
 that identity rests on the same report and is not verifiable from the
 repository, since dispatch preceded landing. On that basis the brief the
 reviewer worked from is citable by hash rather than by recollection.
@@ -59,15 +70,18 @@ reviewer, and the review's standing is qualified accordingly:
   barred resolving an ambiguity by choosing an answer. The reviewer
   answered "pass as drafted" and gave reasons, treating it as a
   judgment rather than refusing it, which is the reading correction 4
-  makes explicit. Of the five, this was the one with a plausible effect
-  on the outcome, and it had none.
+  makes explicit. Of the five, this is the one whose absence could most
+  plausibly have changed what the reviewer did.
 - `CANNOT COMPLETE — BRIEF DEFECT`, added by correction 5, did not
   exist when the review ran. The reviewer was not blocked, so the gap
   did not bite.
 
-None of the five changed the verdict. The record keeps both the brief as
-dispatched and the defects found in it, so a later reader can see what
-the reviewer did and did not have.
+These are observations about what the reviewer wrote, not claims about
+what a corrected brief would have produced. That counterfactual is not
+this seat's to assert: the same seat landed the artifact under review,
+wrote the brief, and wrote this receipt. The record keeps both the brief
+as dispatched and the defects found in it so a later reader can judge
+for themselves.
 
 The addendum carries five corrections, three of which change what the
 brief asks, and says so in its own header rather than claiming to change
@@ -126,6 +140,12 @@ The review completed on 2026-09-15 and returned `PASS`, reviewer
 `br-operator` session `20260914_234018_5b1c61`, `actor_id`
 `UNAVAILABLE`, against artifact SHA-256 `466469cc…13dae`.
 
+**The one enforceable independence check is unverifiable.** The brief's
+independence rule is written against an Actor-Id, and the reviewer's is
+reported `UNAVAILABLE`. Independence therefore rests on the seat name
+`br-operator` alone, which is neither barred identity but is not the
+field the rule names.
+
 **That output is not in this repository.** The operator reports it at
 `hermes-profile-suite/HANDOFF-operator-to-founder-pr2b-gate3-trancheB-r4-document-review-20260915.md`,
 SHA-256 `a5ba787f736eca8675c53f219f772a614009c08e22ca610e317cb127d51fc21b`,
@@ -137,13 +157,26 @@ repository identity. The directory holding it is the subject of FounderOS
 `DEC-20260914-01`.
 
 The verdict's citations were spot-checked against committed truth rather
-than accepted: the act's section 18 is `DELIBERATELY UNFILLED` at the
-cited line, `B-R16` is at line 1333, plan r1's `B-R14` and `B-R15` are
-untouched at 1325 and 1326, and the live R3-to-R4 diff is 14 hunks at
-default context as reported. Three findings the reviewer marked
-non-blocking remain open: the FD-B5 row at section 17.1 against the D-1
-supersession at section 9.1, section 12 item 4 omitting B-T4, and R3
-findings A through D.
+than accepted. **Every line number below names its file**, because an
+earlier revision of this receipt attributed act line numbers to plan r1,
+which is 974 lines and cannot contain them:
+
+| Claim | File | Lines |
+|---|---|---|
+| Section 18 is `DELIBERATELY UNFILLED` | R4 act | 2414 |
+| `B-R16` added to the section 6.3 matrix | R4 act | 1333 |
+| `B-R14` and `B-R15` restated, unchanged | R4 act | 1325, 1326 |
+| `B-R14` and `B-R15` as plan r1 assigns them | plan r1 | 455, 456 |
+| Their control mappings PC-5 and PC-8 | plan r1 | 827, 830 |
+
+The live R3-to-R4 diff is 14 hunks at default context, as reported.
+`B-R16` appears nowhere in plan r1, so the plan-wide half of Q6 holds;
+the reviewer asserted it and it is confirmed here.
+
+Open findings the reviewer marked non-blocking: the FD-B5 row at act
+section 17.1 against the D-1 supersession at act section 9.1; act
+section 12 item 4 omitting B-T4; and R3 findings A, B, C and D. That is
+six findings in three items, not three.
 
 ## What this commit does not do
 
