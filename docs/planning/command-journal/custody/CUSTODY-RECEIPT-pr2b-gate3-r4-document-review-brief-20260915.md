@@ -24,34 +24,50 @@ that identity rests on the same report and is not verifiable from the
 repository, since dispatch preceded landing. On that basis the brief the
 reviewer worked from is citable by hash rather than by recollection.
 
-## Addendum 1, correcting the brief
+## Brief addendum 1, correcting the brief
 
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `ec9f91b9a1aff6805e8b4fc647e888f3fa0edaaa` |
-| SHA-256 | `416a7573b052e8bb7778f967e33149ef3662d5acbd39b3c3d80c95917459afc5` |
-| Bytes | 3701 |
-| Lines | 85 (`wc -l`) |
+| Git blob id | `f0f94de7aa94ab8fd555f6c724beb598b83c0d5f` |
+| SHA-256 | `fa5e80021859a90bd2c92a1bdfe8d139ff122e2b7e92cbaa79e2aa3b91f06182` |
+| Bytes | 5110 |
+| Lines | 110 (`wc -l`) |
+| Trailing newline | present (single LF) |
+| Dispatched | **not yet.** The brief went to the operator before these
+defects were found; this addendum has not been sent. A correction that
+does not reach the reviewer does not correct the review |
 
-An advisory review of the brief found two builder defects in it, and the
-brief had already been dispatched. The addendum corrects them rather than
-editing the dispatched text, so the record holds both what was sent and
-what corrects it.
+Advisory reviews of the brief (runs `34926174104` and `34926421238`,
+2026-09-15) found defects in it, and the brief had already been
+dispatched. The addendum corrects them rather than editing the
+dispatched text, so the record holds both what was sent and what
+corrects it.
 
-1. The brief stated the R3-to-R4 delta as "18 hunks, 17 insertions and
-   one replaced line". "17 insertions" was a hunk count read as a line
-   count. Measured from committed truth: 18 hunks, 335 lines added, 1
-   line removed, net +334, which reconciles R3's 2285 lines with R4's
-   2619.
+It carries four corrections. **Two of them change what the brief asks**,
+and the addendum says so rather than claiming to change nothing:
+
+1. The R3-to-R4 delta was stated in an ambiguous unit: "17 insertions"
+   is a hunk count that reads as a line count and cannot be reconciled
+   with the sizes the brief itself gives. Measured from committed truth:
+   18 hunks, 335 lines added, 1 removed, net +334, reconciling R3's 2285
+   lines with R4's 2619.
 2. Questions 6 and 7 require reading the implementation plan, which the
-   brief never identified. The addendum supplies path, blob, SHA-256 and
-   size for plan r1 and for addendum 02 revision r6, and records that
-   FD-B1 through FD-B7 have no separate artifact and are read at the
-   act's section 0.
+   brief never identified while demanding committed-truth reading
+   everywhere else. Path, blob, SHA-256 and size are supplied for plan
+   r1 and plan addendum 02 revision r6, with the section and line
+   locations Q6 depends on.
+3. **Changes Q6.** The brief attributed the B-R14 to B-R16 renumbering
+   to the authorization act; it is the D-1 ruling's act, which R4
+   carries into its matrix. Q6 is restated accordingly.
+4. **Narrows a constraint.** The bar on resolving an ambiguity by
+   choosing an answer is scoped to gaps and contradictions in the act,
+   not to Q8, which asks for a judgment deliberately.
 
-The addendum changes no question, no verdict vocabulary, no constraint,
-and not the independence rule.
+The addendum also records that two things the brief cites cannot be
+given repository identity: act revisions R1 and R2 are not in this
+repository (only R3 and R4 are on `main`), and the R2 document review
+output is not either. No question depends on them.
 
 ## What it asks for
 
