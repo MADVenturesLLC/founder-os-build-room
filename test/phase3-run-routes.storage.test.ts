@@ -362,7 +362,13 @@ describe('Phase 3 run routes — leadership fence', { skip: STORAGE_SKIP }, () =
   });
 
   it('reconciles committed finalization and returns awaiting adjudication', async () => {
-    const result = await runWithPostCommitDemotion(7);
+    // The 7th commit is `attempt_finished` — the last write of a clean run,
+    // with nothing after it to retry. A tight reconciliation deadline here
+    // only races the real commit-then-re-export round trip against the
+    // clock, so this uses the same request timeout the sibling
+    // `Phase3ControlPlaneClient` instances above use, instead of the
+    // fast-fail budget the never-reconciles scenarios below need.
+    const result = await runWithPostCommitDemotion(7, 1_000);
     assert.equal(result.outcome, 'awaiting_adjudication');
     assert.equal((result.evidence as Phase3EvidenceExport).attempt.state, 'awaiting_adjudication');
   });
@@ -538,7 +544,18 @@ function routeExpectation(input: Phase3AttemptInput): Phase3EvidenceExpectation 
   return { attempt: input, environment: node!.config.environment };
 }
 
-async function runWithPostCommitDemotion(demoteAtCommit: number) {
+/**
+ * `requestTimeoutMs` bounds the client's own reconciliation deadline
+ * (`requestTimeoutMs * 3`, see `Phase3ControlPlaneClient`). A demotion that
+ * lands on the LAST write of an otherwise successful run — the case this
+ * default doesn't cover — commits before the fence rejects it, so the
+ * client's job is to discover that by re-exporting, not to keep failing.
+ * The default stays tight because the other callers demote at a point that
+ * can never reconcile (the node stays demoted for the rest of the test),
+ * and there every extra millisecond here is pure wait before the correct
+ * `unresolved_commit`.
+ */
+async function runWithPostCommitDemotion(demoteAtCommit: number, requestTimeoutMs = 50) {
   let phase3Commits = 0;
   let fencedNode!: SessionNode;
   fencedNode = await restartNode({
@@ -608,7 +625,7 @@ async function runWithPostCommitDemotion(demoteAtCommit: number) {
       stagingLockPresent: false,
     },
   };
-  const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, 50, 1);
+  const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, requestTimeoutMs, 1);
   let heartbeatSent = false;
   return performPhase3Attempt(plan, {
     observeEntry: async () => observation,

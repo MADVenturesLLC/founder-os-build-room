@@ -257,6 +257,18 @@ export async function startNodeServer(
 
   return {
     url: `http://127.0.0.1:${port}`,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    /*
+     * `server.close()` alone waits for every keep-alive socket to end on its
+     * own — which, left to Node's and the client's idle timeouts, is several
+     * real seconds per test. Nothing here needs a graceful drain: the test
+     * has already finished reading whatever response it cared about, so
+     * `closeAllConnections()` cuts the idle sockets immediately and lets the
+     * close callback fire right away.
+     */
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections();
+      }),
   };
 }
