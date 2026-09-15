@@ -29,20 +29,30 @@ and one replaced line (the title designator)."
 
 "17 insertions" is a hunk count. Read as a line count, which the
 sentence invites, it cannot be reconciled with the sizes the brief
-itself gives. Measured from committed truth on main, `git diff
---numstat` between the two blobs:
+itself gives.
 
-  hunks            18     (17 insertion hunks + 1 replacement hunk)
+Line counts, from `git diff --numstat` between the two blobs on main.
+These do not depend on how the diff is rendered:
+
   lines added      335
   lines removed    1      (the title designator, R3 -> R4)
   net              +334
   R3               2285 lines
   R4               2619 lines   (2285 + 335 - 1)
 
-"Pure insertion" is also loose: seventeen hunks insert, one replaces a
-single line. The claim to verify is that no R3 line other than the title
-designator was changed or removed, and that R3's rows are retained
-rather than replaced.
+Hunk counts do depend on rendering, and the brief gave one as though it
+were fixed. `--numstat` reports no hunks at all. Counting `@@` markers:
+
+  18 hunks at --unified=0    (17 insertion + 1 replacement)
+  14 hunks at the default -U3
+
+Cite the line counts. Treat any hunk count as a description of one
+rendering, not a property of the change.
+
+"Pure insertion" is also loose: one hunk replaces a single line. The
+claim to verify is that no R3 line other than the title designator was
+changed or removed, and that R3's rows are retained rather than
+replaced.
 
 CORRECTION 2 — Q6 and Q7 need documents the brief never identified
 

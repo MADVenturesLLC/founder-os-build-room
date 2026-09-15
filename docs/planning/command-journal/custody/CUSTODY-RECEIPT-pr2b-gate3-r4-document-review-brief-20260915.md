@@ -29,10 +29,10 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `72ff1a215550c159e4329699710cb753a4df22e0` |
-| SHA-256 | `c233b9be33592af371301e41b422528833d2d09bdab0a71ea38e3f644b5657b8` |
-| Bytes | 6238 |
-| Lines | 132 (`wc -l`) |
+| Git blob id | `81117c8fe4d928248a51363c6f9080aa5cbfeda5` |
+| SHA-256 | `24706cc1325d1907caa417b15dd0bf08ec3798be5ec222d566e3fa96a6d8b4bd` |
+| Bytes | 6533 |
+| Lines | 142 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **not yet — see the action below** |
 
@@ -58,8 +58,10 @@ nothing:
 1. The R3-to-R4 delta was stated in an ambiguous unit: "17 insertions"
    is a hunk count that reads as a line count and cannot be reconciled
    with the sizes the brief itself gives. Measured from committed truth:
-   18 hunks, 335 lines added, 1 removed, net +334, reconciling R3's 2285
-   lines with R4's 2619.
+   335 lines added, 1 removed, net +334, reconciling R3's 2285 lines
+   with R4's 2619. Hunk counts are rendering-dependent (18 at
+   `--unified=0`, 14 at the default) and `--numstat` reports none, so
+   the addendum tells the reviewer to cite lines, not hunks.
 2. Questions 6 and 7 require reading the implementation plan, which the
    brief never identified while demanding committed-truth reading
    everywhere else. Path, blob, SHA-256 and size are supplied for plan
