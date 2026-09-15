@@ -13,6 +13,10 @@ name: advisory-reviewers
 # The two legs are independent: a failure in one does not skip the other,
 # and the summary step still fails closed unless both posted.
 #
+# Changes to this workflow's triggers, permissions, or steps require
+# founder approval before merge (same rule class as DEC-20260718-02
+# clause 4).
+#
 # This workflow is purely additive. It does NOT amend any required check,
 # does NOT modify the existing `code-review` workflow, does NOT gate merge,
 # and does NOT change governance. It fails closed (exit 1 with ::error::)
@@ -195,6 +199,7 @@ jobs:
         if: ${{ !cancelled() && steps.diff.outcome == 'success' }}
         run: |
           set -o pipefail
+          # 2.1.272 = `npm view @anthropic-ai/claude-code version`, 2026-09-15
           npm install -g @anthropic-ai/claude-code@2.1.272 2>&1 | tail -3
 
       - name: Mint claude reviewer installation token
