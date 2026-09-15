@@ -155,7 +155,7 @@ jobs:
           trap 'rm -f /tmp/gemini_auth.h' EXIT
           URL="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
           # Retry 429 / 5xx / transport failure with backoff (15s, 30s);
-          # 3 x 180s plus backoff stays well inside the 20-minute step cap.
+          # 3 x 300s plus backoff is about 16 minutes, inside the step cap.
           attempt=0
           HTTP=000
           while :; do
