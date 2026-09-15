@@ -118,8 +118,17 @@ TEST_DATABASE_URL=postgresql://…/buildroom_test npm run test:storage
 npm run test:custody:macos
 
 npm run gate:path-audit             # required check
+npm run gate:custody-pin-check      # NOT a required check — see below
 npm run gate:attribution-selftest   # required check, parser regression cases
 npm run gate:verify-check           # required check — unverified checks count as failing (docs/verify-gate-integrity.md)
+
+# The custody pin gate. The records under
+# docs/planning/command-journal/custody/ cite each other by blob id, SHA-256,
+# byte and line count, and one publishes a sed recipe for a hash-pinned
+# extract. All of it is hand-maintained and all of it fails silently — a stale
+# pin still looks like a pin. This recomputes every declaration from the file
+# it names. It is deliberately NOT in the main ruleset's required checks:
+# making it required is a repository-settings change and a Founder act.
 
 # The contract integrity gate. It scans the authorizing contract DOCUMENT,
 # which lives outside this repository, so it takes the path explicitly and is
