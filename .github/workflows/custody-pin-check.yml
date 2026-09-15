@@ -23,11 +23,16 @@
 # would skip.
 #
 # Changes to this workflow's triggers, permissions, or steps require founder
-# approval before merge. That rule is DEC-20260718-02 clause 4; this comment
-# restates where the rule comes from and does not create it — a file cannot
-# establish an approval requirement about itself, any more than it can make
-# itself a required check. Enforcement, if wanted beyond the decision record,
-# belongs in the ruleset or CODEOWNERS.
+# approval before merge (same rule class as DEC-20260718-02 clause 4). The
+# hedge is deliberate and matches advisory-reviewers.yml, attribution-shape.yml
+# and claude-code-review.yml: that decision record lives in FounderOS, not in
+# this repository, so nothing here has read it. Stating flatly what an unread
+# document says is the error this file's own gate exists to make visible.
+#
+# This comment restates where the rule comes from and does not create it — a
+# file cannot establish an approval requirement about itself, any more than it
+# can make itself a required check. Enforcement, if wanted beyond the decision
+# record, belongs in the ruleset or CODEOWNERS.
 
 name: Custody Pin Check
 
