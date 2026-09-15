@@ -262,16 +262,18 @@ export async function startNodeServer(
      * own — which, left to Node's and the client's idle timeouts, is several
      * real seconds per test. `closeAllConnections()` destroys every socket
      * immediately, including one still mid-request, so the close callback
-     * fires right away — safe here because every caller of `close()` in this
-     * test suite has already awaited its last response before tearing down.
+     * fires right away. Callers MUST await their last response before
+     * calling this: a request still in flight would see its socket
+     * destroyed instead of finishing, the same way every caller of `close()`
+     * in this test suite already behaves today.
      * `closeIdleConnections()` looked like the more conservative choice (it
      * leaves an in-flight socket alone) but proved unreliable in practice:
      * repeated local runs still saw multi-second hangs, presumably because
      * whatever marks a socket idle hadn't run yet at the point this fires.
      */
     close: () =>
-      new Promise<void>((resolve) => {
-        server.close(() => resolve());
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
         server.closeAllConnections();
       }),
   };
