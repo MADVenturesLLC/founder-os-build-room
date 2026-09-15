@@ -259,17 +259,14 @@ export async function startNodeServer(
     url: `http://127.0.0.1:${port}`,
     /**
      * `server.close()` alone waits for every keep-alive socket to end on its
-     * own — which, left to Node's and the client's idle timeouts, is several
-     * real seconds per test. `closeAllConnections()` destroys every socket
-     * immediately, including one still mid-request, so the close callback
-     * fires right away. Callers MUST await their last response before
-     * calling this: a request still in flight would see its socket
-     * destroyed instead of finishing, the same way every caller of `close()`
-     * in this test suite already behaves today.
-     * `closeIdleConnections()` looked like the more conservative choice (it
-     * leaves an in-flight socket alone) but proved unreliable in practice:
-     * repeated local runs still saw multi-second hangs, presumably because
-     * whatever marks a socket idle hadn't run yet at the point this fires.
+     * own — several real seconds per test, left to Node's and the client's
+     * idle timeouts. `closeAllConnections()` destroys every socket
+     * immediately, including one still mid-request, so callers MUST await
+     * their last response before calling this. `closeIdleConnections()`
+     * looked like the more conservative choice (it leaves an in-flight
+     * socket alone) but proved unreliable in practice: repeated local runs
+     * still saw multi-second hangs, presumably because whatever marks a
+     * socket idle hadn't run yet at the point this fires.
      */
     close: () =>
       new Promise<void>((resolve, reject) => {
@@ -277,7 +274,7 @@ export async function startNodeServer(
           // A double close() is a harmless no-op, matching the prior
           // always-resolves behavior; anything else is a real failure the
           // caller should see rather than have silently swallowed.
-          if (error !== undefined && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') {
+          if (error != null && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') {
             reject(error);
             return;
           }

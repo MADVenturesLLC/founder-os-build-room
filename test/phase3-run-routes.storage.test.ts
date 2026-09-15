@@ -35,6 +35,23 @@ let server: { url: string; close: () => Promise<void> } | undefined;
 const ADJUDICATION_TOKEN = 'phase3-adjudication-test-token-value';
 /** Request timeout for the harness `Phase3ControlPlaneClient`s in this file. */
 const CLIENT_REQUEST_TIMEOUT_MS = 1_000;
+/**
+ * Reconciliation budget for the one `runWithPostCommitDemotion` scenario
+ * that must actually reconcile a real commit-then-re-export round trip
+ * (see `FINALIZATION_COMMIT`). Kept independent of
+ * `CLIENT_REQUEST_TIMEOUT_MS` — they happen to share a value today, but
+ * one is "enough for ordinary test traffic" and the other is "enough
+ * headroom that a real round trip under load won't be mistaken for a
+ * lost write"; tuning one for its own reasons shouldn't silently move
+ * the other.
+ */
+const FINALIZATION_RECONCILIATION_TIMEOUT_MS = 1_000;
+// Commit indices (1-based, counting `afterCommit` fires) in a clean
+// `runWithPostCommitDemotion` run: create, connect, adapter_registered,
+// request, matched_response, disconnect, attempt_finished.
+const CREATE_COMMIT = 1;
+const FIRST_LIFECYCLE_STAGE_COMMIT = 2;
+const FINALIZATION_COMMIT = 7;
 
 beforeEach(async () => {
   if (STORAGE_SKIP !== false) return;
@@ -305,13 +322,6 @@ describe('Phase 3 run routes — closed write and export surface', { skip: STORA
   });
 });
 
-// Commit indices (1-based, counting `afterCommit` fires) in a clean run:
-// create, connect, adapter_registered, request, matched_response,
-// disconnect, attempt_finished.
-const CREATE_COMMIT = 1;
-const FIRST_LIFECYCLE_STAGE_COMMIT = 2;
-const FINALIZATION_COMMIT = 7;
-
 describe('Phase 3 run routes — leadership fence', { skip: STORAGE_SKIP }, () => {
   it('rolls back when leadership is lost before commit', async () => {
     let fencedNode!: SessionNode;
@@ -373,7 +383,7 @@ describe('Phase 3 run routes — leadership fence', { skip: STORAGE_SKIP }, () =
   it('reconciles committed finalization and returns awaiting adjudication', async () => {
     // See `runWithPostCommitDemotion`'s doc comment for why this scenario,
     // unlike the two below, needs a real reconciliation budget.
-    const result = await runWithPostCommitDemotion(FINALIZATION_COMMIT, CLIENT_REQUEST_TIMEOUT_MS);
+    const result = await runWithPostCommitDemotion(FINALIZATION_COMMIT, FINALIZATION_RECONCILIATION_TIMEOUT_MS);
     assert.equal(result.outcome, 'awaiting_adjudication');
     assert.equal((result.evidence as Phase3EvidenceExport).attempt.state, 'awaiting_adjudication');
   });
