@@ -20,6 +20,7 @@ import {
 import { ScriptedClock } from '../packages/control-plane/src/gateway/clock.js';
 import { PostgresLedgerStore } from '../packages/control-plane/src/store.js';
 import { FIXED_WALL_MS } from './gateway-helpers.js';
+import { closeServer } from './support/close-server.js';
 
 export const SURFACE_TOKEN = 'surface-suite-token-that-is-long-enough';
 
@@ -137,15 +138,13 @@ export async function startSurface(
     config,
     close: async () => {
       await gateway.stop();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await closeServer(server);
     },
   };
 }
 
 export async function closeAllSurfaces(): Promise<void> {
-  await Promise.all(
-    openServers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
-  );
+  await Promise.all(openServers.map((server) => closeServer(server)));
 }
 
 export function bearer(token: string = SURFACE_TOKEN): Record<string, string> {

@@ -24,6 +24,7 @@ import type { PostgresLedgerStore } from '../packages/control-plane/src/store.js
 import { loadConfig } from '../packages/control-plane/src/config.js';
 import { initialLedger } from '../packages/ledger/src/index.js';
 import { makeEvent } from './helpers.js';
+import { closeServer } from './support/close-server.js';
 
 // The room endpoints now require this on `Authorization: Bearer`. Declared
 // before CONFIG because CONFIG reads it.
@@ -124,22 +125,12 @@ async function start(pool: Pool, store: PostgresLedgerStore): Promise<Harness> {
   return {
     url: `http://127.0.0.1:${port}`,
     gateway,
-    close: () =>
-      new Promise<void>((resolve) => {
-        server.close(() => resolve());
-      }),
+    close: () => closeServer(server),
   };
 }
 
 after(async () => {
-  await Promise.all(
-    openServers.map(
-      (server) =>
-        new Promise<void>((resolve) => {
-          server.close(() => resolve());
-        }),
-    ),
-  );
+  await Promise.all(openServers.map((server) => closeServer(server)));
 });
 
 /** `Response.json()` is `unknown` under strict TS; read it once, typed. */
