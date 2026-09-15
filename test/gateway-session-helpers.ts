@@ -257,7 +257,7 @@ export async function startNodeServer(
 
   return {
     url: `http://127.0.0.1:${port}`,
-    /*
+    /**
      * `server.close()` alone waits for every keep-alive socket to end on its
      * own — which, left to Node's and the client's idle timeouts, is several
      * real seconds per test. `closeAllConnections()` destroys every socket
