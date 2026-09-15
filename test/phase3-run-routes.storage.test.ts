@@ -47,6 +47,8 @@ const CLIENT_REQUEST_TIMEOUT_MS = 1_000;
  * same reason, even though it too now shares the value.
  */
 const FINALIZATION_RECONCILIATION_TIMEOUT_MS = 1_000;
+/** Default `requestTimeoutMs` for `runWithPostCommitDemotion` — see its doc comment. */
+const DEMOTION_CLIENT_TIMEOUT_MS = 1_000;
 // Commit indices (1-based, counting `afterCommit` fires) in a clean
 // `runWithPostCommitDemotion` run: create, connect, adapter_registered,
 // request, matched_response, disconnect, attempt_finished.
@@ -383,7 +385,7 @@ describe('Phase 3 run routes — leadership fence', { skip: STORAGE_SKIP }, () =
 
   it('reconciles committed finalization and returns awaiting adjudication', async () => {
     // See `runWithPostCommitDemotion`'s doc comment for why this scenario,
-    // unlike the two below, needs a real reconciliation budget.
+    // unlike the two above, needs a real reconciliation budget.
     const result = await runWithPostCommitDemotion(FINALIZATION_COMMIT, FINALIZATION_RECONCILIATION_TIMEOUT_MS);
     assert.equal(result.outcome, 'awaiting_adjudication');
     assert.equal((result.evidence as Phase3EvidenceExport).attempt.state, 'awaiting_adjudication');
@@ -559,9 +561,6 @@ function syntheticFixture(): Phase3FixturePort {
 function routeExpectation(input: Phase3AttemptInput): Phase3EvidenceExpectation {
   return { attempt: input, environment: node!.config.environment };
 }
-
-/** Default `requestTimeoutMs` for `runWithPostCommitDemotion` — see its doc comment. */
-const DEMOTION_CLIENT_TIMEOUT_MS = 1_000;
 
 /**
  * `requestTimeoutMs` bounds the client's own reconciliation deadline (a
