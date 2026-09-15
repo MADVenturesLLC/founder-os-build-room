@@ -11,9 +11,9 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `8ddce61cb978aef47162b56370b0c81d5c503325` |
-| SHA-256 (as landed) | `1afce577cd73083005a9a0d7a6093d2c0eb6e8ebe849f71dbb9c704d5026622b` |
-| Bytes / lines (as landed) | 7744 bytes, 137 lines |
+| Git blob id (as landed) | `4d6b9ec5ca7d6f284d6fd2ff5cb4caca29fbb2c5` |
+| SHA-256 (as landed) | `64a623b685fd0430d04eef4f3bd9a72113775768b7dbd4b091c3c637a8024562` |
+| Bytes / lines (as landed) | 7774 bytes, 137 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat in session, 2026-09-15, at Founder direction ("write the document review brief") |
@@ -58,10 +58,10 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `9e350cc7a00c9b09add681f61de888b21f9a3326` |
-| SHA-256 | `209be6993f444450d3685c1b3fbea1c807dca23555add87b3d3e732389cd7413` |
-| Bytes | 7630 |
-| Lines | 156 (`wc -l`) |
+| Git blob id | `339740b2f4997e26476ffd8578d454221d69b519` |
+| SHA-256 | `91e61f8ee111f6b1bc94a00b9637bf7f6370d675adafc8551c1d61e4e1fa679f` |
+| Bytes | 8282 |
+| Lines | 172 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
 
@@ -93,6 +93,18 @@ reviewer, and the review's standing is qualified accordingly:
 - `CANNOT COMPLETE — BRIEF DEFECT`, added by correction 5, did not
   exist when the review ran. The reviewer was not blocked, so the gap
   did not bite.
+
+**Whether the `PASS` stands on a brief with these defects is not
+decided here.** The record establishes that the review ran from a brief
+carrying five defects, three of which change what it asks, and that
+correction 4's absence is the one that could most plausibly have changed
+what the reviewer did. That does not establish the verdict is unsound,
+and this seat is not the one to rule either way: the same seat landed
+the artifact, wrote the brief and wrote this receipt. Whether the `PASS`
+is accepted as the FD-B1 to FD-B7 independent document review, or the
+corrected brief is re-dispatched, is an open Founder decision — open in
+the same way, and for the same reason, as the brief-authorship question
+recorded at the end of this receipt.
 
 These are observations about what the reviewer wrote, not claims about
 what a corrected brief would have produced. That counterfactual is not

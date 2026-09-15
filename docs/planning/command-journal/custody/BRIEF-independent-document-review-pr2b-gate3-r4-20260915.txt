@@ -3,7 +3,7 @@ This brief was dispatched, and the review it asked for completed on
 2026-09-15 returning PASS. Defects were then found in the brief itself.
 Read it with brief addendum 1:
   docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
-  sha256 209be6993f444450d3685c1b3fbea1c807dca23555add87b3d3e732389cd7413
+  sha256 91e61f8ee111f6b1bc94a00b9637bf7f6370d675adafc8551c1d61e4e1fa679f
 Known defects below, all corrected there: Q6 attributes the B-R14 to
 B-R16 renumbering to the act when it is the D-1 ruling's; the delta is
 given as "17 insertions" in an ambiguous unit; Q6 needs the
@@ -19,7 +19,7 @@ unchanged. Everything above that line is this banner. Recover and check
   P=docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt
   git show "$REF:$P" \
     | sed -n '/^INDEPENDENT DOCUMENT REVIEW BRIEF$/,$p' \
-    | shasum -a 256
+    | shasum -a 256          # sha256sum on Linux
   3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
 The sed anchor matches exactly one line in this file. An edit that adds
 another exact match above the rule breaks recovery with a wrong hash,
