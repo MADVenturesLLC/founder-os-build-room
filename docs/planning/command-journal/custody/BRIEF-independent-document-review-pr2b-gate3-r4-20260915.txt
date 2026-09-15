@@ -4,7 +4,7 @@ This brief was dispatched, and the review it asked for completed on
 Read it with brief addendum 1, written after dispatch and never sent,
 so the reviewer did not have it:
   docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
-  sha256 9967722f2b4384b4b6be169d8454c54fcd1d124a2e4a64f485ed12b2a7112b51
+  sha256 58a5a8f210dcae3d815d1110a4e36f8360b42ecea957d2c4fdac07bafd7d1849
 All six known defects, each corrected there: Q6 attributes the B-R14
 to B-R16 renumbering to the act when it is the D-1 ruling's; the delta
 is given as "17 insertions" in an ambiguous unit; Q6 needs the

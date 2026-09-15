@@ -11,8 +11,8 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `72552e9a5f6a62d91f1bbdf30bd8e26a7f1eb940` |
-| SHA-256 (as landed) | `30f3fdb054819a8b95443662cb0bc81fcb9ce357bc7291b684b3dc20d86e2c42` |
+| Git blob id (as landed) | `d1d65d775b5bfb437d68e05f5080f367e9ef0149` |
+| SHA-256 (as landed) | `c658149e865e72df15c4244063a169101a7673287a8b9f7326e3ce9396643fcc` |
 | Bytes / lines (as landed) | 8388 bytes, 145 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
@@ -59,10 +59,10 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `290d027e7e76f18058f06ff9cba9e0194d2200c4` |
-| SHA-256 | `9967722f2b4384b4b6be169d8454c54fcd1d124a2e4a64f485ed12b2a7112b51` |
-| Bytes | 10453 |
-| Lines | 214 (`wc -l`) |
+| Git blob id | `5cc95f110df94e94127d0d0e50abce19dca0d74e` |
+| SHA-256 | `58a5a8f210dcae3d815d1110a4e36f8360b42ecea957d2c4fdac07bafd7d1849` |
+| Bytes | 11519 |
+| Lines | 235 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
 
@@ -230,9 +230,9 @@ decisions and neither is taken here.
 `hermes-profile-suite/HANDOFF-operator-to-founder-pr2b-gate3-trancheB-r4-document-review-20260915.md`,
 SHA-256 `a5ba787f736eca8675c53f219f772a614009c08e22ca610e317cb127d51fc21b`,
 11251 bytes, 91 lines. Those figures are the operator's report and are
-not verified from this surface. This is the same gap the addendum charges
-against the brief's handling of the R2 review output, named here rather
-than left implicit: the verdict a Gate III issuance would rest on has no
+not verified from this surface. The addendum notes the same absence for the R2
+review output, which is likewise held nowhere in this repository. Named
+here rather than left implicit: the verdict a Gate III issuance would rest on has no
 repository identity. The directory holding it is the subject of FounderOS
 `DEC-20260914-01`.
 

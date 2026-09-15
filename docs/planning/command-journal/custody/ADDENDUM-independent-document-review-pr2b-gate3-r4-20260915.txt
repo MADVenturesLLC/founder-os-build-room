@@ -88,8 +88,9 @@ replaced.
 
 CORRECTION 2 (HISTORICAL — NEVER DISPATCHED) — Q6 needs a document the brief never identified
 
-The brief gives committed-truth identity for the act and the D-1 ruling
-only, while Q6 requires reading the implementation plan. Q7 is framed
+The brief gives committed-truth identity for the act, the D-1 ruling and
+R3, while Q6 requires reading the implementation plan, which it does not
+identify. Q7 is framed
 against the act's own sections 5, 6, 7 and 16 and makes no reference to
 the plan at all. An earlier revision of this addendum said "the brief's
 wording implied otherwise"; it did not. That conflation was this
@@ -173,6 +174,12 @@ redirection operators, so bash parses `<path` as input redirection and
 the line dies with `syntax error near unexpected token '>'` before
 git runs. Verified with `bash -n`.
 
+The placeholder has a second defect the shell never reaches: the path
+it points at is itself wrapped across the brief's lines 50 and 51 with
+continuation indentation, so a reader substituting by hand must rejoin
+two lines and strip leading whitespace, with no hash on the rejoined
+result to catch an error. The single-line `P=` form below fixes both.
+
 This is the same defect class the banner warns about and the receipt
 records fixing in its own recipe. It was missed in the dispatched text
 because the earlier rounds only inspected the banner and the receipt.
@@ -181,9 +188,15 @@ bytes are pinned at 3aac089e and must not change.
 
 The command should read:
 
+  git fetch origin main
   P=docs/planning/command-journal/custody/DRAFT-founder-authorization-pr2b-gate3-trancheB-journal-authority-r4-20260914.md
   git show "origin/main:$P" > /tmp/r4.md
   sha256sum /tmp/r4.md      # must equal 466469cc...13dae
+
+An earlier revision of this correction dropped the `git fetch origin
+main` the original block carried at the brief's line 58. Without it
+origin/main may be stale and the check can pass or fail against the
+wrong bytes. It is restored above.
 
 Whether the reviewer hit this is not known from here. The review
 completed, so the act's bytes were obtained by some route; which route
@@ -204,9 +217,17 @@ above, made a second time in the same file.
   on main. The SHA-256 values the brief lists for R1 and R2 are the
   drafting seat's record, unverifiable from here.
 
-  The R2 document review output, whose verdict the brief quotes and
-  whose precision it holds up as the standard, is likewise not in this
-  repository and is cited by no path or hash anywhere.
+  The R2 document review output, whose verdict the brief quotes, is
+  likewise not in this repository and is cited by no path or hash
+  anywhere.
+
+  A third retraction, of the same class as the two above. An earlier
+  revision of this section added "and whose precision it holds up as the
+  standard". It does not: the brief's OUTPUT FORMAT, at its own line
+  132, names R3's repair round as the precision standard, and R3 is
+  given a blob id and SHA-256 at the brief's lines 63 to 65. The
+  artifact the brief actually holds up is citable in this repository.
+  The receipt repeated this charge and no longer does.
 
 Treat both as background. No question depends on them: Q1 targets the
 defect class that review found, and the act's own section 0.5 and
