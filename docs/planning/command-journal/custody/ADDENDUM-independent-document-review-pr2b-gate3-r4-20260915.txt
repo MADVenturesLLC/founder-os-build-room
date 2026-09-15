@@ -120,6 +120,8 @@ The brief's Q6 says "R4 renumbers r6's proposed denial row to B-R16".
 The renumbering is the D-1 ruling's act, not the authorization act's.
 R4 carries it into the matrix at its section 6.3. Q6 therefore reads:
 
+  (HISTORICAL — NEVER DISPATCHED. The restatement below is what Q6
+  should have said, not an instruction to anyone.)
   The D-1 ruling of 2026-09-14 renumbers plan addendum 02 revision r6's
   proposed denial row to B-R16, because plan r1 section 5.2 already
   assigns B-R14. Verify that R4 carries that renumbering into its
@@ -156,6 +158,10 @@ A third first-line verdict is therefore available:
   CANNOT COMPLETE — BRIEF DEFECT
 
 Use it when the brief or this addendum, not the act, prevents answering.
+Left open, and recorded in the receipt: the brief's mandated last line,
+`Reviewer: <your id>  Artifact: 466469cc...`, is an attribution of a
+verdict on the act. Whether it still applies under a verdict that is
+expressly not about the act is not settled here; an R5 must settle it.
 Name the question, name what is missing, and answer whatever other
 questions you can. It is not a verdict on the act and does not count as
 a failed document review.
@@ -164,8 +170,7 @@ CORRECTION 6 (HISTORICAL — NEVER DISPATCHED) — a command in the
 dispatched text does not run as written
 
 The brief's "Read it from committed truth, not a working tree" block
-gives, at line 66 of the brief as landed — line 24 of the dispatched
-text, the frame this addendum otherwise uses:
+gives, at line 24 of the dispatched text:
 
   git show origin/main:<path above> > /tmp/r4.md
 
@@ -175,8 +180,8 @@ the line dies with `syntax error near unexpected token '>'` before
 git runs. Verified with `bash -n`.
 
 The placeholder has a second defect the shell never reaches: the path
-it points at is itself wrapped, across dispatched-text lines 15 and 16
-(landed 57 and 58), with continuation indentation, so a
+it points at is itself wrapped, across dispatched-text lines 15 and 16,
+with continuation indentation, so a
 reader substituting by hand must rejoin two lines and strip leading
 whitespace, with no hash on the rejoined result to catch an error. The
 single-line `P=` form below fixes both.
@@ -192,11 +197,12 @@ The command should read:
   git fetch origin main
   P=docs/planning/command-journal/custody/DRAFT-founder-authorization-pr2b-gate3-trancheB-journal-authority-r4-20260914.md
   git show "origin/main:$P" > /tmp/r4.md
-  sha256sum /tmp/r4.md      # must equal 466469cc...13dae
+  sha256sum /tmp/r4.md      # or shasum -a 256 on macOS; must equal
+                            # 466469cc...13dae
 
 An earlier revision of this correction dropped the `git fetch origin
-main` the original block carries at dispatched-text line 23 (landed
-65). Without it
+main` the original block carries at dispatched-text line 23. Without
+it
 origin/main may be stale and the check can pass or fail against the
 wrong bytes. It is restored above.
 
@@ -226,19 +232,19 @@ above, made a second time in the same file.
   A third retraction, of the same class as the two above. An earlier
   revision of this section added "and whose precision it holds up as the
   standard". It does not: the brief's OUTPUT FORMAT block, at its own
-  line
-  139 as landed and line 97 of the dispatched text, names
-  R3's repair round as the precision standard, and R3 is given a blob
-  id and SHA-256 at the brief's lines 73 to 74 as landed,
-  lines 31 to 32 of the dispatched text. An earlier
-  revision of this paragraph cited "lines 63 to 65" in the landed frame.
-  Those numbers were stale when written and point elsewhere now; the
-  rows meant are R1, R2 and the R2 verdict note, at dispatched-text
-  lines 28 to 30 (landed 70 to 72). A stale landed-frame
-  citation carried across a banner edit, written inside the paragraph
-  that retracts a mis-citation of this same section. Every landed number
-  in this file is now paired with the dispatched number, which does not
-  move. The
+  line 97 of the dispatched text, names R3's repair round as the
+  precision standard, and R3 is given a blob id and SHA-256 at
+  dispatched-text lines 31 and 32. An earlier revision of this paragraph
+  cited "lines 63 to 65" in the landed frame. Those numbers were stale
+  when written and point elsewhere now; the rows meant are R1, R2 and
+  the R2 verdict note, at dispatched-text lines 28 to 30. A stale
+  landed-frame citation carried across a banner edit, written inside the
+  paragraph that retracts a mis-citation of this same section.
+
+  This file no longer cites landed-frame numbers at all. The brief's
+  banner pins this file's SHA-256, and this file's landed citations
+  depended on that banner's length, so revising either invalidated the
+  other. Dispatched-frame numbers do not move. The
   artifact the brief actually holds up is citable in this repository.
   The receipt repeated this charge and no longer does.
 

@@ -11,9 +11,9 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `547e26af256d8e76cbe8ac9894c25edc570c23f2` |
-| SHA-256 (as landed) | `45e60e099c28a0a5b20ae2954395bed88ee3d2e02fb917893c531ee32b2aa906` |
-| Bytes / lines (as landed) | 8847 bytes, 152 lines |
+| Git blob id (as landed) | `7d2a1f49b4630ef6bae05cdbc7e3d58442bdc0cb` |
+| SHA-256 (as landed) | `a96058b6caa74e49d42e71b9679a9cb26871d393b70638f73d030cff2ec85773` |
+| Bytes / lines (as landed) | 8972 bytes, 154 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat, Actor-Id `session:claude-code/session_01KbHPzSthh2gKc8TtsG4QRp`, 2026-09-15, at Founder direction ("write the document review brief") |
@@ -59,10 +59,10 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `3509d5675fcb543bf2c91968b00a06d79204eca8` |
-| SHA-256 | `52c7604cb4613dbe8675d6ce6c228296dd820e88baf6cb7e7b9b4ef709d87134` |
-| Bytes | 12167 |
-| Lines | 248 (`wc -l`) |
+| Git blob id | `412f3fd8afaade6520544dbeda9d579a6f56b7e4` |
+| SHA-256 | `7b1e1fbdb4a330a3b78ce93180a38c6e46cb932351a419d089a53858cacb036b` |
+| Bytes | 12584 |
+| Lines | 254 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
 
@@ -73,7 +73,7 @@ the value in the table above:
 ```
 REF=origin/main
 P=docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
-git show "$REF:$P" | shasum -a 256
+git show "$REF:$P" | shasum -a 256   # or sha256sum on Linux
 ```
 
 **Overtaken: the review completed without it.** The brief reached the
@@ -154,8 +154,7 @@ nothing:
    `--unified=0`, 14 at the default) and `--numstat` reports none, so
    the addendum tells the reviewer to cite lines, not hunks.
 2. Question 6 requires reading the implementation plan, which the brief
-   never identified while demanding committed-truth reading everywhere
-   else. Path, blob, SHA-256 and size are supplied for plan r1 and plan
+   does not identify by path, blob or hash. Path, blob, SHA-256 and size are supplied for plan r1 and plan
    addendum 02 revision r6, with the section and line locations Q6
    depends on. Q7 is framed against the act's own sections and makes no
    reference to the plan. An earlier revision of this receipt added "the
@@ -173,8 +172,8 @@ nothing:
    would have had to fail the act for the builder's fault. A third
    first-line verdict, `CANNOT COMPLETE — BRIEF DEFECT`, is now
    available and is explicitly not a verdict on the act.
-6. **Repairs an unrunnable command.** The brief at line 66 as
-   landed, line 24 of the dispatched text, reads
+6. **Repairs an unrunnable command.** The brief, at line 24 of the
+   dispatched text, reads
    `git show origin/main:<path above> > /tmp/r4.md`. `<` and `>` are
    redirection operators, so bash dies with
    `syntax error near unexpected token '>'` before git runs — the same
