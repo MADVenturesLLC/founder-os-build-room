@@ -1,0 +1,82 @@
+FOUNDER RULING — PR 2b GATE III / TRANCHE B
+D-1 SCOPE AMENDMENT: CONDITIONAL ACCEPTANCE AND RECONCILIATION
+
+I, Michael Alberto Daley, issue the following scope ruling.
+
+This ruling is scope-only. It is not Gate III implementation issuance.
+It creates no implementation, execution, merge, deployment, credential,
+or fixture authority. Gate III remains PROPOSED and unsigned.
+
+INSTRUMENTS BOUND
+
+  Addendum 02 r6 (the amendment ruled on)
+    path:  docs/planning/command-journal/pr2b-implementation-plan-r1-addendum-02-r6.md
+    blob:  01f60a4e8f021e8eff3d2a310c9c393c9ee3f493
+    sha256: 16e316be4e8d52ae0e856cf53801180cd2a18209450c7e94954d80d107a8dcac
+    on:    founder-os-build-room main, merge dace9af9da158be8480b91d9576472645d068e3f (PR #41)
+
+  Gate III draft act r3 (custody copy)
+    path:  docs/planning/command-journal/custody/DRAFT-founder-authorization-pr2b-gate3-trancheB-journal-authority-r3-20260913.md
+    blob:  78ef441422714044663bf2c2cd34d493fdf00e00
+    sha256: d024e508d77169c5d85d323fb28f32c6ea5c2b709d2e12cc3470f0bde37f5945
+
+  Controlling ruling of 2026-09-13 (custody copy)
+    path:  docs/planning/command-journal/custody/FOUNDER-RULING-pr2b-gate3-trancheB-complete-replacement-source-20260913.txt
+    blob:  55e5fbde58614de2e13b53a5c784fe9652657cf3
+    sha256: 2431c6338d45d2eea074d2fe0ac797f70f0a555e78d80b005a2ee2924a9dcd6d
+    both on: founder-os-build-room main, merge f95d7995f984d06fa4c8b1f8e9e51fb9accc229c (PR #43)
+
+D-1 — RULING
+
+I accept D-1 as a proposed Tranche B scope amendment only, including
+B-N2, B-N3, B-T4, r6 §2.8, and the denial row r6 labels "B-R14",
+which is renumbered B-R16 by this ruling because plan r1 §5.2 already
+assigns B-R14 to the NOLOGIN assertion (PC-5); r1's B-R14 and B-R15
+are unchanged, and every r6 reference to its proposed "B-R14" reads
+B-R16. Acceptance is conditional on the governing Gate III instrument
+adopting r6 §2.3's interface and on B-M4, the ci.yml file-map change,
+clearing plan r1 stop condition S4 by the mechanism r3 §8 specifies.
+Otherwise the caller is withdrawn.
+
+No Gate III execution authority is effective unless the issuance names
+the CI bootstrap/identity mechanism under which the denial matrix and
+vector tests run as the required non-superuser login, thereby clearing
+S4 through B-M4. The mechanism is not chosen by this ruling.
+
+RECONCILIATION — BINDING ON THE SUCCESSOR GATE III DRAFT
+
+The successor Gate III draft must incorporate these three sentences:
+
+1. r6's SQL encoder is a second conforming serializer implementation
+   required to produce byte-identical canonical bytes with
+   packages/journal; it is not a second journal, chain, sequence space,
+   writer, or runtime consumer, and does not displace packages/journal
+   as the contract and reference-vector source.
+
+2. r6 §2.8 does not return step 15 to migration 0006 or extend that
+   migration's DDL. Its functions/routines default-privilege review
+   belongs to FD-B4's B-R11 carrier; migration 0006 remains steps 1–13
+   only, with no step-15 SQL.
+
+3. For this D-1 scope amendment only, r6's specified append and
+   pure-encoder signatures and return forms supersede FD-B5's otherwise
+   delegated signature/return choice; creation, revocation, grants, and
+   catalog tests must bind those exact signatures.
+
+The successor draft must cite this ruling by its exact repository path,
+git blob id, and SHA-256 as landed on founder-os-build-room main.
+
+CUSTODY
+
+Preserve this message verbatim as a new file in founder-os-build-room at
+exactly this path:
+
+  docs/planning/command-journal/custody/FOUNDER-RULING-pr2b-D1-scope-amendment-20260914.txt
+
+Record its SHA-256, bytes, lines, and trailing-newline status in the
+commit that lands it and in the custody receipt that accompanies it.
+Do not alter the text. This is the single record of the D-1 ruling; no
+FounderOS decision entry duplicates it.
+
+Signed: Michael Alberto Daley
+Date: 2026-09-14
