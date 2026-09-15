@@ -11,9 +11,9 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `74770334de45cb3883f424c1077a0007dcb20cfa` |
-| SHA-256 (as landed) | `2fac4f591f129f31c715ecfd333d9d0060aecf167c3036c96791bddd24f63526` |
-| Bytes / lines (as landed) | 8092 bytes, 142 lines |
+| Git blob id (as landed) | `e10e34f12cc8e4043fd95d1cee406146b59c8ff2` |
+| SHA-256 (as landed) | `a6c0362ce9edff12d596429818d4ce84ff503327bfbd4743cb04e578a944e6aa` |
+| Bytes / lines (as landed) | 8151 bytes, 142 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat in session, 2026-09-15, at Founder direction ("write the document review brief") |
@@ -45,9 +45,9 @@ committed truth.
 The `sed` anchor matches exactly one line in the brief. The banner
 carries that heading text twice more — once in quotes with trailing
 text, once inside the recovery command itself — and neither can match
-`^...$`, so the range starts at the section header. Any future edit that adds a second exact
-match above the rule breaks recovery silently — a different hash, not an
-error.
+`^...$`, so the range starts at the section header. Any future edit
+that adds a second exact match above the rule breaks recovery silently —
+a different hash, not an error.
 
 The Founder reports that those bytes are the dispatched text verbatim;
 that identity rests on the same report and is not verifiable from the
@@ -59,10 +59,10 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `1b713835d74b1dd6f428b9d21328eda52f851dfc` |
-| SHA-256 | `66027d8bdc714a320b6ecd5f65d808353e55c3ef2487ad1dbf64cb6c5edc2df1` |
-| Bytes | 9936 |
-| Lines | 207 (`wc -l`) |
+| Git blob id | `bddb7f9bf44c891b04df38a8654afae31f144ab8` |
+| SHA-256 | `da081ee8c18d6173026a82e1e58ab8acba2689d3bf5a99e59f17038e6d52e73d` |
+| Bytes | 10026 |
+| Lines | 208 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
 
@@ -101,17 +101,19 @@ reviewer, and the review's standing is qualified accordingly:
   barred resolving an ambiguity by choosing an answer. The reviewer
   answered "pass as drafted" and gave reasons, treating it as a
   judgment rather than refusing it, which is the reading correction 4
-  makes explicit. Of the five, this is the one whose absence could most
-  plausibly have changed what the reviewer did.
+  makes explicit. Of the five listed here, this is the one whose absence
+  could most plausibly have changed what the reviewer did. Correction 6
+  is not in this list because its effect on the reviewer is unknown.
 - `CANNOT COMPLETE — BRIEF DEFECT`, added by correction 5, did not
   exist when the review ran. The reviewer was not blocked, so the gap
   did not bite.
 
 **Whether the `PASS` stands on a brief with these defects is not
 decided here.** The record establishes that the review ran from a brief
-carrying six defects, three of which change what it asks, and that
-correction 4's absence is the one that could most plausibly have changed
-what the reviewer did. That does not establish the verdict is unsound,
+carrying six defects, three of which change what it asks, and that of
+the five whose effect can be assessed, correction 4's absence is the one
+that could most plausibly have changed what the reviewer did. Correction
+6's effect is not known from here at all. That does not establish the verdict is unsound,
 and this seat is not the one to rule either way: the same seat landed
 the artifact, wrote the brief and wrote this receipt. Whether the `PASS`
 is accepted as the FD-B1 to FD-B7 independent document review, or the
@@ -141,8 +143,10 @@ nothing:
    never identified while demanding committed-truth reading everywhere
    else. Path, blob, SHA-256 and size are supplied for plan r1 and plan
    addendum 02 revision r6, with the section and line locations Q6
-   depends on. Q7 is framed against the act's own sections, so it does
-   not depend on the plan; the brief implied otherwise.
+   depends on. Q7 is framed against the act's own sections and makes no
+   reference to the plan. An earlier revision of this receipt added "the
+   brief implied otherwise"; it did not, and that retraction is recorded
+   above.
 3. **Changes Q6.** The brief attributed the B-R14 to B-R16 renumbering
    to the authorization act; it is the D-1 ruling's act, which R4
    carries into its matrix. Q6 is restated accordingly.
@@ -155,7 +159,8 @@ nothing:
    would have had to fail the act for the builder's fault. A third
    first-line verdict, `CANNOT COMPLETE — BRIEF DEFECT`, is now
    available and is explicitly not a verdict on the act.
-6. **Repairs an unrunnable command.** The brief's own line 54 reads
+6. **Repairs an unrunnable command.** The brief at line 56 as
+   landed, line 24 of the dispatched text, reads
    `git show origin/main:<path above> > /tmp/r4.md`. `<` and `>` are
    redirection operators, so bash dies with
    `syntax error near unexpected token '>'` before git runs — the same

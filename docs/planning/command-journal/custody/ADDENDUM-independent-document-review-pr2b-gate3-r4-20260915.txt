@@ -163,7 +163,8 @@ CORRECTION 6 (HISTORICAL — NEVER DISPATCHED) — a command in the
 dispatched text does not run as written
 
 The brief's "Read it from committed truth, not a working tree" block
-gives, at its own line 54:
+gives, at line 56 of the brief as landed — line 24 of the dispatched
+text, the frame this addendum otherwise uses:
 
   git show origin/main:<path above> > /tmp/r4.md
 
