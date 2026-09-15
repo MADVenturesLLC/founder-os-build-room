@@ -35,7 +35,7 @@ let server: { url: string; close: () => Promise<void> } | undefined;
 const ADJUDICATION_TOKEN = 'phase3-adjudication-test-token-value';
 /** Request timeout for the harness `Phase3ControlPlaneClient`s in this file. */
 const CLIENT_REQUEST_TIMEOUT_MS = 1_000;
-/** Default `requestTimeoutMs` for `runWithPostCommitDemotion` — see its doc comment. */
+/** Client request timeout for `runWithPostCommitDemotion` — see its doc comment. */
 const DEMOTION_CLIENT_TIMEOUT_MS = 1_000;
 // Commit indices (1-based, counting `afterCommit` fires) in a clean
 // `runWithPostCommitDemotion` run: create, connect, adapter_registered,
@@ -374,7 +374,7 @@ describe('Phase 3 run routes — leadership fence', { skip: STORAGE_SKIP }, () =
   it('reconciles committed finalization and returns awaiting adjudication', async () => {
     // See `runWithPostCommitDemotion`'s doc comment for why this scenario,
     // unlike the two above, needs its write to actually reconcile —
-    // the default `requestTimeoutMs` budget is what makes that reliable.
+    // `DEMOTION_CLIENT_TIMEOUT_MS` is what makes that reliable.
     const result = await runWithPostCommitDemotion(FINALIZATION_COMMIT);
     assert.equal(result.outcome, 'awaiting_adjudication');
     assert.equal((result.evidence as Phase3EvidenceExport).attempt.state, 'awaiting_adjudication');
@@ -552,9 +552,10 @@ function routeExpectation(input: Phase3AttemptInput): Phase3EvidenceExpectation 
 }
 
 /**
- * `requestTimeoutMs` bounds the client's own reconciliation deadline (a
- * small multiple of it — see `Phase3ControlPlaneClient.writeReconciliationDeadline`).
- * It has to stay generous for every scenario this helper drives, not just
+ * `DEMOTION_CLIENT_TIMEOUT_MS` bounds the client's own reconciliation
+ * deadline (a small multiple of it — see
+ * `Phase3ControlPlaneClient.writeReconciliationDeadline`). It has to stay
+ * generous for every scenario this helper drives, not just
  * `FINALIZATION_COMMIT`: every fenced write's route commits
  * unconditionally, even a pure idempotent replay of an already-applied
  * write (see `createAttemptFenced`/`appendEventFenced` in
@@ -569,9 +570,9 @@ function routeExpectation(input: Phase3AttemptInput): Phase3EvidenceExpectation 
  * `FINALIZATION_COMMIT` — flaking in CI to reveal it.) `FINALIZATION_COMMIT`
  * is additionally the one scenario whose demoted write is expected to
  * actually succeed via reconciliation rather than stay unresolved, but it
- * needs no larger budget than this default already provides.
+ * needs no larger budget than every other scenario already uses.
  */
-async function runWithPostCommitDemotion(demoteAtCommit: number, requestTimeoutMs = DEMOTION_CLIENT_TIMEOUT_MS) {
+async function runWithPostCommitDemotion(demoteAtCommit: number) {
   let phase3Commits = 0;
   let fencedNode!: SessionNode;
   fencedNode = await restartNode({
@@ -641,7 +642,7 @@ async function runWithPostCommitDemotion(demoteAtCommit: number, requestTimeoutM
       stagingLockPresent: false,
     },
   };
-  const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, requestTimeoutMs, 1);
+  const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, DEMOTION_CLIENT_TIMEOUT_MS, 1);
   let heartbeatSent = false;
   return performPhase3Attempt(plan, {
     observeEntry: async () => observation,
