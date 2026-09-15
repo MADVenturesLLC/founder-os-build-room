@@ -26,9 +26,16 @@ dispatched text, and the dispatched bytes remain recoverable and
 checkable:
 
 ```
-sed -n '/^INDEPENDENT DOCUMENT REVIEW BRIEF$/,$p' <file> | sha256sum
+git show <ref>:docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt \
+  | sed -n '/^INDEPENDENT DOCUMENT REVIEW BRIEF$/,$p' \
+  | shasum -a 256
 # 3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
 ```
+
+Use `sha256sum` in place of `shasum -a 256` on Linux. Reading through
+`git show <ref>:<path>` rather than a working-tree file keeps the check
+on committed truth and avoids a shell placeholder being read as a
+redirection.
 
 The Founder reports that those bytes are the dispatched text verbatim;
 that identity rests on the same report and is not verifiable from the
