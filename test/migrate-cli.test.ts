@@ -196,12 +196,21 @@ interface CliRun {
   readonly timedOut: boolean;
 }
 
+function cliEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  // Stage-5 metadata belongs to each fixture, not the parent shell or CI job.
+  delete env['GITHUB_SHA'];
+  delete env['FOUNDER_AUTHORIZED_SHA'];
+  delete env['MIGRATE_APPROVER_IDENTITY'];
+  return { ...env, ...overrides };
+}
+
 function runCli(
   instance: OwnedInstance,
   args: readonly string[],
   opts: { readonly adminUrl?: string | null; readonly env?: Record<string, string> } = {},
 ): CliRun {
-  const env: Record<string, string | undefined> = { ...process.env, ...(opts.env ?? {}) };
+  const env = cliEnv(opts.env);
   const adminUrl = opts.adminUrl === undefined ? instance.url : opts.adminUrl;
   if (adminUrl !== null) {
     env['MIGRATE_ADMIN_DATABASE_URL'] = adminUrl;
@@ -386,7 +395,7 @@ describe('B-T3 migrate-cli — one tranche per run', { skip: SKIP_REASON }, () =
       assert.match(String(evidence['run_id']), /^[0-9a-f-]{36}$/);
       assert.match(String(evidence['started_at']), /^\d{4}-\d{2}-\d{2}T.*Z$/);
       assert.match(String(evidence['finished_at']), /^\d{4}-\d{2}-\d{2}T.*Z$/);
-      assert.equal(evidence['expected_sha'], null, 'no workflow env locally: recorded null, never guessed');
+      assert.equal(evidence['expected_sha'], null, 'fixture omits workflow metadata: recorded null, never guessed');
       assert.equal(evidence['observed_sha'], null);
       assert.equal(evidence['approver_identity'], null);
     }
@@ -394,9 +403,13 @@ describe('B-T3 migrate-cli — one tranche per run', { skip: SKIP_REASON }, () =
 
   it('applies 0006 — the canonical journal-authority tranche — and records it', async () => {
     assert.ok(instance !== undefined);
-    const run = runCli(instance, [TRANCHE_B_ID]);
+    const fixtureSha = '0123456789abcdef0123456789abcdef01234567';
+    const run = runCli(instance, [TRANCHE_B_ID], { env: { GITHUB_SHA: fixtureSha } });
     assert.equal(run.status, 0, `apply 0006 must exit 0; stderr: ${run.stderr}`);
     const evidence = JSON.parse(run.stdout.trim()) as Record<string, unknown>;
+    assert.equal(evidence['expected_sha'], null);
+    assert.equal(evidence['observed_sha'], fixtureSha, 'stage-5 reports the explicit fixture SHA');
+    assert.equal(evidence['approver_identity'], null);
     assert.deepEqual(evidence['applied_migration_ids'], [TRANCHE_B_ID]);
     assert.deepEqual(evidence['schema_migrations_after'], [
       TRANCHE_A_ID,
@@ -443,7 +456,7 @@ describe('B-T3 migrate-cli — no runtime activation', { skip: SKIP_REASON }, ()
     // A spawn (not spawnSync) proves the process EXITS on its own — a CLI
     // that opened a listener would hang until the watchdog kills it.
     const child = spawn(process.execPath, [CLI_JS, TRANCHE_B_ID], {
-      env: { ...process.env, MIGRATE_ADMIN_DATABASE_URL: instance.url },
+      env: cliEnv({ MIGRATE_ADMIN_DATABASE_URL: instance.url }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const stdout = await new Promise<string>((resolve, reject) => {
