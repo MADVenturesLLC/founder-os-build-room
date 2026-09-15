@@ -56,7 +56,15 @@ on:
   # read-only from the API, and it reaches the models as data only.
   pull_request_target:
     branches: [main]
-    types: [opened, synchronize, reopened]
+    # `opened` and `reopened` only, deliberately NOT `synchronize`. Every push
+    # used to re-run both advisory legs, and PR #50's fifteen commits produced
+    # nine rounds and twenty review bodies re-listing the same findings — the
+    # churn this lane existed to add value against. The review that matters is
+    # the one over the PR as it will be merged, not a fresh re-roll per push;
+    # the claude-code-review workflow still re-reviews on every push, so a
+    # later substantive change is not left unseen, it just is not re-litigated
+    # by two more models each time.
+    types: [opened, reopened]
 
 permissions:
   contents: read
@@ -166,6 +174,10 @@ jobs:
           HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
         run: |
           set -euo pipefail
+          # An empty head SHA makes `?ref=` resolve to the DEFAULT branch:
+          # main's text would reach the reviewer labelled as PR-head text. That
+          # failure must be impossible, so it is refused up front.
+          : "${HEAD_SHA:?head sha not resolved}"
           umask 077
           # A file over the per-file cap, and any file past the total, is NAMED in the
           # context rather than dropped. A reviewer given less than the change touches
@@ -184,6 +196,14 @@ jobs:
           rm -f /tmp/context.md
           : > /tmp/context.partial
           printf '<file-context>\n' >> /tmp/context.partial
+          # The diff step truncates at a byte cap and appends a marker; the
+          # context then cannot list files whose `+++` lines were cut off. They
+          # are absent AND unlisted, so they are named here as a class, or the
+          # "NAMED rather than dropped" rule would be silently broken.
+          if grep -qF '[diff truncated at' /tmp/pr.diff; then
+            printf '(the diff was truncated at its byte cap, so files whose +++ lines were cut off are absent from this context and are not listed anywhere)\n' >> /tmp/context.partial
+            echo "::warning::context: the diff was truncated; files past the cut are absent from the context and unlisted"
+          fi
           # Both plain and git-C-quoted post-image paths. Git quotes a path that
           # contains a control character or a quote, as `+++ "b/pa\tth"`; the
           # quotes are stripped here but the escapes inside them are NOT decoded,
@@ -197,6 +217,11 @@ jobs:
           fi
           while IFS= read -r path; do
             [ -n "$path" ] || continue
+            # The file contents are tag-stripped below; so is the path when it
+            # appears in a context HEADER. A path literally containing the
+            # closing tag would otherwise close the untrusted region from the
+            # heading itself.
+            disp=$(printf '%s' "$path" | sed -e 's|<file-context>|[file-context-tag-stripped]|g' -e 's|</file-context>|[file-context-tag-stripped]|g')
             declared=$((declared + 1))
             # The path is a URL path segment, so it is percent-encoded, and `@uri`
             # encodes `/` as `%2F`. That is NOT a breakage here, and this is
@@ -221,38 +246,39 @@ jobs:
                 # this step did not do its job, which must not look like a run in
                 # which two files were renamed.
                 printf '\n### %s\n(unresolved at %s: renamed, removed by a later commit, or unreadable)\n' \
-                  "$path" "$HEAD_SHA" >> /tmp/context.partial
+                  "$disp" "$HEAD_SHA" >> /tmp/context.partial
                 unresolved=$((unresolved + 1))
                 echo "::warning::context: unresolved at $HEAD_SHA — $path"
                 continue ;;
             esac
             if [ "$size" -gt "$PER_FILE" ]; then
               printf '\n### %s\n(omitted: %s bytes is over the %s-byte per-file cap)\n' \
-                "$path" "$size" "$PER_FILE" >> /tmp/context.partial
+                "$disp" "$size" "$PER_FILE" >> /tmp/context.partial
               echo "::warning::context: omitted $path (${size} bytes, over the per-file cap)"
               continue
             fi
             if [ $((declared_bytes + size)) -gt "$TOTAL" ]; then
               printf '\n### %s\n(omitted: the %s-byte context budget is reached)\n' \
-                "$path" "$TOTAL" >> /tmp/context.partial
+                "$disp" "$TOTAL" >> /tmp/context.partial
               echo "::warning::context: omitted $path (over the ${TOTAL}-byte budget)"
               continue
             fi
             # One file at a time, so a mid-stream failure cannot leave its own
             # half-written bytes above the failure note — the whole-file
             # atomicity below, applied per file.
-            printf '\n### %s (%s bytes, at %s)\n' "$path" "$size" "$HEAD_SHA" >> /tmp/context.partial
+            printf '\n### %s (%s bytes, at %s)\n' "$disp" "$size" "$HEAD_SHA" >> /tmp/context.partial
             if gh api "repos/$GITHUB_REPOSITORY/contents/$enc?ref=$HEAD_SHA" \
                  -H "Accept: application/vnd.github.raw" </dev/null 2>/tmp/context.err \
                | sed -e 's|<file-context>|[file-context-tag-stripped]|g' \
-                     -e 's|</file-context>|[file-context-tag-stripped]|g' > /tmp/context.one; then
+                     -e 's|</file-context>|[file-context-tag-stripped]|g' \
+               | iconv -c -f utf-8 -t utf-8 > /tmp/context.one; then
               cat /tmp/context.one >> /tmp/context.partial
               declared_bytes=$((declared_bytes + size))
               resolved=$((resolved + 1))
             else
               # The stub and nothing else: no partial bytes above it.
               printf '### %s\n(fetch failed at %s; contents not available: %s)\n' \
-                "$path" "$HEAD_SHA" "$(head -c 200 /tmp/context.err | tr -d '\n')" \
+                "$disp" "$HEAD_SHA" "$(head -c 200 /tmp/context.err | tr -d '\n')" \
                 >> /tmp/context.partial
               unresolved=$((unresolved + 1))
               echo "::warning::context: fetch failed for $path"
