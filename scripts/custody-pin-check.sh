@@ -37,6 +37,20 @@
 # or authorized; it checks only that the record's own arithmetic holds. It is
 # not a Tier-2 review and not a merge authorization.
 #
+# WHAT THE NUMBERS MEAN, stated because the declarations being checked are
+# hand-produced and the two identity columns do not share a basis:
+#   - "Lines" is `wc -l` semantics — newline characters counted. A file with no
+#     trailing newline therefore reports one fewer than a reader counting
+#     visible lines. Every custody record checked here ends with a newline.
+#   - "SHA-256" is over the file's bytes on disk. "Git blob id" is
+#     `git hash-object`, which applies any `.gitattributes` or `core.autocrlf`
+#     filter, so it matches the blob git actually stores — which is what a
+#     receipt's blob column means. Under a clean/CRLF filter the two columns
+#     would be computed over different bytes and could disagree without either
+#     being wrong. This repository defines no `.gitattributes` today, and all
+#     three forms (filtered, `--no-filters`, and the blob stored on `main`)
+#     were confirmed identical when this check was written.
+#
 # NO SILENT PASS. A verifier that can exit green having verified nothing is the
 # same defect it exists to catch, moved one level up. So: a custody directory
 # holding records but yielding zero verified pins is a FAILURE, not a pass; a
@@ -178,7 +192,7 @@ def is_pin_key(k):
 
 
 # ------------------------------------------------- receipts: tables + extract
-for receipt in sorted(custody.glob("CUSTODY-RECEIPT-*.md")):
+for receipt in sorted(custody.rglob("CUSTODY-RECEIPT-*.md")):
     text = receipt.read_text(encoding="utf-8")
     lines = text.splitlines()
     rel = receipt.relative_to(repo_root)
@@ -308,7 +322,7 @@ PIN = re.compile(r"\bsha256\s+([0-9a-f]{64})\b")
 PATHS = re.compile(rf"({re.escape(CUSTODY_REL)}[^\s`'\"*)\]]+)")
 TRIM = "`,;)]*.\"'"
 
-for record in sorted(custody.iterdir()):
+for record in sorted(custody.rglob("*")):
     if not record.is_file():
         continue
     try:
@@ -346,7 +360,7 @@ for record in sorted(custody.iterdir()):
             fail(f"{rel.name}: inline pin on {Path(named).name} declared {pin.group(1)}, actual {got}")
 
 # --------------------------------------------------------------- verdict
-records = [p for p in custody.iterdir() if p.is_file()]
+records = [p for p in custody.rglob("*") if p.is_file()]
 print()
 if failures:
     print(f"custody-pin-check: FAIL — {failures} problem(s), {checks} pin(s) verified")
