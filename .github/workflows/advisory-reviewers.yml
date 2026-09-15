@@ -107,6 +107,7 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository
       && github.event.pull_request.user.type == 'User'
+      && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 50
     permissions:
@@ -192,6 +193,7 @@ jobs:
           resolved=0
           unresolved=0
           omitted=0
+          file_cap_skips=0
           seen=0
           # A per-run file cap, with the same "named rather than dropped"
           # treatment the byte caps get. Without it, a PR touching a few
@@ -204,7 +206,7 @@ jobs:
           # the review step's `-f` check cannot tell it from a complete one — so the
           # reviewer would be told it has every touched file when it has a prefix.
           # Removing the destination first is what makes existence mean "complete".
-          rm -f /tmp/context.md
+          rm -f /tmp/context.md /tmp/context.state
           : > /tmp/context.partial
           printf '<file-context>\n' >> /tmp/context.partial
           # The diff step truncates at a byte cap and appends a marker; the
@@ -242,6 +244,7 @@ jobs:
             # survives in any of them can redraw the untrusted-region boundary.
             sed -e 's|--- END DIFF ---|[end-diff-marker-stripped]|g' \
                 -e 's|--- FULL TEXT AT THE PR HEAD ---|[file-context-marker-stripped]|g' \
+                -e 's|--- DIFF ---|[diff-marker-stripped]|g' \
                 -e 's|<file-context>|[file-context-tag-stripped]|g' \
                 -e 's|</file-context>|[file-context-tag-stripped]|g'
           }
@@ -249,7 +252,7 @@ jobs:
             [ -n "$path" ] || continue
             seen=$((seen + 1))
             if [ "$seen" -gt "$MAX_FILES" ]; then
-              omitted=$((omitted + 1))
+              file_cap_skips=$((file_cap_skips + 1))
               continue
             fi
             # The file contents are tag-stripped below; so is the path when it
@@ -310,10 +313,7 @@ jobs:
             # untrusted context region.
             if gh api "repos/$GITHUB_REPOSITORY/contents/$enc?ref=$HEAD_SHA" \
                  -H "Accept: application/vnd.github.raw" </dev/null 2>/tmp/context.err \
-               | sed -e 's|--- END DIFF ---|[end-diff-marker-stripped]|g' \
-                     -e 's|--- FULL TEXT AT THE PR HEAD ---|[file-context-marker-stripped]|g' \
-                     -e 's|<file-context>|[file-context-tag-stripped]|g' \
-                     -e 's|</file-context>|[file-context-tag-stripped]|g' \
+               | strip_markers \
                | iconv -c -f utf-8 -t utf-8 > /tmp/context.one; then
               printf '\n### %s (%s bytes, at %s)\n' "$disp" "$size" "$HEAD_SHA" >> /tmp/context.partial
               cat /tmp/context.one >> /tmp/context.partial
@@ -331,7 +331,7 @@ jobs:
             rm -f /tmp/context.one /tmp/context.err
           done < /tmp/context.paths
           if [ "$seen" -gt "$MAX_FILES" ]; then
-            printf '(fetched the first %s files; %s more were not fetched — the per-run file cap is reached and they are not listed)\n' "$MAX_FILES" "$((seen - MAX_FILES))" >> /tmp/context.partial
+            printf '(fetched the first %s files; %s more were not fetched — the per-run file cap omits them as a class, named here by count rather than one stanza per file, because for a large PR the stanzas would blow the very budget the cap protects)\n' "$MAX_FILES" "$((seen - MAX_FILES))" >> /tmp/context.partial
             echo "::warning::context: file cap reached; $((seen - MAX_FILES)) file(s) not fetched"
           fi
           printf '</file-context>\n' >> /tmp/context.partial
@@ -341,10 +341,11 @@ jobs:
           CTX_STATE="full"
           if [ ! -s /tmp/context.paths ]; then
             CTX_STATE="no-paths"
+          elif [ $((unresolved + omitted + file_cap_skips)) -gt 0 ]; then
+            CTX_STATE="partial ($unresolved unresolved, $((omitted + file_cap_skips)) omitted or skipped by caps)"
           elif tail -n1 /tmp/pr.diff | grep -qF '[diff truncated at'; then
             CTX_STATE="truncated"
           fi
-          printf '%s\n' "$CTX_STATE" > /tmp/context.state
           # `declared_bytes` is the API's .size for the files INCLUDED; the written
           # count below is larger by whatever the tag-stripping added. They are
           # reported as two figures rather than one, because they do not measure
@@ -354,11 +355,22 @@ jobs:
           # its job — each file was evaluated and its omission is named in the
           # context. The guard is for the step doing NOTHING, which is what
           # zero resolved AND zero omitted means.
+          # Byte-cap omissions count as work (each was evaluated and named);
+          # unresolved paths and file-cap skips do not. Without that
+          # distinction, a PR whose first 60 files are unresolved with 140
+          # skipped by the file cap would ship a context with zero file text
+          # and state full, and the guard would not fire.
           if [ "$declared" -gt 0 ] && [ $((resolved + omitted)) -eq 0 ]; then
             echo "::warning::context: not one of $declared path(s) resolved or omitted at $HEAD_SHA — this step did not do its job, and the review that follows will claim context it does not have"
             exit 1
           fi
           mv /tmp/context.partial /tmp/context.md
+          # Written only AFTER the mv: the state file must never outlive the
+          # context it describes. Before this, an all-unresolved run hit the
+          # guard's `exit 1` after writing state=full but before the mv, so the
+          # review step read `full` for a context that did not exist — the
+          # exact trusted-channel lie this design exists to prevent.
+          printf '%s\n' "$CTX_STATE" > /tmp/context.state
           echo "context: $(wc -c < /tmp/context.md) bytes written (includes tag-stripping expansion)"
 
       # ---- gemini reviewer (generate only) ----
@@ -401,8 +413,16 @@ jobs:
           # could downgrade the trusted description. Degradation-only, but the
           # claimed invariant did not hold.
           CTX_STATE="none"
-          if [ -f /tmp/context.state ]; then
-            CTX_STATE="$(cat /tmp/context.state)"
+          if [ -f /tmp/context.md ]; then
+            # context.md exists only if the context step completed its mv, so a
+            # completed step with no state file is "full" (a crash between mv
+            # and the state write is the only gap, and full is the true answer
+            # for a completed context). No context file at all is "none".
+            if [ -f /tmp/context.state ]; then
+              CTX_STATE="$(cat /tmp/context.state)"
+            else
+              CTX_STATE="full"
+            fi
           fi
           build_req() {
             # Built per call from the pair actually being sent. One SYSTEM built
@@ -418,6 +438,7 @@ jobs:
             # untrusted-region framing depends on.
             sed -e 's|--- END DIFF ---|[end-diff-marker-stripped]|g' \
                 -e 's|--- FULL TEXT AT THE PR HEAD ---|[file-context-marker-stripped]|g' \
+                -e 's|--- DIFF ---|[diff-marker-stripped]|g' \
                 -e 's|<file-context>|[file-context-tag-stripped]|g' \
                 -e 's|</file-context>|[file-context-tag-stripped]|g' \
                 /tmp/pr.diff | iconv -c -f utf-8 -t utf-8 > /tmp/pr.diff.safe
