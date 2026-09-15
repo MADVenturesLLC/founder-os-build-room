@@ -457,7 +457,15 @@ from pathlib import Path
 class RecipeLimit(Exception):
     """A published recipe exceeded its time or output bound."""
 
-custody = Path(os.environ["CUSTODY_DIR"])
+# Both resolved, and that matters. repo_root was resolved while custody was
+# not, so every path enumerated under custody kept the unresolved prefix and
+# `relative_to(repo_root)` raised an uncaught ValueError whenever any component
+# of the checkout path was a symlink. The bash side builds repo_root with
+# `cd && pwd`, which yields the logical path, so the two genuinely diverge.
+# Reproduced before fixing: running against a symlink to the repo printed a
+# traceback and exited 1 — telling the reader the pins are stale when in fact
+# the check never ran, which the exit table above defines as 2.
+custody = Path(os.environ["CUSTODY_DIR"]).resolve()
 repo_root = Path(os.environ["REPO_ROOT"]).resolve()
 
 failures = 0
