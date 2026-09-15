@@ -11,9 +11,9 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `7d2a1f49b4630ef6bae05cdbc7e3d58442bdc0cb` |
-| SHA-256 (as landed) | `a96058b6caa74e49d42e71b9679a9cb26871d393b70638f73d030cff2ec85773` |
-| Bytes / lines (as landed) | 8972 bytes, 154 lines |
+| Git blob id (as landed) | `bee5a4cbb1b88987faf223696917a4559298418d` |
+| SHA-256 (as landed) | `a62e5d42ab82234edbd39b7a37e0f062595685072cb1c5d47eb9d881b23d959f` |
+| Bytes / lines (as landed) | 9238 bytes, 159 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat, Actor-Id `session:claude-code/session_01KbHPzSthh2gKc8TtsG4QRp`, 2026-09-15, at Founder direction ("write the document review brief") |
@@ -26,6 +26,7 @@ dispatched text, and the dispatched bytes remain recoverable and
 checkable:
 
 ```
+git fetch origin main
 REF=origin/main
 P=docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt
 git show "$REF:$P" \
@@ -71,6 +72,7 @@ whole file and the committed-truth check applies directly. It must equal
 the value in the table above:
 
 ```
+git fetch origin main
 REF=origin/main
 P=docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
 git show "$REF:$P" | shasum -a 256   # or sha256sum on Linux
@@ -275,8 +277,11 @@ seat `br-architect`, and the builder session that landed the artifact
 (`session:claude-code/session_01KbHPzSthh2gKc8TtsG4QRp`), which is the
 session that also authored the brief, this addendum and this receipt.
 
-Authoring the questions is not performing the review, so the stated rule
-holds. It is recorded here that the rule nonetheless leaves the party
+Authoring the questions is not performing the review, so brief
+authorship falls outside the rule as stated. That is a statement about
+the rule's scope, not a finding that compliance was established —
+compliance cannot be established at all, for the namespace reason
+recorded above. It is recorded here that the rule nonetheless leaves the party
 whose landing is under review setting the questions the reviewer
 answers. Whether the independence rule should also cover brief
 authorship is the Founder's to decide; it is not decided here.

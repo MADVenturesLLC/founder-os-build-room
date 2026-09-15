@@ -14,13 +14,15 @@ forbidding the judgment Q8 asks for; the verdict vocabulary lacks
 CANNOT COMPLETE — BRIEF DEFECT; and the git show command at line 24 of
 the dispatched text does not parse, for the same redirection reason
 this banner warns about. To locate it in this file as landed, add the
-number of banner lines above the rule.
+line number of the dashed rule below — the rule is the last banner
+line, so its number is exactly the offset.
 This file is a record of what was sent. Nothing in it is a live
 instruction to anyone.
 The dispatched text is everything from the line reading
 "INDEPENDENT DOCUMENT REVIEW BRIEF", below the rule, to end of file,
 unchanged. Everything above that line is this banner. Recover and check
 (shell variables, not <...> placeholders: < and > are redirections):
+  git fetch origin main
   REF=origin/main
   P=docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt
   git show "$REF:$P" \
@@ -33,7 +35,10 @@ not an error. Note also that any edit to this banner shifts every
 landed-file line number below it. This record therefore cites lines of the
 brief in the dispatched-text frame only. That frame does not move when
 the banner changes; to locate a dispatched line in this file as landed,
-add the number of banner lines above the rule.
+add the line number of the dashed rule below. An earlier revision said
+"the number of banner lines above the rule", which is one too few: the
+rule is itself a banner line, and dispatched line 1 is the line after
+it.
 Two hashes describe this file and only one is load-bearing. The
 dispatched-text hash 3aac089e is what the record is anchored to and is
 unaffected by anything above the rule. The landed-file SHA-256 and blob
