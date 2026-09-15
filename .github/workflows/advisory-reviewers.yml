@@ -40,9 +40,9 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Resolve PR identities
         id: resolve
@@ -75,7 +75,7 @@ jobs:
 
       - name: Mint gemini reviewer installation token
         id: gemini-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1, resolved 2026-09-15 (run 34916086704)
         with:
           app-id: ${{ secrets.GEMINI_REVIEWER_APP_ID }}
           private-key: ${{ secrets.GEMINI_REVIEWER_APP_PRIVATE_KEY }}
@@ -183,7 +183,7 @@ jobs:
       - name: Mint claude reviewer installation token
         if: ${{ !cancelled() && steps.diff.outcome == 'success' }}
         id: claude-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1, resolved 2026-09-15 (run 34916086704)
         with:
           app-id: ${{ secrets.CLAUDE_REVIEWER_APP_ID }}
           private-key: ${{ secrets.CLAUDE_REVIEWER_APP_PRIVATE_KEY }}
