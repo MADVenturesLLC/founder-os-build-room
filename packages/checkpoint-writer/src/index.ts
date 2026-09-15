@@ -45,3 +45,20 @@ export {
 } from './triggers.js';
 
 export { NotesLog, NotesLogError, type NoteEntry } from './notes.js';
+export {
+  CheckpointStore,
+  CheckpointStoreError,
+  SingleWriterError,
+  type PersistedCheckpoint,
+  type WriteLease,
+} from './store.js';
+
+export {
+  CheckpointWriter,
+  CheckpointWriterError,
+  WRITER_SEAT_ID,
+  type CheckpointWriteResult,
+  type CheckpointWriterConfig,
+  type WriterSeatModel,
+  type WriterSeatRequest,
+} from './writer.js';
