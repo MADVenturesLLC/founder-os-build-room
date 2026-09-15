@@ -19,8 +19,39 @@ PROPOSED and unsigned on `main`.
 | Authored by | the `builder` seat in session, 2026-09-15, at Founder direction ("write the document review brief") |
 | Dispatched | the Founder reports sending this text to the operator before it was landed |
 
-The file holds the dispatched text verbatim, so the brief the reviewer
-worked from is citable by hash rather than by recollection.
+The Founder reports that the file holds the dispatched text verbatim;
+that identity rests on the same report and is not verifiable from the
+repository, since dispatch preceded landing. On that basis the brief the
+reviewer worked from is citable by hash rather than by recollection.
+
+## Addendum 1, correcting the brief
+
+| Field | Value |
+|---|---|
+| Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
+| Git blob id | `ec9f91b9a1aff6805e8b4fc647e888f3fa0edaaa` |
+| SHA-256 | `416a7573b052e8bb7778f967e33149ef3662d5acbd39b3c3d80c95917459afc5` |
+| Bytes | 3701 |
+| Lines | 85 (`wc -l`) |
+
+An advisory review of the brief found two builder defects in it, and the
+brief had already been dispatched. The addendum corrects them rather than
+editing the dispatched text, so the record holds both what was sent and
+what corrects it.
+
+1. The brief stated the R3-to-R4 delta as "18 hunks, 17 insertions and
+   one replaced line". "17 insertions" was a hunk count read as a line
+   count. Measured from committed truth: 18 hunks, 335 lines added, 1
+   line removed, net +334, which reconciles R3's 2285 lines with R4's
+   2619.
+2. Questions 6 and 7 require reading the implementation plan, which the
+   brief never identified. The addendum supplies path, blob, SHA-256 and
+   size for plan r1 and for addendum 02 revision r6, and records that
+   FD-B1 through FD-B7 have no separate artifact and are read at the
+   act's section 0.
+
+The addendum changes no question, no verdict vocabulary, no constraint,
+and not the independence rule.
 
 ## What it asks for
 

@@ -1,0 +1,85 @@
+ADDENDUM 1 TO THE INDEPENDENT DOCUMENT REVIEW BRIEF
+PR 2b Gate III Tranche B draft authorization act, revision R4
+
+This addendum corrects and extends the brief
+  sha256 3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
+which was dispatched before these defects were found. The brief's
+questions, output format, constraints and independence rule are
+unchanged. Read this alongside it; where the two conflict, this governs.
+
+Both corrections came from an advisory review of the brief itself. They
+are the builder's defects, not the reviewer's findings about the act.
+
+CORRECTION 1 — the R3-to-R4 delta was stated ambiguously and wrongly
+
+The brief says: "R4 amends R3 by pure insertion: 18 hunks, 17 insertions
+and one replaced line (the title designator)."
+
+"17 insertions" was a hunk count, not a line count, and reads as though
+R4 added 17 lines. It did not. Measured from committed truth on main,
+`git diff --numstat` between the two blobs:
+
+  hunks            18
+  lines added      335
+  lines removed    1     (the title designator, R3 -> R4)
+  net              +334
+  R3               2285 lines
+  R4               2619 lines   (2285 + 334)
+
+"Pure insertion" is also loose: seventeen hunks are insertions and one
+is a single-line replacement. The claim the reviewer should verify is
+that no R3 line other than the title designator was changed or removed,
+and that R3's rows are retained rather than replaced.
+
+CORRECTION 2 — Q6 and Q7 need documents the brief never identified
+
+The brief gives committed-truth identity for the act and the D-1 ruling
+only, while Q6 and Q7 require reading the implementation plan. Identity
+for those, on main:
+
+  PLAN r1
+    path   docs/planning/command-journal/pr2b-implementation-plan-r1.md
+    blob   c9436f11ec11312264295f99389649fe986f7f87
+    sha256 08f3ea7418db7052ffd7fb4cf6df4672f169c95933a7c07c71ef637ae775b3ce
+    size   67849 bytes, 974 lines
+    B-R14 at line 455, B-R15 at line 456; PC-5 and PC-8 mappings at
+    lines 827 and 830
+
+  PLAN r1 ADDENDUM 02, revision r6
+    path   docs/planning/command-journal/
+           pr2b-implementation-plan-r1-addendum-02-r6.md
+    blob   01f60a4e8f021e8eff3d2a310c9c393c9ee3f493
+    sha256 16e316be4e8d52ae0e856cf53801180cd2a18209450c7e94954d80d107a8dcac
+    size   35805 bytes, 529 lines
+    this is the revision whose proposed denial row the D-1 ruling
+    renumbers to B-R16
+
+NOTATION — case alone distinguishes two revision series
+
+The brief uses R1 through R4 for revisions of the authorization act, and
+lowercase r1 and r6 for revisions of the implementation plan and its
+addendum. Case-only disambiguation is fragile. Read every citation as
+"act revision R<n>" or "plan revision r<n>" per the list above.
+
+FD-B1 THROUGH FD-B7
+
+These rulings have no separate repository artifact. They are quoted and
+incorporated at section 0 of the act under review, sourced to Founder
+message ff56f500-d562-4a73-835f-5c6bf4144ae1. Read them there. If the
+act's quotation of a ruling appears incomplete or altered, that is a
+finding, and it is exactly what Q1 and Q2 are for.
+
+ON Q8 AND THE NO-AMBIGUITY-RESOLUTION CONSTRAINT
+
+Q8 asks for a judgment on drafted text: are the duplicated Work ID and
+Starting base rows consistent, or a defect. That is a finding to make.
+The constraint that bars resolving an ambiguity by choosing an answer
+applies to gaps and contradictions in the act's instructions, not to
+questions the brief puts deliberately. If Q8 cannot be settled from the
+document, say so and explain what is missing.
+
+NO OTHER CHANGE
+
+The eight questions, the verdict vocabulary, the output format, the
+constraints, and the reviewer-independence rule stand exactly as the
+brief states them.
