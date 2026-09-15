@@ -33,7 +33,7 @@ let harness: GatewayHarness | undefined;
 let node: SessionNode | undefined;
 let server: { url: string; close: () => Promise<void> } | undefined;
 const ADJUDICATION_TOKEN = 'phase3-adjudication-test-token-value';
-/** Shared request timeout for every `Phase3ControlPlaneClient` this file constructs. */
+/** Request timeout for the harness `Phase3ControlPlaneClient`s in this file. */
 const CLIENT_REQUEST_TIMEOUT_MS = 1_000;
 
 beforeEach(async () => {
@@ -549,19 +549,22 @@ function routeExpectation(input: Phase3AttemptInput): Phase3EvidenceExpectation 
   return { attempt: input, environment: node!.config.environment };
 }
 
+/** Default `requestTimeoutMs` for `runWithPostCommitDemotion` — see its doc comment. */
+const DEMOTION_CLIENT_TIMEOUT_MS = 50;
+
 /**
  * `requestTimeoutMs` bounds the client's own reconciliation deadline (a
  * small multiple of it — see `Phase3ControlPlaneClient.writeReconciliationDeadline`).
- * The default is tight because most callers demote at a point that can
- * never reconcile: the node stays demoted for the rest of the test, so
- * every extra millisecond here is pure wait before the correct
- * `unresolved_commit`. `FINALIZATION_COMMIT` is the exception — a demotion
- * on the LAST write of an otherwise successful run. That write commits
- * before the fence rejects the response, so the client's job is to
- * discover the already-committed state by re-exporting, not to keep
- * failing, and it needs real time to do that under load.
+ * The default (`DEMOTION_CLIENT_TIMEOUT_MS`) is tight because most callers
+ * demote at a point that can never reconcile: the node stays demoted for
+ * the rest of the test, so every extra millisecond here is pure wait
+ * before the correct `unresolved_commit`. `FINALIZATION_COMMIT` is the
+ * exception — a demotion on the LAST write of an otherwise successful run.
+ * That write commits before the fence rejects the response, so the
+ * client's job is to discover the already-committed state by re-exporting,
+ * not to keep failing, and it needs real time to do that under load.
  */
-async function runWithPostCommitDemotion(demoteAtCommit: number, requestTimeoutMs = 50) {
+async function runWithPostCommitDemotion(demoteAtCommit: number, requestTimeoutMs = DEMOTION_CLIENT_TIMEOUT_MS) {
   let phase3Commits = 0;
   let fencedNode!: SessionNode;
   fencedNode = await restartNode({
