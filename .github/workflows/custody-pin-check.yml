@@ -55,12 +55,16 @@ jobs:
     steps:
       - name: Checkout
         # Pinned to the commit `v4` resolved to on 2026-09-01 (tag v4.4.0).
-        # Verified, not assumed: across all six files in `.github/workflows/`
-        # this is the only DISTINCT `actions/checkout@` value — every workflow
-        # carries this same SHA. (An earlier wording here said "the only pin",
-        # then said it was identical across four named files; those cannot both
-        # be true, and a comment whose stated basis is "verified" should not
-        # contain a claim that refutes itself.)
+        #
+        # No cross-file claim here, deliberately. Two successive wordings of
+        # this comment tried to assert how the other workflows pin checkout,
+        # and both were wrong: the first said "the only pin" AND "identical
+        # across four files", which cannot both hold; the second said "every
+        # workflow carries this same SHA", but advisory-reviewers.yml has no
+        # checkout step at all. A hand-maintained claim about other files,
+        # living in a comment that nothing checks, is the exact failure this
+        # PR's own gate exists to catch — so the claim belongs in the PR
+        # record, dated and evidenced, not restated here where it drifts.
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
