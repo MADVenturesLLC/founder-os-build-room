@@ -33,6 +33,16 @@ let harness: GatewayHarness | undefined;
 let node: SessionNode | undefined;
 let server: { url: string; close: () => Promise<void> } | undefined;
 const ADJUDICATION_TOKEN = 'phase3-adjudication-test-token-value';
+/** Request timeout for the harness `Phase3ControlPlaneClient`s in this file. */
+const CLIENT_REQUEST_TIMEOUT_MS = 1_000;
+/** Client request timeout for `runWithPostCommitDemotion` — see its doc comment. */
+const DEMOTION_CLIENT_TIMEOUT_MS = 1_000;
+// Commit indices (1-based, counting `afterCommit` fires) in a clean
+// `runWithPostCommitDemotion` run: create, connect, adapter_registered,
+// request, matched_response, disconnect, attempt_finished.
+const CREATE_COMMIT = 1;
+const FIRST_LIFECYCLE_STAGE_COMMIT = 2;
+const FINALIZATION_COMMIT = 7;
 
 beforeEach(async () => {
   if (STORAGE_SKIP !== false) return;
@@ -119,14 +129,14 @@ describe('Phase 3 run routes — closed write and export surface', { skip: STORA
   it('is consumable through the token-holding harness client without leaking its token', async () => {
     const input = attemptBody();
     await insertEnrolledGateway(input.gatewayId);
-    const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, 1_000, 1);
+    const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, CLIENT_REQUEST_TIMEOUT_MS, 1);
     const expected = routeExpectation(input);
     await client.createAttempt(input, expected);
     const exported = await client.exportAttempt(input.runAttemptId, expected);
     assert.equal(exported.attempt.runAttemptId, input.runAttemptId);
 
     const secret = 'wrong-but-sensitive-client-token';
-    const wrong = new Phase3ControlPlaneClient(server!.url, secret, 1_000, 1);
+    const wrong = new Phase3ControlPlaneClient(server!.url, secret, CLIENT_REQUEST_TIMEOUT_MS, 1);
     await assert.rejects(
       wrong.exportAttempt(input.runAttemptId, expected),
       (error: unknown) => error instanceof Error && !error.message.includes(secret),
@@ -136,7 +146,7 @@ describe('Phase 3 run routes — closed write and export surface', { skip: STORA
   it('returns a durable 409 lifecycle refusal through the harness client', async () => {
     const input = attemptBody();
     await insertEnrolledGateway(input.gatewayId);
-    const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, 1_000, 1);
+    const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, CLIENT_REQUEST_TIMEOUT_MS, 1);
     const expected = routeExpectation(input);
     assert.equal((await client.createAttempt(input, expected)).created, true);
     const refusal = await client.appendEvent(input.runAttemptId, {
@@ -156,7 +166,7 @@ describe('Phase 3 run routes — closed write and export surface', { skip: STORA
   it('carries a real-route refusal through the runner without losing its reason', async () => {
     const gateway = await enrollGateway(node!);
     const epoch = await openSession(node!, gateway);
-    const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, 1_000, 1);
+    const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, CLIENT_REQUEST_TIMEOUT_MS, 1);
     const plan: Phase3AttemptPlan = {
       runAttemptId: randomUUID(),
       label: 'Phase3-CR1',
@@ -339,7 +349,7 @@ describe('Phase 3 run routes — leadership fence', { skip: STORAGE_SKIP }, () =
   });
 
   it('returns an explicit unresolved stop when creation committed before demotion', async () => {
-    const result = await runWithPostCommitDemotion(1);
+    const result = await runWithPostCommitDemotion(CREATE_COMMIT);
     assert.equal(result.outcome, 'unresolved_commit');
     assert.equal((result.evidence as Phase3EvidenceExport).attempt.state, 'active');
     assert.equal(
@@ -351,7 +361,7 @@ describe('Phase 3 run routes — leadership fence', { skip: STORAGE_SKIP }, () =
   });
 
   it('reconciles a committed lifecycle stage before returning an unresolved stop', async () => {
-    const result = await runWithPostCommitDemotion(2);
+    const result = await runWithPostCommitDemotion(FIRST_LIFECYCLE_STAGE_COMMIT);
     assert.equal(result.outcome, 'unresolved_commit');
     assert.deepEqual(
       (result.evidence as Phase3EvidenceExport).events
@@ -362,7 +372,10 @@ describe('Phase 3 run routes — leadership fence', { skip: STORAGE_SKIP }, () =
   });
 
   it('reconciles committed finalization and returns awaiting adjudication', async () => {
-    const result = await runWithPostCommitDemotion(7);
+    // See `runWithPostCommitDemotion`'s doc comment for why this scenario,
+    // unlike the two above, needs its write to actually reconcile —
+    // `DEMOTION_CLIENT_TIMEOUT_MS` is what makes that reliable.
+    const result = await runWithPostCommitDemotion(FINALIZATION_COMMIT);
     assert.equal(result.outcome, 'awaiting_adjudication');
     assert.equal((result.evidence as Phase3EvidenceExport).attempt.state, 'awaiting_adjudication');
   });
@@ -538,6 +551,27 @@ function routeExpectation(input: Phase3AttemptInput): Phase3EvidenceExpectation 
   return { attempt: input, environment: node!.config.environment };
 }
 
+/**
+ * `DEMOTION_CLIENT_TIMEOUT_MS` bounds the client's own reconciliation
+ * deadline (a small multiple of it — see
+ * `Phase3ControlPlaneClient.writeReconciliationDeadline`). It has to stay
+ * generous for every scenario this helper drives, not just
+ * `FINALIZATION_COMMIT`: every fenced write's route commits
+ * unconditionally, even a pure idempotent replay of an already-applied
+ * write (see `createAttemptFenced`/`appendEventFenced` in
+ * `packages/control-plane/src/phase3-run.ts`), so a too-tight budget that
+ * client-side-aborts a merely slow-but-successful response causes the
+ * client to retry it — and that retry's harmless replay still fires
+ * `afterCommit` again. That injects an extra counted commit before the
+ * step this test actually means to target, silently demoting the wrong
+ * write. (A 50ms default here once caused exactly that: it corrupted the
+ * commit *count*, not just one write's outcome, and it took a genuinely
+ * different scenario — `FIRST_LIFECYCLE_STAGE_COMMIT`, not
+ * `FINALIZATION_COMMIT` — flaking in CI to reveal it.) `FINALIZATION_COMMIT`
+ * is additionally the one scenario whose demoted write is expected to
+ * actually succeed via reconciliation rather than stay unresolved, but it
+ * needs no larger budget than every other scenario already uses.
+ */
 async function runWithPostCommitDemotion(demoteAtCommit: number) {
   let phase3Commits = 0;
   let fencedNode!: SessionNode;
@@ -608,7 +642,7 @@ async function runWithPostCommitDemotion(demoteAtCommit: number) {
       stagingLockPresent: false,
     },
   };
-  const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, 50, 1);
+  const client = new Phase3ControlPlaneClient(server!.url, TEST_TOKEN, DEMOTION_CLIENT_TIMEOUT_MS, 1);
   let heartbeatSent = false;
   return performPhase3Attempt(plan, {
     observeEntry: async () => observation,
