@@ -1,0 +1,51 @@
+# ADVISORY — deterministic verification of the pins inside custody records.
+#
+# NOT A REQUIRED CHECK, and this file cannot make it one. Whether a check is
+# required on `main` is a repository ruleset setting, which is a Founder act;
+# adding this job to that set is a separate decision from merging this file.
+# Until that decision is taken, a failure here is visible and blocks nothing.
+#
+# WHY IT EXISTS. The records under `docs/planning/command-journal/custody/`
+# cite each other by git blob id, SHA-256, byte count and line count, and one
+# publishes a `sed` recipe for extracting a hash-pinned substring. All of it is
+# maintained by hand and all of it fails silently — a stale pin still looks
+# like a pin. The R4 brief's own landing banner says so: an edit that breaks
+# the extraction yields "a wrong hash, not an error". This job turns that class
+# of silent failure into a red check.
+#
+# It verifies the records' own declarations rather than a manifest of its own.
+# A manifest would be one more hand-maintained copy to go stale, which is the
+# failure being guarded against.
+#
+# Runs on every pull request rather than filtering on a path glob, for the same
+# reason `path-audit.yml` does: a commit that moves or deletes a pinned file
+# without touching the record that pins it is exactly the case a path filter
+# would skip.
+#
+# Changes to this workflow's triggers, permissions, or steps require founder
+# approval before merge (same rule class as DEC-20260718-02 clause 4).
+
+name: Custody Pin Check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  custody-pin-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # Pinned to the commit `v4` resolved to on 2026-09-01 (tag v4.4.0),
+        # matching the pin already used by this repository's other workflows.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Verify declared custody pins
+        run: bash scripts/custody-pin-check.sh

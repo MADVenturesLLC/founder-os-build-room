@@ -202,8 +202,27 @@ jobs:
             - Do not edit files, create commits, push, approve, request
               changes, or submit a formal review.
 
+          # `claude_args` is a block scalar handed to the action's own
+          # argument parser, not to YAML — so it carries arguments only, and
+          # the note below sits outside it as a real YAML comment.
+          #
+          # --max-turns is 80, raised from 40 on 2026-09-15. The cap was hit
+          # on three consecutive heads of PR #48 — 44, then 48, then 49 turns
+          # — and in each case the review itself SUCCEEDED and the action
+          # failed the job on turn count alone ("subtype": "success",
+          # "is_error": false, then `Claude reported a successful result
+          # after N turns, exceeding the configured maximum of 40`). The
+          # action exiting non-zero skips the `post` job, so the completed
+          # review is discarded and no comment is posted: the cost of the cap
+          # is a lost review, not a bounded one.
+          #
+          # Turn usage scales with how much of a diff must be verified rather
+          # than read, so hash-dense governance records under
+          # `docs/planning/command-journal/custody/` will keep exceeding a low
+          # cap however correct they are. 80 is twice the observed ceiling,
+          # not a removal of the bound: a runaway review still terminates.
           claude_args: |
-            --max-turns 40
+            --max-turns 80
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
             --json-schema '{"type":"object","properties":{"review":{"type":"string"}},"required":["review"]}'
 
