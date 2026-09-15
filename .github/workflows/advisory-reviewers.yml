@@ -109,7 +109,11 @@ jobs:
       && github.event.pull_request.user.type == 'User'
       && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    # Worst-case step budgets inside this job: context 5 + gemini 40 + claude
+    # 20 plus the diff/install steps is ~69 minutes, so the job cap must
+    # exceed that. Typical runs finish in minutes; this is a ceiling, not a
+    # target.
+    timeout-minutes: 90
     permissions:
       contents: read
       pull-requests: read
@@ -213,7 +217,7 @@ jobs:
           # context then cannot list files whose `+++` lines were cut off. They
           # are absent AND unlisted, so they are named here as a class, or the
           # "NAMED rather than dropped" rule would be silently broken.
-          if tail -n1 /tmp/pr.diff | grep -qF '[diff truncated at'; then
+          if { read -r lastline < <(tail -n1 /tmp/pr.diff); } 2>/dev/null              && case "$lastline" in *'[diff truncated at'*) true ;; *) false ;; esac; then
             printf '(the diff was truncated at its byte cap, so files whose +++ lines were cut off are absent from this context and are not listed anywhere)\n' >> /tmp/context.partial
             echo "::warning::context: the diff was truncated; files past the cut are absent from the context and unlisted"
           fi
@@ -343,7 +347,7 @@ jobs:
             CTX_STATE="no-paths"
           elif [ $((unresolved + omitted + file_cap_skips)) -gt 0 ]; then
             CTX_STATE="partial ($unresolved unresolved, $((omitted + file_cap_skips)) omitted or skipped by caps)"
-          elif tail -n1 /tmp/pr.diff | grep -qF '[diff truncated at'; then
+          elif { read -r lastline < <(tail -n1 /tmp/pr.diff); } 2>/dev/null                && case "$lastline" in *'[diff truncated at'*) true ;; *) false ;; esac; then
             CTX_STATE="truncated"
           fi
           # `declared_bytes` is the API's .size for the files INCLUDED; the written
@@ -359,7 +363,8 @@ jobs:
           # unresolved paths and file-cap skips do not. Without that
           # distinction, a PR whose first 60 files are unresolved with 140
           # skipped by the file cap would ship a context with zero file text
-          # and state full, and the guard would not fire.
+          # (labelled partial, but with nothing in it), and the guard would
+          # not fire.
           if [ "$declared" -gt 0 ] && [ $((resolved + omitted)) -eq 0 ]; then
             echo "::warning::context: not one of $declared path(s) resolved or omitted at $HEAD_SHA — this step did not do its job, and the review that follows will claim context it does not have"
             exit 1
@@ -413,16 +418,23 @@ jobs:
           # could downgrade the trusted description. Degradation-only, but the
           # claimed invariant did not hold.
           CTX_STATE="none"
-          if [ -f /tmp/context.md ]; then
-            # context.md exists only if the context step completed its mv, so a
-            # completed step with no state file is "full" (a crash between mv
-            # and the state write is the only gap, and full is the true answer
-            # for a completed context). No context file at all is "none".
-            if [ -f /tmp/context.state ]; then
-              CTX_STATE="$(cat /tmp/context.state)"
-            else
-              CTX_STATE="full"
-            fi
+          if [ ! -f /tmp/context.md ]; then
+            # The placeholder is written BELOW — after the state is decided,
+            # never before. In the round-9 shape the placeholder branch ran
+            # first, so `-f /tmp/context.md` was then ALWAYS true, and with no
+            # state file the read fell through to "full": a degraded run told
+            # the model it had every file. That is the same trusted-channel lie
+            # this design exists to prevent, third occurrence, now closed by
+            # order of operations.
+            printf '<file-context>\n(file context was not fetched for this run; the diff is all you have, and anything it asserts about the files it lands in is unverified)\n</file-context>\n' > /tmp/context.md
+            echo "::warning::gemini review proceeding WITHOUT file context; findings about the surrounding code will be marked unverified"
+          elif [ -f /tmp/context.state ]; then
+            CTX_STATE="$(cat /tmp/context.state)"
+          else
+            # context.md exists and no state file: the mv completed (existence
+            # means completeness), so "full" is the true answer for a completed
+            # context.
+            CTX_STATE="full"
           fi
           build_req() {
             # Built per call from the pair actually being sent. One SYSTEM built
@@ -447,6 +459,7 @@ jobs:
               none)      have="NO file text — the context step failed or was skipped, so the diff is all you have, and anything the diff asserts about the files it lands in is unverified" ;;
               no-paths)  have="no file text — no file paths could be parsed out of the diff, so anything the diff implies about the files it lands in is unverified" ;;
               truncated) have="file text, but the diff was truncated at its byte cap, so files past the cut are absent and unlisted" ;;
+              partial*) have="file text, but not all of it — the context step reported: $3" ;;
             esac
             local system="You are $1 ($2 effort), an advisory code reviewer for MADVenturesLLC/founder-os-build-room.
 
