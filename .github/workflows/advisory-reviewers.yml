@@ -68,7 +68,7 @@ jobs:
             head -c 400000 /tmp/pr.diff | head -n -1 > /tmp/pr.diff.trunc
             printf '\n\n[diff truncated at 400000 bytes]\n' >> /tmp/pr.diff.trunc
             mv /tmp/pr.diff.trunc /tmp/pr.diff
-            echo "::warning::PR diff truncated to 400000 bytes for review"
+            echo "::warning::PR diff truncated for review; $(wc -c < /tmp/pr.diff) bytes remain"
           fi
 
       # ---- gemini reviewer ----
@@ -80,8 +80,9 @@ jobs:
           app-id: ${{ secrets.GEMINI_REVIEWER_APP_ID }}
           private-key: ${{ secrets.GEMINI_REVIEWER_APP_PRIVATE_KEY }}
 
-      - name: Review as gemini-3.8-flash (medium)
+      - name: Review as gemini reviewer (model and effort from env)
         id: gemini
+        timeout-minutes: 20
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.8-flash
@@ -109,6 +110,7 @@ jobs:
               ]}' > /tmp/gemini_req.json
           # Key goes through a header file, not argv.
           printf 'Authorization: Bearer %s\n' "$GEMINI_API_KEY" > /tmp/gemini_auth.h
+          trap 'rm -f /tmp/gemini_auth.h' EXIT
           URL="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
           # Retry 429 / 5xx / transport failure with backoff (15s, 30s).
           attempt=0
@@ -119,7 +121,7 @@ jobs:
               -o /tmp/gemini_resp.json -w '%{http_code}' \
               -H @/tmp/gemini_auth.h \
               -H "Content-Type: application/json" \
-              -d @/tmp/gemini_req.json \
+              --data-binary @/tmp/gemini_req.json \
               "$URL") || HTTP=000
             case "$HTTP" in
               200) break ;;
@@ -139,11 +141,15 @@ jobs:
             exit 1
           fi
           REVIEW=$(jq -r '.choices[0].message.content // empty' /tmp/gemini_resp.json)
-          if [ -z "$REVIEW" ]; then
-            echo "::error::gemini reviewer returned empty output"
+          FINISH=$(jq -r '.choices[0].finish_reason // empty' /tmp/gemini_resp.json)
+          if [ "$FINISH" = "length" ] && [ -z "$REVIEW" ]; then
+            echo "::error::gemini spent its whole output budget before producing content (finish_reason=length)"
             exit 1
           fi
-          FINISH=$(jq -r '.choices[0].finish_reason // empty' /tmp/gemini_resp.json)
+          if [ -z "$REVIEW" ]; then
+            echo "::error::gemini reviewer returned empty output (finish_reason=${FINISH:-none})"
+            exit 1
+          fi
           if [ "$FINISH" = "length" ]; then
             echo "::warning::gemini response hit the output limit; posting it marked as cut off"
             REVIEW="$(printf '%s\n\n(response cut off at the model output limit)' "$REVIEW")"
@@ -155,7 +161,8 @@ jobs:
           # Marker is a fixed reviewer identifier for consumers of these
           # reviews; it is deliberately not derived from GEMINI_MODEL /
           # GEMINI_EFFORT so a model bump does not change it.
-          printf '<!-- advisory-reviewers:gemini-3.8-flash-medium -->\n\n%s\n' "$REVIEW" > /tmp/gemini_body.md
+          printf '<!-- advisory-reviewers:gemini-3.8-flash-medium -->\n<!-- advisory-reviewers:model=%s effort=%s -->\n\n%s\n' \
+            "$GEMINI_MODEL" "$GEMINI_EFFORT" "$REVIEW" > /tmp/gemini_body.md
           gh api -X POST "repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
             -f event=COMMENT \
             -f commit_id="$HEAD_SHA" \
@@ -184,6 +191,7 @@ jobs:
       - name: Review as claude-opus-5
         if: ${{ !cancelled() && steps.diff.outcome == 'success' }}
         id: claude
+        timeout-minutes: 10
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           GH_TOKEN: ${{ steps.claude-token.outputs.token }}
