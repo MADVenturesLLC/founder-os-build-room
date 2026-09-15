@@ -207,6 +207,22 @@ run_selftest() {
     "inline pin on sample.txt" \
     "printf '\\nPinned:\\n  path docs/planning/command-journal/\\n       custody/sample.txt\\n  sha256 %s\\n' \"\$(sha256sum docs/planning/command-journal/custody/sample.txt | cut -d\" \" -f1)\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
 
+  selftest_case "an unrecognized SHA-256 qualifier is refused, not guessed at" 1 \
+    "qualifier this check does not recognize" \
+    "sed -i 's/^| SHA-256 |/| SHA-256 (as sent) |/' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "an uppercase digest is accepted, not reported as absent" 0 \
+    "PASS" \
+    "sed -i '/^| SHA-256 |/s/[0-9a-f]\\{64\\}/\\U&/' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "the same path named twice on one line is not ambiguous" 0 \
+    "inline pin on sample.txt" \
+    "printf '\\nSee docs/planning/command-journal/custody/sample.txt and again docs/planning/command-journal/custody/sample.txt\\n  sha256 %s\\n' \"\$(sha256sum docs/planning/command-journal/custody/sample.txt | cut -d\" \" -f1)\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "receipts renamed to a non-markdown extension trip the floor" 1 \
+    "not one table declared a Path row" \
+    "mv docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.txt"
+
   selftest_case "an inline pin with no path nearby is noted, not counted, not failed" 0 \
     "not verified, not counted" \
     "printf '\\nSuperseded revision:\\n  sha256 %s\\n' \"\$(printf '1%.0s' {1..64})\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
@@ -219,6 +235,30 @@ run_selftest() {
   echo "custody-pin-check selftest: PASS — $selftest_ran case(s)"
   return 0
 }
+
+# Preflight runs BEFORE the selftest branch below, so an unsupported platform
+# gets one clear message instead of a wall of per-case mismatches. sha256sum is
+# here because the selftest fixtures use it; on macOS it is `shasum -a 256`, and
+# GNU sed is absent too, so this check is a Linux/coreutils gate either way.
+for tool in python3 git sed sha256sum; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "custody-pin-check: required tool not found: $tool" >&2
+    echo "custody-pin-check: this check needs GNU sed and coreutils." >&2
+    exit 2
+  }
+done
+
+# The published recipes are executed rather than reimplemented, so they run
+# under `sed --sandbox` (see the header). A sed without that flag — BSD/macOS
+# sed, notably — cannot run them safely, and would in any case interpret a GNU
+# recipe differently and extract different bytes. That is "could not run",
+# not "the pins are stale", so it exits 2 rather than 1.
+if ! printf '' | sed --sandbox -n '1p' >/dev/null 2>&1; then
+  echo "custody-pin-check: this check requires a sed supporting --sandbox (GNU sed)." >&2
+  echo "custody-pin-check: the published extraction recipes are executed, and are run" >&2
+  echo "custody-pin-check: sandboxed so a document cannot execute commands via sed." >&2
+  exit 2
+fi
 
 if [[ "${1:-}" == "selftest" ]]; then
   SELFTEST_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
@@ -241,25 +281,6 @@ if [[ ! -d "$custody_dir" ]]; then
   exit 2
 fi
 
-for tool in python3 git sed; do
-  command -v "$tool" >/dev/null 2>&1 || {
-    echo "custody-pin-check: required tool not found: $tool" >&2
-    exit 2
-  }
-done
-
-# The published recipes are executed rather than reimplemented, so they run
-# under `sed --sandbox` (see the header). A sed without that flag — BSD/macOS
-# sed, notably — cannot run them safely, and would in any case interpret a GNU
-# recipe differently and extract different bytes. That is "could not run",
-# not "the pins are stale", so it exits 2 rather than 1.
-if ! printf '' | sed --sandbox -n '1p' >/dev/null 2>&1; then
-  echo "custody-pin-check: this check requires a sed supporting --sandbox (GNU sed)." >&2
-  echo "custody-pin-check: the published extraction recipes are executed, and are run" >&2
-  echo "custody-pin-check: sandboxed so a document cannot execute commands via sed." >&2
-  exit 2
-fi
-
 # Blob ids come from `git hash-object`. Outside a work tree that fails for
 # every record, which is a tooling problem and not a stale pin.
 if ! git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
@@ -271,9 +292,15 @@ CUSTODY_DIR="$custody_dir" REPO_ROOT="$repo_root" python3 - <<'PY'
 import hashlib
 import os
 import re
+import select
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+
+class RecipeLimit(Exception):
+    """A published recipe exceeded its time or output bound."""
 
 custody = Path(os.environ["CUSTODY_DIR"])
 repo_root = Path(os.environ["REPO_ROOT"]).resolve()
@@ -297,6 +324,56 @@ def ok(msg):
 
 def sha256_of(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+RECIPE_TIMEOUT = 30
+RECIPE_MAX_BYTES = 64 * 1024 * 1024  # ~400x the largest custody record today
+
+
+def run_recipe(expr, target):
+    """Run a published recipe under sed --sandbox, bounded in time AND output.
+
+    The timeout bounds wall time; it does not bound volume, and a looping
+    recipe can emit gigabytes well inside it, all buffered in the runner. So
+    stdout is read through select with a deadline and a byte cap, and the
+    process is killed the moment either is exceeded.
+
+    Returns (returncode, stdout_bytes, stderr_bytes) or raises RecipeLimit.
+    """
+    proc = subprocess.Popen(
+        ["sed", "--sandbox", "-n", "-e", expr, "--", str(target)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    chunks, total = [], 0
+    deadline = time.monotonic() + RECIPE_TIMEOUT
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RecipeLimit(f"did not finish in {RECIPE_TIMEOUT}s")
+            ready, _, _ = select.select([proc.stdout], [], [], remaining)
+            if not ready:
+                raise RecipeLimit(f"did not finish in {RECIPE_TIMEOUT}s")
+            chunk = proc.stdout.read1(65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > RECIPE_MAX_BYTES:
+                raise RecipeLimit(
+                    f"produced more than {RECIPE_MAX_BYTES} bytes; no custody record "
+                    "is remotely this large, so the recipe is looping")
+            chunks.append(chunk)
+        proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+    except (RecipeLimit, subprocess.TimeoutExpired) as exc:
+        proc.kill()
+        proc.wait()
+        raise RecipeLimit(str(exc) if isinstance(exc, RecipeLimit)
+                          else f"did not finish in {RECIPE_TIMEOUT}s") from None
+    finally:
+        err = proc.stderr.read()
+        proc.stdout.close()
+        proc.stderr.close()
+    return proc.returncode, b"".join(chunks), err
 
 
 def blob_id_of(path):
@@ -337,8 +414,10 @@ SED_EXPR = re.compile(r"sed -n '(?P<expr>[^']*)'")
 
 
 def hex_of(text, minimum, maximum):
-    m = re.search(rf"\b([0-9a-f]{{{minimum},{maximum}}})\b", text)
-    return m.group(1) if m else None
+    """A declared digest, casefolded. Uppercase is a rendering choice, not a
+    defect; reporting it as "declares no hash" would blame the wrong thing."""
+    m = re.search(rf"\b([0-9a-fA-F]{{{minimum},{maximum}}})\b", text)
+    return m.group(1).lower() if m else None
 
 
 def int_before(text, word):
@@ -370,6 +449,15 @@ def table_blocks(lines):
     return out
 
 
+# SHA-256 row qualifiers that mean "the whole file", enumerated from the
+# qualifiers actually present in the records rather than guessed: a bare row,
+# "(as landed)", and "re-derived from `main`". These digests are
+# content-addressed, so all three are the same bytes. "(dispatched text)" is
+# handled separately, and anything else is refused rather than compared against
+# bytes this check only assumes are the right ones.
+WHOLE_FILE_SHA = re.compile(r"^sha-256(\s*\(as landed\)|\s+re-derived from\b.*)?$")
+
+
 def is_pin_key(k):
     k = k.lower()
     return (
@@ -392,7 +480,13 @@ def is_pin_key(k):
 # complain about, green. So presence is any markdown in the directory, while
 # coverage is Path rows actually read.
 receipts = sorted(custody.rglob("CUSTODY-RECEIPT-*.md"))
-md_records = sorted(custody.rglob("*.md"))
+# Presence is ANY file, not just *.md: receipts renamed to another extension,
+# with one inline pin still verifying, would otherwise satisfy both floors
+# while the table channel sees nothing — the same shape as the hole the floor
+# was added for. The cost is that a custody directory holding records but no
+# receipt at all is red; that is loud and one commit to fix, which is the
+# trade this whole script exists to make.
+md_records = sorted(p for p in custody.rglob("*") if p.is_file())
 path_rows_seen = 0
 
 for receipt in receipts:
@@ -491,16 +585,14 @@ for receipt in receipts:
                 # edits f in place; with `-e ... --` it is rejected as an
                 # unknown command while a normal range still runs.
                 try:
-                    r = subprocess.run(
-                        ["sed", "--sandbox", "-n", "-e", expr, "--", str(target)],
-                        capture_output=True, timeout=30)
-                except subprocess.TimeoutExpired:
-                    fail(f"{name}: published recipe `sed -n '{expr}'` did not finish in 30s")
+                    rc, blob, errout = run_recipe(expr, target)
+                except RecipeLimit as limit:
+                    fail(f"{name}: published recipe `sed -n '{expr}'` {limit}")
                     continue
-                if r.returncode != 0:
-                    fail(f"{name}: published recipe `sed -n '{expr}'` failed: {r.stderr.decode(errors='replace').strip()}")
+                if rc != 0:
+                    fail(f"{name}: published recipe `sed -n '{expr}'` failed: "
+                         f"{errout.decode(errors='replace').strip()}")
                     continue
-                blob = r.stdout
                 if not blob:
                     fail(f"{name}: published recipe `sed -n '{expr}'` extracted nothing")
                     continue
@@ -522,7 +614,7 @@ for receipt in receipts:
                     else:
                         fail(f"{name}: extract lines declared {d_lines}, actual {n}")
 
-            elif k.startswith("sha-256"):
+            elif WHOLE_FILE_SHA.match(k.strip()):
                 declared = hex_of(value, 64, 64)
                 if declared is None:
                     fail(f"{name}: SHA-256 row declares no hash: {value!r}")
@@ -530,6 +622,16 @@ for receipt in receipts:
                     ok(f"{name}: sha256 {declared[:8]}…")
                 else:
                     fail(f"{name}: sha256 declared {declared}, actual {actual['sha']}")
+
+            elif k.startswith("sha-256"):
+                # A SHA-256 row qualified with something this check does not
+                # know. The catch-all that used to live here compared, say,
+                # `SHA-256 (as sent)` against the WHOLE FILE and failed a
+                # correct record with a message about a hash mismatch. Failing
+                # on the qualifier says the true thing: it does not know which
+                # bytes that row is about.
+                fail(f"{name}: '{key}' is a SHA-256 row with a qualifier this check "
+                     "does not recognize — it does not know which bytes to hash")
 
             else:  # bytes / lines
                 d_bytes = int_before(value, "bytes")
@@ -591,15 +693,17 @@ for record in sorted(custody.rglob("*")):
         noted.append(f"  note {rel}: not UTF-8 text; no inline pins read from it")
         continue
     for i, line in enumerate(lines):
-        pin = PIN.search(line)
-        if not pin:
-            continue
+      # Every pin on the line, not just the first: dropping a second one would
+      # be a silent coverage loss inside the one channel whose whole principle
+      # is that nothing goes unreported.
+      for pin in PIN.finditer(line):
         # Candidate paths: this line, then backwards a short way. Ambiguity is
         # reported rather than resolved by picking the nearest.
         candidates = []
         for j in range(i, max(-1, i - 4), -1):
-            found = [m.group(1).rstrip(TRIM) for m in PATHS.finditer(path_line(lines, j))]
-            found = [f for f in found if not f.endswith("/")]
+            found = sorted({m.group(1).rstrip(TRIM)
+                            for m in PATHS.finditer(path_line(lines, j))
+                            if not m.group(1).rstrip(TRIM).endswith("/")})
             if found:
                 candidates = found
                 break
@@ -642,8 +746,8 @@ print()
 # off a CUSTODY-RECEIPT-* glob would itself be defeated by renaming the files.
 if md_records and path_rows_seen == 0:
     print(
-        f"custody-pin-check: FAIL — {len(md_records)} markdown record(s) present but not "
-        "one table declared a Path row. Either the receipts were renamed out of the "
+        f"custody-pin-check: FAIL — {len(md_records)} record(s) present but not one "
+        "table declared a Path row. Either the receipts were renamed out of the "
         "CUSTODY-RECEIPT-*.md pattern this check scans, or the table format moved; either "
         "way any pins counted came from elsewhere and do not cover the tables."
     )

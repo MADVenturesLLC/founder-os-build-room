@@ -55,9 +55,12 @@ jobs:
     steps:
       - name: Checkout
         # Pinned to the commit `v4` resolved to on 2026-09-01 (tag v4.4.0).
-        # Verified, not assumed: this is the only `actions/checkout@` pin in
-        # `.github/workflows/`, byte-identical across ci.yml,
-        # attribution-shape.yml, claude-code-review.yml and path-audit.yml.
+        # Verified, not assumed: across all six files in `.github/workflows/`
+        # this is the only DISTINCT `actions/checkout@` value — every workflow
+        # carries this same SHA. (An earlier wording here said "the only pin",
+        # then said it was identical across four named files; those cannot both
+        # be true, and a comment whose stated basis is "verified" should not
+        # contain a claim that refutes itself.)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
