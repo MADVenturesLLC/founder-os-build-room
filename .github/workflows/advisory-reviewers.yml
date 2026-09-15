@@ -149,7 +149,7 @@ jobs:
           HTTP=000
           while :; do
             attempt=$((attempt + 1))
-            HTTP=$(curl -sS --max-time 180 \
+            HTTP=$(curl -sS --max-time 300 \
               -o /tmp/gemini_resp.json -w '%{http_code}' \
               -H @/tmp/gemini_auth.h \
               -H "Content-Type: application/json" \
@@ -190,6 +190,12 @@ jobs:
           fi
           # Strip HTML comments so model output cannot forge marker lines.
           REVIEW="$(printf '%s' "$REVIEW" | sed -E 's/<!--.*-->//g; s/<!--//g; s/-->//g')"
+          # A response that was entirely comments is now empty: fail, do not
+          # post a body carrying only the marker lines.
+          if [ -z "$(printf '%s' "$REVIEW" | tr -d '[:space:]')" ]; then
+            echo "::error::gemini review was empty after comment stripping"
+            exit 1
+          fi
           # Output guard: GitHub caps review bodies at 65536 chars.
           if [ "${#REVIEW}" -gt 60000 ]; then
             REVIEW="$(printf '%s\n\n(truncated)' "${REVIEW:0:60000}")"
@@ -259,6 +265,12 @@ jobs:
           fi
           # Strip HTML comments so model output cannot forge marker lines.
           REVIEW="$(printf '%s' "$REVIEW" | sed -E 's/<!--.*-->//g; s/<!--//g; s/-->//g')"
+          # A response that was entirely comments is now empty: fail, do not
+          # post a body carrying only the marker lines.
+          if [ -z "$(printf '%s' "$REVIEW" | tr -d '[:space:]')" ]; then
+            echo "::error::claude review was empty after comment stripping"
+            exit 1
+          fi
           if [ "${#REVIEW}" -gt 60000 ]; then
             REVIEW="$(printf '%s\n\n(truncated)' "${REVIEW:0:60000}")"
           fi
@@ -269,7 +281,11 @@ jobs:
   post:
     # Write channel lives here. App tokens only; no model credential.
     needs: review
-    if: ${{ !cancelled() }}
+    # always() is redundant with !cancelled() but removes any doubt that the
+    # implicit success() on `needs` is overridden: `post` must run when one
+    # leg of `review` failed, so the surviving review still posts and the
+    # summary still fails closed.
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
