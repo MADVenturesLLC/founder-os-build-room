@@ -345,10 +345,14 @@ jobs:
           CTX_STATE="full"
           if [ ! -s /tmp/context.paths ]; then
             CTX_STATE="no-paths"
-          elif [ $((unresolved + omitted + file_cap_skips)) -gt 0 ]; then
-            CTX_STATE="partial ($unresolved unresolved, $((omitted + file_cap_skips)) omitted or skipped by caps)"
+          # Truncation tested before partial: a run that is both truncated and
+          # partial must report the truncation in the trusted sentence — it is
+          # the larger limitation. The partial counts still reach the model
+          # through the context itself.
           elif { read -r lastline < <(tail -n1 /tmp/pr.diff); } 2>/dev/null                && case "$lastline" in *'[diff truncated at'*) true ;; *) false ;; esac; then
             CTX_STATE="truncated"
+          elif [ $((unresolved + omitted + file_cap_skips)) -gt 0 ]; then
+            CTX_STATE="partial ($unresolved unresolved, $((omitted + file_cap_skips)) omitted or skipped by caps)"
           fi
           # `declared_bytes` is the API's .size for the files INCLUDED; the written
           # count below is larger by whatever the tag-stripping added. They are
@@ -397,35 +401,23 @@ jobs:
             echo "::error::GEMINI_API_KEY missing; gemini reviewer cannot run"
             exit 1
           fi
-          # `--rawfile` fails the whole request on a missing file, so a context
-          # step that was skipped or died must degrade this review rather than
-          # kill it. The reviewer is told what it did not get, in its own
-          # prompt, so a diff-only review cannot read as a review with context.
-          if [ ! -f /tmp/context.md ]; then
-            printf '<file-context>\n(file context was not fetched for this run; the diff is all you have, and anything it asserts about the files it lands in is unverified)\n</file-context>\n' > /tmp/context.md
-            echo "::warning::gemini review proceeding WITHOUT file context; findings about the surrounding code will be marked unverified"
-          fi
           # The SYSTEM prompt must describe what the model actually HAS. Before
           # this, the degraded-path correction lived only inside <file-context>,
           # which the prompt itself tells the model to treat as untrusted — so
           # the trusted channel asserted it had every file when it did not,
           # exactly in the run where that mattered most.
           #
-          # The state comes from /tmp/context.state, written by the context
-          # step, which never receives PR content. An earlier version derived
-          # the state by grepping /tmp/context.md itself — a file that HOLDS
-          # PR-head file text — so a reviewed file containing a sentinel phrase
-          # could downgrade the trusted description. Degradation-only, but the
-          # claimed invariant did not hold.
+          # The placeholder is written HERE, inside the state decision, and
+          # nowhere else. Rounds 9 and 10 each added a placeholder-write in a
+          # second block that ran before this one, making this check dead and
+          # re-introducing the same lie — the fourth occurrence of this class,
+          # and the structural cause was parallel blocks instead of one. There
+          # is exactly one write and it sits beside the one state decision.
+          #
+          # The state itself comes from /tmp/context.state, written by the
+          # context step, which never receives PR content.
           CTX_STATE="none"
           if [ ! -f /tmp/context.md ]; then
-            # The placeholder is written BELOW — after the state is decided,
-            # never before. In the round-9 shape the placeholder branch ran
-            # first, so `-f /tmp/context.md` was then ALWAYS true, and with no
-            # state file the read fell through to "full": a degraded run told
-            # the model it had every file. That is the same trusted-channel lie
-            # this design exists to prevent, third occurrence, now closed by
-            # order of operations.
             printf '<file-context>\n(file context was not fetched for this run; the diff is all you have, and anything it asserts about the files it lands in is unverified)\n</file-context>\n' > /tmp/context.md
             echo "::warning::gemini review proceeding WITHOUT file context; findings about the surrounding code will be marked unverified"
           elif [ -f /tmp/context.state ]; then
@@ -433,8 +425,10 @@ jobs:
           else
             # context.md exists and no state file: the mv completed (existence
             # means completeness), so "full" is the true answer for a completed
-            # context.
-            CTX_STATE="full"
+            # context. "full" by inference is still a claim in the trusted
+            # channel, so the honest fallback is "unknown": the context exists,
+            # its completeness was not recorded.
+            CTX_STATE="unknown"
           fi
           build_req() {
             # Built per call from the pair actually being sent. One SYSTEM built
@@ -460,6 +454,7 @@ jobs:
               no-paths)  have="no file text — no file paths could be parsed out of the diff, so anything the diff implies about the files it lands in is unverified" ;;
               truncated) have="file text, but the diff was truncated at its byte cap, so files past the cut are absent and unlisted" ;;
               partial*) have="file text, but not all of it — the context step reported: $3" ;;
+              unknown)  have="file text, but its completeness could not be established — the context step did not record a state" ;;
             esac
             local system="You are $1 ($2 effort), an advisory code reviewer for MADVenturesLLC/founder-os-build-room.
 
