@@ -4,14 +4,14 @@ This brief was dispatched, and the review it asked for completed on
 Read it with brief addendum 1, written after dispatch and never sent,
 so the reviewer did not have it:
   docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
-  sha256 da081ee8c18d6173026a82e1e58ab8acba2689d3bf5a99e59f17038e6d52e73d
+  sha256 9967722f2b4384b4b6be169d8454c54fcd1d124a2e4a64f485ed12b2a7112b51
 All six known defects, each corrected there: Q6 attributes the B-R14
 to B-R16 renumbering to the act when it is the D-1 ruling's; the delta
 is given as "17 insertions" in an ambiguous unit; Q6 needs the
 implementation plan, which is not identified here; the bar on resolving
 an ambiguity by choosing an answer is stated unscoped, so it reads as
 forbidding the judgment Q8 asks for; the verdict vocabulary lacks
-CANNOT COMPLETE — BRIEF DEFECT; and the git show command at line 56
+CANNOT COMPLETE — BRIEF DEFECT; and the git show command at line 59
 of this file as landed, which is line 24 of the dispatched text, does
 not parse, for the same redirection reason this banner warns about.
 This file is a record of what was sent. Nothing in it is a live
@@ -28,7 +28,10 @@ unchanged. Everything above that line is this banner. Recover and check
   3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
 The sed anchor matches exactly one line in this file. An edit that adds
 another exact match above the rule breaks recovery with a wrong hash,
-not an error.
+not an error. Note also that any edit to this banner shifts every
+landed-file line number below it. Where this record cites a line of the
+brief it gives the dispatched-text number too; that frame is stable
+under banner edits and is the one to prefer.
 --------------------------------------------------------------------
 INDEPENDENT DOCUMENT REVIEW BRIEF
 PR 2b Gate III Tranche B draft authorization act, revision R4

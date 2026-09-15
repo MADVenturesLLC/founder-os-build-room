@@ -11,9 +11,9 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `e10e34f12cc8e4043fd95d1cee406146b59c8ff2` |
-| SHA-256 (as landed) | `a6c0362ce9edff12d596429818d4ce84ff503327bfbd4743cb04e578a944e6aa` |
-| Bytes / lines (as landed) | 8151 bytes, 142 lines |
+| Git blob id (as landed) | `72552e9a5f6a62d91f1bbdf30bd8e26a7f1eb940` |
+| SHA-256 (as landed) | `30f3fdb054819a8b95443662cb0bc81fcb9ce357bc7291b684b3dc20d86e2c42` |
+| Bytes / lines (as landed) | 8388 bytes, 145 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat in session, 2026-09-15, at Founder direction ("write the document review brief") |
@@ -59,10 +59,10 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `bddb7f9bf44c891b04df38a8654afae31f144ab8` |
-| SHA-256 | `da081ee8c18d6173026a82e1e58ab8acba2689d3bf5a99e59f17038e6d52e73d` |
-| Bytes | 10026 |
-| Lines | 208 (`wc -l`) |
+| Git blob id | `290d027e7e76f18058f06ff9cba9e0194d2200c4` |
+| SHA-256 | `9967722f2b4384b4b6be169d8454c54fcd1d124a2e4a64f485ed12b2a7112b51` |
+| Bytes | 10453 |
+| Lines | 214 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
 
@@ -159,7 +159,7 @@ nothing:
    would have had to fail the act for the builder's fault. A third
    first-line verdict, `CANNOT COMPLETE — BRIEF DEFECT`, is now
    available and is explicitly not a verdict on the act.
-6. **Repairs an unrunnable command.** The brief at line 56 as
+6. **Repairs an unrunnable command.** The brief at line 59 as
    landed, line 24 of the dispatched text, reads
    `git show origin/main:<path above> > /tmp/r4.md`. `<` and `>` are
    redirection operators, so bash dies with

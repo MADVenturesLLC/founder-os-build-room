@@ -163,7 +163,7 @@ CORRECTION 6 (HISTORICAL — NEVER DISPATCHED) — a command in the
 dispatched text does not run as written
 
 The brief's "Read it from committed truth, not a working tree" block
-gives, at line 56 of the brief as landed — line 24 of the dispatched
+gives, at line 59 of the brief as landed — line 24 of the dispatched
 text, the frame this addendum otherwise uses:
 
   git show origin/main:<path above> > /tmp/r4.md
@@ -191,8 +191,14 @@ is not recorded.
 
 NOT AVAILABLE, AND NOT REQUIRED (HISTORICAL — NEVER DISPATCHED)
 
-Two things the brief cites cannot be given repository identity, and the
-brief should not have implied otherwise.
+Two things the brief cites cannot be given repository identity. Recorded
+as substance, not as a charge against the brief: an earlier revision of
+this section added "and the brief should not have implied otherwise",
+which is unsupported and is retracted here. The brief gives R3 a blob id
+and gives R1 and R2 a SHA-256 only, which signals non-repository
+provenance rather than the reverse, and it never claims a path for the
+R2 review output. This is the same conflation retracted in correction 2
+above, made a second time in the same file.
 
   Act revisions R1 and R2 are not in this repository. Only R3 and R4 are
   on main. The SHA-256 values the brief lists for R1 and R2 are the
