@@ -1,5 +1,5 @@
 /**
- * `@build-room/completion-gate` — package entry.
+ * Completion gate v0 — package entry.
  *
  * Founder Act "MiMo→MAD Long-Horizon Core v0" (2026-09-15), Lane 1. An
  * independent verifier seat judging a worker's stop/completion claim against
@@ -9,9 +9,10 @@
  * format are this repository's own (see the Lane 1 handoff under
  * `docs/planning/mimo-evolve-v0/`).
  *
- * Placement: an additive sibling package under the act's preferred
- * placement, carrying a manifest and workspace membership under the act's
- * explicit lockfile instruction (the `build/spend-broker-v0` precedent).
+ * Placement: an additive sibling directory under the act's preferred
+ * placement, following the `packages/seat-registry` pattern — no package
+ * manifest, no workspace membership, byte-identical lockfile; compiled via
+ * the root tsconfig `include` and consumed through relative source imports.
  * It imports `packages/seat-registry` and `packages/seat-output-schema`
  * only through their public entries and modifies neither. Library-only:
  * nothing here is wired to gateway dispatch, daemon boot, or any hook.

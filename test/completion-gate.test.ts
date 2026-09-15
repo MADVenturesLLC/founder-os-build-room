@@ -645,7 +645,7 @@ describe('completion-gate · schema reject', () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* Static surface — purity and the act-directed manifest                 */
+/* Static surface — purity and the seat-registry placement pattern       */
 /* ------------------------------------------------------------------ */
 
 describe('completion-gate · static surface', () => {
@@ -679,17 +679,10 @@ describe('completion-gate · static surface', () => {
     }
   });
 
-  it('carries the act-directed manifest: workspace member, zero runtime dependencies', () => {
-    // Unlike seat-output-schema (no manifest, Founder ruling 2026-09-05), this
-    // lane's act explicitly directs a manifest + lockfile registration.
-    const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'packages', 'completion-gate', 'package.json'), 'utf8')) as Record<string, unknown>;
-    assert.equal(manifest['name'], '@build-room/completion-gate');
-    assert.equal(manifest['private'], true);
-    assert.equal(manifest['version'], '0.0.0');
-    assert.equal(manifest['type'], 'module');
-    assert.equal(manifest['main'], 'src/index.ts');
-    assert.equal(manifest['types'], 'src/index.ts');
-    assert.equal(manifest['license'], 'UNLICENSED');
-    assert.deepEqual(Object.keys((manifest['dependencies'] ?? {}) as Record<string, unknown>), []);
+  it('carries no package manifest — tsconfig-include package, byte-identical lockfile (seat-registry pattern)', () => {
+    // Recent pack practice (seat-registry, seat-output-schema, Lane 2 of this
+    // act): a sibling directory under packages/ is compiled via the root
+    // tsconfig include and registered NOWHERE in package-lock.json.
+    assert.throws(() => readFileSync(join(REPO_ROOT, 'packages', 'completion-gate', 'package.json')));
   });
 });

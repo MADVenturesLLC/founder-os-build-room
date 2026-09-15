@@ -1,7 +1,12 @@
-# @build-room/completion-gate
+# completion-gate
 
 Completion gate v0 — the independent completion verifier. Founder Act
 "MiMo→MAD Long-Horizon Core v0" (2026-09-15), Lane 1.
+
+Like `packages/seat-registry` and `packages/seat-output-schema`, this
+directory carries no package manifest and is not a workspace member: it is
+compiled via the root tsconfig `include` array and consumed through relative
+source imports; the lockfile stays byte-identical (recent pack practice).
 
 When a seat attempts to stop or claims done, `verifyCompletion(contract,
 bundle)` judges the claim against a bound `success-contract/v1`:

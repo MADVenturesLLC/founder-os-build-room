@@ -18,18 +18,19 @@ Dream/Distill.
 | Repository | `MADVenturesLLC/founder-os-build-room` |
 | Branch | `build/completion-gate-v0` |
 | origin/main at act start (base pin) | `1f8328cce68a35e2b5014693d8138380b9e54734` |
-| Head SHA | the commit that adds this file (branch head; reported in the session handoff) |
-| Package | `packages/completion-gate` (new sibling package; choice recorded below) |
+| Head SHA | the correction commit at branch head (reported in the session handoff) |
+| Package | `packages/completion-gate` (new sibling directory; placement recorded below) |
 | Actor | `session:kimi-code/mimo-evolve-v0-lane1`, surface `kimi-code-cli`, role `builder` |
 
-Note: at handoff time `origin/main` had advanced 13 commits beyond the
-act-start pin (observed via `git status` after a fetch elsewhere). The branch
-was deliberately NOT rebased: the act pins the base above, and any move onto
-the newer main is a separate decision.
+Note: at handoff time `origin/main` had advanced beyond the act-start pin
+(observed via `git status` after a fetch elsewhere). The branch was
+deliberately NOT rebased: the act pins the base above, and any move onto the
+newer main is a separate decision. The two files this lane once touched and
+then restored (`package-lock.json`, the T18 test file) are byte-identical on
+both the pin and the advanced `origin/main`.
 
-## Changed paths
+## Changed paths (net diff vs the base pin, final)
 
-- `packages/completion-gate/package.json` (ADD — act-directed manifest)
 - `packages/completion-gate/README.md` (ADD)
 - `packages/completion-gate/src/contract.ts` (ADD — `success-contract/v1` IR)
 - `packages/completion-gate/src/evidence.ts` (ADD — `evidence-bundle/v1`)
@@ -38,49 +39,56 @@ the newer main is a separate decision.
 - `packages/completion-gate/src/index.ts` (ADD — public entry)
 - `test/completion-gate.test.ts` (ADD — 39 tests)
 - `tsconfig.json` (MODIFY — one include line)
-- `package-lock.json` (MODIFY — workspace link entries only; see below)
-- `test/room-runtime-phase1-acceptance-gateway.test.ts` (MODIFY — T18
-  lockfile regression pin updated under its own documented mechanism; see
-  below)
 - `docs/planning/mimo-evolve-v0/HANDOFF-completion-gate.md` (ADD — this file)
 
-Not changed: `packages/seat-registry/**`, `packages/seat-output-schema/**`
-(both imported through their public entries only), root `package.json` (no
-new script, no dependency), `AGENTS.md`, `README.md`, CI workflows, any
-daemon / control-plane / run-harness / gateway source.
+Byte-identical to the base (net zero diff): `package-lock.json`,
+`test/room-runtime-phase1-acceptance-gateway.test.ts`, root `package.json`,
+`packages/seat-registry/**`, `packages/seat-output-schema/**` (both imported
+through their public entries only), `AGENTS.md`, `README.md`, CI workflows,
+any daemon / control-plane / run-harness / gateway source.
 
 Paths named in this file that do not exist at the base: every path under
 `packages/completion-gate/`, `test/completion-gate.test.ts`, and this
 directory — all added by this lane.
 
-## Package choice — the act's preferred sibling placement, with a manifest
+## Placement — seat-registry pattern; correction chronology (kept honest)
 
-The act preferred a new sibling package. Chosen: `packages/completion-gate`,
-following the `packages/journal` manifest shape (`@build-room/completion-gate`,
-`private`, `0.0.0`, `type: module`, `main`/`types: src/index.ts`,
-`UNLICENSED`, zero runtime dependencies — `@build-room/contracts` was not
-needed; nothing in the lifecycle vocabulary is reused).
+The act preferred a new sibling package. Final placement:
+`packages/completion-gate` as a **tsconfig-include directory with NO package
+manifest and NO workspace registration** — the `packages/seat-registry`
+pattern (fixtures/src only, compiled via the root tsconfig `include`, zero
+package-lock.json entries), consumed through relative source imports.
+`@build-room/contracts` was not needed; nothing in the lifecycle vocabulary
+is reused.
 
-One deliberate divergence from the nearest sibling precedent:
-`packages/seat-output-schema` carries no manifest ("workspace membership
-needs its own authorization", Founder workspace/lockfile ruling 2026-09-05).
-THIS act supplies that authorization explicitly: it directs a named manifest
-and an `npm install` to register the workspace, committing the resulting
-lockfile. The diff is the expected minimal shape — two entries
-(`node_modules/@build-room/completion-gate` link + `packages/completion-gate`),
-9 insertions, nothing else. (`build/spend-broker-v0`, cited by the act as the
-shape precedent, added a manifest with NO lockfile diff; this lane followed
-the act's explicit npm-install instruction instead, and `npm ci --dry-run`
-confirms the locked install stays in sync for CI.)
+Chronology, because the first revision was wrong and the record should say so:
 
-Consequence: the T18 regression test
-(`test/room-runtime-phase1-acceptance-gateway.test.ts`) pins
-`package-lock.json` by SHA-256 at the AE-01 A2 execution base, with the
-comment "a later, separately authorized change to any of these updates its
-pin deliberately in the same change." This act is that separate
-authorization, so the pin was updated in this change
-(`82a2ff7c…` → `b54d74b5…`), with the comment extended to record the
-authorizing act. No other REGRESSION_PINS entry moved.
+1. **First revision (commits `5cb866e`, `6dfe23a`, `375c33d`):** this lane
+   read the act's "run `npm install`; commit the resulting
+   `package-lock.json` (minimal link entries)" line as directing workspace
+   registration, added `packages/completion-gate/package.json`
+   (`@build-room/completion-gate`), committed the two resulting lockfile
+   link entries, and updated the T18 regression pin for
+   `package-lock.json` — reading the pin comment's "later, separately
+   authorized change" clause as satisfied by the act.
+2. **Review finding:** the act's discipline is "prefer byte-identical lock
+   unless act requires otherwise — match recent pack practice", and the act
+   does not require lock changes. Recent pack practice on `origin/main`:
+   `packages/seat-registry` has no manifest and zero lockfile entries;
+   `build/spend-broker-v0` committed zero lockfile delta; Lane 2 of this
+   same act (checkpoint-writer) shipped no manifest and a byte-identical
+   lock. The act never names T18 or lockfile-pin updates, so it is not the
+   "separately authorized change" the pin comment reserves; updating the pin
+   was inventing policy.
+3. **Correction (the head commit):** manifest deleted; `package-lock.json`
+   restored byte-identical (sha256
+   `82a2ff7c9bb9430571fcb0180ea9cb270d30c098a020b97e45827a53169c2c38`,
+   verified with `shasum -a 256`); the T18 test file restored byte-identical
+   to the base; the README, package entry header, and the static-surface
+   test now describe and assert the no-manifest pattern (the test asserts
+   `packages/completion-gate/package.json` does NOT exist, mirroring Lane
+   A's assertion for `seat-output-schema`). History was not rewritten: the
+   correction is one new commit on top of the pushed branch.
 
 ## What was built
 
@@ -122,7 +130,7 @@ authorizing act. No other REGRESSION_PINS entry moved.
   (c) contradictions ⇒ artifact sha256 mismatch `gap`, forbidden claim
   asserted `impossible`. Schema-reject paths covered for both inputs.
 
-## Test evidence
+## Test evidence (final, on the correction commit)
 
 Focused (`npm run build && node --test dist/test/completion-gate.test.js`):
 
@@ -130,31 +138,36 @@ Focused (`npm run build && node --test dist/test/completion-gate.test.js`):
 tests 39 · pass 39 · fail 0
 ```
 
-Full suite on this branch (`npm test`, credential-free; storage cases
-self-skip without `TEST_DATABASE_URL`, as on main):
+The T18 file (`node --test dist/test/room-runtime-phase1-acceptance-gateway.test.js`,
+run with `TMPDIR=/tmp`):
 
 ```
-tests 1019 · suites 359 · pass 1016 · fail 3
+tests 29 · suites 12 · pass 29 · fail 0
 ```
 
-The 3 failures are the gateway-daemon lifecycle tests
-(`the-entry-point-boots-and-serves-ipc`, `sigterm-stops-the-timers-closes-the-socket-and-exits-zero`,
-`sigint-is-the-same-clean-shutdown`), each a 10-second timeout. They fail
-IDENTICALLY on the untouched act-start base `1f8328c` in this environment
-(verified by `git stash -u`, rebuild, re-run: same 3 failures; local node is
-v26.5.1 while `engines` pins `^22.13.0`). They do not import or touch this
-package. The fourth earlier failure (T18 lockfile pin) is resolved by the
-authorized pin update above and now passes.
-
-Gates run locally:
+Full suite on this branch (`TMPDIR=/tmp npm test`, credential-free; storage
+cases self-skip without `TEST_DATABASE_URL`, as on main):
 
 ```
-npm run typecheck                 PASS
+tests 1019 · suites 359 · pass 1019 · fail 0
+```
+
+Without the `TMPDIR=/tmp` workaround, 3 gateway-daemon lifecycle tests
+(`the-entry-point-boots-and-serves-ipc`,
+`sigterm-stops-the-timers-closes-the-socket-and-exits-zero`,
+`sigint-is-the-same-clean-shutdown`) fail on 10-second timeouts in this
+environment — IDENTICALLY on the untouched act-start base `1f8328c`
+(verified by `git stash -u`, rebuild, re-run; local node is v26.5.1 while
+`engines` pins `^22.13.0`). They do not import or touch this package, and
+they pass with the workaround.
+
+Gates run locally on the final tree:
+
+```
 npm run gate:path-audit           PASS
-npm run gate:attribution-selftest PASS
 npm run gate:verify-check         PASS (3/3: path-audit, attribution-selftest, typecheck)
-npm ci --dry-run                  PASS (lockfile in sync for the CI locked install)
 npm run gate:secret-scan          PASS (gitleaks 8.30.1 via homebrew; no leaks found)
+attribution-shape-check.sh pr 1f8328c… HEAD build/completion-gate-v0  PASS
 npx eslint <new and touched files> 0 findings
 npm run lint (whole repo)         32 errors, ALL pre-existing on the base in
                                   files this lane did not touch (CI runs lint
@@ -200,10 +213,10 @@ MAD-invented here (this repository's own, none of it MiMo's):
 
 Library-only. The package is imported by its test and is callable from
 run-harness/tests; it is wired to NOTHING live — no gateway dispatch, no
-daemon boot, no hook, no control-plane route. Zero edits to existing package
-sources; the only pre-existing file touched beyond `tsconfig.json` and the
-lockfile is the T18 pin comment+hash under its own documented update
-mechanism. No production logic in `test/`.
+daemon boot, no hook, no control-plane route. The net diff adds only the new
+directory, its test, this document, and one `tsconfig.json` include line;
+every pre-existing file is byte-identical to the base. No production logic
+in `test/`.
 
 ## Open items / decisions
 
@@ -217,7 +230,7 @@ mechanism. No production logic in `test/`.
   the act author, not for this package.
 - Registering additional seat-output-schema ids is a code change to
   `handoff-schemas.ts` under a future act.
-- The 3 pre-existing daemon-lifecycle failures in this environment (node
-  26.5.1 vs `engines ^22.13.0`) are unchanged by this lane and are flagged
-  for whoever owns that environment question.
+- The 3 daemon-lifecycle tests are environment-sensitive locally (fail on
+  10 s timeouts without `TMPDIR=/tmp`; pass with it), on the base and on
+  this branch alike — flagged for whoever owns that environment question.
 - Merge remains a separate Founder act naming the exact head SHA.
