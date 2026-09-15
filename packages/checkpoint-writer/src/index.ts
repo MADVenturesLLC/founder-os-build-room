@@ -62,3 +62,17 @@ export {
   type WriterSeatModel,
   type WriterSeatRequest,
 } from './writer.js';
+export {
+  AssemblerBudgetError,
+  DEFAULT_SECTION_SHARES,
+  SECTION_ORDER,
+  assembleRebuild,
+  estimateTokens,
+  resolveSectionBudgets,
+  type BudgetOverrides,
+  type MemoryExcerpt,
+  type RebuildInput,
+  type RebuildOutput,
+  type SectionName,
+  type SectionReport,
+} from './assemble.js';
