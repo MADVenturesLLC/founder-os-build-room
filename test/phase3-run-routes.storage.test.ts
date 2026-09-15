@@ -303,6 +303,15 @@ describe('Phase 3 run routes — closed write and export surface', { skip: STORA
   });
 });
 
+// The commit index (1-based, counting `afterCommit` fires) of `attempt_finished`
+// in a clean run: create, connect, adapter_registered, request,
+// matched_response, disconnect, attempt_finished.
+const FINALIZATION_COMMIT = 7;
+// Matches the `Phase3ControlPlaneClient` instances above (lines 122, 129,
+// 139, 159) — see `runWithPostCommitDemotion`'s doc comment for why this
+// scenario needs that budget instead of the fast-fail default.
+const SIBLING_REQUEST_TIMEOUT_MS = 1_000;
+
 describe('Phase 3 run routes — leadership fence', { skip: STORAGE_SKIP }, () => {
   it('rolls back when leadership is lost before commit', async () => {
     let fencedNode!: SessionNode;
@@ -362,13 +371,14 @@ describe('Phase 3 run routes — leadership fence', { skip: STORAGE_SKIP }, () =
   });
 
   it('reconciles committed finalization and returns awaiting adjudication', async () => {
-    // The 7th commit is `attempt_finished` — the last write of a clean run,
-    // with nothing after it to retry. A tight reconciliation deadline here
-    // only races the real commit-then-re-export round trip against the
+    // FINALIZATION_COMMIT is `attempt_finished` — the last write of a clean
+    // run, with nothing after it to retry. A tight reconciliation deadline
+    // here only races the real commit-then-re-export round trip against the
     // clock, so this uses the same request timeout the sibling
-    // `Phase3ControlPlaneClient` instances above use, instead of the
-    // fast-fail budget the never-reconciles scenarios below need.
-    const result = await runWithPostCommitDemotion(7, 1_000);
+    // `Phase3ControlPlaneClient` instances above use (lines 122, 129, 139,
+    // 159), instead of the fast-fail budget the never-reconciles scenarios
+    // below need.
+    const result = await runWithPostCommitDemotion(FINALIZATION_COMMIT, SIBLING_REQUEST_TIMEOUT_MS);
     assert.equal(result.outcome, 'awaiting_adjudication');
     assert.equal((result.evidence as Phase3EvidenceExport).attempt.state, 'awaiting_adjudication');
   });
@@ -545,9 +555,9 @@ function routeExpectation(input: Phase3AttemptInput): Phase3EvidenceExpectation 
 }
 
 /**
- * `requestTimeoutMs` bounds the client's own reconciliation deadline
- * (`requestTimeoutMs * 3`, see `Phase3ControlPlaneClient`). A demotion that
- * lands on the LAST write of an otherwise successful run — the case this
+ * `requestTimeoutMs` bounds the client's own reconciliation deadline (a
+ * small multiple of it — see `Phase3ControlPlaneClient.writeReconciliationDeadline`).
+ * A demotion that lands on the LAST write of an otherwise successful run — the case this
  * default doesn't cover — commits before the fence rejects it, so the
  * client's job is to discover that by re-exporting, not to keep failing.
  * The default stays tight because the other callers demote at a point that
