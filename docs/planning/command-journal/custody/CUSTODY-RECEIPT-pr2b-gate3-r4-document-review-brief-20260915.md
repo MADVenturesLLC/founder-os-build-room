@@ -11,8 +11,8 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `f85b715a5ad98bdd467a388b0fc263a763c1006a` |
-| SHA-256 (as landed) | `debfc65d00b34f4edeb047bc58ab1a8e495ba7f67a565aaed9d5d77ec0730654` |
+| Git blob id (as landed) | `8ddce61cb978aef47162b56370b0c81d5c503325` |
+| SHA-256 (as landed) | `1afce577cd73083005a9a0d7a6093d2c0eb6e8ebe849f71dbb9c704d5026622b` |
 | Bytes / lines (as landed) | 7744 bytes, 137 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
@@ -58,10 +58,10 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `ea921078ef06817ba005ce79d7ed4246558f740e` |
-| SHA-256 | `a2ace9031aae010ab3b96e09ff3ac88a9b8d87c3ab3df544001b2301d4514a7e` |
-| Bytes | 7547 |
-| Lines | 155 (`wc -l`) |
+| Git blob id | `9e350cc7a00c9b09add681f61de888b21f9a3326` |
+| SHA-256 | `209be6993f444450d3685c1b3fbea1c807dca23555add87b3d3e732389cd7413` |
+| Bytes | 7630 |
+| Lines | 156 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
 

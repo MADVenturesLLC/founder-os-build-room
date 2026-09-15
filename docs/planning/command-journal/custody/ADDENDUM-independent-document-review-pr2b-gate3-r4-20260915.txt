@@ -24,7 +24,8 @@ MADVenturesLLC/founder-os-build-room, workflow claude-code-review.yml,
 runs 34926174104 and 34926421238 of 2026-09-15, at
   https://github.com/MADVenturesLLC/founder-os-build-room/actions/runs/34926174104
   https://github.com/MADVenturesLLC/founder-os-build-room/actions/runs/34926421238
-and a further review of this addendum, run 34926733875 of the same date.
+and a further review of this addendum, run 34926733875 of the same date:
+  https://github.com/MADVenturesLLC/founder-os-build-room/actions/runs/34926733875
 These are the builder's defects, not findings about the act.
 
 Five corrections follow. Three change what the brief asks: correction 3

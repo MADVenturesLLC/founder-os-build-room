@@ -3,7 +3,7 @@ This brief was dispatched, and the review it asked for completed on
 2026-09-15 returning PASS. Defects were then found in the brief itself.
 Read it with brief addendum 1:
   docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
-  sha256 a2ace9031aae010ab3b96e09ff3ac88a9b8d87c3ab3df544001b2301d4514a7e
+  sha256 209be6993f444450d3685c1b3fbea1c807dca23555add87b3d3e732389cd7413
 Known defects below, all corrected there: Q6 attributes the B-R14 to
 B-R16 renumbering to the act when it is the D-1 ruling's; the delta is
 given as "17 insertions" in an ambiguous unit; Q6 needs the
