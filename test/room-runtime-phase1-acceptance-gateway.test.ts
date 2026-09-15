@@ -1360,6 +1360,7 @@ describe('AE-01 Run02 correction — viewer-presence-gated synthetic output', ()
       const gateway = await handle.ready;
       const rooms = gateway.daemon.rooms;
       let capability = '';
+      let firstViewerId = '';
       const first = await connectV2(gateway.paths.socketPath);
       try {
         first.send({ op: 'Hello', ipc_version: 2 });
@@ -1367,6 +1368,11 @@ describe('AE-01 Run02 correction — viewer-presence-gated synthetic output', ()
         first.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'h4', viewer_caps: 'read' });
         const join = await nextOp(first, 'JoinRoom');
         capability = String(join['viewer_capability']);
+        firstViewerId = String(join['viewer_id']);
+        assert.ok(
+          capability.length > 0 && capability !== 'undefined',
+          'the Gateway minted a non-empty viewer capability',
+        );
         await waitForCondition(() => seqsOf(rooms)[0] >= 1, 5_000, 'output began');
       } finally {
         first.socket.destroy();
@@ -1387,7 +1393,15 @@ describe('AE-01 Run02 correction — viewer-presence-gated synthetic output', ()
           viewer_capability: capability,
           viewer_caps: 'read',
         });
-        await nextOp(re, 'JoinRoom');
+        const rejoin = await nextOp(re, 'JoinRoom');
+        // A surviving join resumes the SAME Gateway-minted identity. A fresh
+        // mint would advance the sequences just the same, so this identity
+        // assertion is what gives the test its meaning (r4.1 §5, AT-R4-35).
+        assert.equal(
+          String(rejoin['viewer_id']),
+          firstViewerId,
+          'the reattach resumed the original viewer, not a fresh mint',
+        );
         await sleep(FIXTURE_INTERVAL_MS * 2 + 200);
         const after = seqsOf(rooms);
         assert.ok(after[0] > frozen[0], `slot-a advanced monotonically (${String(frozen[0])} -> ${String(after[0])})`);
@@ -1403,8 +1417,10 @@ describe('AE-01 Run02 correction — viewer-presence-gated synthetic output', ()
   });
 
   it('H5 with two attached viewers the producer still emits once per interval globally — two viewers do not double the rate', async (t) => {
-    t.mock.timers.enable({ apis: ['setInterval'] });
     await withGateway(async (gateway) => {
+      // Same ordering invariant as H1: enable the mock only after gateway
+      // creation, so no boot-path interval is ever swept into the mock.
+      t.mock.timers.enable({ apis: ['setInterval'] });
       const rooms = gateway.daemon.rooms;
       const errors: unknown[] = [];
       const output = beginFixtureOutput(rooms, (error) => errors.push(error));
@@ -1519,5 +1535,25 @@ describe('AE-01 Run02 correction — viewer-presence-gated synthetic output', ()
     } finally {
       runner.cleanup();
     }
+  });
+
+  it('H8 a room that does not exist halts the producer and reports it — never a silent forever-idle', async (t) => {
+    await withGateway(async (gateway) => {
+      t.mock.timers.enable({ apis: ['setInterval'] });
+      const rooms = gateway.daemon.rooms;
+      const errors: unknown[] = [];
+      const output = beginFixtureOutput(rooms, (error) => errors.push(error), 'fixture-room-that-does-not-exist');
+      try {
+        t.mock.timers.tick(FIXTURE_INTERVAL_MS * 3);
+        assert.equal(output.ticks(), 0, 'no synthetic output for a room that does not exist');
+        assert.equal(errors.length, 1, 'the missing room was reported, never swallowed');
+        assert.match(String(errors[0]), /no longer exists/);
+        // The timer is halted: later intervals do not report again.
+        t.mock.timers.tick(FIXTURE_INTERVAL_MS * 3);
+        assert.equal(errors.length, 1, 'the timer was halted, not retried on every interval');
+      } finally {
+        output.halt();
+      }
+    });
   });
 });
