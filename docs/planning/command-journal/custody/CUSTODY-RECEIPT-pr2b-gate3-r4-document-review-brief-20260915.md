@@ -36,14 +36,31 @@ reviewer worked from is citable by hash rather than by recollection.
 | Trailing newline | present (single LF) |
 | Dispatched | **not yet — see the action below** |
 
-**Action, owner: the Founder.** The brief reached the operator before
-these defects were found. This addendum has not been sent, and nothing
-else in this record dispatches it. Until the Founder sends it, the
-reviewer is answering a Q6 whose premise the builder has already found
-wrong, and is missing the identity Q6 and Q7 need. A correction that does
-not reach the reviewer does not correct the review. If a verdict arrives
-that was produced without this addendum, it is reported as such rather
-than accepted.
+**Overtaken: the review completed without it.** The brief reached the
+operator before these defects were found, and the addendum was never
+dispatched. On 2026-09-15 the operator returned `PASS` on the R4 act,
+produced from the brief alone. The addendum is therefore kept as a
+record of defects found in the brief, not as an instruction to a
+reviewer, and the review's standing is qualified accordingly:
+
+- Q6 was answered against the brief's wrong premise, which attributed
+  the `B-R14` to `B-R16` renumbering to the act. The reviewer
+  nonetheless recorded it correctly as D-1's act, so correction 3
+  changed nothing about the answer.
+- Q6 and Q7 were answered without the plan identity correction 2
+  supplies. The reviewer located plan r1 independently and cited
+  section 5.2 lines 455 and 456, which is the location correction 2
+  names.
+- The brief's ambiguous hunk figure went unremarked. The reviewer
+  reported the live count of 14 at default context where the brief said
+  18 and did not flag the difference. Correction 1 explains it.
+- `CANNOT COMPLETE — BRIEF DEFECT`, added by correction 5, did not
+  exist when the review ran. The reviewer was not blocked, so the gap
+  did not bite.
+
+None of the four changed the verdict. The record keeps both the brief as
+dispatched and the defects found in it, so a later reader can see what
+the reviewer did and did not have.
 
 Advisory reviews of the brief (runs `34926174104` and `34926421238`,
 2026-09-15) found defects in it, and the brief had already been
