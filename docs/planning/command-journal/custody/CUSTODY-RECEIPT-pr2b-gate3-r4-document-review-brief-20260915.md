@@ -11,9 +11,9 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `4d6b9ec5ca7d6f284d6fd2ff5cb4caca29fbb2c5` |
-| SHA-256 (as landed) | `64a623b685fd0430d04eef4f3bd9a72113775768b7dbd4b091c3c637a8024562` |
-| Bytes / lines (as landed) | 7774 bytes, 137 lines |
+| Git blob id (as landed) | `a3893ef5a81342b7abe2d70e5894ae6e4e8c234e` |
+| SHA-256 (as landed) | `ba2781ea15eac1a83e64e2b138a50e8475801a6b287bfc3d4e9d81a8ac96fc06` |
+| Bytes / lines (as landed) | 7978 bytes, 140 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat in session, 2026-09-15, at Founder direction ("write the document review brief") |
@@ -42,9 +42,10 @@ defect this paragraph previously claimed the recipe avoided. Reading
 through `git show` rather than a working-tree file keeps the check on
 committed truth.
 
-The `sed` anchor matches exactly one line in the brief; the banner's own
-mention of that heading carries quotes and trailing text, so the range
-starts at the section header. Any future edit that adds a second exact
+The `sed` anchor matches exactly one line in the brief. The banner
+carries that heading text twice more — once in quotes with trailing
+text, once inside the recovery command itself — and neither can match
+`^...$`, so the range starts at the section header. Any future edit that adds a second exact
 match above the rule breaks recovery silently — a different hash, not an
 error.
 
