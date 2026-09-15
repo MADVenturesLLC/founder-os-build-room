@@ -116,10 +116,20 @@ that could most plausibly have changed what the reviewer did. Correction
 6's effect is not known from here at all. That does not establish the verdict is unsound,
 and this seat is not the one to rule either way: the same seat landed
 the artifact, wrote the brief and wrote this receipt. Whether the `PASS`
-is accepted as the FD-B1 to FD-B7 independent document review, or the
+is accepted as the FD-B1 to FD-B7 independent document review, or a
 corrected brief is re-dispatched, is an open Founder decision — open in
 the same way, and for the same reason, as the brief-authorship question
 recorded at the end of this receipt.
+
+**Re-dispatch, if chosen, does not mean sending the addendum.** The
+addendum declares `NEVER DISPATCHED` in its header and in all six
+correction titles; sending it would make the document false about
+itself. Re-dispatch means minting a new brief — an R5 — that folds the
+six corrections into the dispatched text, with the addendum kept as the
+historical record of why. An R5 would also need to settle what correction
+5 left open: whether the mandated last line, `Reviewer: <your id>
+Artifact: 466469cc…`, still applies when the verdict is
+`CANNOT COMPLETE — BRIEF DEFECT`, which is not a verdict on the act.
 
 These are observations about what the reviewer wrote, not claims about
 what a corrected brief would have produced. That counterfactual is not
@@ -197,12 +207,24 @@ The review completed on 2026-09-15 and returned `PASS`, reviewer
 `br-operator` session `20260914_234018_5b1c61`, `actor_id`
 `UNAVAILABLE`, against artifact SHA-256 `466469cc…13dae`.
 
-**The one enforceable independence check is unverifiable.** The brief's
-independence rule is written against an Actor-Id, and the reviewer's is
-reported `UNAVAILABLE`. Independence therefore rests on the seat name
-`br-operator` alone. That name is neither of the two barred identities,
-but a seat name is not the field the rule names, so the one enforceable
-check cannot be made.
+**The independence rule is unenforceable by construction, not merely
+unenforced this once.** It bars
+`Actor-Id session:claude-code/session_01KbHPzSthh2gKc8TtsG4QRp`, while
+the reviewer is recorded as `br-operator` session
+`20260914_234018_5b1c61`. Those are two different identifier
+namespaces: an operator session id of that shape could never be compared
+against a barred value of that shape, so a *reported* `actor_id` would
+not have saved the check either. The reviewer's `actor_id` being
+`UNAVAILABLE` is a second, independent reason it cannot be made. An
+earlier revision of this receipt named only that second reason, which
+implied availability would have sufficed. It would not.
+
+Independence therefore rests on the seat name `br-operator` alone. That
+name is neither of the two barred identities, but a seat name is not the
+field the rule names. Making the rule checkable means restating it
+against the identifier the operator seat actually emits, or requiring a
+resolvable Actor-Id before a review is accepted at all. Both are Founder
+decisions and neither is taken here.
 
 **That output is not in this repository.** The operator reports it at
 `hermes-profile-suite/HANDOFF-operator-to-founder-pr2b-gate3-trancheB-r4-document-review-20260915.md`,
