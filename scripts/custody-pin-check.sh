@@ -249,7 +249,7 @@ selftest_case() {
 # touching either counter, and a simulated failure produced "PASS — 19 case(s)"
 # and exit 0. Counting cases against a fixed expectation closes the class
 # rather than that one instance.
-SELFTEST_EXPECTED_CASES=21
+SELFTEST_EXPECTED_CASES=22
 
 run_selftest() {
   selftest_failures=0
@@ -289,6 +289,10 @@ run_selftest() {
   selftest_case "two distinct recipes are ambiguous, not resolved by guessing" 1 \
     "distinct sed recipes" \
     "printf \"\\nAlternative: \\\`sed -n '5,20p' f\\\`\\n\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "pin rows under a differently-spelled path key are reported, not dropped" 1 \
+    "no row this check reads as the path" \
+    "sed -i 's/^| Path |/| Path (repo-relative) |/' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
 
   selftest_case "a column-heading row is reported as a table-shape problem" 1 \
     "table shape not understood" \
@@ -689,6 +693,20 @@ for receipt in receipts:
         decl = {k: v for k, v in rows}
         path_key = next((k for k in decl if k.lower() == "path"), None)
         if path_key is None:
+            # A block carrying pin rows but no row this check recognises as the
+            # path is a hole, not a block to skip. Dropping it silently is the
+            # shape of the very failure the presence floor was added for, one
+            # level down: the floor counts Path rows READ, so a block that
+            # spells the key differently is not a row read, and other receipts
+            # keep the count non-zero. Reproduced before fixing: a receipt with
+            # `| Path (repo-relative) | ... |` and a deliberately stale SHA-256
+            # alongside one valid receipt gave "PASS — 4 declared pin(s)
+            # verified", exit 0, and named nothing.
+            pin_keys = [k for k in keys if is_pin_key(k)]
+            if pin_keys:
+                fail(f"{rel}: a table declares {sorted(pin_keys)} but no row this check "
+                     f"reads as the path (it looks for a key spelled exactly 'Path'); "
+                     f"those pins were not verified")
             continue
         path_rows_seen += 1
         decl_path = decl[path_key].strip("`")
