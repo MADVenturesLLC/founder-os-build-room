@@ -7,6 +7,12 @@ name: advisory-reviewers
 # invocation lives in this workflow; the Apps provide only the bot identity
 # (no model binding, no model-hosting responsibility).
 #
+# The gemini leg calls the Gemini API directly (OpenAI-compatible endpoint,
+# GEMINI_API_KEY) because the `agy` CLI used locally is not installed on
+# GitHub runners (every run since 1c7c797 failed with exit 127 there).
+# The two legs are independent: a failure in one does not skip the other,
+# and the summary step still fails closed unless both posted.
+#
 # This workflow is purely additive. It does NOT amend any required check,
 # does NOT modify the existing `code-review` workflow, does NOT gate merge,
 # and does NOT change governance. It fails closed (exit 1 with ::error::)
@@ -66,10 +72,12 @@ jobs:
           app-id: ${{ secrets.GEMINI_REVIEWER_APP_ID }}
           private-key: ${{ secrets.GEMINI_REVIEWER_APP_PRIVATE_KEY }}
 
-      - name: Review as gemini-3.8-flash-medium
+      - name: Review as gemini-3.8-flash (medium)
         id: gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.8-flash
+          GEMINI_EFFORT: medium
           GH_TOKEN: ${{ steps.gemini-token.outputs.token }}
           PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
           HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
@@ -79,19 +87,38 @@ jobs:
             echo "::error::GEMINI_API_KEY missing; gemini reviewer cannot run"
             exit 1
           fi
-          PROMPT=$(printf 'You are gemini-3.8-flash-medium, an advisory code reviewer for MADVenturesLLC/founder-os-build-room. Review the following PR diff. Output a single review body with: (1) one of PASS / PASS-WITH-ADVISORIES / FAIL / REQUEST_CHANGES as the first line, (2) a 1-3 sentence rationale, (3) zero or more bullet-pointed findings with file:line citations when applicable. The diff is:\n\n---\n%s\n---' "$(cat /tmp/pr.diff)")
-          REVIEW=$(printf '%s' "$PROMPT" \
-            | timeout 360 agy --print --model gemini-3.8-flash-medium \
-              --effort medium --dangerously-skip-permissions \
-              --print-timeout 5m 2>&1)
+          SYSTEM='You are gemini-3.8-flash (medium effort), an advisory code reviewer for MADVenturesLLC/founder-os-build-room. Review the PR diff you are given. Output a single review body with: (1) one of PASS / PASS-WITH-ADVISORIES / FAIL / REQUEST_CHANGES as the first line, (2) a 1-3 sentence rationale, (3) zero or more bullet-pointed findings with file:line citations when applicable.'
+          jq -n \
+            --arg model "$GEMINI_MODEL" \
+            --arg effort "$GEMINI_EFFORT" \
+            --arg system "$SYSTEM" \
+            --rawfile diff /tmp/pr.diff \
+            '{model: $model, reasoning_effort: $effort,
+              messages: [
+                {role: "system", content: $system},
+                {role: "user", content: ("The diff is:\n\n---\n" + $diff + "\n---")}
+              ]}' > /tmp/gemini_req.json
+          HTTP=$(curl -sS --max-time 360 \
+            -o /tmp/gemini_resp.json -w '%{http_code}' \
+            -H "Authorization: Bearer $GEMINI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/gemini_req.json \
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::gemini API returned HTTP $HTTP"
+            jq -r '.error.message // empty' /tmp/gemini_resp.json 2>/dev/null || true
+            exit 1
+          fi
+          REVIEW=$(jq -r '.choices[0].message.content // empty' /tmp/gemini_resp.json)
           if [ -z "$REVIEW" ]; then
             echo "::error::gemini reviewer returned empty output"
             exit 1
           fi
+          printf '<!-- advisory-reviewers:gemini-3.8-flash-medium -->\n\n%s\n' "$REVIEW" > /tmp/gemini_body.md
           gh api -X POST "repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
             -f event=COMMENT \
             -f commit_id="$HEAD_SHA" \
-            -f body="<!-- advisory-reviewers:gemini-3.8-flash-medium -->\n\n$REVIEW" \
+            -F body=@/tmp/gemini_body.md \
             --jq '.id' > /tmp/gemini_review_id
           echo "status=posted" >> "$GITHUB_OUTPUT"
 
@@ -102,9 +129,11 @@ jobs:
       # CLI accepts as a fallback for the OAuth credentials file.
 
       - name: Install Claude Code CLI
+        if: ${{ !cancelled() }}
         run: npm install -g @anthropic-ai/claude-code@latest 2>&1 | tail -3
 
       - name: Mint claude reviewer installation token
+        if: ${{ !cancelled() }}
         id: claude-token
         uses: actions/create-github-app-token@v1
         with:
@@ -112,6 +141,7 @@ jobs:
           private-key: ${{ secrets.CLAUDE_REVIEWER_APP_PRIVATE_KEY }}
 
       - name: Review as claude-opus-5
+        if: ${{ !cancelled() }}
         id: claude
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -135,10 +165,11 @@ jobs:
             echo "::error::claude reviewer returned empty output"
             exit 1
           fi
+          printf '<!-- advisory-reviewers:claude-opus-5 -->\n\n%s\n' "$REVIEW" > /tmp/claude_body.md
           gh api -X POST "repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
             -f event=COMMENT \
             -f commit_id="$HEAD_SHA" \
-            -f body="<!-- advisory-reviewers:claude-opus-5 -->\n\n$REVIEW" \
+            -F body=@/tmp/claude_body.md \
             --jq '.id' > /tmp/claude_review_id
           echo "status=posted" >> "$GITHUB_OUTPUT"
 
