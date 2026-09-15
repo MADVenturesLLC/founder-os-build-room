@@ -11,9 +11,9 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `bee5a4cbb1b88987faf223696917a4559298418d` |
-| SHA-256 (as landed) | `a62e5d42ab82234edbd39b7a37e0f062595685072cb1c5d47eb9d881b23d959f` |
-| Bytes / lines (as landed) | 9238 bytes, 159 lines |
+| Git blob id (as landed) | `4fb6e313327b61ab1563008219ae701ca0c30296` |
+| SHA-256 (as landed) | `270989325b9ae1ba5f8190bf93ef01bda2abc077973226506cab8bc750e86621` |
+| Bytes / lines (as landed) | 9240 bytes, 159 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat, Actor-Id `session:claude-code/session_01KbHPzSthh2gKc8TtsG4QRp`, 2026-09-15, at Founder direction ("write the document review brief") |
@@ -60,10 +60,10 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `412f3fd8afaade6520544dbeda9d579a6f56b7e4` |
-| SHA-256 | `7b1e1fbdb4a330a3b78ce93180a38c6e46cb932351a419d089a53858cacb036b` |
-| Bytes | 12584 |
-| Lines | 254 (`wc -l`) |
+| Git blob id | `aee1dd493945b328ff8d9eb0952bd1f4725ca6b8` |
+| SHA-256 | `1f0e503d79bb306a7a4ca47452e04b29edebef1013b00cfcc6b6d1253150be75` |
+| Bytes | 12857 |
+| Lines | 257 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
 
@@ -156,9 +156,10 @@ nothing:
    `--unified=0`, 14 at the default) and `--numstat` reports none, so
    the addendum tells the reviewer to cite lines, not hunks.
 2. Question 6 requires reading the implementation plan, which the brief
-   does not identify by path, blob or hash. Path, blob, SHA-256 and size are supplied for plan r1 and plan
-   addendum 02 revision r6, with the section and line locations Q6
-   depends on. Q7 is framed against the act's own sections and makes no
+   does not identify by path, blob or hash. Path, blob, SHA-256 and size
+   are supplied for plan r1 and for plan addendum 02 revision r6, and
+   for plan r1 also the section and line locations Q6 depends on. Plan
+   addendum 02 is given identity only; no question needs a line of it. Q7 is framed against the act's own sections and makes no
    reference to the plan. An earlier revision of this receipt added "the
    brief implied otherwise"; it did not, and that retraction is recorded
    above.

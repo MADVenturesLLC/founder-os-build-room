@@ -4,7 +4,7 @@ This brief was dispatched, and the review it asked for completed on
 Read it with brief addendum 1, written after dispatch and never sent,
 so the reviewer did not have it:
   docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
-  sha256 7b1e1fbdb4a330a3b78ce93180a38c6e46cb932351a419d089a53858cacb036b
+  sha256 1f0e503d79bb306a7a4ca47452e04b29edebef1013b00cfcc6b6d1253150be75
 All six known defects, each corrected there: Q6 attributes the B-R14
 to B-R16 renumbering to the act when it is the D-1 ruling's; the delta
 is given as "17 insertions" in an ambiguous unit; Q6 needs the
@@ -28,7 +28,7 @@ unchanged. Everything above that line is this banner. Recover and check
   git show "$REF:$P" \
     | sed -n '/^INDEPENDENT DOCUMENT REVIEW BRIEF$/,$p' \
     | shasum -a 256          # or sha256sum on Linux
-  3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
+  # 3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
 The sed anchor matches exactly one line in this file. An edit that adds
 another exact match above the rule breaks recovery with a wrong hash,
 not an error. Note also that any edit to this banner shifts every

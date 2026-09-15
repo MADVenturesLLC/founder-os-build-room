@@ -7,7 +7,8 @@ brief alone, returning PASS. Nothing below reached the reviewer. Read
 the imperatives here as what the brief should have said, not as
 directions to anyone. The custody receipt records what the reviewer
 wrote about each; it does not claim what a corrected brief would have
-produced, and neither does this.
+produced, save for one comparative judgement it labels as a judgement
+rather than a finding. This file makes no such claim at all.
 
 This addendum corrects and extends the brief
   sha256 3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
@@ -51,7 +52,9 @@ Six corrections follow. Three change what the brief asks: correction 3
 restates Q6, correction 4 narrows a constraint, and correction 5 adds a
 third permissible first line, which is a change to the output format.
 Corrections 1, 2 and 6 supply or repair information without changing
-what is asked. The brief's eight questions are otherwise unchanged, as
+which questions are asked. Correction 1 does sharpen what Q4's "pure
+insertion" claim commits the reviewer to verifying; it changes the
+precision of a verification target, not the question. The brief's eight questions are otherwise unchanged, as
 is the reviewer-independence rule.
 
 CORRECTION 1 (HISTORICAL — NEVER DISPATCHED) — the R3-to-R4 delta was stated in an ambiguous unit
