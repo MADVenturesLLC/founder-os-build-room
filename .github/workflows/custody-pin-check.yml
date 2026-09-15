@@ -62,5 +62,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Selftest the checker against synthetic records
+        # The checker is a parser over hand-written markdown. This asserts that
+        # each documented failure mode actually fails — a moved format, an
+        # ambiguous record, a hostile sed recipe — before the real records are
+        # read, so a green result below means the parser still works rather
+        # than that it stopped seeing anything.
+        run: bash scripts/custody-pin-check.sh selftest
+
       - name: Verify declared custody pins
         run: bash scripts/custody-pin-check.sh

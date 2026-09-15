@@ -80,6 +80,9 @@
 #
 # Usage:   scripts/custody-pin-check.sh [repo-root]
 #          (repo-root defaults to the repository containing this script)
+#          scripts/custody-pin-check.sh selftest
+#          (runs this checker against synthetic records in a temporary
+#          repository, asserting that each documented failure mode fails)
 # Exit:    0 = every declared pin matches the file it names, and at least one
 #              pin was verified
 #          1 = one or more pins are stale, unparseable, ambiguous, or the
@@ -88,6 +91,142 @@
 #              a `sed` without `--sandbox`, or not a git repository)
 
 set -uo pipefail
+
+# ---------------------------------------------------------------- selftest
+# `custody-pin-check.sh selftest` builds synthetic custody records in a
+# throwaway repository and asserts what this checker does with each one. It
+# exists because this script is a parser over hand-written markdown, and every
+# claim in the header above — that a moved format fails rather than passes,
+# that an ambiguous record fails rather than guesses, that a hostile recipe
+# cannot execute — is otherwise asserted rather than tested. Same role as
+# `gate:attribution-selftest` plays for the attribution parser.
+#
+# It touches nothing outside its temporary directory and reads no real record.
+
+selftest_fixture() {
+  # $1 = directory to build in. Leaves a valid, self-consistent record set.
+  local t="$1" c
+  c="$t/docs/planning/command-journal/custody"
+  mkdir -p "$c"
+  git -C "$t" init -q 2>/dev/null
+  printf 'PREAMBLE\nANCHOR\nbody line\n' > "$c/sample.txt"
+
+  local rel="docs/planning/command-journal/custody/sample.txt"
+  local blob sha bytes lines esha ebytes elines
+  blob="$(git -C "$t" hash-object "$c/sample.txt")"
+  sha="$(sha256sum "$c/sample.txt" | cut -d' ' -f1)"
+  bytes="$(wc -c < "$c/sample.txt" | tr -d ' ')"
+  lines="$(wc -l < "$c/sample.txt" | tr -d ' ')"
+  esha="$(sed -n '/^ANCHOR$/,$p' "$c/sample.txt" | sha256sum | cut -d' ' -f1)"
+  ebytes="$(sed -n '/^ANCHOR$/,$p' "$c/sample.txt" | wc -c | tr -d ' ')"
+  elines="$(sed -n '/^ANCHOR$/,$p' "$c/sample.txt" | wc -l | tr -d ' ')"
+
+  {
+    printf '# Custody receipt (synthetic)\n\n'
+    printf '| Field | Value |\n|---|---|\n'
+    printf '| Path | `%s` |\n' "$rel"
+    printf '| Git blob id | `%s` |\n' "$blob"
+    printf '| SHA-256 | `%s` |\n' "$sha"
+    printf '| Bytes | %s bytes |\n' "$bytes"
+    printf '| Lines | %s lines |\n' "$lines"
+    printf '| SHA-256 (dispatched text) | `%s` — %s bytes, %s lines |\n' "$esha" "$ebytes" "$elines"
+    printf '\nRecover the dispatched text with:\n\n'
+    printf "    sed -n '/^ANCHOR\$/,\$p' sample.txt | sha256sum\n"
+  } > "$c/CUSTODY-RECEIPT-sample.md"
+}
+
+selftest_case() {
+  # $1 = name, $2 = expected exit, $3 = substring expected in output,
+  # $4 = shell to mutate the fixture (runs with $c and $t set)
+  local name="$1" want="$2" needle="$3" mutate="$4"
+  local t out rc c
+  t="$(mktemp -d)"
+  selftest_fixture "$t"
+  c="$t/docs/planning/command-journal/custody"
+  ( cd "$t" && eval "$mutate" ) >/dev/null 2>&1
+  out="$(bash "$SELFTEST_SELF" "$t" 2>&1)"; rc=$?
+  if [[ "$rc" == "$want" ]] && printf '%s' "$out" | grep -qF -- "$needle"; then
+    printf '  ok   %s\n' "$name"
+  else
+    printf '  FAIL %s — exit %s (want %s), looking for %s\n' "$name" "$rc" "$want" "$needle"
+    printf '%s\n' "$out" | sed 's/^/         /'
+    selftest_failures=$((selftest_failures + 1))
+  fi
+  selftest_ran=$((selftest_ran + 1))
+  rm -rf "$t"
+}
+
+run_selftest() {
+  selftest_failures=0
+  selftest_ran=0
+  echo "custody-pin-check selftest"
+
+  selftest_case "a self-consistent record set passes" 0 \
+    "PASS —" ":"
+
+  selftest_case "a stale SHA-256 fails and names it" 1 \
+    "sha256 declared" \
+    "sed -i 's/| SHA-256 | \`[0-9a-f]*\`/| SHA-256 | \`$(printf '0%.0s' {1..64})\`/' \"\$PWD/docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md\""
+
+  selftest_case "an unparseable pin value fails rather than being skipped" 1 \
+    "does not parse" \
+    "sed -i 's/^| Bytes | .*/| Bytes | thirteen thousand |/' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "renaming the Path key trips the floor" 1 \
+    "not one table declared a Path row" \
+    "sed -i 's/^| Path |/| Filepath |/' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "renaming receipts out of the scanned pattern trips the floor" 1 \
+    "not one table declared a Path row" \
+    "mv docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md docs/planning/command-journal/custody/RECEIPT-CUSTODY-sample.md"
+
+  # The needle is sed's own parse error, not just a non-zero exit: if sed had
+  # accepted `-i` it would have rewritten the file, and the run would then fail
+  # anyway on the now-stale hash. Only "unknown command" proves it was refused.
+  selftest_case "a recipe beginning with - is not handed to sed as an option" 1 \
+    "unknown command" \
+    "sed -i \"s|sed -n '/\\^ANCHOR\\\$/,\\\$p'|sed -n '-i s/PREAMBLE/OWNED/'|\" docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "a recipe using sed's e command is refused by the sandbox" 1 \
+    "sandbox mode" \
+    "sed -i \"s|sed -n '/\\^ANCHOR\\\$/,\\\$p'|sed -n '1e echo hi'|\" docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "two distinct recipes are ambiguous, not resolved by guessing" 1 \
+    "distinct sed recipes" \
+    "printf \"\\nAlternative: \\\`sed -n '5,20p' f\\\`\\n\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "a column-heading row is reported as a table-shape problem" 1 \
+    "table shape not understood" \
+    "printf '\\n| Path | Git blob id |\\n|---|---|\\n' >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "an empty custody directory passes with nothing to verify" 0 \
+    "nothing to verify" \
+    "rm -f docs/planning/command-journal/custody/*"
+
+  selftest_case "an inline pin whose path is wrapped across two lines is read" 0 \
+    "inline pin on sample.txt" \
+    "printf '\\nPinned:\\n  path docs/planning/command-journal/\\n       custody/sample.txt\\n  sha256 %s\\n' \"\$(sha256sum docs/planning/command-journal/custody/sample.txt | cut -d\" \" -f1)\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "an inline pin with no path nearby is noted, not counted, not failed" 0 \
+    "not verified, not counted" \
+    "printf '\\nSuperseded revision:\\n  sha256 %s\\n' \"\$(printf '1%.0s' {1..64})\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  echo
+  if (( selftest_failures )); then
+    echo "custody-pin-check selftest: FAIL — $selftest_failures of $selftest_ran case(s) failed"
+    return 1
+  fi
+  echo "custody-pin-check selftest: PASS — $selftest_ran case(s)"
+  return 0
+}
+
+if [[ "${1:-}" == "selftest" ]]; then
+  SELFTEST_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  export SELFTEST_SELF
+  run_selftest
+  exit $?
+fi
+
 
 repo_root="${1:-}"
 if [[ -z "$repo_root" ]]; then
@@ -242,8 +381,19 @@ def is_pin_key(k):
 
 
 # ------------------------------------------------- receipts: tables + extract
+# The SCAN is globbed to receipts: the other markdown here (the DRAFT
+# authorization acts) runs to thousands of lines of governance tables that are
+# not pin declarations, and reading them as receipts produces false failures on
+# correct records — measured, not assumed.
+#
+# The FLOOR below is deliberately NOT globbed the same way. Keying "are there
+# records to verify?" off the same CUSTODY-RECEIPT-* pattern the scan uses
+# would let a rename defeat both at once: no matches, nothing read, nothing to
+# complain about, green. So presence is any markdown in the directory, while
+# coverage is Path rows actually read.
 receipts = sorted(custody.rglob("CUSTODY-RECEIPT-*.md"))
-table_before = (checks, failures)
+md_records = sorted(custody.rglob("*.md"))
+path_rows_seen = 0
 
 for receipt in receipts:
     text = receipt.read_text(encoding="utf-8")
@@ -268,7 +418,17 @@ for receipt in receipts:
         path_key = next((k for k in decl if k.lower() == "path"), None)
         if path_key is None:
             continue
+        path_rows_seen += 1
         decl_path = decl[path_key].strip("`")
+        if is_pin_key(decl_path) or decl_path.lower() == "path":
+            # A two-column HEADER row `| Path | Git blob id |` parses as
+            # key="Path", value="Git blob id". The `|` guard below only sees
+            # three-or-more-column tables, so without this the header row
+            # reaches resolve() and reports "no such file" — blaming the
+            # record for the parser's assumption.
+            fail(f"{rel}: table shape not understood — '{path_key}' names "
+                 f"another column heading ({decl_path!r}), not a file")
+            continue
         if "|" in decl_path:
             # ROW reads a two-column key/value table. A column-oriented table
             # (`| Path | Git blob id | SHA-256 |` header plus data rows) puts
@@ -322,8 +482,21 @@ for receipt in receipts:
                     fail(f"{rel}: publishes {len(exprs)} distinct sed recipes — which one applies to {name} is ambiguous")
                     continue
                 expr = exprs[0]
-                r = subprocess.run(
-                    ["sed", "--sandbox", "-n", expr, str(target)], capture_output=True)
+                # `-e` forces expr to be read as the script even when it
+                # begins with "-", and `--` ends option parsing before the
+                # filename. Without both, a document supplying `-i ...` or
+                # `-f ...` is parsed as OPTIONS: --sandbox blocks the e/r/w
+                # COMMANDS, it does not stop sed being handed -i, and -i
+                # rewrites files. Verified: `sed --sandbox -n '-i s/a/b/' f`
+                # edits f in place; with `-e ... --` it is rejected as an
+                # unknown command while a normal range still runs.
+                try:
+                    r = subprocess.run(
+                        ["sed", "--sandbox", "-n", "-e", expr, "--", str(target)],
+                        capture_output=True, timeout=30)
+                except subprocess.TimeoutExpired:
+                    fail(f"{name}: published recipe `sed -n '{expr}'` did not finish in 30s")
+                    continue
                 if r.returncode != 0:
                     fail(f"{name}: published recipe `sed -n '{expr}'` failed: {r.stderr.decode(errors='replace').strip()}")
                     continue
@@ -383,8 +556,6 @@ for receipt in receipts:
                     else:
                         fail(f"{name}: lines declared {d_lines}, actual {actual['lines']}")
 
-table_read = (checks, failures) != table_before
-
 # ------------------------------------------------------------- inline pins
 # Inline pins name files anywhere under the command journal, not only under
 # custody/: the R4 brief and its addendum pin the implementation plan and its
@@ -397,12 +568,13 @@ TRIM = "`,;)]*.\"'"
 # paths, putting `.../custody/` on one line and the filename on the next. The
 # path is stated, just not on one line, and reading only the first line finds
 # either nothing or a directory.
-DANGLING_DIR = re.compile(r"\S*/\s*$")
+DANGLING_DIR = re.compile(rf"{re.escape(JOURNAL_REL)}\S*$")
 
 
 def path_line(lines, j):
     """Line j, with a wrapped path rejoined from the line below it."""
-    if j + 1 < len(lines) and DANGLING_DIR.search(lines[j]):
+    stripped = lines[j].rstrip()
+    if j + 1 < len(lines) and stripped.endswith("/") and DANGLING_DIR.search(stripped):
         return lines[j].rstrip() + lines[j + 1].strip()
     return lines[j]
 
@@ -416,7 +588,7 @@ for record in sorted(custody.rglob("*")):
         # Not a failure — a binary record simply cannot declare a text pin —
         # but said out loud, because a file skipped in silence is how a
         # verifier ends up verifying less than its output implies.
-        print(f"  note {rel}: not UTF-8 text; no inline pins read from it")
+        noted.append(f"  note {rel}: not UTF-8 text; no inline pins read from it")
         continue
     for i, line in enumerate(lines):
         pin = PIN.search(line)
@@ -463,16 +635,17 @@ records = [p for p in custody.rglob("*") if p.is_file()]
 print()
 
 # Per-channel floor. The global "zero checks" floor below is not enough on its
-# own: the inline-pin channel can keep producing checks while the receipt-table
-# channel has gone completely blind — renaming the `Path` key in every receipt
-# did exactly that, and the run still reported a green PASS on five inline pins.
-# A receipt exists to declare pins, so receipts present and NOTHING read out of
-# any of their tables means the format moved, not that the pins are fine.
-if receipts and not table_read:
+# own: the inline-pin channel can keep producing checks while the table channel
+# has gone completely blind — renaming the `Path` key in every receipt did
+# exactly that, and the run still reported a green PASS on five inline pins.
+# The floor counts `Path` ROWS ACTUALLY READ, not receipt filenames: keying it
+# off a CUSTODY-RECEIPT-* glob would itself be defeated by renaming the files.
+if md_records and path_rows_seen == 0:
     print(
-        f"custody-pin-check: FAIL — {len(receipts)} custody receipt(s) present but not one "
-        "table pin was read. The table format has moved and this check no longer sees it; "
-        "any pins verified below came from elsewhere and do not cover the receipts."
+        f"custody-pin-check: FAIL — {len(md_records)} markdown record(s) present but not "
+        "one table declared a Path row. Either the receipts were renamed out of the "
+        "CUSTODY-RECEIPT-*.md pattern this check scans, or the table format moved; either "
+        "way any pins counted came from elsewhere and do not cover the tables."
     )
     failures += 1
 

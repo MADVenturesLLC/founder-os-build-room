@@ -134,6 +134,11 @@ npm run gate:verify-check           # required check — unverified checks count
 # pins. It is deliberately NOT a required check: making it one is a
 # repository-settings change and a Founder act.
 npm run gate:custody-pin-check
+
+# The checker's own parser regression cases: synthetic records in a
+# throwaway repo, asserting that a moved format, an ambiguous record and
+# a hostile sed recipe each fail. Runs in CI ahead of the check above.
+npm run gate:custody-pin-selftest
 ```
 
 ### Takes an argument, or is not a CI step
