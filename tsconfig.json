@@ -23,6 +23,7 @@
     "packages/gateway-cli/src/**/*.ts",
     "packages/worker-supervisor/src/**/*.ts",
     "packages/seat-output-schema/src/**/*.ts",
+    "packages/checkpoint-writer/src/**/*.ts",
     "packages/quarantine-advisor/src/**/*.ts",
     "packages/redaction/src/**/*.ts",
     "packages/completion-gate/src/**/*.ts",
