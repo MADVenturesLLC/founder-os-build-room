@@ -3,7 +3,7 @@ This brief was dispatched, and the review it asked for completed on
 2026-09-15 returning PASS. Defects were then found in the brief itself.
 Read it with brief addendum 1:
   docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
-  sha256 64dd52600fc02c746a60d77e13f08d38404b2771b6f254cc4f36eb88cd91e5a1
+  sha256 a2ace9031aae010ab3b96e09ff3ac88a9b8d87c3ab3df544001b2301d4514a7e
 Known defects below, all corrected there: Q6 attributes the B-R14 to
 B-R16 renumbering to the act when it is the D-1 ruling's; the delta is
 given as "17 insertions" in an ambiguous unit; Q6 needs the
@@ -13,11 +13,17 @@ This file is a record of what was sent. Nothing in it is a live
 instruction to anyone.
 The dispatched text is everything from the line reading
 "INDEPENDENT DOCUMENT REVIEW BRIEF", below the rule, to end of file,
-unchanged. Everything above that line is this banner. Recover and check:
-  git show <ref>:<this path> \
+unchanged. Everything above that line is this banner. Recover and check
+(shell variables, not <...> placeholders: < and > are redirections):
+  REF=origin/main
+  P=docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt
+  git show "$REF:$P" \
     | sed -n '/^INDEPENDENT DOCUMENT REVIEW BRIEF$/,$p' \
     | shasum -a 256
   3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
+The sed anchor matches exactly one line in this file. An edit that adds
+another exact match above the rule breaks recovery with a wrong hash,
+not an error.
 --------------------------------------------------------------------
 INDEPENDENT DOCUMENT REVIEW BRIEF
 PR 2b Gate III Tranche B draft authorization act, revision R4

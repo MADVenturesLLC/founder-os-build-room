@@ -27,13 +27,13 @@ runs 34926174104 and 34926421238 of 2026-09-15, at
 and a further review of this addendum, run 34926733875 of the same date.
 These are the builder's defects, not findings about the act.
 
-Five corrections follow. Three of them change what the brief asks:
-correction 3 restates Q6, correction 4 narrows a constraint, and
-correction 5 adds a verdict. The brief's eight questions and its output
-format are otherwise unchanged, and the reviewer-independence rule is
-unchanged.
+Five corrections follow. Three change what the brief asks: correction 3
+restates Q6, correction 4 narrows a constraint, and correction 5 adds a
+third permissible first line, which is a change to the output format.
+The brief's eight questions are otherwise unchanged, as is the
+reviewer-independence rule.
 
-CORRECTION 1 — the R3-to-R4 delta was stated in an ambiguous unit
+CORRECTION 1 (HISTORICAL — NEVER DISPATCHED) — the R3-to-R4 delta was stated in an ambiguous unit
 
 The brief says: "R4 amends R3 by pure insertion: 18 hunks, 17 insertions
 and one replaced line (the title designator)."
@@ -65,7 +65,7 @@ claim to verify is that no R3 line other than the title designator was
 changed or removed, and that R3's rows are retained rather than
 replaced.
 
-CORRECTION 2 — Q6 needs a document the brief never identified
+CORRECTION 2 (HISTORICAL — NEVER DISPATCHED) — Q6 needs a document the brief never identified
 
 The brief gives committed-truth identity for the act and the D-1 ruling
 only, while Q6 requires reading the implementation plan. (Q7 is framed
@@ -90,7 +90,7 @@ the plan; the brief's wording implied otherwise.)
     sha256 16e316be4e8d52ae0e856cf53801180cd2a18209450c7e94954d80d107a8dcac
     size   35805 bytes, 529 lines
 
-CORRECTION 3 — Q6 attributes the renumbering to the wrong instrument
+CORRECTION 3 (HISTORICAL — NEVER DISPATCHED) — Q6 attributes the renumbering to the wrong instrument
 
 The brief's Q6 says "R4 renumbers r6's proposed denial row to B-R16".
 The renumbering is the D-1 ruling's act, not the authorization act's.
@@ -103,7 +103,7 @@ R4 carries it into the matrix at its section 6.3. Q6 therefore reads:
   matrix or in the plan, and that plan r1's B-R14 and B-R15 are
   untouched.
 
-CORRECTION 4 — the no-ambiguity constraint is scoped, which narrows it
+CORRECTION 4 (HISTORICAL — NEVER DISPATCHED) — the no-ambiguity constraint is scoped, which narrows it
 
 The brief bars the reviewer from resolving an ambiguity by choosing an
 answer. That bar is about gaps and contradictions found in the act: do
@@ -117,12 +117,12 @@ Likewise, "Reviewer: <your id>" on the output's last line is an
 attribution of the review, not a signature field of the act. The bar on
 filling signature or identity fields applies to the act.
 
-CORRECTION 5 — the verdict vocabulary had no way to report a brief defect
+CORRECTION 5 (HISTORICAL — NEVER DISPATCHED) — the verdict vocabulary had no way to report a brief defect
 
 The brief fixes the first output line to PASS or REQUEST CHANGES /
 DOCUMENT REVIEW FAILED. Both are verdicts on the act. A reviewer blocked
 by a defect in the brief itself — for instance unable to locate the
-implementation plan Q6 and Q7 need, which is exactly what correction 2
+implementation plan Q6 needs, which is exactly what correction 2
 repairs — had no vocabulary for that, and would have had to return
 REQUEST CHANGES against the act for a fault in the brief. That would
 corrupt the record this review feeds.
@@ -136,7 +136,7 @@ Name the question, name what is missing, and answer whatever other
 questions you can. It is not a verdict on the act and does not count as
 a failed document review.
 
-NOT AVAILABLE, AND NOT REQUIRED
+NOT AVAILABLE, AND NOT REQUIRED (HISTORICAL — NEVER DISPATCHED)
 
 Two things the brief cites cannot be given repository identity, and the
 brief should not have implied otherwise.

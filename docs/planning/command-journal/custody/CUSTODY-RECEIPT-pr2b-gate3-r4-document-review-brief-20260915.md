@@ -11,9 +11,9 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `97e863dbdef353a6c03c8568e496a7c5b0cbfb99` |
-| SHA-256 (as landed) | `2e041820db827cbdc7a4aee408941d435a5c1e230cb5cb47525fa84910eb2ade` |
-| Bytes / lines (as landed) | 7407 bytes, 131 lines |
+| Git blob id (as landed) | `f85b715a5ad98bdd467a388b0fc263a763c1006a` |
+| SHA-256 (as landed) | `debfc65d00b34f4edeb047bc58ab1a8e495ba7f67a565aaed9d5d77ec0730654` |
+| Bytes / lines (as landed) | 7744 bytes, 137 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat in session, 2026-09-15, at Founder direction ("write the document review brief") |
@@ -26,16 +26,27 @@ dispatched text, and the dispatched bytes remain recoverable and
 checkable:
 
 ```
-git show <ref>:docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt \
+REF=origin/main
+P=docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt
+git show "$REF:$P" \
   | sed -n '/^INDEPENDENT DOCUMENT REVIEW BRIEF$/,$p' \
   | shasum -a 256
 # 3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
 ```
 
-Use `sha256sum` in place of `shasum -a 256` on Linux. Reading through
-`git show <ref>:<path>` rather than a working-tree file keeps the check
-on committed truth and avoids a shell placeholder being read as a
-redirection.
+Use `sha256sum` in place of `shasum -a 256` on Linux. The ref and path
+are shell variables, not `<...>` placeholders, because `<` and `>` are
+redirection operators: an earlier revision of this recipe wrote
+`git show <ref>:<path>` and failed to parse when run, which is the
+defect this paragraph previously claimed the recipe avoided. Reading
+through `git show` rather than a working-tree file keeps the check on
+committed truth.
+
+The `sed` anchor matches exactly one line in the brief; the banner's own
+mention of that heading carries quotes and trailing text, so the range
+starts at the section header. Any future edit that adds a second exact
+match above the rule breaks recovery silently — a different hash, not an
+error.
 
 The Founder reports that those bytes are the dispatched text verbatim;
 that identity rests on the same report and is not verifiable from the
@@ -47,9 +58,9 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `aac0fc711796fb065785d9073a889416e5f8af25` |
-| SHA-256 | `64dd52600fc02c746a60d77e13f08d38404b2771b6f254cc4f36eb88cd91e5a1` |
-| Bytes | 7329 |
+| Git blob id | `ea921078ef06817ba005ce79d7ed4246558f740e` |
+| SHA-256 | `a2ace9031aae010ab3b96e09ff3ac88a9b8d87c3ab3df544001b2301d4514a7e` |
+| Bytes | 7547 |
 | Lines | 155 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
@@ -150,8 +161,9 @@ The review completed on 2026-09-15 and returned `PASS`, reviewer
 **The one enforceable independence check is unverifiable.** The brief's
 independence rule is written against an Actor-Id, and the reviewer's is
 reported `UNAVAILABLE`. Independence therefore rests on the seat name
-`br-operator` alone, which is neither barred identity but is not the
-field the rule names.
+`br-operator` alone. That name is neither of the two barred identities,
+but a seat name is not the field the rule names, so the one enforceable
+check cannot be made.
 
 **That output is not in this repository.** The operator reports it at
 `hermes-profile-suite/HANDOFF-operator-to-founder-pr2b-gate3-trancheB-r4-document-review-20260915.md`,
