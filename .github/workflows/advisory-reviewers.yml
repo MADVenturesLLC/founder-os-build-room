@@ -35,11 +35,18 @@ name: advisory-reviewers
 #   - claude (model from the job env; marker advisory-reviewers:claude)
 #                              -> reviews post under claude-reviewer-madventures[bot]
 #
-# No workflow_dispatch trigger: the job needs a pull_request event to name
+# No workflow_dispatch trigger: the job needs a pull-request event to name
 # the PR; a manual dispatch had no PR input and could only fail.
 
 on:
-  pull_request:
+  # pull_request_target, not pull_request: the workflow definition is taken
+  # from the base branch, so a PR cannot edit the credential-holding job
+  # before it runs against its own diff, and fork PRs get a working run
+  # instead of a permanently red check. The usual pull_request_target
+  # hazard does not apply here because nothing checks out or executes PR
+  # content: there is no actions/checkout step, the diff is fetched
+  # read-only from the API, and it reaches the models as data only.
+  pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened]
 
