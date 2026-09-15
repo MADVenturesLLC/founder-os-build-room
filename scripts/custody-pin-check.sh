@@ -249,7 +249,7 @@ selftest_case() {
 # touching either counter, and a simulated failure produced "PASS — 19 case(s)"
 # and exit 0. Counting cases against a fixed expectation closes the class
 # rather than that one instance.
-SELFTEST_EXPECTED_CASES=22
+SELFTEST_EXPECTED_CASES=23
 
 run_selftest() {
   selftest_failures=0
@@ -289,6 +289,10 @@ run_selftest() {
   selftest_case "two distinct recipes are ambiguous, not resolved by guessing" 1 \
     "distinct sed recipes" \
     "printf \"\\nAlternative: \\\`sed -n '5,20p' f\\\`\\n\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "two path rows differing only in case are ambiguous, not silently resolved" 1 \
+    "cannot read unambiguously" \
+    "sed -i '/^| Path |/a | path | \`docs/planning/command-journal/custody/other.txt\` |' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
 
   selftest_case "pin rows under a differently-spelled path key are reported, not dropped" 1 \
     "no row this check reads as the path" \
@@ -685,9 +689,20 @@ for receipt in receipts:
         rows = [ROW.match(l) for l in block]
         rows = [(m.group("key").strip(), m.group("value").strip()) for m in rows if m]
         keys = [k for k, _ in rows]
-        dupes = {k for k in keys if keys.count(k) > 1}
+        # Case-INSENSITIVE, because the path row is matched that way
+        # (`k.lower() == "path"`). Comparing exact strings here while matching
+        # loosely there let a block carrying both `| Path |` and `| path |`
+        # pass: no duplicate was reported, the first was silently chosen, and
+        # the second row's file was never verified and never named. Reproduced
+        # before fixing — two path rows pointing at different files gave
+        # "PASS — 4 declared pin(s) verified", exit 0, with the second file
+        # mentioned nowhere. The header promises to fail on ambiguity rather
+        # than guess; this is that promise applied to its own lookup rule.
+        folded = [k.lower() for k in keys]
+        dupes = {k for k in keys if folded.count(k.lower()) > 1}
         if dupes:
-            fail(f"{rel}: table has duplicated key(s) {sorted(dupes)} — cannot read unambiguously")
+            fail(f"{rel}: table has duplicated key(s) {sorted(dupes)} (compared without "
+                 "regard to case) — cannot read unambiguously")
             continue
 
         decl = {k: v for k, v in rows}
