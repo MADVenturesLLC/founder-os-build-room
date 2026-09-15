@@ -62,6 +62,13 @@ jobs:
             echo "::error::empty diff"
             exit 1
           fi
+          # Size guard: keep the prompt within model input limits.
+          if [ "$(wc -c < /tmp/pr.diff)" -gt 400000 ]; then
+            head -c 400000 /tmp/pr.diff > /tmp/pr.diff.trunc
+            printf '\n\n[diff truncated at 400000 bytes]\n' >> /tmp/pr.diff.trunc
+            mv /tmp/pr.diff.trunc /tmp/pr.diff
+            echo "::warning::PR diff truncated to 400000 bytes for review"
+          fi
 
       # ---- gemini reviewer ----
 
@@ -98,15 +105,36 @@ jobs:
                 {role: "system", content: $system},
                 {role: "user", content: ("The diff is:\n\n---\n" + $diff + "\n---")}
               ]}' > /tmp/gemini_req.json
-          HTTP=$(curl -sS --max-time 360 \
-            -o /tmp/gemini_resp.json -w '%{http_code}' \
-            -H "Authorization: Bearer $GEMINI_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d @/tmp/gemini_req.json \
-            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
+          # Key goes through a header file, not argv.
+          umask 077
+          printf 'Authorization: Bearer %s\n' "$GEMINI_API_KEY" > /tmp/gemini_auth.h
+          URL="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+          # Retry 429 / 5xx / transport failure with backoff (15s, 30s, 45s).
+          attempt=0
+          HTTP=000
+          while :; do
+            attempt=$((attempt + 1))
+            HTTP=$(curl -sS --max-time 360 \
+              -o /tmp/gemini_resp.json -w '%{http_code}' \
+              -H @/tmp/gemini_auth.h \
+              -H "Content-Type: application/json" \
+              -d @/tmp/gemini_req.json \
+              "$URL") || HTTP=000
+            case "$HTTP" in
+              200) break ;;
+              429|500|502|503|504|000)
+                if [ "$attempt" -ge 4 ]; then break; fi
+                echo "gemini API HTTP $HTTP on attempt $attempt; retrying"
+                sleep $((attempt * 15)) ;;
+              *) break ;;
+            esac
+          done
+          rm -f /tmp/gemini_auth.h
           if [ "$HTTP" != "200" ]; then
-            echo "::error::gemini API returned HTTP $HTTP"
-            jq -r '.error.message // empty' /tmp/gemini_resp.json 2>/dev/null || true
+            echo "::error::gemini API returned HTTP $HTTP after $attempt attempt(s)"
+            echo "response body (first 2000 bytes):"
+            head -c 2000 /tmp/gemini_resp.json 2>/dev/null || true
+            echo
             exit 1
           fi
           REVIEW=$(jq -r '.choices[0].message.content // empty' /tmp/gemini_resp.json)
@@ -114,6 +142,12 @@ jobs:
             echo "::error::gemini reviewer returned empty output"
             exit 1
           fi
+          # Output guard: GitHub caps review bodies at 65536 chars.
+          if [ "${#REVIEW}" -gt 60000 ]; then
+            REVIEW="$(printf '%s\n\n(truncated)' "${REVIEW:0:60000}")"
+          fi
+          # Marker is intentionally frozen for comment dedup; it is not
+          # derived from GEMINI_MODEL / GEMINI_EFFORT.
           printf '<!-- advisory-reviewers:gemini-3.8-flash-medium -->\n\n%s\n' "$REVIEW" > /tmp/gemini_body.md
           gh api -X POST "repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
             -f event=COMMENT \
@@ -129,11 +163,11 @@ jobs:
       # CLI accepts as a fallback for the OAuth credentials file.
 
       - name: Install Claude Code CLI
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.diff.outcome == 'success' }}
         run: npm install -g @anthropic-ai/claude-code@latest 2>&1 | tail -3
 
       - name: Mint claude reviewer installation token
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.diff.outcome == 'success' }}
         id: claude-token
         uses: actions/create-github-app-token@v1
         with:
@@ -141,7 +175,7 @@ jobs:
           private-key: ${{ secrets.CLAUDE_REVIEWER_APP_PRIVATE_KEY }}
 
       - name: Review as claude-opus-5
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.diff.outcome == 'success' }}
         id: claude
         env:
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -164,6 +198,9 @@ jobs:
           if [ -z "$REVIEW" ]; then
             echo "::error::claude reviewer returned empty output"
             exit 1
+          fi
+          if [ "${#REVIEW}" -gt 60000 ]; then
+            REVIEW="$(printf '%s\n\n(truncated)' "${REVIEW:0:60000}")"
           fi
           printf '<!-- advisory-reviewers:claude-opus-5 -->\n\n%s\n' "$REVIEW" > /tmp/claude_body.md
           gh api -X POST "repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
