@@ -29,14 +29,21 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `f0f94de7aa94ab8fd555f6c724beb598b83c0d5f` |
-| SHA-256 | `fa5e80021859a90bd2c92a1bdfe8d139ff122e2b7e92cbaa79e2aa3b91f06182` |
-| Bytes | 5110 |
-| Lines | 110 (`wc -l`) |
+| Git blob id | `72ff1a215550c159e4329699710cb753a4df22e0` |
+| SHA-256 | `c233b9be33592af371301e41b422528833d2d09bdab0a71ea38e3f644b5657b8` |
+| Bytes | 6238 |
+| Lines | 132 (`wc -l`) |
 | Trailing newline | present (single LF) |
-| Dispatched | **not yet.** The brief went to the operator before these
-defects were found; this addendum has not been sent. A correction that
-does not reach the reviewer does not correct the review |
+| Dispatched | **not yet — see the action below** |
+
+**Action, owner: the Founder.** The brief reached the operator before
+these defects were found. This addendum has not been sent, and nothing
+else in this record dispatches it. Until the Founder sends it, the
+reviewer is answering a Q6 whose premise the builder has already found
+wrong, and is missing the identity Q6 and Q7 need. A correction that does
+not reach the reviewer does not correct the review. If a verdict arrives
+that was produced without this addendum, it is reported as such rather
+than accepted.
 
 Advisory reviews of the brief (runs `34926174104` and `34926421238`,
 2026-09-15) found defects in it, and the brief had already been
@@ -44,8 +51,9 @@ dispatched. The addendum corrects them rather than editing the
 dispatched text, so the record holds both what was sent and what
 corrects it.
 
-It carries four corrections. **Two of them change what the brief asks**,
-and the addendum says so rather than claiming to change nothing:
+It carries five corrections. **Three of them change what the brief
+asks**, and the addendum says so rather than claiming to change
+nothing:
 
 1. The R3-to-R4 delta was stated in an ambiguous unit: "17 insertions"
    is a hunk count that reads as a line count and cannot be reconciled
@@ -63,6 +71,12 @@ and the addendum says so rather than claiming to change nothing:
 4. **Narrows a constraint.** The bar on resolving an ambiguity by
    choosing an answer is scoped to gaps and contradictions in the act,
    not to Q8, which asks for a judgment deliberately.
+5. **Adds a verdict.** The brief offered only `PASS` and
+   `REQUEST CHANGES / DOCUMENT REVIEW FAILED`, both verdicts on the act.
+   A reviewer blocked by a defect in the brief had no way to say so and
+   would have had to fail the act for the builder's fault. A third
+   first-line verdict, `CANNOT COMPLETE — BRIEF DEFECT`, is now
+   available and is explicitly not a verdict on the act.
 
 The addendum also records that two things the brief cites cannot be
 given repository identity: act revisions R1 and R2 are not in this
@@ -98,6 +112,19 @@ It performs no review, records no verdict, names no CI bootstrap or
 identity mechanism, fills no signature or executor identity field, and
 does not satisfy D-1's condition. Those remain Founder acts or reviewer
 output.
+
+## Independence, and its limit
+
+The brief bars two identities from performing the review: the drafting
+seat `br-architect`, and the builder session that landed the artifact
+(`session:claude-code/session_01KbHPzSthh2gKc8TtsG4QRp`), which is the
+session that also authored the brief, this addendum and this receipt.
+
+Authoring the questions is not performing the review, so the stated rule
+holds. It is recorded here that the rule nonetheless leaves the party
+whose landing is under review setting the questions the reviewer
+answers. Whether the independence rule should also cover brief
+authorship is the Founder's to decide; it is not decided here.
 
 ## Attribution
 
