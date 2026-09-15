@@ -204,7 +204,7 @@ jobs:
 
           # `claude_args` is a block scalar handed to the action's own
           # argument parser, not to YAML — so it carries arguments only, and
-          # the note below sits outside it as a real YAML comment.
+          # this note sits above it as a real YAML comment.
           #
           # --max-turns is 80, raised from 40.
           #
@@ -214,8 +214,17 @@ jobs:
           # appears. The cost of the cap is a lost review, not a bounded one.
           #
           # This raises the cliff, it does not remove it: a successful review is
-          # still discarded one turn past the cap, and the cap remains the only
-          # ceiling on a runaway review's cost. The durable fix is to persist the
+          # still discarded one turn past the cap.
+          #
+          # An earlier wording here called the cap "the only ceiling on a runaway
+          # review's cost". That was wrong. The `review` job sets no
+          # `timeout-minutes`, so GitHub's 6h job default is also a ceiling, and
+          # the binding one in wall-clock terms. Giving that job an explicit
+          # `timeout-minutes` would bound cost without discarding finished work,
+          # and is a separate founder-approved change rather than part of this
+          # one.
+          #
+          # The durable fix for the loss itself is to persist the
           # review output before the turn-count check, and it is NOT the
           # one-liner it looks like: `post` below is gated on
           # `needs.review.result == 'success'` AND a non-empty structured output,

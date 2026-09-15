@@ -81,8 +81,11 @@
 # WHAT COVERAGE THIS CLAIMS, because a green run must not imply more.
 #
 #   Covered: every pin declared in a `CUSTODY-RECEIPT-*.md` table, and inline
-#   pins written `sha256 <hex>`, `sha256: <hex>` or `sha256=<hex>` near a path
-#   under `docs/planning/command-journal/`.
+#   pins written with a LOWERCASE `sha256` keyword — `sha256 <hex>`,
+#   `sha256: <hex>` or `sha256=<hex>` — near a path under
+#   `docs/planning/command-journal/`. The hex may be either case; the keyword
+#   may not. No uppercase-keyword pin exists in the records today (measured),
+#   but this says so rather than letting the reader assume otherwise.
 #
 #   NOT covered: hashes written `SHA-256: <hex>` in running prose. The records
 #   use that form too, and this check does not read it — they are not verified
@@ -186,7 +189,7 @@ selftest_case() {
   # $4 = shell to mutate the fixture (runs with $c and $t set)
   local name="$1" want="$2" needle="$3" mutate="$4"
   local t out rc c
-  t="$(mktemp -d)"
+  t="$(mktemp -d)" || { echo "  FAIL $name — mktemp -d failed" >&2; return 1; }
   selftest_fixture "$t"
   c="$t/docs/planning/command-journal/custody"
   # A mutation that silently fails to apply leaves a pristine fixture, and any
@@ -299,6 +302,9 @@ run_selftest() {
     "inline pin on sample.txt" \
     "printf '\\nPinned: docs/planning/command-journal/custody/sample.txt\\n  sha256: %s\\n' \"\$(sha256sum docs/planning/command-journal/custody/sample.txt | cut -d\" \" -f1)\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
 
+  # The blank lines are load-bearing: they put the pin outside the four-line
+  # lookback by construction rather than by however long the fixture happens to
+  # be, so adding a line to selftest_fixture cannot silently invert this case.
   selftest_case "an inline pin with no path nearby is noted, not counted, not failed" 0 \
     "not verified, not counted" \
     "printf '\\nSuperseded revision:\\n  sha256 %s\\n' \"\$(printf '1%.0s' {1..64})\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
@@ -783,9 +789,11 @@ for receipt in receipts:
 # custody/: the R4 brief and its addendum pin the implementation plan and its
 # addenda, which live one directory up.
 JOURNAL_REL = "docs/planning/command-journal/"
-# Case-insensitive to match hex_of on the table side. A case-sensitive pattern
-# left an uppercase inline digest neither verified NOR noted — invisible rather
-# than reported, which is the one outcome this channel is not allowed to have.
+# The HEX is case-folded, to match hex_of on the table side: a case-sensitive
+# hex class left an uppercase digest neither verified NOR noted. The KEYWORD is
+# not — `SHA256 <hex>` with an uppercase keyword is not matched. Measured
+# 2026-09-15: zero such pins exist in the records, and the coverage statement in
+# the header names the lowercase keyword explicitly rather than claiming more.
 PIN = re.compile(r"\bsha256[\s:=]+([0-9a-fA-F]{64})\b")
 PATHS = re.compile(rf"({re.escape(JOURNAL_REL)}[^\s`'\"*)\]]+)")
 TRIM = "`,;)]*.\"'"
@@ -899,7 +907,8 @@ if checks == 0:
     sys.exit(0)
 print(f"custody-pin-check: PASS — {checks} declared pin(s) verified")
 print(
-    "  coverage: receipt tables, and inline pins written `sha256`, `sha256:` or\n"
+    "  coverage: receipt tables, and inline pins written with a lowercase\n"
+    "            `sha256` keyword — `sha256`, `sha256:` or\n"
     "            `sha256=`. Hashes written `SHA-256:` in prose are NOT read —\n"
     "            not verified and not reported. See this script's header.\n")
 sys.exit(0)
