@@ -11,6 +11,9 @@ produced, and neither does this.
 
 This addendum corrects and extends the brief
   sha256 3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
+  That is the hash of the DISPATCHED TEXT ONLY. The file as landed
+  includes a banner and hashes differently; the banner carries the
+  recovery recipe that reproduces the value above.
 which was dispatched before these defects were found. Read it alongside
 the brief. Where the two conflict, this is the corrected reading — a
 statement about what the brief should have said, not an instruction
@@ -44,11 +47,12 @@ substance rather than leaving the run to explain it.
 
 These are the builder's defects, not findings about the act.
 
-Five corrections follow. Three change what the brief asks: correction 3
+Six corrections follow. Three change what the brief asks: correction 3
 restates Q6, correction 4 narrows a constraint, and correction 5 adds a
 third permissible first line, which is a change to the output format.
-The brief's eight questions are otherwise unchanged, as is the
-reviewer-independence rule.
+Corrections 1, 2 and 6 supply or repair information without changing
+what is asked. The brief's eight questions are otherwise unchanged, as
+is the reviewer-independence rule.
 
 CORRECTION 1 (HISTORICAL — NEVER DISPATCHED) — the R3-to-R4 delta was stated in an ambiguous unit
 
@@ -85,9 +89,11 @@ replaced.
 CORRECTION 2 (HISTORICAL — NEVER DISPATCHED) — Q6 needs a document the brief never identified
 
 The brief gives committed-truth identity for the act and the D-1 ruling
-only, while Q6 requires reading the implementation plan. (Q7 is framed
-against the act's own sections 5, 6, 7 and 16, so it does not depend on
-the plan; the brief's wording implied otherwise.)
+only, while Q6 requires reading the implementation plan. Q7 is framed
+against the act's own sections 5, 6, 7 and 16 and makes no reference to
+the plan at all. An earlier revision of this addendum said "the brief's
+wording implied otherwise"; it did not. That conflation was this
+addendum's own, and the receipt repeated it. Both are corrected.
 
   PLAN r1
     path   docs/planning/command-journal/pr2b-implementation-plan-r1.md
@@ -152,6 +158,35 @@ Use it when the brief or this addendum, not the act, prevents answering.
 Name the question, name what is missing, and answer whatever other
 questions you can. It is not a verdict on the act and does not count as
 a failed document review.
+
+CORRECTION 6 (HISTORICAL — NEVER DISPATCHED) — a command in the
+dispatched text does not run as written
+
+The brief's "Read it from committed truth, not a working tree" block
+gives, at its own line 54:
+
+  git show origin/main:<path above> > /tmp/r4.md
+
+`<path above>` is not a placeholder the shell ignores. `<` and `>` are
+redirection operators, so bash parses `<path` as input redirection and
+the line dies with `syntax error near unexpected token '>'` before
+git runs. Verified with `bash -n`.
+
+This is the same defect class the banner warns about and the receipt
+records fixing in its own recipe. It was missed in the dispatched text
+because the earlier rounds only inspected the banner and the receipt.
+It is corrected here rather than in the brief, because the dispatched
+bytes are pinned at 3aac089e and must not change.
+
+The command should read:
+
+  P=docs/planning/command-journal/custody/DRAFT-founder-authorization-pr2b-gate3-trancheB-journal-authority-r4-20260914.md
+  git show "origin/main:$P" > /tmp/r4.md
+  sha256sum /tmp/r4.md      # must equal 466469cc...13dae
+
+Whether the reviewer hit this is not known from here. The review
+completed, so the act's bytes were obtained by some route; which route
+is not recorded.
 
 NOT AVAILABLE, AND NOT REQUIRED (HISTORICAL — NEVER DISPATCHED)
 

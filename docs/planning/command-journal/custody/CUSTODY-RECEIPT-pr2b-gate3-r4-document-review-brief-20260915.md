@@ -11,9 +11,9 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `a3893ef5a81342b7abe2d70e5894ae6e4e8c234e` |
-| SHA-256 (as landed) | `ba2781ea15eac1a83e64e2b138a50e8475801a6b287bfc3d4e9d81a8ac96fc06` |
-| Bytes / lines (as landed) | 7978 bytes, 140 lines |
+| Git blob id (as landed) | `74770334de45cb3883f424c1077a0007dcb20cfa` |
+| SHA-256 (as landed) | `2fac4f591f129f31c715ecfd333d9d0060aecf167c3036c96791bddd24f63526` |
+| Bytes / lines (as landed) | 8092 bytes, 142 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat in session, 2026-09-15, at Founder direction ("write the document review brief") |
@@ -59,12 +59,22 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `339740b2f4997e26476ffd8578d454221d69b519` |
-| SHA-256 | `91e61f8ee111f6b1bc94a00b9637bf7f6370d675adafc8551c1d61e4e1fa679f` |
-| Bytes | 8282 |
-| Lines | 172 (`wc -l`) |
+| Git blob id | `1b713835d74b1dd6f428b9d21328eda52f851dfc` |
+| SHA-256 | `66027d8bdc714a320b6ecd5f65d808353e55c3ef2487ad1dbf64cb6c5edc2df1` |
+| Bytes | 9936 |
+| Lines | 207 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
+
+The addendum has no banner and no extract, so its SHA-256 is over the
+whole file and the committed-truth check applies directly. It must equal
+the value in the table above:
+
+```
+REF=origin/main
+P=docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
+git show "$REF:$P" | shasum -a 256
+```
 
 **Overtaken: the review completed without it.** The brief reached the
 operator before these defects were found, and the addendum was never
@@ -80,7 +90,9 @@ reviewer, and the review's standing is qualified accordingly:
 - Q6 was answered without the plan identity correction 2 supplies. The
   reviewer located plan r1 independently and cited section 5.2 lines 455
   and 456, which is the location correction 2 names. Q7 never needed the
-  plan; the brief implied it did.
+  plan and never said it did; an earlier revision of this receipt said
+  the brief implied it, repeating the addendum's own conflation. Both
+  are corrected.
 - The brief's ambiguous hunk figure went unremarked. The reviewer
   reported the live count of 14 at default context where the brief said
   18 and did not flag the difference. Correction 1 explains it.
@@ -97,7 +109,7 @@ reviewer, and the review's standing is qualified accordingly:
 
 **Whether the `PASS` stands on a brief with these defects is not
 decided here.** The record establishes that the review ran from a brief
-carrying five defects, three of which change what it asks, and that
+carrying six defects, three of which change what it asks, and that
 correction 4's absence is the one that could most plausibly have changed
 what the reviewer did. That does not establish the verdict is unsound,
 and this seat is not the one to rule either way: the same seat landed
@@ -114,7 +126,7 @@ wrote the brief, and wrote this receipt. The record keeps both the brief
 as dispatched and the defects found in it so a later reader can judge
 for themselves.
 
-The addendum carries five corrections, three of which change what the
+The addendum carries six corrections, three of which change what the
 brief asks, and says so in its own header rather than claiming to change
 nothing:
 
@@ -143,6 +155,15 @@ nothing:
    would have had to fail the act for the builder's fault. A third
    first-line verdict, `CANNOT COMPLETE — BRIEF DEFECT`, is now
    available and is explicitly not a verdict on the act.
+6. **Repairs an unrunnable command.** The brief's own line 54 reads
+   `git show origin/main:<path above> > /tmp/r4.md`. `<` and `>` are
+   redirection operators, so bash dies with
+   `syntax error near unexpected token '>'` before git runs — the same
+   defect class this receipt records fixing in its own recipe, missed in
+   the dispatched text because earlier rounds inspected only the banner
+   and this file. Corrected in the addendum, not the brief: the
+   dispatched bytes are pinned at `3aac089e…` and must not change.
+   Whether the reviewer hit it is not known from here.
 
 The addendum also records that two things the brief cites cannot be
 given repository identity: act revisions R1 and R2 are not in this

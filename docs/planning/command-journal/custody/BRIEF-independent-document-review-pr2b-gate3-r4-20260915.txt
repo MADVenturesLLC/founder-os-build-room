@@ -4,14 +4,16 @@ This brief was dispatched, and the review it asked for completed on
 Read it with brief addendum 1, written after dispatch and never sent,
 so the reviewer did not have it:
   docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
-  sha256 91e61f8ee111f6b1bc94a00b9637bf7f6370d675adafc8551c1d61e4e1fa679f
-All five known defects, each corrected there: Q6 attributes the B-R14
+  sha256 66027d8bdc714a320b6ecd5f65d808353e55c3ef2487ad1dbf64cb6c5edc2df1
+All six known defects, each corrected there: Q6 attributes the B-R14
 to B-R16 renumbering to the act when it is the D-1 ruling's; the delta
 is given as "17 insertions" in an ambiguous unit; Q6 needs the
 implementation plan, which is not identified here; the bar on resolving
 an ambiguity by choosing an answer is stated unscoped, so it reads as
 forbidding the judgment Q8 asks for; the verdict vocabulary lacks
-CANNOT COMPLETE — BRIEF DEFECT.
+CANNOT COMPLETE — BRIEF DEFECT; and the git show command at line 54
+below does not parse, for the same redirection reason this banner warns
+about.
 This file is a record of what was sent. Nothing in it is a live
 instruction to anyone.
 The dispatched text is everything from the line reading
