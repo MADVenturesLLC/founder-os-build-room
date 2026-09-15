@@ -65,6 +65,17 @@ env:
 jobs:
   review:
     # Model credentials live here. Read-only token, no App token, no write.
+    #
+    # Same-repo, human-authored pull requests only. This is the control, not
+    # a courtesy: under pull_request_target a fork-originated or bot-authored
+    # PR would otherwise reach the steps holding GEMINI_API_KEY and
+    # CLAUDE_CODE_OAUTH_TOKEN. claude-code-review.yml gates its own
+    # credential-holding job the same way. When this gate skips the job, the
+    # summary in `post` reports not-applicable and exits 0 rather than
+    # reddening the check.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.user.type == 'User'
     runs-on: ubuntu-latest
     timeout-minutes: 50
     permissions:
@@ -289,13 +300,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: read
+      # No contents: read — nothing here reads the repository.
       pull-requests: write
     env:
       PR_NUMBER: ${{ needs.review.outputs.pr_number }}
       HEAD_SHA: ${{ needs.review.outputs.head_sha }}
+      REVIEW_RESULT: ${{ needs.review.result }}
     steps:
       - name: Materialize review bodies
+        if: ${{ needs.review.result != 'skipped' }}
         id: bodies
         env:
           GEMINI_B64: ${{ needs.review.outputs.gemini_b64 }}
@@ -376,6 +389,10 @@ jobs:
       - name: Surface advisory-reviewers status
         if: ${{ !cancelled() }}
         run: |
+          if [ "${REVIEW_RESULT:-}" = "skipped" ]; then
+            echo "::notice::advisory reviewers do not run for fork-originated or bot-authored pull requests; not applicable"
+            exit 0
+          fi
           gemini="${{ steps.gemini.outputs.status }}"
           claude="${{ steps.claude.outputs.status }}"
           echo "advisory-reviewers: gemini ($GEMINI_MODEL, $GEMINI_EFFORT)=$gemini, claude ($CLAUDE_MODEL)=$claude"
