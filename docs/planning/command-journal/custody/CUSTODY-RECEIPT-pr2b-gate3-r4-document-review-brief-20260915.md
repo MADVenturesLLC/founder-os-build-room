@@ -29,12 +29,12 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `81117c8fe4d928248a51363c6f9080aa5cbfeda5` |
-| SHA-256 | `24706cc1325d1907caa417b15dd0bf08ec3798be5ec222d566e3fa96a6d8b4bd` |
-| Bytes | 6533 |
-| Lines | 142 (`wc -l`) |
+| Git blob id | `9342b24948f0b808253864ac5b69bd56c7bbad16` |
+| SHA-256 | `6261afb2cb1056532d586d3b3ab9fb2fb7546c22bf224bea677252de884a5c81` |
+| Bytes | 7109 |
+| Lines | 152 (`wc -l`) |
 | Trailing newline | present (single LF) |
-| Dispatched | **not yet — see the action below** |
+| Dispatched | **never — overtaken, see below** |
 
 **Overtaken: the review completed without it.** The brief reached the
 operator before these defects were found, and the addendum was never
@@ -54,22 +54,23 @@ reviewer, and the review's standing is qualified accordingly:
 - The brief's ambiguous hunk figure went unremarked. The reviewer
   reported the live count of 14 at default context where the brief said
   18 and did not flag the difference. Correction 1 explains it.
+- Q8 was answered under the unnarrowed constraint that correction 4
+  scopes. The brief both asked for a judgment on drafted text and
+  barred resolving an ambiguity by choosing an answer. The reviewer
+  answered "pass as drafted" and gave reasons, treating it as a
+  judgment rather than refusing it, which is the reading correction 4
+  makes explicit. Of the five, this was the one with a plausible effect
+  on the outcome, and it had none.
 - `CANNOT COMPLETE — BRIEF DEFECT`, added by correction 5, did not
   exist when the review ran. The reviewer was not blocked, so the gap
   did not bite.
 
-None of the four changed the verdict. The record keeps both the brief as
+None of the five changed the verdict. The record keeps both the brief as
 dispatched and the defects found in it, so a later reader can see what
 the reviewer did and did not have.
 
-Advisory reviews of the brief (runs `34926174104` and `34926421238`,
-2026-09-15) found defects in it, and the brief had already been
-dispatched. The addendum corrects them rather than editing the
-dispatched text, so the record holds both what was sent and what
-corrects it.
-
-It carries five corrections. **Three of them change what the brief
-asks**, and the addendum says so rather than claiming to change
+The addendum carries five corrections, three of which change what the
+brief asks, and says so in its own header rather than claiming to change
 nothing:
 
 1. The R3-to-R4 delta was stated in an ambiguous unit: "17 insertions"
@@ -79,11 +80,12 @@ nothing:
    with R4's 2619. Hunk counts are rendering-dependent (18 at
    `--unified=0`, 14 at the default) and `--numstat` reports none, so
    the addendum tells the reviewer to cite lines, not hunks.
-2. Questions 6 and 7 require reading the implementation plan, which the
-   brief never identified while demanding committed-truth reading
-   everywhere else. Path, blob, SHA-256 and size are supplied for plan
-   r1 and plan addendum 02 revision r6, with the section and line
-   locations Q6 depends on.
+2. Question 6 requires reading the implementation plan, which the brief
+   never identified while demanding committed-truth reading everywhere
+   else. Path, blob, SHA-256 and size are supplied for plan r1 and plan
+   addendum 02 revision r6, with the section and line locations Q6
+   depends on. Q7 is framed against the act's own sections, so it does
+   not depend on the plan; the brief implied otherwise.
 3. **Changes Q6.** The brief attributed the B-R14 to B-R16 renumbering
    to the authorization act; it is the D-1 ruling's act, which R4
    carries into its matrix. Q6 is restated accordingly.
@@ -115,22 +117,40 @@ by choosing an answer.
 
 Revision R2 went through the same review and returned
 `REQUEST CHANGES` / `DOCUMENT REVIEW FAILED` on two issuance blockers,
-which R3 repaired. R4 has not been reviewed; question 1 targets that same
-defect class deliberately.
+which R3 repaired. Question 1 targets that same defect class
+deliberately.
 
-## Reviewer independence
+## The review, and what is not held here
 
-The brief bars two identities from performing the review: the drafting
-seat `br-architect`, and the builder session that landed the artifact
-(`session:claude-code/session_01KbHPzSthh2gKc8TtsG4QRp`), which is the
-session that also authored this brief and this receipt.
+The review completed on 2026-09-15 and returned `PASS`, reviewer
+`br-operator` session `20260914_234018_5b1c61`, `actor_id`
+`UNAVAILABLE`, against artifact SHA-256 `466469cc…13dae`.
+
+**That output is not in this repository.** The operator reports it at
+`hermes-profile-suite/HANDOFF-operator-to-founder-pr2b-gate3-trancheB-r4-document-review-20260915.md`,
+SHA-256 `a5ba787f736eca8675c53f219f772a614009c08e22ca610e317cb127d51fc21b`,
+11251 bytes, 91 lines. Those figures are the operator's report and are
+not verified from this surface. This is the same gap the addendum charges
+against the brief's handling of the R2 review output, named here rather
+than left implicit: the verdict a Gate III issuance would rest on has no
+repository identity. The directory holding it is the subject of FounderOS
+`DEC-20260914-01`.
+
+The verdict's citations were spot-checked against committed truth rather
+than accepted: the act's section 18 is `DELIBERATELY UNFILLED` at the
+cited line, `B-R16` is at line 1333, plan r1's `B-R14` and `B-R15` are
+untouched at 1325 and 1326, and the live R3-to-R4 diff is 14 hunks at
+default context as reported. Three findings the reviewer marked
+non-blocking remain open: the FD-B5 row at section 17.1 against the D-1
+supersession at section 9.1, section 12 item 4 omitting B-T4, and R3
+findings A through D.
 
 ## What this commit does not do
 
-It performs no review, records no verdict, names no CI bootstrap or
+It performs no review and records no verdict of its own: the `PASS`
+above is the operator's, reported here. It names no CI bootstrap or
 identity mechanism, fills no signature or executor identity field, and
-does not satisfy D-1's condition. Those remain Founder acts or reviewer
-output.
+does not satisfy D-1's condition. Those remain Founder acts.
 
 ## Independence, and its limit
 
