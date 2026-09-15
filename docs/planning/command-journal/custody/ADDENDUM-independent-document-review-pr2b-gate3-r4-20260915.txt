@@ -52,9 +52,12 @@ Six corrections follow. Three change what the brief asks: correction 3
 restates Q6, correction 4 narrows a constraint, and correction 5 adds a
 third permissible first line, which is a change to the output format.
 Corrections 1, 2 and 6 supply or repair information without changing
-which questions are asked. Correction 1 does sharpen what Q4's "pure
-insertion" claim commits the reviewer to verifying; it changes the
-precision of a verification target, not the question. The brief's eight questions are otherwise unchanged, as
+which questions are asked. Correction 1 does sharpen what the
+"pure insertion" claim at dispatched-text line 34 commits the reviewer
+to verifying, which Q8 relies on at dispatched-text line 88; it changes
+the precision of a verification target, not the question. An earlier
+revision of this sentence named Q4, which is D-1 IS STATED CORRECTLY
+and does not mention pure insertion. The brief's eight questions are otherwise unchanged, as
 is the reviewer-independence rule.
 
 CORRECTION 1 (HISTORICAL — NEVER DISPATCHED) — the R3-to-R4 delta was stated in an ambiguous unit
@@ -161,13 +164,14 @@ A third first-line verdict is therefore available:
   CANNOT COMPLETE — BRIEF DEFECT
 
 Use it when the brief or this addendum, not the act, prevents answering.
+Name the question, name what is missing, and answer whatever other
+questions you can. It is not a verdict on the act and does not count as
+a failed document review.
+
 Left open, and recorded in the receipt: the brief's mandated last line,
 `Reviewer: <your id>  Artifact: 466469cc...`, is an attribution of a
 verdict on the act. Whether it still applies under a verdict that is
 expressly not about the act is not settled here; an R5 must settle it.
-Name the question, name what is missing, and answer whatever other
-questions you can. It is not a verdict on the act and does not count as
-a failed document review.
 
 CORRECTION 6 (HISTORICAL — NEVER DISPATCHED) — a command in the
 dispatched text does not run as written
@@ -197,7 +201,7 @@ bytes are pinned at 3aac089e and must not change.
 
 The command should read:
 
-  git fetch origin main
+  git fetch origin +refs/heads/main:refs/remotes/origin/main
   P=docs/planning/command-journal/custody/DRAFT-founder-authorization-pr2b-gate3-trancheB-journal-authority-r4-20260914.md
   git show "origin/main:$P" > /tmp/r4.md
   sha256sum /tmp/r4.md      # or shasum -a 256 on macOS; must equal

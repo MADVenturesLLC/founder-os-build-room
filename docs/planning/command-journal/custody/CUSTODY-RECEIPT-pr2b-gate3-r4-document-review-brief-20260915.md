@@ -11,9 +11,9 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `4fb6e313327b61ab1563008219ae701ca0c30296` |
-| SHA-256 (as landed) | `270989325b9ae1ba5f8190bf93ef01bda2abc077973226506cab8bc750e86621` |
-| Bytes / lines (as landed) | 9240 bytes, 159 lines |
+| Git blob id (as landed) | `6d4b9e9fab9a120e4378b68c0ed535ad5b316d44` |
+| SHA-256 (as landed) | `c8d17d84e6832b9da890cd2336a0e7be3f57446d1a59a777ed29476d740d9762` |
+| Bytes / lines (as landed) | 9329 bytes, 160 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat, Actor-Id `session:claude-code/session_01KbHPzSthh2gKc8TtsG4QRp`, 2026-09-15, at Founder direction ("write the document review brief") |
@@ -26,7 +26,7 @@ dispatched text, and the dispatched bytes remain recoverable and
 checkable:
 
 ```
-git fetch origin main
+git fetch origin +refs/heads/main:refs/remotes/origin/main
 REF=origin/main
 P=docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt
 git show "$REF:$P" \
@@ -60,10 +60,10 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `aee1dd493945b328ff8d9eb0952bd1f4725ca6b8` |
-| SHA-256 | `1f0e503d79bb306a7a4ca47452e04b29edebef1013b00cfcc6b6d1253150be75` |
-| Bytes | 12857 |
-| Lines | 257 (`wc -l`) |
+| Git blob id | `6a541f6775790331a27e9c9a087f873a3927637a` |
+| SHA-256 | `eb7851b02661605b00159ea0f2d5e013ba722ac5cdde19ea862f137a82d4a553` |
+| Bytes | 13085 |
+| Lines | 261 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
 
@@ -72,7 +72,7 @@ whole file and the committed-truth check applies directly. It must equal
 the value in the table above:
 
 ```
-git fetch origin main
+git fetch origin +refs/heads/main:refs/remotes/origin/main
 REF=origin/main
 P=docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
 git show "$REF:$P" | shasum -a 256   # or sha256sum on Linux
@@ -213,27 +213,35 @@ The review completed on 2026-09-15 and returned `PASS`, reviewer
 `br-operator` session `20260914_234018_5b1c61`, `actor_id`
 `UNAVAILABLE`, against artifact SHA-256 `466469cc…13dae`.
 
-**The independence rule is unenforceable by construction, not merely
-unenforced this once.** It bars
+**Half the independence rule was enforced; the other half is
+unenforceable by construction.** The rule has two clauses. It bars the
+drafting seat `br-architect`, which is a seat name in the same namespace
+as the recorded reviewer `br-operator` — that clause is checkable, and
+it is satisfied. It separately bars
 `Actor-Id session:claude-code/session_01KbHPzSthh2gKc8TtsG4QRp`, while
 the reviewer is recorded as `br-operator` session
 `20260914_234018_5b1c61`. Those are two different identifier
 namespaces: an operator session id of that shape could never be compared
 against a barred value of that shape, so a *reported* `actor_id` would
-not have saved the check either. The reviewer's `actor_id` being
+not have saved that clause either. The reviewer's `actor_id` being
 `UNAVAILABLE` is a second, independent reason it cannot be made. An
 earlier revision of this receipt named only that second reason, which
-implied availability would have sufficed. It would not.
+implied availability would have sufficed. It would not. A further
+revision then said the rule was unenforceable outright, which overstated
+it in the other direction: the `br-architect` clause was enforceable and
+was met.
 
-Independence therefore rests on the seat name `br-operator` alone. That
-name is neither of the two barred identities, but a seat name is not the
-field the rule names. Making the rule checkable means restating it
+What cannot be established is the clause that matters most here — that
+the reviewer was not the builder session which landed the artifact.
+Making that clause checkable means restating it
 against the identifier the operator seat actually emits, or requiring a
 resolvable Actor-Id before a review is accepted at all. Both are Founder
 decisions and neither is taken here.
 
 **That output is not in this repository.** The operator reports it at
-`hermes-profile-suite/HANDOFF-operator-to-founder-pr2b-gate3-trancheB-r4-document-review-20260915.md`,
+`hermes-profile-suite/HANDOFF-operator-to-founder-pr2b-gate3-trancheB-r4-document-review-20260915.md`
+— an **off-repository** path on the operator's own surface, not a path
+in this repository, despite reading like one —
 SHA-256 `a5ba787f736eca8675c53f219f772a614009c08e22ca610e317cb127d51fc21b`,
 11251 bytes, 91 lines. Those figures are the operator's report and are
 not verified from this surface. The addendum notes the same absence for the R2

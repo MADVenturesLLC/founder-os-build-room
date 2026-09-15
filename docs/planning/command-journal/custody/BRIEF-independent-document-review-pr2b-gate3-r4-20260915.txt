@@ -4,15 +4,16 @@ This brief was dispatched, and the review it asked for completed on
 Read it with brief addendum 1, written after dispatch and never sent,
 so the reviewer did not have it:
   docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt
-  sha256 1f0e503d79bb306a7a4ca47452e04b29edebef1013b00cfcc6b6d1253150be75
-All six known defects, each corrected there: Q6 attributes the B-R14
-to B-R16 renumbering to the act when it is the D-1 ruling's; the delta
-is given as "17 insertions" in an ambiguous unit; Q6 needs the
-implementation plan, which is not identified here; the bar on resolving
-an ambiguity by choosing an answer is stated unscoped, so it reads as
-forbidding the judgment Q8 asks for; the verdict vocabulary lacks
-CANNOT COMPLETE — BRIEF DEFECT; and the git show command at line 24 of
-the dispatched text does not parse, for the same redirection reason
+  sha256 eb7851b02661605b00159ea0f2d5e013ba722ac5cdde19ea862f137a82d4a553
+All six known defects, numbered as the addendum numbers its
+corrections: (1) the delta is given as "17 insertions" in an ambiguous
+unit; (2) Q6 needs the implementation plan, which is not identified
+here; (3) Q6 attributes the B-R14 to B-R16 renumbering to the act when
+it is the D-1 ruling's; (4) the bar on resolving an ambiguity by
+choosing an answer is stated unscoped, so it reads as forbidding the
+judgment Q8 asks for; (5) the verdict vocabulary lacks
+CANNOT COMPLETE — BRIEF DEFECT; and (6) the git show command at line 24
+of the dispatched text does not parse, for the same redirection reason
 this banner warns about. To locate it in this file as landed, add the
 line number of the dashed rule below — the rule is the last banner
 line, so its number is exactly the offset.
@@ -22,7 +23,7 @@ The dispatched text is everything from the line reading
 "INDEPENDENT DOCUMENT REVIEW BRIEF", below the rule, to end of file,
 unchanged. Everything above that line is this banner. Recover and check
 (shell variables, not <...> placeholders: < and > are redirections):
-  git fetch origin main
+  git fetch origin +refs/heads/main:refs/remotes/origin/main
   REF=origin/main
   P=docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt
   git show "$REF:$P" \
