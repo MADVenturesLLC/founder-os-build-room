@@ -137,11 +137,26 @@
 # reader while this check stays green. Verifying REF belongs to a check that
 # runs against the merged result, not against a PR head.
 #
-# One stated exemption: an EMPTY custody directory passes. Nothing is declared,
-# so nothing is unverified, and this gate does not assert that records must
-# exist — no other gate does either, so deleting the directory is not caught
-# here. Said out loud because an unstated exemption to a "no silent pass" rule
-# is itself a silent pass.
+# WHAT HAPPENS WHEN THERE IS NOTHING TO CHECK, stated exactly, because an
+# earlier wording here was wrong in both directions. It said "an EMPTY custody
+# directory passes" and "deleting the directory is not caught here". Measured:
+#
+#   directory missing entirely      -> exit 2, "no custody directory at ..."
+#                                      It IS caught, as could-not-run.
+#   directory present, no files     -> PASS, "nothing to verify". Reachable in
+#                                      a working tree; git cannot store an
+#                                      empty directory, so not in a commit.
+#   directory present, only a
+#   placeholder such as .gitkeep    -> FAIL. The placeholder counts as a
+#                                      record, so the Path-row floor trips.
+#                                      That is the floor working as designed,
+#                                      though its message names renaming and
+#                                      format drift rather than this case.
+#
+# So this gate does not assert that records must exist, but it is not blind to
+# their absence either. Said out loud because an unstated exemption to a
+# "no silent pass" rule is itself a silent pass — and a MIS-stated one is
+# worse, since a reader trusts it.
 #
 # Usage:   scripts/custody-pin-check.sh [repo-root]
 #          (repo-root defaults to the repository containing this script)
