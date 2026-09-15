@@ -342,17 +342,33 @@ jobs:
           # Written to its own file so the gemini step can trust it: it never
           # receives PR content. Derived here from the same material the
           # context was built from.
+          # COMPOSED from independent flags, not chosen from an enum. "The diff
+          # was truncated" and "the context is partial" are independent facts
+          # that co-occur — the 400 KB diff cap against a 300 KB context budget
+          # with MAX_FILES=60 means a truncated run is usually degraded too —
+          # and an if/elif chain dropped one of them from the trusted sentence
+          # whichever order it was written in. Both reach it now: the clause is
+          # built here, once, and the reader interpolates it verbatim.
           CTX_STATE="full"
           if [ ! -s /tmp/context.paths ]; then
             CTX_STATE="no-paths"
-          # Truncation tested before partial: a run that is both truncated and
-          # partial must report the truncation in the trusted sentence — it is
-          # the larger limitation. The partial counts still reach the model
-          # through the context itself.
-          elif { read -r lastline < <(tail -n1 /tmp/pr.diff); } 2>/dev/null                && case "$lastline" in *'[diff truncated at'*) true ;; *) false ;; esac; then
-            CTX_STATE="truncated"
-          elif [ $((unresolved + omitted + file_cap_skips)) -gt 0 ]; then
-            CTX_STATE="partial ($unresolved unresolved, $((omitted + file_cap_skips)) omitted or skipped by caps)"
+          else
+            CTX_CLAUSE=""
+            if { read -r lastline < <(tail -n1 /tmp/pr.diff); } 2>/dev/null \
+               && case "$lastline" in *'[diff truncated at'*) true ;; *) false ;; esac; then
+              CTX_CLAUSE="the diff was truncated at its byte cap, so files past the cut are absent and unlisted"
+            fi
+            if [ $((unresolved + omitted + file_cap_skips)) -gt 0 ]; then
+              CTX_COUNTS="$unresolved path(s) unresolved and $((omitted + file_cap_skips)) omitted or skipped by caps"
+              if [ -n "$CTX_CLAUSE" ]; then
+                CTX_CLAUSE="$CTX_CLAUSE; and $CTX_COUNTS"
+              else
+                CTX_CLAUSE="$CTX_COUNTS"
+              fi
+            fi
+            if [ -n "$CTX_CLAUSE" ]; then
+              CTX_STATE="degraded: $CTX_CLAUSE"
+            fi
           fi
           # `declared_bytes` is the API's .size for the files INCLUDED; the written
           # count below is larger by whatever the tag-stripping added. They are
@@ -452,9 +468,15 @@ jobs:
             case "$3" in
               none)      have="NO file text — the context step failed or was skipped, so the diff is all you have, and anything the diff asserts about the files it lands in is unverified" ;;
               no-paths)  have="no file text — no file paths could be parsed out of the diff, so anything the diff implies about the files it lands in is unverified" ;;
-              truncated) have="file text, but the diff was truncated at its byte cap, so files past the cut are absent and unlisted" ;;
-              partial*) have="file text, but not all of it — the context step reported: $3" ;;
-              unknown)  have="file text, but its completeness could not be established — the context step did not record a state" ;;
+              full)      : ;;
+              unknown)   have="file text, but its completeness could not be established — the context step did not record a state" ;;
+              degraded:*) have="file text, but ${3#degraded: }" ;;
+              # Not an enumerated state any more: the clause is composed by the
+              # context step, so this arm is the CONSERVATIVE default rather than
+              # the strongest claim. It falls out of the composition at no extra
+              # cost — an unrecognised value now reports itself instead of
+              # silently taking the full-text sentence.
+              *)         have="file text, but the context step reported: $3" ;;
             esac
             local system="You are $1 ($2 effort), an advisory code reviewer for MADVenturesLLC/founder-os-build-room.
 
