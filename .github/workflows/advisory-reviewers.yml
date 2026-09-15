@@ -83,9 +83,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -o pipefail
+          set -euo pipefail
           gh api "repos/${{ github.repository }}/pulls/${{ steps.resolve.outputs.pr_number }}" \
-            -H "Accept: application/vnd.github.v3.diff" > /tmp/pr.diff
+            -H "Accept: application/vnd.github.v3.diff" > /tmp/pr.diff.raw
+          # Drop invalid UTF-8 so jq --rawfile never sees bad bytes.
+          iconv -c -f utf-8 -t utf-8 /tmp/pr.diff.raw > /tmp/pr.diff
+          rm -f /tmp/pr.diff.raw
           if [ ! -s /tmp/pr.diff ]; then
             echo "::error::empty diff"
             exit 1
@@ -96,6 +99,7 @@ jobs:
             if [ ! -s /tmp/pr.diff.trunc ]; then
               # Line-boundary cut left nothing; keep the raw byte cut.
               head -c 400000 /tmp/pr.diff | iconv -c -f utf-8 -t utf-8 > /tmp/pr.diff.trunc
+              # (re-sanitised: the raw byte cut can split a multibyte sequence)
             fi
             echo "::warning::PR diff truncated for review; $(wc -c < /tmp/pr.diff.trunc) bytes remain"
             printf '\n\n[diff truncated at 400000 bytes]\n' >> /tmp/pr.diff.trunc
@@ -177,6 +181,8 @@ jobs:
             echo "::warning::gemini response hit the output limit; posting it marked as cut off"
             REVIEW="$(printf '%s\n\n(response cut off at the model output limit)' "$REVIEW")"
           fi
+          # Strip HTML comments so model output cannot forge marker lines.
+          REVIEW="$(printf '%s' "$REVIEW" | sed -E 's/<!--.*-->//g; s/<!--//g; s/-->//g')"
           # Output guard: GitHub caps review bodies at 65536 chars.
           if [ "${#REVIEW}" -gt 60000 ]; then
             REVIEW="$(printf '%s\n\n(truncated)' "${REVIEW:0:60000}")"
@@ -244,6 +250,8 @@ jobs:
             echo
             exit 1
           fi
+          # Strip HTML comments so model output cannot forge marker lines.
+          REVIEW="$(printf '%s' "$REVIEW" | sed -E 's/<!--.*-->//g; s/<!--//g; s/-->//g')"
           if [ "${#REVIEW}" -gt 60000 ]; then
             REVIEW="$(printf '%s\n\n(truncated)' "${REVIEW:0:60000}")"
           fi
