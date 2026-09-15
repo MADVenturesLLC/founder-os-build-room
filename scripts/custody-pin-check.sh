@@ -189,7 +189,12 @@ selftest_case() {
   # $4 = shell to mutate the fixture (runs with $c and $t set)
   local name="$1" want="$2" needle="$3" mutate="$4"
   local t out rc c
-  t="$(mktemp -d)" || { echo "  FAIL $name — mktemp -d failed" >&2; return 1; }
+  t="$(mktemp -d)" || {
+    printf '  FAIL %s — mktemp -d failed\n' "$name"
+    selftest_failures=$((selftest_failures + 1))
+    selftest_ran=$((selftest_ran + 1))
+    return
+  }
   selftest_fixture "$t"
   c="$t/docs/planning/command-journal/custody"
   # A mutation that silently fails to apply leaves a pristine fixture, and any
@@ -218,6 +223,16 @@ selftest_case() {
   selftest_ran=$((selftest_ran + 1))
   rm -rf "$t"
 }
+
+# The number of cases run_selftest defines. Asserted at the end, because a case
+# that disappears for ANY reason — a mktemp failure, an early return, an edit
+# that drops a call — would otherwise leave the suite printing PASS with a
+# quietly smaller N. That is the defect this whole script exists to catch, and
+# it was live here: the mktemp guard added one commit ago returned without
+# touching either counter, and a simulated failure produced "PASS — 19 case(s)"
+# and exit 0. Counting cases against a fixed expectation closes the class
+# rather than that one instance.
+SELFTEST_EXPECTED_CASES=20
 
 run_selftest() {
   selftest_failures=0
@@ -313,6 +328,12 @@ run_selftest() {
     "printf '\\n\\n\\n\\n\\n\\nSuperseded revision:\\n  sha256 %s\\n' \"\$(printf '1%.0s' {1..64})\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
 
   echo
+  if (( selftest_ran != SELFTEST_EXPECTED_CASES )); then
+    echo "custody-pin-check selftest: FAIL — ran $selftest_ran case(s), expected" \
+         "$SELFTEST_EXPECTED_CASES. A case did not run, and reporting PASS here"
+    echo "custody-pin-check selftest: would present a smaller suite as the whole one."
+    return 1
+  fi
   if (( selftest_failures )); then
     echo "custody-pin-check selftest: FAIL — $selftest_failures of $selftest_ran case(s) failed"
     return 1
@@ -398,6 +419,28 @@ repo_root = Path(os.environ["REPO_ROOT"]).resolve()
 failures = 0
 checks = 0
 noted = []
+
+
+def custody_files():
+    """Every regular file under the custody directory, not following symlinks.
+
+    `rglob` descends into symlinked directories, so one committed under
+    custody/ could walk outside the tree or loop. Only hashes are read, so the
+    impact is small, but enumeration deserves the containment resolve() already
+    gives declared paths. Walked once and reused, rather than three times under
+    three names.
+    """
+    out = []
+    for dirpath, dirnames, filenames in os.walk(custody, followlinks=False):
+        dirnames[:] = [d for d in dirnames if not Path(dirpath, d).is_symlink()]
+        for fn in filenames:
+            f = Path(dirpath, fn)
+            if not f.is_symlink() and f.is_file():
+                out.append(f)
+    return sorted(out)
+
+
+ALL_FILES = custody_files()
 
 
 def fail(msg):
@@ -591,14 +634,15 @@ def is_pin_key(k):
 # would let a rename defeat both at once: no matches, nothing read, nothing to
 # complain about, green. So presence is any markdown in the directory, while
 # coverage is Path rows actually read.
-receipts = sorted(custody.rglob("CUSTODY-RECEIPT-*.md"))
+receipts = [p for p in ALL_FILES
+            if p.name.startswith("CUSTODY-RECEIPT-") and p.suffix == ".md"]
 # Presence is ANY file, not just *.md: receipts renamed to another extension,
 # with one inline pin still verifying, would otherwise satisfy both floors
 # while the table channel sees nothing — the same shape as the hole the floor
 # was added for. The cost is that a custody directory holding records but no
 # receipt at all is red; that is loud and one commit to fix, which is the
 # trade this whole script exists to make.
-records_present = sorted(p for p in custody.rglob("*") if p.is_file())
+records_present = ALL_FILES
 path_rows_seen = 0
 
 for receipt in receipts:
@@ -673,7 +717,16 @@ for receipt in receipts:
                 # chance of matching an unrelated hex-looking token.
                 declared = hex_of(value, 12, 40)
                 if declared is None:
-                    fail(f"{name}: blob row declares no hash: {value!r}")
+                    # Distinguish "no hash here" from "a hash this check refuses".
+                    # Calling a conventional 7-character abbreviation "no hash"
+                    # blames the record for the checker's own floor — the mistake
+                    # the SHA-256 qualifier branch was changed to stop making.
+                    short = re.search(r"\b([0-9a-fA-F]{4,11})\b", value)
+                    if short:
+                        fail(f"{name}: blob row declares {short.group(1)}, too short to "
+                             "pin on — this check requires at least 12 hex characters")
+                    else:
+                        fail(f"{name}: blob row declares no hash: {value!r}")
                 elif actual["blob"].startswith(declared):
                     ok(f"{name}: blob {declared}")
                 else:
@@ -814,9 +867,7 @@ def path_line(lines, j):
         return lines[j].rstrip() + lines[j + 1].strip()
     return lines[j]
 
-for record in sorted(custody.rglob("*")):
-    if not record.is_file():
-        continue
+for record in ALL_FILES:
     rel = record.relative_to(repo_root)
     try:
         lines = record.read_text(encoding="utf-8").splitlines()
@@ -870,7 +921,7 @@ for record in sorted(custody.rglob("*")):
             fail(f"{rel.name}: inline pin on {Path(named).name} declared {pin_hex}, actual {got}")
 
 # --------------------------------------------------------------- verdict
-records = [p for p in custody.rglob("*") if p.is_file()]
+records = ALL_FILES
 print()
 
 # Per-channel floor. The global "zero checks" floor below is not enough on its
