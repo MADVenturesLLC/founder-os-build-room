@@ -35,18 +35,6 @@ let server: { url: string; close: () => Promise<void> } | undefined;
 const ADJUDICATION_TOKEN = 'phase3-adjudication-test-token-value';
 /** Request timeout for the harness `Phase3ControlPlaneClient`s in this file. */
 const CLIENT_REQUEST_TIMEOUT_MS = 1_000;
-/**
- * Reconciliation budget for the one `runWithPostCommitDemotion` scenario
- * that must actually reconcile a real commit-then-re-export round trip
- * (see `FINALIZATION_COMMIT`). Kept independent of
- * `CLIENT_REQUEST_TIMEOUT_MS` — they happen to share a value today, but
- * one is "enough for ordinary test traffic" and the other is "enough
- * headroom that a real round trip under load won't be mistaken for a
- * lost write"; tuning one for its own reasons shouldn't silently move
- * the other. Also independent of `DEMOTION_CLIENT_TIMEOUT_MS` for the
- * same reason, even though it too now shares the value.
- */
-const FINALIZATION_RECONCILIATION_TIMEOUT_MS = 1_000;
 /** Default `requestTimeoutMs` for `runWithPostCommitDemotion` — see its doc comment. */
 const DEMOTION_CLIENT_TIMEOUT_MS = 1_000;
 // Commit indices (1-based, counting `afterCommit` fires) in a clean
@@ -385,8 +373,9 @@ describe('Phase 3 run routes — leadership fence', { skip: STORAGE_SKIP }, () =
 
   it('reconciles committed finalization and returns awaiting adjudication', async () => {
     // See `runWithPostCommitDemotion`'s doc comment for why this scenario,
-    // unlike the two above, needs a real reconciliation budget.
-    const result = await runWithPostCommitDemotion(FINALIZATION_COMMIT, FINALIZATION_RECONCILIATION_TIMEOUT_MS);
+    // unlike the two above, needs its write to actually reconcile —
+    // the default `requestTimeoutMs` budget is what makes that reliable.
+    const result = await runWithPostCommitDemotion(FINALIZATION_COMMIT);
     assert.equal(result.outcome, 'awaiting_adjudication');
     assert.equal((result.evidence as Phase3EvidenceExport).attempt.state, 'awaiting_adjudication');
   });
@@ -565,7 +554,7 @@ function routeExpectation(input: Phase3AttemptInput): Phase3EvidenceExpectation 
 /**
  * `requestTimeoutMs` bounds the client's own reconciliation deadline (a
  * small multiple of it — see `Phase3ControlPlaneClient.writeReconciliationDeadline`).
- * It has to stay generous everywhere in this helper, not just for
+ * It has to stay generous for every scenario this helper drives, not just
  * `FINALIZATION_COMMIT`: every fenced write's route commits
  * unconditionally, even a pure idempotent replay of an already-applied
  * write (see `createAttemptFenced`/`appendEventFenced` in
@@ -574,12 +563,13 @@ function routeExpectation(input: Phase3AttemptInput): Phase3EvidenceExpectation 
  * client to retry it — and that retry's harmless replay still fires
  * `afterCommit` again. That injects an extra counted commit before the
  * step this test actually means to target, silently demoting the wrong
- * write. (This is how `FINALIZATION_COMMIT`'s original 50ms budget being
- * unsafe generalized: under load it corrupted the commit *count* here,
- * not just that one write's outcome.) `FINALIZATION_COMMIT` additionally
- * needs `FINALIZATION_RECONCILIATION_TIMEOUT_MS` at its own call site
- * because, unlike every other scenario, its demoted write is expected to
- * actually succeed via reconciliation rather than stay unresolved.
+ * write. (A 50ms default here once caused exactly that: it corrupted the
+ * commit *count*, not just one write's outcome, and it took a genuinely
+ * different scenario — `FIRST_LIFECYCLE_STAGE_COMMIT`, not
+ * `FINALIZATION_COMMIT` — flaking in CI to reveal it.) `FINALIZATION_COMMIT`
+ * is additionally the one scenario whose demoted write is expected to
+ * actually succeed via reconciliation rather than stay unresolved, but it
+ * needs no larger budget than this default already provides.
  */
 async function runWithPostCommitDemotion(demoteAtCommit: number, requestTimeoutMs = DEMOTION_CLIENT_TIMEOUT_MS) {
   let phase3Commits = 0;
