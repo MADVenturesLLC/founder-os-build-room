@@ -23,15 +23,30 @@
 #      recomputed from the named file and compared.
 #   2. Dispatched-text extraction. Where a receipt declares a
 #      `SHA-256 (dispatched text)` value, the extraction is run by invoking
-#      `sed` itself with the anchor the receipt publishes — literally the
-#      command the document gives its readers, not a reimplementation of it,
-#      so a regex metacharacter in the anchor behaves here exactly as it does
-#      for a reader. The resulting hash, byte count and line count are then
-#      compared against the declared ones.
-#   3. Inline banner pins. Anywhere a custody file names another custody file
-#      and pins it with a `sha256 <64 hex>` line within the next few lines, the
-#      pinned value is recomputed and compared. This covers the brief's landing
-#      banner, which pins the addendum.
+#      `sed` itself with the expression the receipt publishes, not a
+#      reimplementation of it, so a regex metacharacter in the anchor behaves
+#      here exactly as it does for a reader. The one addition is `--sandbox`,
+#      which disables sed's `e`, `r` and `w` commands. Those execute shell
+#      commands and read/write arbitrary files; the expression is scraped out
+#      of a repository document, so without the flag anyone able to open a
+#      pull request could run commands on the CI runner. No extraction recipe
+#      uses `e`/`r`/`w`, and `--sandbox` changes nothing about how an address
+#      range or a `p` behaves, so the published recipe is still what runs.
+#      The resulting hash, byte count and line count are then compared against
+#      the declared ones. Those counts are taken over sed's stdout exactly as
+#      emitted, trailing newline included — the same bytes a reader piping the
+#      published recipe into `shasum` would hash.
+#   3. Inline banner pins. Anywhere a custody file names a file under
+#      `docs/planning/command-journal/` and pins it with a `sha256 <64 hex>`
+#      line at or just below it, the pinned value is recomputed and compared.
+#      This covers the brief's landing banner, which pins the addendum, and
+#      the plan revisions the brief and addendum pin a directory up. Paths
+#      these records wrap across two lines are rejoined before matching.
+#      A pin with no path near it is PRINTED AND NOT COUNTED rather than
+#      failed: the records deliberately pin superseded revisions ("R1 frozen",
+#      "R2 reviewed") that name no file in the tree, so failing there would be
+#      permanently red on a correct record. Printing it keeps the output from
+#      implying coverage it does not have.
 #
 # WHAT IT DOES NOT CHECK. It does not judge whether a record is true, complete,
 # or authorized; it checks only that the record's own arithmetic holds. It is
@@ -50,6 +65,10 @@
 #     being wrong. This repository defines no `.gitattributes` today, and all
 #     three forms (filtered, `--no-filters`, and the blob stored on `main`)
 #     were confirmed identical when this check was written.
+#   - A file under the custody directory that is not UTF-8 text carries no
+#     readable inline pins. It is reported by name rather than passed over in
+#     silence, but it is not counted as a failure: a binary attachment is a
+#     legitimate record, it just cannot declare a pin in text.
 #
 # NO SILENT PASS. A verifier that can exit green having verified nothing is the
 # same defect it exists to catch, moved one level up. So: a custody directory
@@ -65,7 +84,8 @@
 #              pin was verified
 #          1 = one or more pins are stale, unparseable, ambiguous, or the
 #              directory holds records but declares no pins at all
-#          2 = the script could not run (missing directory, missing tool)
+#          2 = the script could not run (missing directory, missing tool,
+#              a `sed` without `--sandbox`, or not a git repository)
 
 set -uo pipefail
 
@@ -82,12 +102,31 @@ if [[ ! -d "$custody_dir" ]]; then
   exit 2
 fi
 
-for tool in python3 git; do
+for tool in python3 git sed; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "custody-pin-check: required tool not found: $tool" >&2
     exit 2
   }
 done
+
+# The published recipes are executed rather than reimplemented, so they run
+# under `sed --sandbox` (see the header). A sed without that flag — BSD/macOS
+# sed, notably — cannot run them safely, and would in any case interpret a GNU
+# recipe differently and extract different bytes. That is "could not run",
+# not "the pins are stale", so it exits 2 rather than 1.
+if ! printf '' | sed --sandbox -n '1p' >/dev/null 2>&1; then
+  echo "custody-pin-check: this check requires a sed supporting --sandbox (GNU sed)." >&2
+  echo "custody-pin-check: the published extraction recipes are executed, and are run" >&2
+  echo "custody-pin-check: sandboxed so a document cannot execute commands via sed." >&2
+  exit 2
+fi
+
+# Blob ids come from `git hash-object`. Outside a work tree that fails for
+# every record, which is a tooling problem and not a stale pin.
+if ! git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
+  echo "custody-pin-check: $repo_root is not a git repository; cannot compute blob ids" >&2
+  exit 2
+fi
 
 CUSTODY_DIR="$custody_dir" REPO_ROOT="$repo_root" python3 - <<'PY'
 import hashlib
@@ -102,6 +141,7 @@ repo_root = Path(os.environ["REPO_ROOT"]).resolve()
 
 failures = 0
 checks = 0
+noted = []
 
 
 def fail(msg):
@@ -167,15 +207,25 @@ def int_before(text, word):
     return int(m.group(1).replace(",", "")) if m else None
 
 
+# A markdown header-separator row (`|---|---|`). Two tables written with no
+# blank line between them are one run of `|` lines, and merging them produces
+# a spurious duplicate-key failure on correct records; the separator is where
+# the second table starts.
+SEPARATOR = re.compile(r"^\|[\s:|-]*-[\s:|-]*\|\s*$")
+
+
 def table_blocks(lines):
     block, out = [], []
     for line in lines:
-        if line.startswith("|"):
-            block.append(line)
-        else:
+        if not line.startswith("|"):
             if block:
                 out.append(block)
             block = []
+            continue
+        if SEPARATOR.match(line) and block:
+            out.append(block)
+            block = []
+        block.append(line)
     if block:
         out.append(block)
     return out
@@ -192,7 +242,10 @@ def is_pin_key(k):
 
 
 # ------------------------------------------------- receipts: tables + extract
-for receipt in sorted(custody.rglob("CUSTODY-RECEIPT-*.md")):
+receipts = sorted(custody.rglob("CUSTODY-RECEIPT-*.md"))
+table_before = (checks, failures)
+
+for receipt in receipts:
     text = receipt.read_text(encoding="utf-8")
     lines = text.splitlines()
     rel = receipt.relative_to(repo_root)
@@ -216,6 +269,15 @@ for receipt in sorted(custody.rglob("CUSTODY-RECEIPT-*.md")):
         if path_key is None:
             continue
         decl_path = decl[path_key].strip("`")
+        if "|" in decl_path:
+            # ROW reads a two-column key/value table. A column-oriented table
+            # (`| Path | Git blob id | SHA-256 |` header plus data rows) puts
+            # the remaining cells in the value, and the honest report is that
+            # the layout was not understood — not that the record names a file
+            # that does not exist.
+            fail(f"{rel}: table shape not understood — expected a two-column "
+                 f"key/value table, got a '{path_key}' value spanning columns: {decl_path!r}")
+            continue
 
         target, why = resolve(decl_path)
         if target is None:
@@ -260,7 +322,8 @@ for receipt in sorted(custody.rglob("CUSTODY-RECEIPT-*.md")):
                     fail(f"{rel}: publishes {len(exprs)} distinct sed recipes — which one applies to {name} is ambiguous")
                     continue
                 expr = exprs[0]
-                r = subprocess.run(["sed", "-n", expr, str(target)], capture_output=True)
+                r = subprocess.run(
+                    ["sed", "--sandbox", "-n", expr, str(target)], capture_output=True)
                 if r.returncode != 0:
                     fail(f"{name}: published recipe `sed -n '{expr}'` failed: {r.stderr.decode(errors='replace').strip()}")
                     continue
@@ -275,14 +338,16 @@ for receipt in sorted(custody.rglob("CUSTODY-RECEIPT-*.md")):
                     fail(f"{name}: extract declared {declared}, actual {got}")
                 d_bytes, d_lines = int_before(value, "bytes"), int_before(value, "lines")
                 if d_bytes is not None:
-                    (ok if d_bytes == len(blob) else fail)(
-                        f"{name}: extract bytes {d_bytes}" if d_bytes == len(blob)
-                        else f"{name}: extract bytes declared {d_bytes}, actual {len(blob)}")
+                    if d_bytes == len(blob):
+                        ok(f"{name}: extract bytes {d_bytes}")
+                    else:
+                        fail(f"{name}: extract bytes declared {d_bytes}, actual {len(blob)}")
                 n = blob.count(b"\n")
                 if d_lines is not None:
-                    (ok if d_lines == n else fail)(
-                        f"{name}: extract lines {d_lines}" if d_lines == n
-                        else f"{name}: extract lines declared {d_lines}, actual {n}")
+                    if d_lines == n:
+                        ok(f"{name}: extract lines {d_lines}")
+                    else:
+                        fail(f"{name}: extract lines declared {d_lines}, actual {n}")
 
             elif k.startswith("sha-256"):
                 declared = hex_of(value, 64, 64)
@@ -308,42 +373,76 @@ for receipt in sorted(custody.rglob("CUSTODY-RECEIPT-*.md")):
                     fail(f"{name}: '{key}' names a pin but its value does not parse: {value!r}")
                     continue
                 if d_bytes is not None:
-                    (ok if d_bytes == actual["bytes"] else fail)(
-                        f"{name}: bytes {d_bytes}" if d_bytes == actual["bytes"]
-                        else f"{name}: bytes declared {d_bytes}, actual {actual['bytes']}")
+                    if d_bytes == actual["bytes"]:
+                        ok(f"{name}: bytes {d_bytes}")
+                    else:
+                        fail(f"{name}: bytes declared {d_bytes}, actual {actual['bytes']}")
                 if d_lines is not None:
-                    (ok if d_lines == actual["lines"] else fail)(
-                        f"{name}: lines {d_lines}" if d_lines == actual["lines"]
-                        else f"{name}: lines declared {d_lines}, actual {actual['lines']}")
+                    if d_lines == actual["lines"]:
+                        ok(f"{name}: lines {d_lines}")
+                    else:
+                        fail(f"{name}: lines declared {d_lines}, actual {actual['lines']}")
+
+table_read = (checks, failures) != table_before
 
 # ------------------------------------------------------------- inline pins
-CUSTODY_REL = "docs/planning/command-journal/custody/"
+# Inline pins name files anywhere under the command journal, not only under
+# custody/: the R4 brief and its addendum pin the implementation plan and its
+# addenda, which live one directory up.
+JOURNAL_REL = "docs/planning/command-journal/"
 PIN = re.compile(r"\bsha256\s+([0-9a-f]{64})\b")
-PATHS = re.compile(rf"({re.escape(CUSTODY_REL)}[^\s`'\"*)\]]+)")
+PATHS = re.compile(rf"({re.escape(JOURNAL_REL)}[^\s`'\"*)\]]+)")
 TRIM = "`,;)]*.\"'"
+# A directory prefix left dangling at end of line: these records wrap long
+# paths, putting `.../custody/` on one line and the filename on the next. The
+# path is stated, just not on one line, and reading only the first line finds
+# either nothing or a directory.
+DANGLING_DIR = re.compile(r"\S*/\s*$")
+
+
+def path_line(lines, j):
+    """Line j, with a wrapped path rejoined from the line below it."""
+    if j + 1 < len(lines) and DANGLING_DIR.search(lines[j]):
+        return lines[j].rstrip() + lines[j + 1].strip()
+    return lines[j]
 
 for record in sorted(custody.rglob("*")):
     if not record.is_file():
         continue
+    rel = record.relative_to(repo_root)
     try:
         lines = record.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError:
+        # Not a failure — a binary record simply cannot declare a text pin —
+        # but said out loud, because a file skipped in silence is how a
+        # verifier ends up verifying less than its output implies.
+        print(f"  note {rel}: not UTF-8 text; no inline pins read from it")
         continue
-    rel = record.relative_to(repo_root)
     for i, line in enumerate(lines):
         pin = PIN.search(line)
-        window_start = i
         if not pin:
             continue
         # Candidate paths: this line, then backwards a short way. Ambiguity is
         # reported rather than resolved by picking the nearest.
         candidates = []
         for j in range(i, max(-1, i - 4), -1):
-            found = [m.group(1).rstrip(TRIM) for m in PATHS.finditer(lines[j])]
+            found = [m.group(1).rstrip(TRIM) for m in PATHS.finditer(path_line(lines, j))]
+            found = [f for f in found if not f.endswith("/")]
             if found:
                 candidates = found
                 break
         if not candidates:
+            # Not a failure, and deliberately so. These records pin SUPERSEDED
+            # revisions — "R1 frozen", "R2 reviewed" — which by construction
+            # name no file in the tree; the R1 hash in the R4 brief appears
+            # nowhere except as a citation inside custody documents. A hard
+            # failure here would be permanently red on correct records. But it
+            # is not passed over in silence either: an unattached pin is
+            # printed, uncounted, so the output states what it did not verify
+            # rather than implying full coverage.
+            noted.append(f"  note {rel.name}:{i + 1}: pin {pin.group(1)[:8]}… names no "
+                         "journal path nearby (a superseded revision or an extract, "
+                         "both of which name no file — or a moved file)")
             continue
         if len(candidates) > 1:
             fail(f"{rel.name}: pin {pin.group(1)[:8]}… has {len(candidates)} candidate paths nearby — ambiguous")
@@ -362,6 +461,26 @@ for record in sorted(custody.rglob("*")):
 # --------------------------------------------------------------- verdict
 records = [p for p in custody.rglob("*") if p.is_file()]
 print()
+
+# Per-channel floor. The global "zero checks" floor below is not enough on its
+# own: the inline-pin channel can keep producing checks while the receipt-table
+# channel has gone completely blind — renaming the `Path` key in every receipt
+# did exactly that, and the run still reported a green PASS on five inline pins.
+# A receipt exists to declare pins, so receipts present and NOTHING read out of
+# any of their tables means the format moved, not that the pins are fine.
+if receipts and not table_read:
+    print(
+        f"custody-pin-check: FAIL — {len(receipts)} custody receipt(s) present but not one "
+        "table pin was read. The table format has moved and this check no longer sees it; "
+        "any pins verified below came from elsewhere and do not cover the receipts."
+    )
+    failures += 1
+
+if noted:
+    for line in noted:
+        print(line)
+    print(f"  ({len(noted)} pin(s) not attached to a path — not verified, not counted)")
+    print()
 if failures:
     print(f"custody-pin-check: FAIL — {failures} problem(s), {checks} pin(s) verified")
     sys.exit(1)

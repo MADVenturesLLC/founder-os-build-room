@@ -120,7 +120,11 @@ npm run test:custody:macos
 npm run gate:path-audit             # required check
 npm run gate:attribution-selftest   # required check, parser regression cases
 npm run gate:verify-check           # required check — unverified checks count as failing (docs/verify-gate-integrity.md)
+```
 
+### Not a required check
+
+```bash
 # The custody pin gate. The records under
 # docs/planning/command-journal/custody/ cite each other by blob id, SHA-256,
 # byte and line count, and one publishes a sed recipe for a hash-pinned
@@ -130,7 +134,11 @@ npm run gate:verify-check           # required check — unverified checks count
 # pins. It is deliberately NOT a required check: making it one is a
 # repository-settings change and a Founder act.
 npm run gate:custody-pin-check
+```
 
+### Takes an argument, or is not a CI step
+
+```bash
 # The contract integrity gate. It scans the authorizing contract DOCUMENT,
 # which lives outside this repository, so it takes the path explicitly and is
 # not a CI step.
