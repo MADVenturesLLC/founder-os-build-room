@@ -47,7 +47,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: advisory-reviewers-${{ github.event.pull_request.head.ref }}
+  group: advisory-reviewers-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 env:
@@ -97,9 +97,9 @@ jobs:
               # Line-boundary cut left nothing; keep the raw byte cut.
               head -c 400000 /tmp/pr.diff | iconv -c -f utf-8 -t utf-8 > /tmp/pr.diff.trunc
             fi
+            echo "::warning::PR diff truncated for review; $(wc -c < /tmp/pr.diff.trunc) bytes remain"
             printf '\n\n[diff truncated at 400000 bytes]\n' >> /tmp/pr.diff.trunc
             mv /tmp/pr.diff.trunc /tmp/pr.diff
-            echo "::warning::PR diff truncated for review; $(wc -c < /tmp/pr.diff) bytes remain"
           fi
 
       # ---- gemini reviewer (generate only) ----
@@ -225,6 +225,7 @@ jobs:
           for attempt in 1 2; do
             if REVIEW=$(cd "$WORK" && printf 'The diff is:\n\n---\n%s\n---' "$(cat /tmp/pr.diff)" \
                 | timeout 480 claude -p --model "$CLAUDE_MODEL" --tools "" \
+                    --disallowedTools "Bash,Write,Edit,WebFetch,WebSearch" \
                     --append-system-prompt "$SYSTEM" 2>/tmp/claude_err.log); then
               break
             fi
@@ -259,7 +260,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-      id-token: write   # required by actions/create-github-app-token
     env:
       PR_NUMBER: ${{ needs.review.outputs.pr_number }}
       HEAD_SHA: ${{ needs.review.outputs.head_sha }}
@@ -271,6 +271,10 @@ jobs:
           CLAUDE_B64: ${{ needs.review.outputs.claude_b64 }}
         run: |
           set -euo pipefail
+          if [ -z "${PR_NUMBER:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "::error::review job produced no PR identity; nothing can be posted"
+            exit 1
+          fi
           if [ -n "${GEMINI_B64:-}" ]; then
             printf '%s' "$GEMINI_B64" | base64 -d > /tmp/gemini_body.md
             echo "gemini=present" >> "$GITHUB_OUTPUT"
@@ -285,7 +289,7 @@ jobs:
           fi
 
       - name: Mint gemini reviewer installation token
-        if: ${{ steps.bodies.outputs.gemini == 'present' }}
+        if: ${{ !cancelled() && steps.bodies.outputs.gemini == 'present' }}
         id: gemini-token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1, resolved 2026-09-15 (run 34916086704)
         with:
@@ -293,7 +297,7 @@ jobs:
           private-key: ${{ secrets.GEMINI_REVIEWER_APP_PRIVATE_KEY }}
 
       - name: Post gemini review
-        if: ${{ steps.bodies.outputs.gemini == 'present' && steps.gemini-token.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.bodies.outputs.gemini == 'present' && steps.gemini-token.outcome == 'success' }}
         id: gemini
         env:
           GH_TOKEN: ${{ steps.gemini-token.outputs.token }}
