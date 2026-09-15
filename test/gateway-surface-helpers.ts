@@ -107,6 +107,29 @@ export interface Surface {
 
 const openServers: Server[] = [];
 
+/**
+ * `server.close()` alone waits for every keep-alive socket to end on its
+ * own — several real seconds per test, left to Node's and the client's
+ * idle timeouts. `closeAllConnections()` destroys every socket
+ * immediately, including one still mid-request, so callers MUST await
+ * their last response before calling this.
+ */
+function closeServer(server: Server): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      // A double close() is a harmless no-op, matching the prior
+      // always-resolves behavior; anything else is a real failure the
+      // caller should see rather than have silently swallowed.
+      if (error != null && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+    server.closeAllConnections();
+  });
+}
+
 export async function startSurface(
   overrides: Record<string, string> = {},
   pool: Pool = stubPool(),
@@ -137,15 +160,13 @@ export async function startSurface(
     config,
     close: async () => {
       await gateway.stop();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await closeServer(server);
     },
   };
 }
 
 export async function closeAllSurfaces(): Promise<void> {
-  await Promise.all(
-    openServers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
-  );
+  await Promise.all(openServers.map((server) => closeServer(server)));
 }
 
 export function bearer(token: string = SURFACE_TOKEN): Record<string, string> {

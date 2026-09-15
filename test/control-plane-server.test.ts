@@ -48,6 +48,29 @@ interface Harness {
 const openServers: Server[] = [];
 
 /**
+ * `server.close()` alone waits for every keep-alive socket to end on its
+ * own — several real seconds per test, left to Node's and the client's
+ * idle timeouts. `closeAllConnections()` destroys every socket
+ * immediately, including one still mid-request, so callers MUST await
+ * their last response before calling this.
+ */
+function closeServer(server: Server): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      // A double close() is a harmless no-op, matching the prior
+      // always-resolves behavior; anything else is a real failure the
+      // caller should see rather than have silently swallowed.
+      if (error != null && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+    server.closeAllConnections();
+  });
+}
+
+/**
  * A pool stub that answers the handful of statements leadership issues, so the
  * gateway surface in these tests is the REAL one and only the database is
  * stubbed — which is this suite's premise everywhere else too.
@@ -124,22 +147,12 @@ async function start(pool: Pool, store: PostgresLedgerStore): Promise<Harness> {
   return {
     url: `http://127.0.0.1:${port}`,
     gateway,
-    close: () =>
-      new Promise<void>((resolve) => {
-        server.close(() => resolve());
-      }),
+    close: () => closeServer(server),
   };
 }
 
 after(async () => {
-  await Promise.all(
-    openServers.map(
-      (server) =>
-        new Promise<void>((resolve) => {
-          server.close(() => resolve());
-        }),
-    ),
-  );
+  await Promise.all(openServers.map((server) => closeServer(server)));
 });
 
 /** `Response.json()` is `unknown` under strict TS; read it once, typed. */
