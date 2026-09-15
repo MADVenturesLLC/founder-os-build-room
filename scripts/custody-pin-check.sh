@@ -78,6 +78,35 @@
 # candidate paths for one inline pin, a duplicated table key — is a FAILURE
 # rather than a guess.
 #
+# WHAT COVERAGE THIS CLAIMS, because a green run must not imply more.
+#
+#   Covered: every pin declared in a `CUSTODY-RECEIPT-*.md` table, and inline
+#   pins written `sha256 <hex>`, `sha256: <hex>` or `sha256=<hex>` near a path
+#   under `docs/planning/command-journal/`.
+#
+#   NOT covered: hashes written `SHA-256: <hex>` in running prose. The records
+#   use that form too, and this check does not read it — they are not verified
+#   and, unlike the notes below, not even reported. Measured on 2026-09-15:
+#   27 such hashes across the custody tree, of which 6 resolve to a file
+#   present in this repository:
+#
+#     AMENDMENT-pr2b-test-role-fixture-r2-20260910.md  lines 15, 16, 17, 19
+#       -> pr2b-storage-architecture-r6.md, pr2b-implementation-plan-r1.md,
+#          pr2b-implementation-plan-r1-addendum-01.md,
+#          FOUNDER-AUTHORIZATION-pr2b-gate1-ISSUANCE-RECEIPT-20260910.md
+#     FOUNDER-AUTHORIZATION-pr2b-gate3-PROPOSED-ISSUANCE-RECEIPT-20260913.md
+#       lines 29, 41
+#       -> DRAFT-founder-authorization-...-r3-20260913.md,
+#          FOUNDER-RULING-...-complete-replacement-source-20260913.txt
+#
+#   This is a scope decision, not an oversight. Prose can spell a hash any
+#   number of ways, and each widening of the inline matcher has revealed
+#   another spelling; widening it again would pull ~21 further hashes out of
+#   2600-line prose documents into a channel whose path-attribution window is
+#   four lines, which produces false failures on correct records. The
+#   receipt-table channel is complete and tested; the inline channel is a
+#   bounded bonus and says so rather than implying it is exhaustive.
+#
 # A second stated exemption: the published recipes read committed truth
 # (`git show "$REF:$P"`), and this check reads the WORKING TREE instead. `P=` is
 # compared against the Path row so the recipe cannot name a different file, but
@@ -869,5 +898,9 @@ if checks == 0:
     print("custody-pin-check: PASS — custody directory is empty, nothing to verify")
     sys.exit(0)
 print(f"custody-pin-check: PASS — {checks} declared pin(s) verified")
+print(
+    "  coverage: receipt tables, and inline pins written `sha256`, `sha256:` or\n"
+    "            `sha256=`. Hashes written `SHA-256:` in prose are NOT read —\n"
+    "            not verified and not reported. See this script's header.\n")
 sys.exit(0)
 PY
