@@ -19,7 +19,8 @@ name: advisory-reviewers
 # if either reviewer fails to produce a review.
 #
 # Bots produced:
-#   - gemini-3.8-flash-medium  -> reviews post under gemini-reviewer-madventures[bot]
+#   - gemini (model/effort from the job env; marker gemini-3.8-flash-medium)
+#                              -> reviews post under gemini-reviewer-madventures[bot]
 #   - claude-opus-5            -> reviews post under claude-reviewer-madventures[bot]
 
 on:
@@ -31,7 +32,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  id-token: write   # required by actions/create-github-app-token@v1
+  id-token: write   # required by actions/create-github-app-token
 
 concurrency:
   group: advisory-reviewers-${{ github.event.pull_request.head.ref }}
@@ -41,6 +42,9 @@ jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      GEMINI_MODEL: gemini-3.8-flash
+      GEMINI_EFFORT: medium
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -66,6 +70,10 @@ jobs:
           # Size guard: keep the prompt within model input limits.
           if [ "$(wc -c < /tmp/pr.diff)" -gt 400000 ]; then
             head -c 400000 /tmp/pr.diff | head -n -1 > /tmp/pr.diff.trunc
+            if [ ! -s /tmp/pr.diff.trunc ]; then
+              # No newline in the first 400000 bytes; keep the raw cut.
+              head -c 400000 /tmp/pr.diff > /tmp/pr.diff.trunc
+            fi
             printf '\n\n[diff truncated at 400000 bytes]\n' >> /tmp/pr.diff.trunc
             mv /tmp/pr.diff.trunc /tmp/pr.diff
             echo "::warning::PR diff truncated for review; $(wc -c < /tmp/pr.diff) bytes remain"
@@ -74,6 +82,7 @@ jobs:
       # ---- gemini reviewer ----
 
       - name: Mint gemini reviewer installation token
+        if: ${{ !cancelled() && steps.diff.outcome == 'success' }}
         id: gemini-token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1, resolved 2026-09-15 (run 34916086704)
         with:
@@ -81,12 +90,11 @@ jobs:
           private-key: ${{ secrets.GEMINI_REVIEWER_APP_PRIVATE_KEY }}
 
       - name: Review as gemini reviewer (model and effort from env)
+        if: ${{ !cancelled() && steps.diff.outcome == 'success' }}
         id: gemini
         timeout-minutes: 20
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-3.8-flash
-          GEMINI_EFFORT: medium
           GH_TOKEN: ${{ steps.gemini-token.outputs.token }}
           PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
           HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
@@ -112,12 +120,13 @@ jobs:
           printf 'Authorization: Bearer %s\n' "$GEMINI_API_KEY" > /tmp/gemini_auth.h
           trap 'rm -f /tmp/gemini_auth.h' EXIT
           URL="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-          # Retry 429 / 5xx / transport failure with backoff (15s, 30s).
+          # Retry 429 / 5xx / transport failure with backoff (15s, 30s);
+          # 3 x 180s plus backoff stays well inside the 20-minute step cap.
           attempt=0
           HTTP=000
           while :; do
             attempt=$((attempt + 1))
-            HTTP=$(curl -sS --max-time 360 \
+            HTTP=$(curl -sS --max-time 180 \
               -o /tmp/gemini_resp.json -w '%{http_code}' \
               -H @/tmp/gemini_auth.h \
               -H "Content-Type: application/json" \
@@ -136,6 +145,12 @@ jobs:
           if [ "$HTTP" != "200" ]; then
             echo "::error::gemini API returned HTTP $HTTP after $attempt attempt(s)"
             echo "response body (first 2000 bytes):"
+            head -c 2000 /tmp/gemini_resp.json 2>/dev/null || true
+            echo
+            exit 1
+          fi
+          if ! jq -e . /tmp/gemini_resp.json >/dev/null 2>&1; then
+            echo "::error::gemini response was not JSON"
             head -c 2000 /tmp/gemini_resp.json 2>/dev/null || true
             echo
             exit 1
@@ -178,7 +193,7 @@ jobs:
 
       - name: Install Claude Code CLI
         if: ${{ !cancelled() && steps.diff.outcome == 'success' }}
-        run: npm install -g @anthropic-ai/claude-code@latest 2>&1 | tail -3
+        run: npm install -g @anthropic-ai/claude-code@2.1.272 2>&1 | tail -3
 
       - name: Mint claude reviewer installation token
         if: ${{ !cancelled() && steps.diff.outcome == 'success' }}
@@ -240,7 +255,7 @@ jobs:
         run: |
           gemini="${{ steps.gemini.outputs.status }}"
           claude="${{ steps.claude.outputs.status }}"
-          echo "advisory-reviewers: gemini-3.8-flash-medium=$gemini, claude-opus-5=$claude"
+          echo "advisory-reviewers: gemini ($GEMINI_MODEL, $GEMINI_EFFORT)=$gemini, claude-opus-5=$claude"
           case "$gemini:$claude" in
             posted:posted)
               exit 0
