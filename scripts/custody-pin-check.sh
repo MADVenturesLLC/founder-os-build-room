@@ -78,6 +78,12 @@
 # candidate paths for one inline pin, a duplicated table key — is a FAILURE
 # rather than a guess.
 #
+# One stated exemption: an EMPTY custody directory passes. Nothing is declared,
+# so nothing is unverified, and this gate does not assert that records must
+# exist — no other gate does either, so deleting the directory is not caught
+# here. Said out loud because an unstated exemption to a "no silent pass" rule
+# is itself a silent pass.
+#
 # Usage:   scripts/custody-pin-check.sh [repo-root]
 #          (repo-root defaults to the repository containing this script)
 #          scripts/custody-pin-check.sh selftest
@@ -143,7 +149,21 @@ selftest_case() {
   t="$(mktemp -d)"
   selftest_fixture "$t"
   c="$t/docs/planning/command-journal/custody"
-  ( cd "$t" && eval "$mutate" ) >/dev/null 2>&1
+  # A mutation that silently fails to apply leaves a pristine fixture, and any
+  # case expecting exit 0 then goes green having tested nothing. So its exit
+  # status is checked AND the fixture is required to have actually changed.
+  local before after mrc
+  before="$(find "$t/docs" -type f -exec sha256sum {} + | sort | sha256sum)"
+  ( cd "$t" && eval "$mutate" ) >/dev/null 2>&1; mrc=$?
+  after="$(find "$t/docs" -type f -exec sha256sum {} + | sort | sha256sum)"
+  if [[ "$mutate" != ":" ]] && { [[ "$mrc" != 0 ]] || [[ "$before" == "$after" ]]; }; then
+    printf '  FAIL %s — the mutation did not apply (exit %s), so this case tested nothing\n' \
+      "$name" "$mrc"
+    selftest_failures=$((selftest_failures + 1))
+    selftest_ran=$((selftest_ran + 1))
+    rm -rf "$t"
+    return
+  fi
   out="$(bash "$SELFTEST_SELF" "$t" 2>&1)"; rc=$?
   if [[ "$rc" == "$want" ]] && printf '%s' "$out" | grep -qF -- "$needle"; then
     printf '  ok   %s\n' "$name"
@@ -223,6 +243,14 @@ run_selftest() {
     "not one table declared a Path row" \
     "mv docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.txt"
 
+  selftest_case "an uppercase INLINE digest is verified, not passed over invisibly" 0 \
+    "inline pin on sample.txt" \
+    "printf '\\nPinned: docs/planning/command-journal/custody/sample.txt\\n  sha256 %s\\n' \"\$(sha256sum docs/planning/command-journal/custody/sample.txt | cut -d\" \" -f1 | tr a-f A-F)\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "a recipe reading a different file than the Path row is refused" 1 \
+    "would verify a hash no reader reproduces" \
+    "printf '\\nP=docs/planning/command-journal/custody/other.txt\\n' >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
   selftest_case "an inline pin with no path nearby is noted, not counted, not failed" 0 \
     "not verified, not counted" \
     "printf '\\nSuperseded revision:\\n  sha256 %s\\n' \"\$(printf '1%.0s' {1..64})\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
@@ -240,7 +268,12 @@ run_selftest() {
 # gets one clear message instead of a wall of per-case mismatches. sha256sum is
 # here because the selftest fixtures use it; on macOS it is `shasum -a 256`, and
 # GNU sed is absent too, so this check is a Linux/coreutils gate either way.
-for tool in python3 git sed sha256sum; do
+required_tools=(python3 git sed)
+# sha256sum is used only by the selftest fixtures; the real path hashes through
+# python's hashlib. Demanding it on every run would blame a tool the check being
+# run does not need.
+[[ "${1:-}" == "selftest" ]] && required_tools+=(sha256sum)
+for tool in "${required_tools[@]}"; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "custody-pin-check: required tool not found: $tool" >&2
     echo "custody-pin-check: this check needs GNU sed and coreutils." >&2
@@ -344,25 +377,36 @@ def run_recipe(expr, target):
         ["sed", "--sandbox", "-n", "-e", expr, "--", str(target)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
-    chunks, total = [], 0
+    chunks, errchunks, total = [], [], 0
     deadline = time.monotonic() + RECIPE_TIMEOUT
+    # Both pipes are drained together. Draining stdout alone deadlocks a recipe
+    # that writes more than the pipe buffer to stderr: sed blocks on stderr,
+    # stdout never becomes readable, and the real diagnostic surfaces 30s later
+    # as a timeout instead of as the message sed actually produced.
+    open_pipes = [proc.stdout, proc.stderr]
     try:
-        while True:
+        while open_pipes:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise RecipeLimit(f"did not finish in {RECIPE_TIMEOUT}s")
-            ready, _, _ = select.select([proc.stdout], [], [], remaining)
+            ready, _, _ = select.select(open_pipes, [], [], remaining)
             if not ready:
                 raise RecipeLimit(f"did not finish in {RECIPE_TIMEOUT}s")
-            chunk = proc.stdout.read1(65536)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > RECIPE_MAX_BYTES:
-                raise RecipeLimit(
-                    f"produced more than {RECIPE_MAX_BYTES} bytes; no custody record "
-                    "is remotely this large, so the recipe is looping")
-            chunks.append(chunk)
+            for pipe in ready:
+                chunk = pipe.read1(65536)
+                if not chunk:
+                    open_pipes.remove(pipe)
+                    continue
+                if pipe is proc.stderr:
+                    if sum(map(len, errchunks)) < 65536:
+                        errchunks.append(chunk)
+                    continue
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > RECIPE_MAX_BYTES:
+                    raise RecipeLimit(
+                        f"produced more than {RECIPE_MAX_BYTES} bytes; no custody record "
+                        "is remotely this large, so the recipe is looping")
         proc.wait(timeout=max(0.1, deadline - time.monotonic()))
     except (RecipeLimit, subprocess.TimeoutExpired) as exc:
         proc.kill()
@@ -370,10 +414,9 @@ def run_recipe(expr, target):
         raise RecipeLimit(str(exc) if isinstance(exc, RecipeLimit)
                           else f"did not finish in {RECIPE_TIMEOUT}s") from None
     finally:
-        err = proc.stderr.read()
         proc.stdout.close()
         proc.stderr.close()
-    return proc.returncode, b"".join(chunks), err
+    return proc.returncode, b"".join(chunks), b"".join(errchunks)
 
 
 def blob_id_of(path):
@@ -411,12 +454,24 @@ ROW = re.compile(r"^\|\s*(?P<key>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$")
 # The quoted expression of a published `sed -n '<expr>' ...` recipe, captured
 # verbatim so it can be handed straight back to sed.
 SED_EXPR = re.compile(r"sed -n '(?P<expr>[^']*)'")
+# The published recipes give sed NO filename operand — they pipe into it
+# (`git show "$REF:$P" | sed -n '...'`), and the file is named by the `P=`
+# assignment above. So the checker supplies the file itself, and that would
+# silently diverge from what a reader runs if `P=` named a different file than
+# the table's Path row. This captures `P=` so the two can be compared.
+P_ASSIGN = re.compile(r"^\s*P=(?P<path>\S+)\s*$", re.M)
 
 
 def hex_of(text, minimum, maximum):
     """A declared digest, casefolded. Uppercase is a rendering choice, not a
-    defect; reporting it as "declares no hash" would blame the wrong thing."""
-    m = re.search(rf"\b([0-9a-fA-F]{{{minimum},{maximum}}})\b", text)
+    defect; reporting it as "declares no hash" would blame the wrong thing.
+
+    A backtick-quoted span wins over a bare one: these records write digests in
+    backticks, and a loose search can otherwise latch onto an incidental
+    hex-looking word elsewhere in the cell.
+    """
+    quoted = re.search(rf"`([0-9a-fA-F]{{{minimum},{maximum}}})`", text)
+    m = quoted or re.search(rf"\b([0-9a-fA-F]{{{minimum},{maximum}}})\b", text)
     return m.group(1).lower() if m else None
 
 
@@ -486,7 +541,7 @@ receipts = sorted(custody.rglob("CUSTODY-RECEIPT-*.md"))
 # was added for. The cost is that a custody directory holding records but no
 # receipt at all is red; that is loud and one commit to fix, which is the
 # trade this whole script exists to make.
-md_records = sorted(p for p in custody.rglob("*") if p.is_file())
+records_present = sorted(p for p in custody.rglob("*") if p.is_file())
 path_rows_seen = 0
 
 for receipt in receipts:
@@ -498,6 +553,7 @@ for receipt in receipts:
     # expression is ambiguous: this script will not guess which table row a
     # given recipe belongs to.
     exprs = sorted({m.group("expr") for m in SED_EXPR.finditer(text)})
+    recipe_paths = {m.group("path").strip("\"'`") for m in P_ASSIGN.finditer(text)}
 
     for block in table_blocks(lines):
         rows = [ROW.match(l) for l in block]
@@ -556,7 +612,9 @@ for receipt in receipts:
             k = key.lower()
 
             if k.startswith("git blob id"):
-                declared = hex_of(value, 7, 40)
+                # 12, not 7: a 7-character prefix is a weak pin and widens the
+                # chance of matching an unrelated hex-looking token.
+                declared = hex_of(value, 12, 40)
                 if declared is None:
                     fail(f"{name}: blob row declares no hash: {value!r}")
                 elif actual["blob"].startswith(declared):
@@ -574,6 +632,11 @@ for receipt in receipts:
                     continue
                 if len(exprs) > 1:
                     fail(f"{rel}: publishes {len(exprs)} distinct sed recipes — which one applies to {name} is ambiguous")
+                    continue
+                if recipe_paths and decl_path not in recipe_paths:
+                    fail(f"{name}: the published recipe reads {sorted(recipe_paths)} "
+                         f"but this row declares {decl_path} — running it against the "
+                         "row's file would verify a hash no reader reproduces")
                     continue
                 expr = exprs[0]
                 # `-e` forces expr to be read as the script even when it
@@ -663,7 +726,10 @@ for receipt in receipts:
 # custody/: the R4 brief and its addendum pin the implementation plan and its
 # addenda, which live one directory up.
 JOURNAL_REL = "docs/planning/command-journal/"
-PIN = re.compile(r"\bsha256\s+([0-9a-f]{64})\b")
+# Case-insensitive to match hex_of on the table side. A case-sensitive pattern
+# left an uppercase inline digest neither verified NOR noted — invisible rather
+# than reported, which is the one outcome this channel is not allowed to have.
+PIN = re.compile(r"\bsha256\s+([0-9a-fA-F]{64})\b")
 PATHS = re.compile(rf"({re.escape(JOURNAL_REL)}[^\s`'\"*)\]]+)")
 TRIM = "`,;)]*.\"'"
 # A directory prefix left dangling at end of line: these records wrap long
@@ -697,6 +763,7 @@ for record in sorted(custody.rglob("*")):
       # be a silent coverage loss inside the one channel whose whole principle
       # is that nothing goes unreported.
       for pin in PIN.finditer(line):
+        pin_hex = pin.group(1).lower()
         # Candidate paths: this line, then backwards a short way. Ambiguity is
         # reported rather than resolved by picking the nearest.
         candidates = []
@@ -716,12 +783,12 @@ for record in sorted(custody.rglob("*")):
             # is not passed over in silence either: an unattached pin is
             # printed, uncounted, so the output states what it did not verify
             # rather than implying full coverage.
-            noted.append(f"  note {rel.name}:{i + 1}: pin {pin.group(1)[:8]}… names no "
+            noted.append(f"  note {rel.name}:{i + 1}: pin {pin_hex[:8]}… names no "
                          "journal path nearby (a superseded revision or an extract, "
                          "both of which name no file — or a moved file)")
             continue
         if len(candidates) > 1:
-            fail(f"{rel.name}: pin {pin.group(1)[:8]}… has {len(candidates)} candidate paths nearby — ambiguous")
+            fail(f"{rel.name}: pin {pin_hex[:8]}… has {len(candidates)} candidate paths nearby — ambiguous")
             continue
         named = candidates[0]
         target, why = resolve(named)
@@ -729,10 +796,10 @@ for record in sorted(custody.rglob("*")):
             fail(f"{rel.name}: inline pin names an unusable path ({why}): {named}")
             continue
         got = sha256_of(target)
-        if pin.group(1) == got:
+        if pin_hex == got:
             ok(f"{rel.name}: inline pin on {Path(named).name} = {got[:8]}…")
         else:
-            fail(f"{rel.name}: inline pin on {Path(named).name} declared {pin.group(1)}, actual {got}")
+            fail(f"{rel.name}: inline pin on {Path(named).name} declared {pin_hex}, actual {got}")
 
 # --------------------------------------------------------------- verdict
 records = [p for p in custody.rglob("*") if p.is_file()]
@@ -744,12 +811,13 @@ print()
 # exactly that, and the run still reported a green PASS on five inline pins.
 # The floor counts `Path` ROWS ACTUALLY READ, not receipt filenames: keying it
 # off a CUSTODY-RECEIPT-* glob would itself be defeated by renaming the files.
-if md_records and path_rows_seen == 0:
+if records_present and path_rows_seen == 0:
     print(
-        f"custody-pin-check: FAIL — {len(md_records)} record(s) present but not one "
-        "table declared a Path row. Either the receipts were renamed out of the "
-        "CUSTODY-RECEIPT-*.md pattern this check scans, or the table format moved; either "
-        "way any pins counted came from elsewhere and do not cover the tables."
+        f"custody-pin-check: FAIL — {len(records_present)} record(s) present but not one "
+        "table declared a Path row. This measures only that nothing was read; the cause "
+        "is either receipts renamed out of the CUSTODY-RECEIPT-*.md pattern scanned here, "
+        "or a table format that moved. Any pins counted came from elsewhere and do not "
+        "cover the tables."
     )
     failures += 1
 
