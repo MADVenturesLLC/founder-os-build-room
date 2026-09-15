@@ -24,6 +24,7 @@ import type { PostgresLedgerStore } from '../packages/control-plane/src/store.js
 import { loadConfig } from '../packages/control-plane/src/config.js';
 import { initialLedger } from '../packages/ledger/src/index.js';
 import { makeEvent } from './helpers.js';
+import { closeServer } from './support/close-server.js';
 
 // The room endpoints now require this on `Authorization: Bearer`. Declared
 // before CONFIG because CONFIG reads it.
@@ -46,29 +47,6 @@ interface Harness {
 }
 
 const openServers: Server[] = [];
-
-/**
- * `server.close()` alone waits for every keep-alive socket to end on its
- * own — several real seconds per test, left to Node's and the client's
- * idle timeouts. `closeAllConnections()` destroys every socket
- * immediately, including one still mid-request, so callers MUST await
- * their last response before calling this.
- */
-function closeServer(server: Server): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    server.close((error) => {
-      // A double close() is a harmless no-op, matching the prior
-      // always-resolves behavior; anything else is a real failure the
-      // caller should see rather than have silently swallowed.
-      if (error != null && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-    server.closeAllConnections();
-  });
-}
 
 /**
  * A pool stub that answers the handful of statements leadership issues, so the
