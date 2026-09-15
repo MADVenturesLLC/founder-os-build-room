@@ -11,9 +11,9 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `dd0af5920ba382e2a0bb48ac09844f55f5e69d45` |
-| SHA-256 (as landed) | `9c369e1722a577b3dd923836656a85594065fccf46ec2a072c40d13031b7e1d3` |
-| Bytes / lines (as landed) | 7103 bytes, 125 lines |
+| Git blob id (as landed) | `97e863dbdef353a6c03c8568e496a7c5b0cbfb99` |
+| SHA-256 (as landed) | `2e041820db827cbdc7a4aee408941d435a5c1e230cb5cb47525fa84910eb2ade` |
+| Bytes / lines (as landed) | 7407 bytes, 131 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
 | Authored by | the `builder` seat in session, 2026-09-15, at Founder direction ("write the document review brief") |
@@ -47,10 +47,10 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `9342b24948f0b808253864ac5b69bd56c7bbad16` |
-| SHA-256 | `6261afb2cb1056532d586d3b3ab9fb2fb7546c22bf224bea677252de884a5c81` |
-| Bytes | 7109 |
-| Lines | 152 (`wc -l`) |
+| Git blob id | `aac0fc711796fb065785d9073a889416e5f8af25` |
+| SHA-256 | `64dd52600fc02c746a60d77e13f08d38404b2771b6f254cc4f36eb88cd91e5a1` |
+| Bytes | 7329 |
+| Lines | 155 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
 
@@ -65,10 +65,10 @@ reviewer, and the review's standing is qualified accordingly:
   the `B-R14` to `B-R16` renumbering to the act. The reviewer
   nonetheless recorded it correctly as D-1's act, so correction 3
   changed nothing about the answer.
-- Q6 and Q7 were answered without the plan identity correction 2
-  supplies. The reviewer located plan r1 independently and cited
-  section 5.2 lines 455 and 456, which is the location correction 2
-  names.
+- Q6 was answered without the plan identity correction 2 supplies. The
+  reviewer located plan r1 independently and cited section 5.2 lines 455
+  and 456, which is the location correction 2 names. Q7 never needed the
+  plan; the brief implied it did.
 - The brief's ambiguous hunk figure went unremarked. The reviewer
   reported the live count of 14 at default context where the brief said
   18 and did not flag the difference. Correction 1 explains it.

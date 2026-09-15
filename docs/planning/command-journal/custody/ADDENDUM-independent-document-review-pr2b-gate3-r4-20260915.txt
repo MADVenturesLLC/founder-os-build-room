@@ -5,13 +5,16 @@ STATUS: NEVER DISPATCHED. HISTORICAL RECORD, NOT LIVE INSTRUCTION.
 The review it was written to correct completed on 2026-09-15 from the
 brief alone, returning PASS. Nothing below reached the reviewer. Read
 the imperatives here as what the brief should have said, not as
-directions to anyone. The custody receipt records which corrections
-would have mattered and which did not.
+directions to anyone. The custody receipt records what the reviewer
+wrote about each; it does not claim what a corrected brief would have
+produced, and neither does this.
 
 This addendum corrects and extends the brief
   sha256 3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f
 which was dispatched before these defects were found. Read it alongside
-the brief; where the two conflict, this governs.
+the brief. Where the two conflict, this is the corrected reading — a
+statement about what the brief should have said, not an instruction
+that overrode anything at review time, since none of it was sent.
 
 Called "brief addendum 1" throughout, to keep it distinct from plan
 addendum 02, a different document cited below.
