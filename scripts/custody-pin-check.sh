@@ -25,13 +25,30 @@
 #      `SHA-256 (dispatched text)` value, the extraction is run by invoking
 #      `sed` itself with the expression the receipt publishes, not a
 #      reimplementation of it, so a regex metacharacter in the anchor behaves
-#      here exactly as it does for a reader. The one addition is `--sandbox`,
-#      which disables sed's `e`, `r` and `w` commands. Those execute shell
-#      commands and read/write arbitrary files; the expression is scraped out
-#      of a repository document, so without the flag anyone able to open a
-#      pull request could run commands on the CI runner. No extraction recipe
-#      uses `e`/`r`/`w`, and `--sandbox` changes nothing about how an address
-#      range or a `p` behaves, so the published recipe is still what runs.
+#      here exactly as it does for a reader. The additions are `--sandbox`,
+#      which disables sed's `e`, `r` and `w` commands, and `-e <expr> --`,
+#      which stops an expression beginning with `-` being parsed as an option
+#      such as `-i` or `-f`.
+#
+#      WHAT THAT DOES AND DOES NOT BOUND, stated precisely because an earlier
+#      wording here got it wrong. It said that without the flag "anyone able to
+#      open a pull request could run commands on the CI runner". That is false.
+#      This workflow triggers on `pull_request`, and a pull request supplies
+#      the whole checkout — including THIS SCRIPT. An author willing to be
+#      hostile edits the script, not a receipt, and no flag inside the script
+#      constrains them; what constrains them is the job's `contents: read`
+#      token, `persist-credentials: false`, and the absence of secrets.
+#
+#      What these flags do bound is what a DOCUMENT can do wherever the script
+#      itself is trusted: the `push: main` run, and `npm run
+#      gate:custody-pin-check` on a contributor's own machine. There a custody
+#      record is data, the script is not, and a recipe of `1e curl ...` or
+#      `-i s/a/b/` would otherwise execute or overwrite. That is a real and
+#      narrower guarantee than the sentence it replaces.
+#
+#      No extraction recipe uses `e`/`r`/`w`, and `--sandbox` changes nothing
+#      about how an address range or a `p` behaves, so the published recipe is
+#      still what runs.
 #      The resulting hash, byte count and line count are then compared against
 #      the declared ones. Those counts are taken over sed's stdout exactly as
 #      emitted, trailing newline included — the same bytes a reader piping the
@@ -232,7 +249,7 @@ selftest_case() {
 # touching either counter, and a simulated failure produced "PASS — 19 case(s)"
 # and exit 0. Counting cases against a fixed expectation closes the class
 # rather than that one instance.
-SELFTEST_EXPECTED_CASES=20
+SELFTEST_EXPECTED_CASES=21
 
 run_selftest() {
   selftest_failures=0
@@ -284,6 +301,10 @@ run_selftest() {
   selftest_case "an inline pin whose path is wrapped across two lines is read" 0 \
     "inline pin on sample.txt" \
     "printf '\\nPinned:\\n  path docs/planning/command-journal/\\n       custody/sample.txt\\n  sha256 %s\\n' \"\$(sha256sum docs/planning/command-journal/custody/sample.txt | cut -d\" \" -f1)\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "a dispatched row with no byte or line count is reported" 1 \
+    "no byte or line count" \
+    "sed -i 's/^| SHA-256 (dispatched text) | \\(\`[0-9a-f]*\`\\).*/| SHA-256 (dispatched text) | \\1 |/' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
 
   selftest_case "an unrecognized SHA-256 qualifier is refused, not guessed at" 1 \
     "qualifier this check does not recognize" \
@@ -784,6 +805,15 @@ for receipt in receipts:
                 else:
                     fail(f"{name}: extract declared {declared}, actual {got}")
                 d_bytes, d_lines = int_before(value, "bytes"), int_before(value, "lines")
+                if d_bytes is None and d_lines is None:
+                    # The bytes/lines ROWS fail hard when their value will not
+                    # parse, under the header's "a row whose key names a pin but
+                    # whose value will not parse is a FAILURE" rule. This row
+                    # carried the opposite treatment: a dispatched hash with no
+                    # counts beside it verified the hash and said nothing about
+                    # the two numbers it did not check. Same rule now applies.
+                    fail(f"{name}: dispatched-text row declares a hash but no byte or "
+                         f"line count, so neither was checked: {value!r}")
                 if d_bytes is not None:
                     if d_bytes == len(extract):
                         ok(f"{name}: extract bytes {d_bytes}")
