@@ -265,8 +265,7 @@ export async function startNodeServer(
      * their last response before calling this. `closeIdleConnections()`
      * looked like the more conservative choice (it leaves an in-flight
      * socket alone) but proved unreliable in practice: repeated local runs
-     * still saw multi-second hangs, presumably because whatever marks a
-     * socket idle hadn't run yet at the point this fires.
+     * still saw multi-second hangs with it in place.
      */
     close: () =>
       new Promise<void>((resolve, reject) => {
