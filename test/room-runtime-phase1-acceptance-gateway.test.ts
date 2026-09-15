@@ -726,9 +726,15 @@ function sha256Of(relativePath: string): string {
  * The acceptance enablement adds no dependency and edits no existing Phase 1
  * suite; a later, separately authorized change to any of these updates its pin
  * deliberately in the same change.
+ *
+ * Pin updates since the execution base:
+ * - `package-lock.json` — Founder Act "MiMo→MAD Long-Horizon Core v0"
+ *   (2026-09-15), Lane 1 authorizes registering the new workspace package
+ *   `@build-room/completion-gate`; the lockfile gained exactly its two link
+ *   entries and nothing else.
  */
 const REGRESSION_PINS: Record<string, string> = {
-  'package-lock.json': '82a2ff7c9bb9430571fcb0180ea9cb270d30c098a020b97e45827a53169c2c38',
+  'package-lock.json': 'b54d74b54908f8dda63e6acb986ef4dd8f9de7780971696feb5895b6da711b75',
   'test/room-runtime-phase1-ipc.test.ts': '33ce996e00f098dd4fc0802624f973498b0562639d5230ad4851ae2fe2663c42',
   'test/room-runtime-phase1-runtime.test.ts': 'b93f375be4eb30d8735008eae86c18d4573d8e15c0067e36d9091784a82e087c',
   'test/room-runtime-phase1-protocol.test.ts': '6a0ec8d4bc1fd25330ce7e5bfe242f3d1b8951891cd484b485f5358e044f3c7b',

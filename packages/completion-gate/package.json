@@ -1,0 +1,10 @@
+{
+  "name": "@build-room/completion-gate",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build Room completion gate v0 (Founder Act MiMo→MAD Long-Horizon Core v0, 2026-09-15, Lane 1) — an independent verifier seat judging a worker's completion claim against a bound success-contract IR, never against the worker's narrative. Pure, zero I/O, library-only.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts"
+}
