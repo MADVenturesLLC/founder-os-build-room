@@ -43,7 +43,8 @@ const CLIENT_REQUEST_TIMEOUT_MS = 1_000;
  * one is "enough for ordinary test traffic" and the other is "enough
  * headroom that a real round trip under load won't be mistaken for a
  * lost write"; tuning one for its own reasons shouldn't silently move
- * the other.
+ * the other. Also independent of `DEMOTION_CLIENT_TIMEOUT_MS` for the
+ * same reason, even though it too now shares the value.
  */
 const FINALIZATION_RECONCILIATION_TIMEOUT_MS = 1_000;
 // Commit indices (1-based, counting `afterCommit` fires) in a clean
@@ -560,19 +561,26 @@ function routeExpectation(input: Phase3AttemptInput): Phase3EvidenceExpectation 
 }
 
 /** Default `requestTimeoutMs` for `runWithPostCommitDemotion` — see its doc comment. */
-const DEMOTION_CLIENT_TIMEOUT_MS = 50;
+const DEMOTION_CLIENT_TIMEOUT_MS = 1_000;
 
 /**
  * `requestTimeoutMs` bounds the client's own reconciliation deadline (a
  * small multiple of it — see `Phase3ControlPlaneClient.writeReconciliationDeadline`).
- * The default (`DEMOTION_CLIENT_TIMEOUT_MS`) is tight because most callers
- * demote at a point that can never reconcile: the node stays demoted for
- * the rest of the test, so every extra millisecond here is pure wait
- * before the correct `unresolved_commit`. `FINALIZATION_COMMIT` is the
- * exception — a demotion on the LAST write of an otherwise successful run.
- * That write commits before the fence rejects the response, so the
- * client's job is to discover the already-committed state by re-exporting,
- * not to keep failing, and it needs real time to do that under load.
+ * It has to stay generous everywhere in this helper, not just for
+ * `FINALIZATION_COMMIT`: every fenced write's route commits
+ * unconditionally, even a pure idempotent replay of an already-applied
+ * write (see `createAttemptFenced`/`appendEventFenced` in
+ * `packages/control-plane/src/phase3-run.ts`), so a too-tight budget that
+ * client-side-aborts a merely slow-but-successful response causes the
+ * client to retry it — and that retry's harmless replay still fires
+ * `afterCommit` again. That injects an extra counted commit before the
+ * step this test actually means to target, silently demoting the wrong
+ * write. (This is how `FINALIZATION_COMMIT`'s original 50ms budget being
+ * unsafe generalized: under load it corrupted the commit *count* here,
+ * not just that one write's outcome.) `FINALIZATION_COMMIT` additionally
+ * needs `FINALIZATION_RECONCILIATION_TIMEOUT_MS` at its own call site
+ * because, unlike every other scenario, its demoted write is expected to
+ * actually succeed via reconciliation rather than stay unresolved.
  */
 async function runWithPostCommitDemotion(demoteAtCommit: number, requestTimeoutMs = DEMOTION_CLIENT_TIMEOUT_MS) {
   let phase3Commits = 0;
