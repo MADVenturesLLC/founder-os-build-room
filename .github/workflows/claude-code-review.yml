@@ -221,6 +221,18 @@ jobs:
           # `docs/planning/command-journal/custody/` will keep exceeding a low
           # cap however correct they are. 80 is twice the observed ceiling,
           # not a removal of the bound: a runaway review still terminates.
+          # (Earlier wording here said "twice the observed ceiling". That was
+          # wrong: the observed ceiling was 49 turns, so 80 is about 1.6x it.
+          # 40 was the cap, not an observation.)
+          #
+          # This raises the cliff, it does not remove it. The lossiness is
+          # structural: a successful review is discarded because the action
+          # exits non-zero on turn count and `post` is skipped, and that is
+          # still true at 81 turns. The durable fix is to persist the review
+          # output before the turn-count check — an artifact, or `if:
+          # always()` on the consuming job — which is a larger change to a
+          # workflow whose header requires founder approval, so it is left as
+          # follow-up rather than folded in here.
           claude_args: |
             --max-turns 80
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"

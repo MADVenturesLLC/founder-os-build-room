@@ -22,10 +22,12 @@
 #      row, the declared `Git blob id`, `SHA-256`, byte count and line count are
 #      recomputed from the named file and compared.
 #   2. Dispatched-text extraction. Where a receipt declares a
-#      `SHA-256 (dispatched text)` value, the extraction is performed with the
-#      `sed` anchor the receipt itself publishes — the script runs the recipe
-#      the document gives its readers, rather than a private reimplementation —
-#      and the resulting hash, byte count and line count are compared.
+#      `SHA-256 (dispatched text)` value, the extraction is run by invoking
+#      `sed` itself with the anchor the receipt publishes — literally the
+#      command the document gives its readers, not a reimplementation of it,
+#      so a regex metacharacter in the anchor behaves here exactly as it does
+#      for a reader. The resulting hash, byte count and line count are then
+#      compared against the declared ones.
 #   3. Inline banner pins. Anywhere a custody file names another custody file
 #      and pins it with a `sha256 <64 hex>` line within the next few lines, the
 #      pinned value is recomputed and compared. This covers the brief's landing
@@ -35,10 +37,20 @@
 # or authorized; it checks only that the record's own arithmetic holds. It is
 # not a Tier-2 review and not a merge authorization.
 #
+# NO SILENT PASS. A verifier that can exit green having verified nothing is the
+# same defect it exists to catch, moved one level up. So: a custody directory
+# holding records but yielding zero verified pins is a FAILURE, not a pass; a
+# row whose key names a pin but whose value will not parse is a FAILURE, not a
+# skip; and anything ambiguous — two extraction recipes in one receipt, two
+# candidate paths for one inline pin, a duplicated table key — is a FAILURE
+# rather than a guess.
+#
 # Usage:   scripts/custody-pin-check.sh [repo-root]
 #          (repo-root defaults to the repository containing this script)
-# Exit:    0 = every declared pin matches the file it names
-#          1 = one or more pins are stale (each is printed with expected/actual)
+# Exit:    0 = every declared pin matches the file it names, and at least one
+#              pin was verified
+#          1 = one or more pins are stale, unparseable, ambiguous, or the
+#              directory holds records but declares no pins at all
 #          2 = the script could not run (missing directory, missing tool)
 
 set -uo pipefail
@@ -72,7 +84,7 @@ import sys
 from pathlib import Path
 
 custody = Path(os.environ["CUSTODY_DIR"])
-repo_root = Path(os.environ["REPO_ROOT"])
+repo_root = Path(os.environ["REPO_ROOT"]).resolve()
 
 failures = 0
 checks = 0
@@ -90,49 +102,58 @@ def ok(msg):
     print(f"  ok   {msg}")
 
 
-def sha256_of(path: Path) -> str:
+def sha256_of(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def blob_id_of(path: Path) -> str:
-    out = subprocess.run(
+def blob_id_of(path):
+    """git hash-object, with its exit status honoured rather than ignored."""
+    r = subprocess.run(
         ["git", "hash-object", str(path)],
-        capture_output=True,
-        text=True,
-        cwd=str(repo_root),
+        capture_output=True, text=True, cwd=str(repo_root),
     )
-    return out.stdout.strip()
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip() or None
 
 
-def resolve(decl_path: str):
-    """A path as declared in a record, resolved against the repository root."""
-    candidate = repo_root / decl_path
-    return candidate if candidate.is_file() else None
+def resolve(decl_path):
+    """Resolve a declared path against the repo root, refusing to leave it.
+
+    Declared paths come from repository documents, which on a fork-triggered
+    run are contributor-controlled. Only hashes are ever compared, so the
+    blast radius is small, but an absolute or escaping path is a defect in
+    the record either way and is reported as one.
+    """
+    if os.path.isabs(decl_path) or decl_path.startswith("~"):
+        return None, "absolute path"
+    candidate = (repo_root / decl_path).resolve()
+    try:
+        candidate.relative_to(repo_root)
+    except ValueError:
+        return None, "path escapes the repository"
+    if not candidate.is_file():
+        return None, "no such file"
+    return candidate, None
 
 
-HEX64 = r"[0-9a-f]{40,64}"
 ROW = re.compile(r"^\|\s*(?P<key>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$")
+# The quoted expression of a published `sed -n '<expr>' ...` recipe, captured
+# verbatim so it can be handed straight back to sed.
+SED_EXPR = re.compile(r"sed -n '(?P<expr>[^']*)'")
 
 
-def rows_of(block):
-    for line in block:
-        m = ROW.match(line)
-        if m:
-            yield m.group("key"), m.group("value")
-
-
-def first_hex(text, width=64):
-    m = re.search(rf"\b([0-9a-f]{{{width}}})\b", text)
+def hex_of(text, minimum, maximum):
+    m = re.search(rf"\b([0-9a-f]{{{minimum},{maximum}}})\b", text)
     return m.group(1) if m else None
 
 
-def first_int_before(text, word):
+def int_before(text, word):
     m = re.search(rf"\b(\d[\d,]*)\s+{word}\b", text)
     return int(m.group(1).replace(",", "")) if m else None
 
 
 def table_blocks(lines):
-    """Contiguous runs of table rows."""
     block, out = [], []
     for line in lines:
         if line.startswith("|"):
@@ -146,120 +167,147 @@ def table_blocks(lines):
     return out
 
 
-# ---------------------------------------------------------------- 1 & 2
+def is_pin_key(k):
+    k = k.lower()
+    return (
+        k.startswith("git blob id")
+        or k.startswith("sha-256")
+        or k.startswith("bytes")
+        or k.startswith("lines")
+    )
+
+
+# ------------------------------------------------- receipts: tables + extract
 for receipt in sorted(custody.glob("CUSTODY-RECEIPT-*.md")):
-    lines = receipt.read_text(encoding="utf-8").splitlines()
+    text = receipt.read_text(encoding="utf-8")
+    lines = text.splitlines()
     rel = receipt.relative_to(repo_root)
 
-    # The sed anchor the receipt publishes for its extraction recipe, if any.
-    anchor = None
-    for line in lines:
-        m = re.search(r"sed -n '/\^(?P<pat>[^/]+)\$/,\$p'", line)
-        if m:
-            anchor = m.group("pat")
-            break
+    # Every published extraction recipe in this receipt. More than one distinct
+    # expression is ambiguous: this script will not guess which table row a
+    # given recipe belongs to.
+    exprs = sorted({m.group("expr") for m in SED_EXPR.finditer(text)})
 
     for block in table_blocks(lines):
-        fields = dict(rows_of(block))
-        decl_path = None
-        for key, value in fields.items():
-            if key.strip().lower() == "path":
-                decl_path = value.strip().strip("`")
-        if not decl_path:
+        rows = [ROW.match(l) for l in block]
+        rows = [(m.group("key").strip(), m.group("value").strip()) for m in rows if m]
+        keys = [k for k, _ in rows]
+        dupes = {k for k in keys if keys.count(k) > 1}
+        if dupes:
+            fail(f"{rel}: table has duplicated key(s) {sorted(dupes)} — cannot read unambiguously")
             continue
 
-        target = resolve(decl_path)
+        decl = {k: v for k, v in rows}
+        path_key = next((k for k in decl if k.lower() == "path"), None)
+        if path_key is None:
+            continue
+        decl_path = decl[path_key].strip("`")
+
+        target, why = resolve(decl_path)
         if target is None:
-            fail(f"{rel}: declares a path that does not resolve: {decl_path}")
+            fail(f"{rel}: declared path unusable ({why}): {decl_path}")
             continue
 
-        actual_sha = sha256_of(target)
-        actual_blob = blob_id_of(target)
         raw = target.read_bytes()
-        actual_bytes = len(raw)
-        actual_lines = raw.count(b"\n")
+        actual = {
+            "sha": hashlib.sha256(raw).hexdigest(),
+            "blob": blob_id_of(target),
+            "bytes": len(raw),
+            "lines": raw.count(b"\n"),
+        }
+        if actual["blob"] is None:
+            fail(f"{rel}: git hash-object failed for {decl_path}")
+            continue
         name = Path(decl_path).name
 
-        for key, value in fields.items():
-            k = key.strip()
+        for key, value in rows:
+            if not is_pin_key(key):
+                continue
+            k = key.lower()
 
-            if k.lower().startswith("git blob id"):
-                declared = first_hex(value, 40)
+            if k.startswith("git blob id"):
+                declared = hex_of(value, 7, 40)
                 if declared is None:
-                    fail(f"{rel}: {name}: blob row has no hash: {value}")
-                elif declared == actual_blob:
+                    fail(f"{name}: blob row declares no hash: {value!r}")
+                elif actual["blob"].startswith(declared):
                     ok(f"{name}: blob {declared}")
                 else:
-                    fail(f"{name}: blob declared {declared}, actual {actual_blob}")
+                    fail(f"{name}: blob declared {declared}, actual {actual['blob']}")
 
-            elif "dispatched text" in k.lower() and k.lower().startswith("sha-256"):
-                declared = first_hex(value)
-                if anchor is None:
-                    fail(f"{rel}: declares a dispatched-text hash but publishes no sed anchor")
+            elif k.startswith("sha-256") and "dispatched" in k:
+                declared = hex_of(value, 64, 64)
+                if declared is None:
+                    fail(f"{name}: dispatched-text row declares no hash: {value!r}")
                     continue
-                text = target.read_text(encoding="utf-8")
-                extract, taking = [], False
-                for line in text.splitlines(keepends=True):
-                    if not taking and line.rstrip("\n") == anchor:
-                        taking = True
-                    if taking:
-                        extract.append(line)
-                blob = "".join(extract).encode("utf-8")
+                if len(exprs) == 0:
+                    fail(f"{rel}: declares a dispatched-text hash but publishes no sed recipe")
+                    continue
+                if len(exprs) > 1:
+                    fail(f"{rel}: publishes {len(exprs)} distinct sed recipes — which one applies to {name} is ambiguous")
+                    continue
+                expr = exprs[0]
+                r = subprocess.run(["sed", "-n", expr, str(target)], capture_output=True)
+                if r.returncode != 0:
+                    fail(f"{name}: published recipe `sed -n '{expr}'` failed: {r.stderr.decode(errors='replace').strip()}")
+                    continue
+                blob = r.stdout
                 if not blob:
-                    fail(f"{name}: sed anchor {anchor!r} matches no line — extraction is empty")
+                    fail(f"{name}: published recipe `sed -n '{expr}'` extracted nothing")
                     continue
                 got = hashlib.sha256(blob).hexdigest()
                 if declared == got:
-                    ok(f"{name}: dispatched extract {got[:8]}… via anchor {anchor!r}")
+                    ok(f"{name}: extract {got[:8]}… via published recipe sed -n '{expr}'")
                 else:
-                    fail(f"{name}: dispatched extract declared {declared}, actual {got}")
-                d_bytes = first_int_before(value, "bytes")
-                d_lines = first_int_before(value, "lines")
-                if d_bytes is not None and d_bytes != len(blob):
-                    fail(f"{name}: dispatched bytes declared {d_bytes}, actual {len(blob)}")
-                elif d_bytes is not None:
-                    ok(f"{name}: dispatched bytes {d_bytes}")
+                    fail(f"{name}: extract declared {declared}, actual {got}")
+                d_bytes, d_lines = int_before(value, "bytes"), int_before(value, "lines")
+                if d_bytes is not None:
+                    (ok if d_bytes == len(blob) else fail)(
+                        f"{name}: extract bytes {d_bytes}" if d_bytes == len(blob)
+                        else f"{name}: extract bytes declared {d_bytes}, actual {len(blob)}")
                 n = blob.count(b"\n")
-                if d_lines is not None and d_lines != n:
-                    fail(f"{name}: dispatched lines declared {d_lines}, actual {n}")
-                elif d_lines is not None:
-                    ok(f"{name}: dispatched lines {d_lines}")
+                if d_lines is not None:
+                    (ok if d_lines == n else fail)(
+                        f"{name}: extract lines {d_lines}" if d_lines == n
+                        else f"{name}: extract lines declared {d_lines}, actual {n}")
 
-            elif k.lower().startswith("sha-256"):
-                declared = first_hex(value)
+            elif k.startswith("sha-256"):
+                declared = hex_of(value, 64, 64)
                 if declared is None:
-                    fail(f"{rel}: {name}: SHA-256 row has no hash: {value}")
-                elif declared == actual_sha:
+                    fail(f"{name}: SHA-256 row declares no hash: {value!r}")
+                elif declared == actual["sha"]:
                     ok(f"{name}: sha256 {declared[:8]}…")
                 else:
-                    fail(f"{name}: sha256 declared {declared}, actual {actual_sha}")
+                    fail(f"{name}: sha256 declared {declared}, actual {actual['sha']}")
 
-            elif k.lower().startswith("bytes"):
-                d_bytes = first_int_before(value, "bytes")
-                if d_bytes is None:
-                    m = re.match(r"^(\d[\d,]*)$", value.strip())
+            else:  # bytes / lines
+                d_bytes = int_before(value, "bytes")
+                d_lines = int_before(value, "lines")
+                if d_bytes is None and k.startswith("bytes"):
+                    m = re.match(r"^(\d[\d,]*)\b", value)
                     d_bytes = int(m.group(1).replace(",", "")) if m else None
-                if d_bytes is not None and d_bytes != actual_bytes:
-                    fail(f"{name}: bytes declared {d_bytes}, actual {actual_bytes}")
-                elif d_bytes is not None:
-                    ok(f"{name}: bytes {d_bytes}")
-                d_lines = first_int_before(value, "lines")
-                if d_lines is not None and d_lines != actual_lines:
-                    fail(f"{name}: lines declared {d_lines}, actual {actual_lines}")
-                elif d_lines is not None:
-                    ok(f"{name}: lines {d_lines}")
+                if d_lines is None and k.startswith("lines"):
+                    m = re.match(r"^(\d[\d,]*)\b", value)
+                    d_lines = int(m.group(1).replace(",", "")) if m else None
+                if d_bytes is None and d_lines is None:
+                    # The key names a pin, so an unreadable value is a hole in
+                    # the verification, not something to pass over quietly.
+                    fail(f"{name}: '{key}' names a pin but its value does not parse: {value!r}")
+                    continue
+                if d_bytes is not None:
+                    (ok if d_bytes == actual["bytes"] else fail)(
+                        f"{name}: bytes {d_bytes}" if d_bytes == actual["bytes"]
+                        else f"{name}: bytes declared {d_bytes}, actual {actual['bytes']}")
+                if d_lines is not None:
+                    (ok if d_lines == actual["lines"] else fail)(
+                        f"{name}: lines {d_lines}" if d_lines == actual["lines"]
+                        else f"{name}: lines declared {d_lines}, actual {actual['lines']}")
 
-            elif k.lower().startswith("lines"):
-                m = re.match(r"^(\d[\d,]*)", value.strip())
-                if m:
-                    d_lines = int(m.group(1).replace(",", ""))
-                    if d_lines != actual_lines:
-                        fail(f"{name}: lines declared {d_lines}, actual {actual_lines}")
-                    else:
-                        ok(f"{name}: lines {d_lines}")
-
-# ---------------------------------------------------------------- 3
+# ------------------------------------------------------------- inline pins
 CUSTODY_REL = "docs/planning/command-journal/custody/"
+PIN = re.compile(r"\bsha256\s+([0-9a-f]{64})\b")
+PATHS = re.compile(rf"({re.escape(CUSTODY_REL)}[^\s`'\"*)\]]+)")
+TRIM = "`,;)]*.\"'"
+
 for record in sorted(custody.iterdir()):
     if not record.is_file():
         continue
@@ -269,34 +317,50 @@ for record in sorted(custody.iterdir()):
         continue
     rel = record.relative_to(repo_root)
     for i, line in enumerate(lines):
-        m = re.search(rf"({re.escape(CUSTODY_REL)}\S+)", line)
-        if not m:
+        pin = PIN.search(line)
+        window_start = i
+        if not pin:
             continue
-        named = m.group(1).rstrip("`,;)")
-        for lookahead in lines[i + 1 : i + 4]:
-            pin = re.search(r"\bsha256\s+([0-9a-f]{64})\b", lookahead)
-            if not pin:
-                continue
-            target = resolve(named)
-            if target is None:
-                fail(f"{rel}: inline pin names a path that does not resolve: {named}")
+        # Candidate paths: this line, then backwards a short way. Ambiguity is
+        # reported rather than resolved by picking the nearest.
+        candidates = []
+        for j in range(i, max(-1, i - 4), -1):
+            found = [m.group(1).rstrip(TRIM) for m in PATHS.finditer(lines[j])]
+            if found:
+                candidates = found
                 break
-            got = sha256_of(target)
-            if pin.group(1) == got:
-                ok(f"{rel.name}: inline pin on {Path(named).name} = {got[:8]}…")
-            else:
-                fail(
-                    f"{rel.name}: inline pin on {Path(named).name} "
-                    f"declared {pin.group(1)}, actual {got}"
-                )
-            break
+        if not candidates:
+            continue
+        if len(candidates) > 1:
+            fail(f"{rel.name}: pin {pin.group(1)[:8]}… has {len(candidates)} candidate paths nearby — ambiguous")
+            continue
+        named = candidates[0]
+        target, why = resolve(named)
+        if target is None:
+            fail(f"{rel.name}: inline pin names an unusable path ({why}): {named}")
+            continue
+        got = sha256_of(target)
+        if pin.group(1) == got:
+            ok(f"{rel.name}: inline pin on {Path(named).name} = {got[:8]}…")
+        else:
+            fail(f"{rel.name}: inline pin on {Path(named).name} declared {pin.group(1)}, actual {got}")
 
+# --------------------------------------------------------------- verdict
+records = [p for p in custody.iterdir() if p.is_file()]
 print()
 if failures:
-    print(f"custody-pin-check: FAIL — {failures} stale pin(s), {checks} verified")
+    print(f"custody-pin-check: FAIL — {failures} problem(s), {checks} pin(s) verified")
     sys.exit(1)
 if checks == 0:
-    print("custody-pin-check: PASS — no declared pins found to verify")
+    if records:
+        # The silent-pass hole this script exists to close, one level up.
+        print(
+            f"custody-pin-check: FAIL — {len(records)} record(s) present but no pin was "
+            "verified. Either the records declare none, or the format moved and this "
+            "check no longer reads them. Passing here would verify nothing."
+        )
+        sys.exit(1)
+    print("custody-pin-check: PASS — custody directory is empty, nothing to verify")
     sys.exit(0)
 print(f"custody-pin-check: PASS — {checks} declared pin(s) verified")
 sys.exit(0)

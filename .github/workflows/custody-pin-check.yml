@@ -23,7 +23,11 @@
 # would skip.
 #
 # Changes to this workflow's triggers, permissions, or steps require founder
-# approval before merge (same rule class as DEC-20260718-02 clause 4).
+# approval before merge. That rule is DEC-20260718-02 clause 4; this comment
+# restates where the rule comes from and does not create it — a file cannot
+# establish an approval requirement about itself, any more than it can make
+# itself a required check. Enforcement, if wanted beyond the decision record,
+# belongs in the ruleset or CODEOWNERS.
 
 name: Custody Pin Check
 
@@ -36,13 +40,24 @@ on:
 permissions:
   contents: read
 
+# One live run per pull request: a newer push cancels a check still running on
+# a superseded head, matching `advisory-reviewers.yml`. The timeout is a
+# backstop for a pathological record, not a performance target — the whole
+# check runs in a few seconds.
+concurrency:
+  group: custody-pin-check-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 jobs:
   custody-pin-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
-        # Pinned to the commit `v4` resolved to on 2026-09-01 (tag v4.4.0),
-        # matching the pin already used by this repository's other workflows.
+        # Pinned to the commit `v4` resolved to on 2026-09-01 (tag v4.4.0).
+        # Verified, not assumed: this is the only `actions/checkout@` pin in
+        # `.github/workflows/`, byte-identical across ci.yml,
+        # attribution-shape.yml, claude-code-review.yml and path-audit.yml.
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
