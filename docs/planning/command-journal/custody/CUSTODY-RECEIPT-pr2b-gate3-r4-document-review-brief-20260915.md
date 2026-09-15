@@ -11,12 +11,12 @@ PROPOSED and unsigned on `main`.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/BRIEF-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id (as landed) | `d1d65d775b5bfb437d68e05f5080f367e9ef0149` |
-| SHA-256 (as landed) | `c658149e865e72df15c4244063a169101a7673287a8b9f7326e3ce9396643fcc` |
-| Bytes / lines (as landed) | 8388 bytes, 145 lines |
+| Git blob id (as landed) | `30b9d5cac8fb0c5e62bb42435cf05a16b877d201` |
+| SHA-256 (as landed) | `aa830acd2c842b67b2a233acf38d2a918214f012b98fcf058d35108ea2d98427` |
+| Bytes / lines (as landed) | 8847 bytes, 152 lines |
 | SHA-256 (dispatched text) | `3aac089e2e5cf5d68d8c56d96ec05768719f74a4beb216ce2cbe52a7ac3eca9f`, 6142 bytes, 110 lines |
 | Trailing newline | present (single LF) |
-| Authored by | the `builder` seat in session, 2026-09-15, at Founder direction ("write the document review brief") |
+| Authored by | the `builder` seat, Actor-Id `session:claude-code/session_01KbHPzSthh2gKc8TtsG4QRp`, 2026-09-15, at Founder direction ("write the document review brief") |
 | Dispatched | the Founder reports sending this text to the operator before it was landed |
 
 The landed file is the dispatched text preceded by a supersession
@@ -59,10 +59,10 @@ reviewer worked from is citable by hash rather than by recollection.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/ADDENDUM-independent-document-review-pr2b-gate3-r4-20260915.txt` |
-| Git blob id | `5cc95f110df94e94127d0d0e50abce19dca0d74e` |
-| SHA-256 | `58a5a8f210dcae3d815d1110a4e36f8360b42ecea957d2c4fdac07bafd7d1849` |
-| Bytes | 11519 |
-| Lines | 235 (`wc -l`) |
+| Git blob id | `650e476a199401a1e123d0b5345af007de4c13eb` |
+| SHA-256 | `9724d13446a45b13caeb7d3fc8ddb3b927a58ede0f26c11eae136604dee2c75e` |
+| Bytes | 11857 |
+| Lines | 241 (`wc -l`) |
 | Trailing newline | present (single LF) |
 | Dispatched | **never — overtaken, see below** |
 
@@ -131,8 +131,12 @@ historical record of why. An R5 would also need to settle what correction
 Artifact: 466469cc…`, still applies when the verdict is
 `CANNOT COMPLETE — BRIEF DEFECT`, which is not a verdict on the act.
 
-These are observations about what the reviewer wrote, not claims about
-what a corrected brief would have produced. That counterfactual is not
+These are observations about what the reviewer wrote. With one stated
+exception they are not claims about what a corrected brief would have
+produced: the ranking above — that of the five assessable corrections,
+correction 4's absence is the likeliest to have changed the reviewer's
+behaviour — is a comparative judgement about the counterfactual, offered
+as a judgement and not as a finding. Nothing else here is. That counterfactual is not
 this seat's to assert: the same seat landed the artifact under review,
 wrote the brief, and wrote this receipt. The record keeps both the brief
 as dispatched and the defects found in it so a later reader can judge
@@ -169,7 +173,7 @@ nothing:
    would have had to fail the act for the builder's fault. A third
    first-line verdict, `CANNOT COMPLETE — BRIEF DEFECT`, is now
    available and is explicitly not a verdict on the act.
-6. **Repairs an unrunnable command.** The brief at line 59 as
+6. **Repairs an unrunnable command.** The brief at line 66 as
    landed, line 24 of the dispatched text, reads
    `git show origin/main:<path above> > /tmp/r4.md`. `<` and `>` are
    redirection operators, so bash dies with

@@ -164,7 +164,7 @@ CORRECTION 6 (HISTORICAL — NEVER DISPATCHED) — a command in the
 dispatched text does not run as written
 
 The brief's "Read it from committed truth, not a working tree" block
-gives, at line 59 of the brief as landed — line 24 of the dispatched
+gives, at line 66 of the brief as landed — line 24 of the dispatched
 text, the frame this addendum otherwise uses:
 
   git show origin/main:<path above> > /tmp/r4.md
@@ -224,8 +224,14 @@ above, made a second time in the same file.
   A third retraction, of the same class as the two above. An earlier
   revision of this section added "and whose precision it holds up as the
   standard". It does not: the brief's OUTPUT FORMAT, at its own line
-  132, names R3's repair round as the precision standard, and R3 is
-  given a blob id and SHA-256 at the brief's lines 63 to 65. The
+  139 as landed and line 97 of the dispatched text, names
+  R3's repair round as the precision standard, and R3 is given a blob
+  id and SHA-256 at the brief's lines 73 to 74 as landed,
+  lines 31 to 32 of the dispatched text. An earlier
+  revision of this paragraph cited lines 63 to 65, which are R1, R2 and
+  the R2 verdict note — a stale citation carried across a banner edit,
+  written inside the paragraph that retracts a mis-citation of this
+  same section. The
   artifact the brief actually holds up is citable in this repository.
   The receipt repeated this charge and no longer does.
 
