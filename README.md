@@ -139,6 +139,12 @@ npm run gate:custody-pin-check
 # throwaway repo, asserting that a moved format, an ambiguous record and
 # a hostile sed recipe each fail. Runs in CI ahead of the check above.
 npm run gate:custody-pin-selftest
+
+# Both of the above are Linux/GNU-only and exit 2 elsewhere. They execute
+# the sed recipe a record publishes rather than reimplementing it, which
+# needs GNU sed's --sandbox (a BSD/macOS sed cannot run them safely and
+# would read a GNU recipe differently anyway); the selftest fixtures also
+# use coreutils sha256sum. On macOS, run them in CI rather than locally.
 ```
 
 ### Takes an argument, or is not a CI step

@@ -78,6 +78,16 @@
 # candidate paths for one inline pin, a duplicated table key — is a FAILURE
 # rather than a guess.
 #
+# A second stated exemption: the published recipes read committed truth
+# (`git show "$REF:$P"`), and this check reads the WORKING TREE instead. `P=` is
+# compared against the Path row so the recipe cannot name a different file, but
+# `REF=` is deliberately NOT resolved: on a pull request that legitimately edits
+# a custody record, the working tree and `origin/main` differ by design, and
+# resolving REF would fail every such PR. The consequence is real and worth
+# naming — a stale or wrong REF in a record reproduces different bytes for a
+# reader while this check stays green. Verifying REF belongs to a check that
+# runs against the merged result, not against a PR head.
+#
 # One stated exemption: an EMPTY custody directory passes. Nothing is declared,
 # so nothing is unverified, and this gate does not assert that records must
 # exist — no other gate does either, so deleting the directory is not caught
@@ -137,7 +147,8 @@ selftest_fixture() {
     printf '| Lines | %s lines |\n' "$lines"
     printf '| SHA-256 (dispatched text) | `%s` — %s bytes, %s lines |\n' "$esha" "$ebytes" "$elines"
     printf '\nRecover the dispatched text with:\n\n'
-    printf "    sed -n '/^ANCHOR\$/,\$p' sample.txt | sha256sum\n"
+    printf '    P=%s\n' "$rel"
+    printf "    sed -n '/^ANCHOR\$/,\$p' | sha256sum\n"
   } > "$c/CUSTODY-RECEIPT-sample.md"
 }
 
@@ -249,7 +260,15 @@ run_selftest() {
 
   selftest_case "a recipe reading a different file than the Path row is refused" 1 \
     "would verify a hash no reader reproduces" \
-    "printf '\\nP=docs/planning/command-journal/custody/other.txt\\n' >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+    "sed -i 's|^    P=.*|    P=docs/planning/command-journal/custody/other.txt|' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "a recipe with no readable P= is reported, not silently unchecked" 1 \
+    "no readable \`P=\` assignment" \
+    "sed -i '/^    P=/d' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "an inline pin written with a colon is read, not passed over" 0 \
+    "inline pin on sample.txt" \
+    "printf '\\nPinned: docs/planning/command-journal/custody/sample.txt\\n  sha256: %s\\n' \"\$(sha256sum docs/planning/command-journal/custody/sample.txt | cut -d\" \" -f1)\" >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
 
   selftest_case "an inline pin with no path nearby is noted, not counted, not failed" 0 \
     "not verified, not counted" \
@@ -633,7 +652,16 @@ for receipt in receipts:
                 if len(exprs) > 1:
                     fail(f"{rel}: publishes {len(exprs)} distinct sed recipes — which one applies to {name} is ambiguous")
                     continue
-                if recipe_paths and decl_path not in recipe_paths:
+                if not recipe_paths:
+                    # `if recipe_paths and ...` would degrade to NO CHECK here:
+                    # any P= line the anchored pattern misses yields an empty
+                    # set and the cross-check quietly does not run. A receipt
+                    # that publishes a recipe owes a readable P=.
+                    fail(f"{rel}: publishes a sed recipe but no readable `P=` assignment, "
+                         "so which file the recipe reads cannot be confirmed against "
+                         f"{name}'s Path row")
+                    continue
+                if decl_path not in recipe_paths:
                     fail(f"{name}: the published recipe reads {sorted(recipe_paths)} "
                          f"but this row declares {decl_path} — running it against the "
                          "row's file would verify a hash no reader reproduces")
@@ -648,7 +676,7 @@ for receipt in receipts:
                 # edits f in place; with `-e ... --` it is rejected as an
                 # unknown command while a normal range still runs.
                 try:
-                    rc, blob, errout = run_recipe(expr, target)
+                    rc, extract, errout = run_recipe(expr, target)
                 except RecipeLimit as limit:
                     fail(f"{name}: published recipe `sed -n '{expr}'` {limit}")
                     continue
@@ -656,21 +684,21 @@ for receipt in receipts:
                     fail(f"{name}: published recipe `sed -n '{expr}'` failed: "
                          f"{errout.decode(errors='replace').strip()}")
                     continue
-                if not blob:
+                if not extract:
                     fail(f"{name}: published recipe `sed -n '{expr}'` extracted nothing")
                     continue
-                got = hashlib.sha256(blob).hexdigest()
+                got = hashlib.sha256(extract).hexdigest()
                 if declared == got:
                     ok(f"{name}: extract {got[:8]}… via published recipe sed -n '{expr}'")
                 else:
                     fail(f"{name}: extract declared {declared}, actual {got}")
                 d_bytes, d_lines = int_before(value, "bytes"), int_before(value, "lines")
                 if d_bytes is not None:
-                    if d_bytes == len(blob):
+                    if d_bytes == len(extract):
                         ok(f"{name}: extract bytes {d_bytes}")
                     else:
-                        fail(f"{name}: extract bytes declared {d_bytes}, actual {len(blob)}")
-                n = blob.count(b"\n")
+                        fail(f"{name}: extract bytes declared {d_bytes}, actual {len(extract)}")
+                n = extract.count(b"\n")
                 if d_lines is not None:
                     if d_lines == n:
                         ok(f"{name}: extract lines {d_lines}")
@@ -729,7 +757,7 @@ JOURNAL_REL = "docs/planning/command-journal/"
 # Case-insensitive to match hex_of on the table side. A case-sensitive pattern
 # left an uppercase inline digest neither verified NOR noted — invisible rather
 # than reported, which is the one outcome this channel is not allowed to have.
-PIN = re.compile(r"\bsha256\s+([0-9a-fA-F]{64})\b")
+PIN = re.compile(r"\bsha256[\s:=]+([0-9a-fA-F]{64})\b")
 PATHS = re.compile(rf"({re.escape(JOURNAL_REL)}[^\s`'\"*)\]]+)")
 TRIM = "`,;)]*.\"'"
 # A directory prefix left dangling at end of line: these records wrap long

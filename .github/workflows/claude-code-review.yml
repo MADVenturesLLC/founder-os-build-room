@@ -206,36 +206,28 @@ jobs:
           # argument parser, not to YAML — so it carries arguments only, and
           # the note below sits outside it as a real YAML comment.
           #
-          # --max-turns is 80, raised from 40 on 2026-09-15.
+          # --max-turns is 80, raised from 40.
           #
-          # THE LOSS MODE, which is the load-bearing part: when the cap is
-          # hit the review has already SUCCEEDED ("subtype": "success",
-          # "is_error": false) and the action fails the job on turn count
-          # alone. A non-zero exit skips `post`, so the finished review is
-          # thrown away and no comment appears. The cost of the cap is a lost
-          # review, not a bounded one. Observed on three consecutive heads of
-          # PR #48 at 44, 48 and 49 turns; per-head tallies live in that PR's
-          # history rather than here, where they would go stale.
+          # THE LOSS MODE: when the cap is hit the review has already SUCCEEDED
+          # and the action fails the job on turn count alone. A non-zero exit
+          # skips `post`, so the finished review is thrown away and no comment
+          # appears. The cost of the cap is a lost review, not a bounded one.
           #
-          # Turn usage scales with how much of a diff must be verified rather
-          # than read, so hash-dense governance records under
-          # `docs/planning/command-journal/custody/` will keep exceeding a low
-          # cap however correct they are. 80 is about 1.6x the highest count
-          # observed — still a bound, and still the only ceiling on a runaway
-          # review's cost.
+          # This raises the cliff, it does not remove it: a successful review is
+          # still discarded one turn past the cap, and the cap remains the only
+          # ceiling on a runaway review's cost. The durable fix is to persist the
+          # review output before the turn-count check, and it is NOT the
+          # one-liner it looks like: `post` below is gated on
+          # `needs.review.result == 'success'` AND a non-empty structured output,
+          # so `if: always()` alone changes nothing and the output is unset when
+          # the action exits non-zero. It needs the output persisted inside
+          # `review` first, then the gate relaxed — a behavioural change to this
+          # founder-approval-gated workflow, deferred on scope, not on the gate.
           #
-          # This raises the cliff, it does not remove it: at 81 turns a
-          # successful review is discarded exactly as before. The durable fix
-          # is to persist the review output before the turn-count check. It is
-          # NOT the one-liner it looks like: `post` below is gated on
-          # `needs.review.result == 'success' && needs.review.outputs.structured
-          # != ''`, so `if: always()` alone changes nothing, and the job output
-          # is not set when the action exits non-zero. It needs the output
-          # persisted inside `review` first, then the gate relaxed — a real
-          # behavioural change to this founder-approval-gated workflow, left as
-          # follow-up on grounds of SCOPE and of needing its own validation,
-          # not on grounds of the approval gate (raising --max-turns edits the
-          # same file under the same rule).
+          # The measurements behind the number (the heads, their turn counts and
+          # the date) are in PR #50, not restated here: dated prose in a comment
+          # nothing checks is the drift this repository's custody gate exists to
+          # make visible, and that argument applies to this file too.
           claude_args: |
             --max-turns 80
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
