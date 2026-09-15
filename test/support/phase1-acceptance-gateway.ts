@@ -214,11 +214,21 @@ export interface FixtureOutput {
 }
 
 /**
- * Emit one tick to each execution, slot-a then slot-b, every `intervalMs`.
- * The source never blocks on a viewer: `emitFixturePatch` fans out to bounded
- * per-viewer queues and disconnects an overflowing viewer on its own. An
- * emission failure (a stream that is no longer RUNNING) halts the timer and
- * is reported to the caller, never swallowed.
+ * Emit one tick to each execution, slot-a then slot-b, every `intervalMs` —
+ * but ONLY while the controlled fixture room's public projection shows at
+ * least one viewer with attachment state ATTACHED (Founder act, 2026-09-13:
+ * Run 02 harness correction). Each interval inspects `snapshot(roomId)` — the
+ * existing read-only RoomRuntime projection — and its `viewers[].attachment`
+ * facts; no private runtime structure is reached and no new production API
+ * exists. With zero actively attached viewers the interval emits nothing and
+ * does NOT increment the synthetic sequence, so no detached-viewer catch-up
+ * backlog accumulates merely because the acceptance runner is idle awaiting
+ * Founder interaction. The producer remains non-blocking: `emitFixturePatch`
+ * fans out to bounded per-viewer queues and disconnects an overflowing viewer
+ * on its own (the Gateway's normal backpressure behavior is unchanged). An
+ * emission failure (a stream that is no longer RUNNING), or a room that no
+ * longer exists, halts the timer and is reported to the caller, never
+ * swallowed.
  */
 export function beginFixtureOutput(
   rooms: RoomRuntime,
@@ -228,6 +238,17 @@ export function beginFixtureOutput(
 ): FixtureOutput {
   let sequence = 0;
   const timer = setInterval(() => {
+    // Viewer-presence gate (act §3): inspect the public projection only.
+    const snapshot = rooms.snapshot(roomId);
+    if (snapshot === null) {
+      // A vanished room is a failure, never "zero viewers attached": halt
+      // and report it, so a missing room can never masquerade as idle.
+      clearInterval(timer);
+      onError(new Error(`fixture room ${roomId} no longer exists`));
+      return;
+    }
+    const attached = snapshot.viewers.some((viewer) => viewer.attachment === 'ATTACHED');
+    if (!attached) return; // zero attached viewers: emit nothing, keep the sequence
     sequence += 1;
     try {
       for (const executionId of FIXTURE_EXECUTION_IDS) {
