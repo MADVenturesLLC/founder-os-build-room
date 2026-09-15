@@ -140,6 +140,13 @@ npm run gate:custody-pin-check
 # a hostile sed recipe each fail. Runs in CI ahead of the check above.
 npm run gate:custody-pin-selftest
 
+# Three outcomes when there is nothing to check, because the middle one
+# surprises people: a MISSING custody directory exits 2 (could not run); a
+# directory with no files at all passes; a directory holding only a
+# placeholder such as .gitkeep FAILS, because the placeholder counts as a
+# record while no table declares a Path row. Git cannot store an empty
+# directory, so the placeholder is the shape a repository actually uses.
+
 # Both of the above are Linux/GNU-only and exit 2 elsewhere. They execute
 # the sed recipe a record publishes rather than reimplementing it, which
 # needs GNU sed's --sandbox (a BSD/macOS sed cannot run them safely and

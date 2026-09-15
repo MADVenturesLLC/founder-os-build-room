@@ -264,7 +264,7 @@ selftest_case() {
 # touching either counter, and a simulated failure produced "PASS — 19 case(s)"
 # and exit 0. Counting cases against a fixed expectation closes the class
 # rather than that one instance.
-SELFTEST_EXPECTED_CASES=23
+SELFTEST_EXPECTED_CASES=24
 
 run_selftest() {
   selftest_failures=0
@@ -316,6 +316,18 @@ run_selftest() {
   selftest_case "a column-heading row is reported as a table-shape problem" 1 \
     "table shape not understood" \
     "printf '\\n| Path | Git blob id |\\n|---|---|\\n' >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  # The only exit-2 path the suite reaches. The header's nothing-to-check table
+  # claims "missing directory -> exit 2, could not run", and that claim was
+  # hand-verified; this makes it machine-verified, in a file whose premise is
+  # that asserted-but-untested claims rot. The sibling exit-2 paths — a non-git
+  # tree, a sed without --sandbox — are NOT covered: exercising them means
+  # mutating outside the fixture's docs/ tree, which the mutation-applied guard
+  # above reads as "did not apply". Closing that needs a harness change, and on
+  # this branch harness changes are where the defects came from.
+  selftest_case "a missing custody directory is could-not-run, not stale pins" 2 \
+    "no custody directory" \
+    "rm -rf docs/planning/command-journal/custody"
 
   selftest_case "an empty custody directory passes with nothing to verify" 0 \
     "nothing to verify" \
