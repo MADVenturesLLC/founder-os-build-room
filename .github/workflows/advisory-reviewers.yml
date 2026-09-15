@@ -40,6 +40,7 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -64,7 +65,7 @@ jobs:
           fi
           # Size guard: keep the prompt within model input limits.
           if [ "$(wc -c < /tmp/pr.diff)" -gt 400000 ]; then
-            head -c 400000 /tmp/pr.diff > /tmp/pr.diff.trunc
+            head -c 400000 /tmp/pr.diff | head -n -1 > /tmp/pr.diff.trunc
             printf '\n\n[diff truncated at 400000 bytes]\n' >> /tmp/pr.diff.trunc
             mv /tmp/pr.diff.trunc /tmp/pr.diff
             echo "::warning::PR diff truncated to 400000 bytes for review"
@@ -94,7 +95,8 @@ jobs:
             echo "::error::GEMINI_API_KEY missing; gemini reviewer cannot run"
             exit 1
           fi
-          SYSTEM='You are gemini-3.8-flash (medium effort), an advisory code reviewer for MADVenturesLLC/founder-os-build-room. Review the PR diff you are given. Output a single review body with: (1) one of PASS / PASS-WITH-ADVISORIES / FAIL / REQUEST_CHANGES as the first line, (2) a 1-3 sentence rationale, (3) zero or more bullet-pointed findings with file:line citations when applicable.'
+          umask 077
+          SYSTEM="You are $GEMINI_MODEL ($GEMINI_EFFORT effort), an advisory code reviewer for MADVenturesLLC/founder-os-build-room. Review the PR diff you are given. Output a single review body with: (1) one of PASS / PASS-WITH-ADVISORIES / FAIL / REQUEST_CHANGES as the first line, (2) a 1-3 sentence rationale, (3) zero or more bullet-pointed findings with file:line citations when applicable."
           jq -n \
             --arg model "$GEMINI_MODEL" \
             --arg effort "$GEMINI_EFFORT" \
@@ -106,10 +108,9 @@ jobs:
                 {role: "user", content: ("The diff is:\n\n---\n" + $diff + "\n---")}
               ]}' > /tmp/gemini_req.json
           # Key goes through a header file, not argv.
-          umask 077
           printf 'Authorization: Bearer %s\n' "$GEMINI_API_KEY" > /tmp/gemini_auth.h
           URL="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-          # Retry 429 / 5xx / transport failure with backoff (15s, 30s, 45s).
+          # Retry 429 / 5xx / transport failure with backoff (15s, 30s).
           attempt=0
           HTTP=000
           while :; do
@@ -123,7 +124,7 @@ jobs:
             case "$HTTP" in
               200) break ;;
               429|500|502|503|504|000)
-                if [ "$attempt" -ge 4 ]; then break; fi
+                if [ "$attempt" -ge 3 ]; then break; fi
                 echo "gemini API HTTP $HTTP on attempt $attempt; retrying"
                 sleep $((attempt * 15)) ;;
               *) break ;;
@@ -142,12 +143,18 @@ jobs:
             echo "::error::gemini reviewer returned empty output"
             exit 1
           fi
+          FINISH=$(jq -r '.choices[0].finish_reason // empty' /tmp/gemini_resp.json)
+          if [ "$FINISH" = "length" ]; then
+            echo "::warning::gemini response hit the output limit; posting it marked as cut off"
+            REVIEW="$(printf '%s\n\n(response cut off at the model output limit)' "$REVIEW")"
+          fi
           # Output guard: GitHub caps review bodies at 65536 chars.
           if [ "${#REVIEW}" -gt 60000 ]; then
             REVIEW="$(printf '%s\n\n(truncated)' "${REVIEW:0:60000}")"
           fi
-          # Marker is intentionally frozen for comment dedup; it is not
-          # derived from GEMINI_MODEL / GEMINI_EFFORT.
+          # Marker is a fixed reviewer identifier for consumers of these
+          # reviews; it is deliberately not derived from GEMINI_MODEL /
+          # GEMINI_EFFORT so a model bump does not change it.
           printf '<!-- advisory-reviewers:gemini-3.8-flash-medium -->\n\n%s\n' "$REVIEW" > /tmp/gemini_body.md
           gh api -X POST "repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
             -f event=COMMENT \
