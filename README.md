@@ -120,7 +120,43 @@ npm run test:custody:macos
 npm run gate:path-audit             # required check
 npm run gate:attribution-selftest   # required check, parser regression cases
 npm run gate:verify-check           # required check — unverified checks count as failing (docs/verify-gate-integrity.md)
+```
 
+### Not a required check
+
+```bash
+# The custody pin gate. The records under
+# docs/planning/command-journal/custody/ cite each other by blob id, SHA-256,
+# byte and line count, and one publishes a sed recipe for a hash-pinned
+# extract. All of it is hand-maintained and all of it fails silently — a stale
+# pin still looks like a pin. This recomputes every declaration from the file
+# it names, and fails rather than passing if it finds records but reads no
+# pins. It is deliberately NOT a required check: making it one is a
+# repository-settings change and a Founder act.
+npm run gate:custody-pin-check
+
+# The checker's own parser regression cases: synthetic records in a
+# throwaway repo, asserting that a moved format, an ambiguous record and
+# a hostile sed recipe each fail. Runs in CI ahead of the check above.
+npm run gate:custody-pin-selftest
+
+# Three outcomes when there is nothing to check, because the middle one
+# surprises people: a MISSING custody directory exits 2 (could not run); a
+# directory with no files at all passes; a directory holding only a
+# placeholder such as .gitkeep FAILS, because the placeholder counts as a
+# record while no table declares a Path row. Git cannot store an empty
+# directory, so the placeholder is the shape a repository actually uses.
+
+# Both of the above are Linux/GNU-only and exit 2 elsewhere. They execute
+# the sed recipe a record publishes rather than reimplementing it, which
+# needs GNU sed's --sandbox (a BSD/macOS sed cannot run them safely and
+# would read a GNU recipe differently anyway); the selftest fixtures also
+# use coreutils sha256sum. On macOS, run them in CI rather than locally.
+```
+
+### Takes an argument, or is not a CI step
+
+```bash
 # The contract integrity gate. It scans the authorizing contract DOCUMENT,
 # which lives outside this repository, so it takes the path explicitly and is
 # not a CI step.
