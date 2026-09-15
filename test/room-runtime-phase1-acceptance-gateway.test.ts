@@ -1273,8 +1273,12 @@ describe('AE-01 Run02 correction — viewer-presence-gated synthetic output', ()
     // 601-frame overflow. Run 02 idled ~5 minutes (601 ticks × 500ms); six
     // minutes of mock-idle time at the same cadence is a materially longer
     // idle window than the one that overflowed Run 02.
-    t.mock.timers.enable({ apis: ['setInterval'] });
     await withGateway(async (gateway) => {
+      // Enable mock timers AFTER gateway creation so only the fixture
+      // producer's cadence is mocked — never an interval a boot path might
+      // register (the acceptance harness starts no heartbeat cadence, but
+      // the mock must not sweep one in if that ever changes).
+      t.mock.timers.enable({ apis: ['setInterval'] });
       const rooms = gateway.daemon.rooms;
       const errors: unknown[] = [];
       const output = beginFixtureOutput(rooms, (error) => errors.push(error));
@@ -1282,6 +1286,7 @@ describe('AE-01 Run02 correction — viewer-presence-gated synthetic output', ()
         assert.equal(attachedViewerCount(rooms), 0, 'no viewer is attached at start');
         t.mock.timers.tick(6 * 60 * 1_000);
         assert.equal(output.ticks(), 0, 'no tick was emitted at all');
+        assert.equal(attachedViewerCount(rooms), 0, 'daemon viewer state unchanged after the mocked idle window');
         assert.deepEqual(seqsOf(rooms), [0, 0], 'no sequence increment while zero viewers attached');
         assert.deepEqual(errors, []);
         // Ties H1 to H2: once a viewer attaches, output begins.
@@ -1433,20 +1438,30 @@ describe('AE-01 Run02 correction — viewer-presence-gated synthetic output', ()
           await client.next();
         }
         healthy.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'h6-h', viewer_caps: 'read' });
-        await nextOp(healthy, 'JoinRoom');
+        const healthyJoin = await nextOp(healthy, 'JoinRoom');
+        const healthyViewerId = String(healthyJoin['viewer_id']);
         slow.send({ op: 'JoinRoom', room_id: FIXTURE_ROOM_ID, idempotency_key: 'h6-s', viewer_caps: 'read' });
-        await nextOp(slow, 'JoinRoom');
+        const slowJoin = await nextOp(slow, 'JoinRoom');
+        const slowViewerId = String(slowJoin['viewer_id']);
         slow.socket.pause();
         // The 500ms cadence alone would need >2 minutes to cross 256 frames;
         // drive the real bound directly through the same authorized harness
         // surface XD1 uses (emitFixturePatch), then assert the backpressure
-        // outcome is unchanged by the correction.
+        // outcome is unchanged by the correction. The healthy viewer's socket
+        // keeps reading, so its adapter drains continuously in real operation;
+        // simulate that steady drain so the flood isolates the non-reading
+        // viewer (per-viewer queue bound, r4 §7.9 Table 11 row 5).
         for (let i = 0; i < 300; i++) {
           rooms.emitFixturePatch(FIXTURE_ROOM_ID, i % 2 === 0 ? 'slot-a' : 'slot-b', `h6 flood ${String(i)}`);
+          rooms.takeOutbox(FIXTURE_ROOM_ID, healthyViewerId);
         }
-        const slowViewerId = rooms.snapshot(FIXTURE_ROOM_ID)!.viewers.at(-1)!.viewer_id;
         const slowPending = rooms.pendingDisconnect(FIXTURE_ROOM_ID, slowViewerId);
         assert.equal(slowPending, 'viewer_backpressure', 'non-reading viewer hit the queue bound');
+        assert.equal(
+          rooms.pendingDisconnect(FIXTURE_ROOM_ID, healthyViewerId),
+          null,
+          'the reading viewer was not backpressured',
+        );
       } finally {
         healthy.socket.destroy();
         slow.socket.destroy();
