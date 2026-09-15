@@ -119,6 +119,12 @@
 #       -> DRAFT-founder-authorization-...-r3-20260913.md,
 #          FOUNDER-RULING-...-complete-replacement-source-20260913.txt
 #
+#   On why this census lives here while claude-code-review.yml in the same
+#   change moves its numbers out to the PR record: that is a Founder direction,
+#   not an inconsistency. The six resolvable pins were directed to be named in
+#   this header so a reader meets them where the limitation applies. The turn
+#   counts were not, so they went to the PR. Same rule, one explicit override.
+#
 #   This is a scope decision, not an oversight. Prose can spell a hash any
 #   number of ways, and each widening of the inline matcher has revealed
 #   another spelling; widening it again would pull ~21 further hashes out of
@@ -264,7 +270,7 @@ selftest_case() {
 # touching either counter, and a simulated failure produced "PASS — 19 case(s)"
 # and exit 0. Counting cases against a fixed expectation closes the class
 # rather than that one instance.
-SELFTEST_EXPECTED_CASES=24
+SELFTEST_EXPECTED_CASES=25
 
 run_selftest() {
   selftest_failures=0
@@ -325,6 +331,13 @@ run_selftest() {
   # mutating outside the fixture's docs/ tree, which the mutation-applied guard
   # above reads as "did not apply". Closing that needs a harness change, and on
   # this branch harness changes are where the defects came from.
+  # Documented in the script header AND in README, previously tested nowhere.
+  # This is the shape a repository actually uses for an otherwise-empty custody
+  # directory, so it is the one a maintainer is most likely to meet.
+  selftest_case "a directory holding only a .gitkeep placeholder fails the floor" 1 \
+    "not one table declared a Path row" \
+    "rm -f docs/planning/command-journal/custody/* && touch docs/planning/command-journal/custody/.gitkeep"
+
   selftest_case "a missing custody directory is could-not-run, not stale pins" 2 \
     "no custody directory" \
     "rm -rf docs/planning/command-journal/custody"
@@ -710,7 +723,19 @@ records_present = ALL_FILES
 path_rows_seen = 0
 
 for receipt in receipts:
-    text = receipt.read_text(encoding="utf-8")
+    rel_receipt = receipt.relative_to(repo_root)
+    try:
+        text = receipt.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        # The inline-pin loop already guards its read; this one did not, so a
+        # receipt that is not UTF-8 produced a traceback and exit 1 — which the
+        # exit table above defines as "one or more pins are stale". Same class
+        # as the symlink ValueError fixed earlier: a crash asserting something
+        # false about the records. A receipt this check cannot read is a real
+        # hole, so it fails by name rather than by stack trace.
+        fail(f"{rel_receipt}: not valid UTF-8, so none of its declarations could be "
+             "read — the pins it carries are unverified")
+        continue
     lines = text.splitlines()
     rel = receipt.relative_to(repo_root)
 
