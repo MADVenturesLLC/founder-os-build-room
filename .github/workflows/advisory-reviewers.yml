@@ -230,42 +230,69 @@ jobs:
           # documents and fixtures that quote diffs, including this file's
           # own pull requests.
           #
-          # It never escaped the repository: the fetch below is
-          # `contents: read` against this repository and the job is gated to
-          # same-repo PRs. What a phantom could do is burn MAX_FILES slots
+          # It never escaped the repository: the per-file fetch below is
+          # `contents: read` and this list call is `pull-requests: read`, both
+          # against this repository, and the job is gated to same-repo PRs.
+          # The `review` job grants exactly those two scopes. What a phantom could do is burn MAX_FILES slots
           # and the byte budget that genuinely touched files need, inflate
           # `unresolved` (the counter the all-unresolved guard keys on), and
           # — when the forged path names a real file — present that file's
           # text inside <file-context> labelled as one the diff touches.
           #
-          # `--paginate` because the endpoint pages at 30 and MAX_FILES is 60;
+          # `--paginate` with an EXPLICIT `per_page=100`. Paginated because
+          # MAX_FILES is 60 and the default page size is smaller than that, so
           # without it the cap would never be the thing that limited a large
-          # PR, and the "named rather than dropped" accounting below would be
-          # counting against a list that was already silently short.
+          # PR and the "named rather than dropped" accounting below would be
+          # counting against a list that was already silently short. The page
+          # size is passed rather than assumed so this comment cannot drift
+          # from the call, and 100 is ~3x fewer requests than the default on a
+          # large PR.
           #
           # `status` and `previous_filename` come back too, so a rename is a
           # NAMED class below rather than an absence inferred from a missing
           # `+++` line. A path containing a tab or a newline is escaped by
           # jq's @tsv and is reported unresolved rather than silently
           # misread — the same discipline the old git-quoting path followed.
-          if gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+          # The last field is "-" when there is no previous name, never empty.
+          # Tab is IFS WHITESPACE, so `read` collapses runs of tabs and drops
+          # trailing empties: with a genuinely empty final field that happens
+          # to be harmless today, but it would silently shift every value if a
+          # field were ever appended. A sentinel removes the hazard instead of
+          # relying on field order never changing.
+          if gh api --paginate -F per_page=100 \
+               "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
                --jq '.[] | select(.status != "removed")
                      | [ .filename, .status,
                          (if .patch == null then "nopatch" else "patch" end),
-                         (.previous_filename // "") ] | @tsv' \
+                         (.previous_filename // "-") ] | @tsv' \
                </dev/null > /tmp/context.files.tsv 2>/tmp/context.list.err; then
-            LC_ALL=C sort -u -o /tmp/context.files.tsv /tmp/context.files.tsv
+            # Deduped on FIELD 1 ONLY. A bare `sort -u` compares whole rows, so
+            # two rows naming the same file with different metadata would both
+            # survive and the file would be fetched and counted twice — a
+            # guarantee the old dedupe-by-path had and this call must keep.
+            # Reachable: `--paginate` issues several requests, and a push
+            # between pages can repeat a file across the window.
+            LC_ALL=C sort -u -t"$(printf '\t')" -k1,1 \
+              -o /tmp/context.files.tsv /tmp/context.files.tsv
             cut -f1 /tmp/context.files.tsv > /tmp/context.paths
           else
             # Fail LOUD, not empty. An empty list here would look exactly like
             # a PR that touches nothing, and the reviewer would be told it had
             # every touched file while having none. `removed`-only PRs reach
             # the no-paths branch below legitimately; a failed call must not.
+            #
+            # This does NOT red-X the pull request and does not cost the
+            # advisory review: the step carries `continue-on-error: true`, so
+            # exiting here leaves /tmp/context.md absent, the gemini step reads
+            # CTX_STATE="none", and the reviewer is told in its own prompt that
+            # it has the diff alone. That is the same degradation the old
+            # `|| true` gave, with the difference that the absence is now
+            # STATED rather than presented as an empty list of touched files.
             echo "::error::context: could not list the PR's files: $(head -c 200 /tmp/context.list.err | tr -d '\n')"
             exit 1
           fi
           if [ ! -s /tmp/context.paths ]; then
-            printf '(this pull request touches no file whose content exists at the head: it only removes files)\n' >> /tmp/context.partial
+            printf '(no files with content at the head: this pull request only removes files, or the API returned none)\n' >> /tmp/context.partial
             echo "::warning::no files to fetch; the reviewer gets the diff alone"
           fi
           strip_markers() {
@@ -279,6 +306,41 @@ jobs:
           }
           while IFS="$(printf '\t')" read -r path status patchstate prev; do
             [ -n "$path" ] || continue
+            # A rename is a NAMED class. The old path discovery could not see
+            # one at all: a pure rename produces no `+++` line, so the file was
+            # absent from the context AND unnamed. "-" is the sentinel for "no
+            # previous name", so an absent value can never be confused with a
+            # field that shifted.
+            renamed_from=""
+            if [ "$status" = "renamed" ] && [ -n "$prev" ] && [ "$prev" != "-" ]; then
+              renamed_from=" (renamed from $(printf '%s' "$prev" | strip_markers))"
+            fi
+            # A file the API returns with no textual patch: binary content, a
+            # mode-only change, a pure rename with no content change, or a diff
+            # too large for the API to render. The old discovery saw none of
+            # these — all four produce no `+++` line. They are NAMED and not
+            # fetched. Not fetched because the four are not distinguishable
+            # here (a binary modification and a pure rename both report
+            # additions 0 / deletions 0 / patch null), and running raw bytes
+            # through `iconv -c` would put mojibake in the context under a
+            # heading claiming to be the file's text. Saying what is missing
+            # beats showing something that is not the file — and being named at
+            # all is already more than the old discovery managed.
+            #
+            # Handled BEFORE `seen` is incremented, so these do not consume
+            # MAX_FILES slots. They cost no API call, and counting them would
+            # let a PR carrying many binary assets push fetchable source files
+            # past the cap — spending the budget on entries that contribute no
+            # text is exactly what the cap exists to prevent.
+            if [ "$patchstate" = "nopatch" ]; then
+              disp=$(printf '%s' "$path" | strip_markers)
+              declared=$((declared + 1))
+              omitted=$((omitted + 1))
+              printf '\n### %s%s\n(not fetched: the API returned no textual patch for this file — binary content, a mode-only change, a pure rename, or a diff too large to render)\n\n' \
+                "$disp" "$renamed_from" >> /tmp/context.partial
+              echo "::warning::context: no textual patch for $path (binary, mode-only, pure rename, or oversized)"
+              continue
+            fi
             seen=$((seen + 1))
             if [ "$seen" -gt "$MAX_FILES" ]; then
               file_cap_skips=$((file_cap_skips + 1))
@@ -290,33 +352,6 @@ jobs:
             # heading itself.
             disp=$(printf '%s' "$path" | strip_markers)
             declared=$((declared + 1))
-            # A rename is now a NAMED class. The old path discovery could not
-            # see one at all: a pure 100%-similarity rename produces no `+++`
-            # line, so the file was absent from the context AND unnamed. It
-            # exists at the head under its new name, so it is fetched
-            # normally; only its stanza changes.
-            renamed_from=""
-            if [ "$status" = "renamed" ] && [ -n "$prev" ]; then
-              renamed_from=" (renamed from $(printf '%s' "$prev" | strip_markers))"
-            fi
-            # Likewise for a file the API returns with no textual patch:
-            # binary content, a mode-only change, a pure rename with no content
-            # change, or a diff too large for the API to render. The old
-            # discovery saw none of these — all four produce no `+++` line.
-            # They are NAMED and not fetched. Not fetched because the four are
-            # not distinguishable here (a binary modification and a pure rename
-            # both report additions 0 / deletions 0 / patch null), and running
-            # raw bytes through `iconv -c` would put mojibake in the context
-            # under a heading claiming to be the file's text. Saying what is
-            # missing beats showing something that is not the file — and being
-            # named at all is already more than the old discovery managed.
-            if [ "$patchstate" = "nopatch" ]; then
-              printf '\n### %s%s\n(not fetched: the API returned no textual patch for this file — binary content, a mode-only change, a pure rename, or a diff too large to render)\n\n' \
-                "$disp" "$renamed_from" >> /tmp/context.partial
-              echo "::warning::context: no textual patch for $path (binary, mode-only, or oversized)"
-              omitted=$((omitted + 1))
-              continue
-            fi
             # The path is a URL path segment, so it is percent-encoded, and `@uri`
             # encodes `/` as `%2F`. That is NOT a breakage here, and this is
             # measured rather than argued: the contents endpoint resolves
