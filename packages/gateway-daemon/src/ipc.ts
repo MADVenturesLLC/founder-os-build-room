@@ -120,11 +120,26 @@ function encodeV2FrameChecked(type: number, payload: Buffer): Buffer {
  *
  * Measured 2026-09-16:
  *   Darwin  a 133-byte socket path -> bind returns EINVAL. Hard refusal.
- *   Linux   the kernel TRUNCATES instead of refusing, and bind and connect
- *           truncate identically, so an over-long path appears to work. Two
- *           DISTINCT 200-byte paths differing only past the cut were observed
- *           to alias: the first bound, the second returned EADDRINUSE on a
- *           path nothing was listening on.
+ *   Linux   an over-long path is TRUNCATED and appears to work. bind and
+ *           connect truncate identically, so nothing surfaces until two paths
+ *           collide: two DISTINCT 200-byte paths differing only past the cut
+ *           were observed to alias -- the first bound, the second returned
+ *           EADDRINUSE on a path nothing was listening on.
+ *
+ * The truncation is NOT the kernel's, which is worth stating precisely because
+ * an earlier revision of this comment said it was. Measured on Node v22.22.2:
+ * binding a 200-byte path from Python, which goes straight to libc, fails with
+ * `AF_UNIX path too long`; binding the SAME path through Node succeeds, and
+ * the name that then exists on disk is the first 108 bytes. So libuv copies
+ * into the fixed field in userspace and the kernel never sees the long path.
+ * That makes the forgiving Linux behaviour a property of the runtime, not of
+ * the platform: a libuv that length-checks instead would return EINVAL here
+ * like Darwin, so code must not depend on either response.
+ *
+ * Note libuv fills all 108 bytes rather than reserving the NUL, so it will
+ * bind a 108-byte path this guard refuses. Refusing it is deliberate: 107 is
+ * the length the `sun_path` contract guarantees, and being one byte stricter
+ * than one runtime's current behaviour is the safe direction.
  *
  * Both were previously invisible. The Darwin case surfaced as `boot()`
  * rejecting with a bare errno and a caller polling for ten seconds against an

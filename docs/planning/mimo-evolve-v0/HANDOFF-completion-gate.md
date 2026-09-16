@@ -234,20 +234,26 @@ in `test/`.
   10 s timeouts without `TMPDIR=/tmp`; pass with it), on the base and on
   this branch alike — flagged for whoever owns that environment question.~~
   **CLOSED** by PR #63, on `main` at
-  `e251c146a1e4a6c4a97bda306253c0fabc107d2e` (2026-09-16). It was not an
-  environment question, and `TMPDIR=/tmp` was a workaround rather than a
-  fix. The socket path this suite builds is `os.tmpdir()` plus an 85-byte
-  fixed tail; on macOS the default base is 48 bytes, so the path came to 133
-  and `bind` returned `EINVAL` against Darwin's 104-byte `sun_path` field
-  (which includes the terminating NUL). `waitForIpc` then polled 100 times
-  at 100 ms against a daemon that could never answer — the 10 seconds,
-  exactly. It never reproduced on Linux CI because Linux truncates rather
-  than refusing, and truncates `bind` and `connect` identically, so an
-  over-long path appears to work until two paths alias. The observation
-  recorded above was accurate; only its diagnosis was wrong, and the
-  diagnosis is what this entry had handed forward. PR #63 adds
-  `assertSocketPathFits` in the daemon's own IPC layer and has the suite
-  choose and assert a base that fits, so a future overgrowth fails in one
-  sentence naming the length instead of three silent timeouts. Nothing here
-  needs `TMPDIR` set.
+  `e251c146a1e4a6c4a97bda306253c0fabc107d2e` (2026-09-16). It was not a
+  local-environment question but a real platform-dependent bug, and
+  `TMPDIR=/tmp` was a workaround rather than a fix. The socket path this
+  suite builds is `os.tmpdir()` plus an 85-byte fixed tail (`mkdtemp`
+  appends exactly six characters, so the width is constant); on macOS the
+  default base is 48 bytes, so the path came to 133 and `bind` returned
+  `EINVAL` against Darwin's 104-byte `sun_path` field, which includes the
+  terminating NUL. `waitForIpc` then polled 100 times at 100 ms against a
+  daemon that could never answer, which is where the ten seconds came from.
+  It never reproduced on Linux CI because there the over-long path is
+  truncated rather than refused, and `bind` and `connect` truncate
+  identically, so it appears to work until two paths alias past the cut.
+  That truncation is **libuv's, not the kernel's** — measured on Node
+  v22.22.2, binding a 200-byte path from Python fails with `AF_UNIX path too
+  long` while the same path through Node succeeds and leaves its first 108
+  bytes on disk — so the forgiving Linux behaviour is a property of the
+  runtime, not the platform. The observation recorded above was accurate;
+  only its diagnosis was wrong, and the diagnosis is what this entry had
+  handed forward. PR #63 adds `assertSocketPathFits` in the daemon's own IPC
+  layer and has the suite choose and assert a base that fits, so a future
+  overgrowth fails in one sentence naming the length instead of three silent
+  timeouts. Nothing here needs `TMPDIR` set.
 - Merge remains a separate Founder act naming the exact head SHA.
