@@ -191,8 +191,18 @@ Mapping to the act's tests:
 ## Open items
 
 - ~~F1 and T6~~ — done, above.
-- Journal wiring when a journal store exists.
-- A package revision adding a plain-text stderr path to `HarnessLogSink`.
+- ~~A package revision adding a plain-text stderr path to `HarnessLogSink`~~ —
+  done, landed on `main` as `57690fb` (`sinks.ts` gains `err(text)`, redacting
+  plain text to the err stream under the same `guarded` boundary as `log`), with
+  its own handoff at `HANDOFF-redaction-v0.1-stderr-path.md`.
+- Journal sink: parked until the command-journal **write path** exists (PR2b
+  Tranche D). **`packages/journal` existing is not that dependency** — as of
+  `d01742c7` it is the record model only (`event-row`, `decision-row`,
+  `envelope`, `chain`, `bytes`, `plandoc`) and exports no append/write/insert;
+  `packages/journal/src/envelope.ts` says so itself: "Redaction enforcement
+  belongs to the write path (2b and later)." The earlier wording here — "when a
+  journal store exists" — reads as satisfied by that package and is not. There
+  is nothing for a redaction sink to attach to until the write path lands.
 - Merge is a separate exact-SHA Founder act; this file asserts none.
 
 Attribution: Role-Id builder; Actor-Id
