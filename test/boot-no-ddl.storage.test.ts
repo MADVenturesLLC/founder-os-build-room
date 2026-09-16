@@ -25,19 +25,19 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { realpathSync, appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pgDefault from 'pg';
 import type { Pool, PoolClient } from 'pg';
 
 const { Pool: PgPool } = pgDefault;
+import { loadConfig } from '../packages/control-plane/src/config.js';
+import { createPool } from '../packages/control-plane/src/db.js';
 import { migrate } from '../packages/control-plane/src/migrations.js';
 import {
   STORAGE_SKIP,
-  createGatewayHarness,
-  destroyGatewayHarness,
   type GatewayHarness,
 } from './gateway-storage-helpers.js';
 
@@ -142,11 +142,58 @@ function runBoot(databaseUrl: string, port: number): Promise<BootRun> {
 }
 
 let harness: GatewayHarness | undefined;
+let mainInstance: LoggedInstance | undefined;
+
+/*
+ * MS-1: the main section spawns the real `main.js`, whose preflight requires
+ * every id in MIGRATIONS — now through 0006, which creates cluster-wide
+ * roles. That cannot be applied per-suite on the shared container, so the
+ * main section's fixture is an exclusively owned disposable instance with
+ * the FULL canonical sequence applied (selection omitted). Real boot
+ * execution and every no-DDL assertion are unchanged. Before the instance is
+ * destroyed, this run's enumerated 0006 objects and roles are removed and
+ * their absence from pg_roles asserted. When server binaries are absent the
+ * section skips with a named reason (CI pins BUILDROOM_TEST_PG_BINDIR).
+ * Authority: Founder ruling — Gate III storage fixture completion §1 (MS-1),
+ * §2/§4 (per-fixture explicit cleanup and role absence).
+ */
+const MAIN_SECTION_SKIP: string | false = (() => {
+  if (STORAGE_SKIP) return STORAGE_SKIP;
+  return serverBinaries() === undefined
+    ? 'boot-no-ddl main section: PostgreSQL server binaries (initdb/pg_ctl) not resolvable — set BUILDROOM_TEST_PG_BINDIR or put pg_ctl on PATH; the canonical boot fixture did not run'
+    : false;
+})();
+
+const JOURNAL_ROLES = ['br_journal_owner', 'command_journal_writer', 'br_app_runtime'] as const;
 
 before(async () => {
-  if (STORAGE_SKIP) return;
-  // Fresh migrated fixture database, created on this suite's own connection.
-  harness = await createGatewayHarness('boot-no-ddl');
+  if (MAIN_SECTION_SKIP) return;
+  const port = await freePort();
+  mainInstance = createDisposableLoggedInstance(port, 'boot_no_ddl_main', (owned) => { mainInstance = owned; });
+  const adminPool = new PgPool({
+    connectionString: `postgresql://postgres@127.0.0.1:${port}/postgres`,
+    max: 1,
+  });
+  try {
+    await adminPool.query('CREATE DATABASE boot_no_ddl_main');
+  } finally {
+    await adminPool.end();
+  }
+  const config = loadConfig({
+    DATABASE_URL: mainInstance.url,
+    CONTROL_PLANE_TOKEN: SUITE_TOKEN,
+    STATEMENT_TIMEOUT_MS: '60000',
+    PG_POOL_MAX: '12',
+  });
+  const pool = createPool(config);
+  harness = { pool, config, databaseName: 'boot_no_ddl_main' };
+  // Full canonical sequence on the owned instance — the boot under test
+  // must find every required id, 0006 included.
+  const result = await migrate(pool);
+  assert.ok(
+    result.applied.includes('0006_command_journal_authority_split'),
+    `canonical sequence through 0006 must apply on the owned instance; applied=${JSON.stringify(result.applied)}`,
+  );
   // DDL observation: table + function first, trigger last, so the fixture's
   // own setup DDL is not recorded — only what happens afterwards (the boot).
   await harness.pool.query(
@@ -174,9 +221,44 @@ before(async () => {
 });
 
 after(async () => {
-  await destroyGatewayHarness(harness);
-  harness = undefined;
+  if (harness !== undefined) {
+    try {
+      await cleanupJournalObjectsAndAssertRoleAbsence(harness.pool, 'boot_no_ddl_main');
+    } finally {
+      await harness.pool.end().catch(() => undefined);
+      harness = undefined;
+    }
+  }
+  destroyLoggedInstance(mainInstance);
+  mainInstance = undefined;
 });
+
+/**
+ * Enumerated same-run removal of the 0006 objects and roles on one owned
+ * instance, then the pg_roles absence assertion — reported, and asserted
+ * BEFORE the instance is destroyed. Never DROP OWNED BY.
+ */
+async function cleanupJournalObjectsAndAssertRoleAbsence(pool: Pool, database: string): Promise<void> {
+  await pool.query('DROP TABLE IF EXISTS public.command_journal_events, public.command_journal_chain_head CASCADE');
+  await pool.query('DROP FUNCTION IF EXISTS public.command_journal_append(text, text, text, bigint, bytea)');
+  await pool.query('DROP FUNCTION IF EXISTS public.command_journal_immutable()');
+  for (const role of JOURNAL_ROLES) {
+    await pool.query(`DROP ROLE IF EXISTS ${role}`);
+  }
+  const { rows } = await pool.query<{ rolname: string }>(
+    `SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[]) ORDER BY rolname`,
+    [[...JOURNAL_ROLES]],
+  );
+  console.log(
+    JSON.stringify({
+      level: 'info',
+      at: 'test.canonical_fixture_teardown',
+      database,
+      residualRoles: rows.map((r) => r.rolname),
+    }),
+  );
+  assert.deepEqual(rows, [], 'every 0006 role must be absent from pg_roles before the owned instance is destroyed');
+}
 
 // CHANNEL SCOPE (F2 correction §6, receipt narrowing clause): the
 // boot_ddl_observation TABLE channel proves only COMMITTED DDL on the boot
@@ -185,7 +267,7 @@ after(async () => {
 // channel for the spawned boot child (the disposable instance's server log)
 // is asserted separately in the local-only section below; in CI (no server
 // binaries) that section skips with a named reason.
-describe('boot issues no DDL (A-R2 / PC-21)', { skip: STORAGE_SKIP ? STORAGE_SKIP : false }, () => {
+describe('boot issues no DDL (A-R2 / PC-21)', { skip: MAIN_SECTION_SKIP ? MAIN_SECTION_SKIP : false }, () => {
   it('boots to listening; the boot connection records zero COMMITTED DDL on the table channel (rollback-surviving channel: local-only section below)', async (t) => {
     assert.ok(harness !== undefined, 'fixture harness was created');
     const port = await freePort();
@@ -385,9 +467,26 @@ function serverBinaries(): { initdb: string; pgCtl: string } | undefined {
   if (initdb !== undefined && initdb !== '' && pgCtl !== undefined && pgCtl !== '') {
     return { initdb, pgCtl };
   }
-  const probe = spawnSync('pg_ctl', ['--version'], { timeout: 10_000 });
-  if (probe.error !== undefined || probe.status !== 0) return undefined;
-  return { initdb: 'initdb', pgCtl: 'pg_ctl' };
+  // The storage-integration job pins the bindir matching its postgres:16
+  // service so the canonical (0006-requiring) fixtures run in CI too.
+  const bindir = process.env['BUILDROOM_TEST_PG_BINDIR'];
+  if (bindir !== undefined && bindir !== '') {
+    const candidate = { initdb: join(bindir, 'initdb'), pgCtl: join(bindir, 'pg_ctl') };
+    if (existsSync(candidate.initdb) && existsSync(candidate.pgCtl) && existsSync(join(bindir, 'postgres'))) {
+      return candidate;
+    }
+  }
+  // PATH probe: initdb requires `postgres` in ITS OWN directory, and a
+  // client-only package (Homebrew libpq) can put initdb/pg_ctl on PATH from a
+  // different directory than the server package's `postgres`. Resolve the
+  // real directory of `pg_ctl` and require all three binaries co-located.
+  const onPath = spawnSync('which', ['pg_ctl'], { timeout: 10_000, encoding: 'utf8' });
+  if (onPath.status !== 0 || onPath.stdout === undefined || onPath.stdout.trim() === '') return undefined;
+  const dir = dirname(realpathSync(onPath.stdout.trim()));
+  if (!existsSync(join(dir, 'initdb')) || !existsSync(join(dir, 'pg_ctl')) || !existsSync(join(dir, 'postgres'))) {
+    return undefined;
+  }
+  return { initdb: join(dir, 'initdb'), pgCtl: join(dir, 'pg_ctl') };
 }
 
 /** The local-only section's skip reason, or false when it can run. */
@@ -491,69 +590,88 @@ interface LoggedInstance {
   readonly logDir: string;
   readonly pgCtl: string;
   readonly clusterDir: string;
+  /** True only after `pg_ctl start -w` returned 0. */
+  started: boolean;
 }
 
-/** initdb + start a throwaway cluster with a test-owned collected log. */
-function createDisposableLoggedInstance(port: number): LoggedInstance {
+/**
+ * initdb + start a throwaway cluster with a test-owned collected log.
+ *
+ * Ownership is registered (via `register`) BEFORE initdb/start so a later
+ * setup failure still reaches after()'s destroy; initdb/start failure
+ * destroys the never-started cluster here and rethrows. Short mkdtemp prefix
+ * keeps the socket path under the kernel sun_path limit (103 bytes, macOS).
+ */
+function createDisposableLoggedInstance(
+  port: number,
+  database: string,
+  register: (instance: LoggedInstance) => void,
+): LoggedInstance {
   const bins = serverBinaries();
   assert.ok(bins !== undefined, 'server binaries were probed present');
-  const rootDir = mkdtempSync(join(tmpdir(), 'pr27-f2-log-'));
+  const rootDir = mkdtempSync(join(tmpdir(), 'bnd-'));
   const clusterDir = join(rootDir, 'cluster');
   const logDir = join(rootDir, 'log');
   const serverOut = join(rootDir, 'server-startup.log');
-
-  const init = spawnSync(
-    bins.initdb,
-    ['-D', clusterDir, '--auth=trust', '--username=postgres', '--no-sync'],
-    { timeout: 120_000, encoding: 'utf8' },
-  );
-  assert.equal(init.status, 0, `initdb failed:\n${String(init.stdout)}\n${String(init.stderr)}`);
-
-  // Server settings go into a conf fragment INSIDE the cluster directory —
-  // pg_ctl's -o quoting around spaces (log_line_prefix) is fragile across
-  // shells, and this file is exactly where postgres looks next.
-  const socketDir = join(rootDir, 'sock');
-  const fragment = [
-    `port = ${port}`,
-    `unix_socket_directories = '${socketDir}'`,
-    'logging_collector = on',
-    'log_destination = stderr',
-    `log_directory = '${logDir}'`,
-    "log_filename = 'instance.log'",
-    'log_rotation_age = 0',
-    "log_line_prefix = '%m [%p] %d '",
-    'log_truncate_on_rotation = off',
-    "listen_addresses = '127.0.0.1'",
-  ].join('\n');
-  appendFileSync(join(clusterDir, 'postgresql.conf'), `\n# pr27-f2 local-only fixture\n${fragment}\n`);
-  mkdirSync(socketDir, { recursive: true });
-
-  const start = spawnSync(
-    bins.pgCtl,
-    ['-D', clusterDir, '-l', serverOut, 'start', '-w', '-t', '60'],
-    { timeout: 120_000, encoding: 'utf8' },
-  );
-  assert.equal(
-    start.status,
-    0,
-    `pg_ctl start failed:\n${String(start.stdout)}\n${String(start.stderr)}\n--- startup out ---\n${safeRead(serverOut)}\n--- collected log ---\n${existsSync(logDir) ? readInstanceLog(logDir) : '(log directory not created)'}`,
-  );
-
-  return {
-    url: `postgresql://postgres@127.0.0.1:${port}/f2log`,
-    rootDir,
-    logDir,
-    pgCtl: bins.pgCtl,
-    clusterDir,
+  const instance: LoggedInstance = {
+    url: `postgresql://postgres@127.0.0.1:${port}/${database}`,
+    rootDir, logDir, pgCtl: bins.pgCtl, clusterDir, started: false,
   };
+  register(instance);
+  try {
+    const init = spawnSync(
+      bins.initdb,
+      ['-D', clusterDir, '--auth=trust', '--username=postgres', '--no-sync'],
+      { timeout: 120_000, encoding: 'utf8' },
+    );
+    assert.equal(init.status, 0, `initdb failed:\n${String(init.stdout)}\n${String(init.stderr)}`);
+
+    // Server settings go into a conf fragment INSIDE the cluster directory —
+    // pg_ctl's -o quoting around spaces (log_line_prefix) is fragile across
+    // shells, and this file is exactly where postgres looks next.
+    const socketDir = join(rootDir, 'sock');
+    const fragment = [
+      `port = ${port}`,
+      `unix_socket_directories = '${socketDir}'`,
+      'logging_collector = on',
+      'log_destination = stderr',
+      `log_directory = '${logDir}'`,
+      "log_filename = 'instance.log'",
+      'log_rotation_age = 0',
+      "log_line_prefix = '%m [%p] %d '",
+      'log_truncate_on_rotation = off',
+      "listen_addresses = '127.0.0.1'",
+    ].join('\n');
+    appendFileSync(join(clusterDir, 'postgresql.conf'), `\n# pr27-f2 local-only fixture\n${fragment}\n`);
+    mkdirSync(socketDir, { recursive: true });
+
+    const start = spawnSync(
+      bins.pgCtl,
+      ['-D', clusterDir, '-l', serverOut, 'start', '-w', '-t', '60'],
+      { timeout: 120_000, encoding: 'utf8' },
+    );
+    assert.equal(
+      start.status,
+      0,
+      `pg_ctl start failed:\n${String(start.stdout)}\n${String(start.stderr)}\n--- startup out ---\n${safeRead(serverOut)}\n--- collected log ---\n${existsSync(logDir) ? readInstanceLog(logDir) : '(log directory not created)'}`,
+    );
+    instance.started = true;
+    return instance;
+  } catch (error) {
+    destroyLoggedInstance(instance);
+    throw error;
+  }
 }
 
-/** Stop the throwaway cluster and delete its directory tree. */
+/** Stop the throwaway cluster (only if it started) and delete its directory tree. */
 function destroyLoggedInstance(instance: LoggedInstance | undefined): void {
   if (instance === undefined) return;
-  spawnSync(instance.pgCtl, ['-D', instance.clusterDir, 'stop', '-m', 'immediate', '-w'], {
-    timeout: 60_000,
-  });
+  if (instance.started) {
+    spawnSync(instance.pgCtl, ['-D', instance.clusterDir, 'stop', '-m', 'immediate', '-w'], {
+      timeout: 60_000,
+    });
+    instance.started = false;
+  }
   spawnSync('rm', ['-rf', instance.rootDir], { timeout: 60_000 });
 }
 
@@ -564,7 +682,7 @@ describe('boot-child DDL observation via the disposable instance log (F2, local-
   before(async () => {
     if (LOG_CHANNEL_SKIP) return;
     const port = await freePort();
-    loggedInstance = createDisposableLoggedInstance(port);
+    loggedInstance = createDisposableLoggedInstance(port, 'f2log', (owned) => { loggedInstance = owned; });
     const adminPool = new PgPool({
       connectionString: `postgresql://postgres@127.0.0.1:${port}/postgres`,
       max: 1,
@@ -582,9 +700,17 @@ describe('boot-child DDL observation via the disposable instance log (F2, local-
   });
 
   after(async () => {
+    // F2 cleanup accounts for the objects 0006 actually introduced on this
+    // owned instance (the ruling's stated condition for touching F2): the
+    // same enumerated removal + pg_roles absence assertion as the main
+    // section, BEFORE destruction.
     if (loggedPool !== undefined) {
-      await loggedPool.end();
-      loggedPool = undefined;
+      try {
+        await cleanupJournalObjectsAndAssertRoleAbsence(loggedPool, 'f2log');
+      } finally {
+        await loggedPool.end().catch(() => undefined);
+        loggedPool = undefined;
+      }
     }
     destroyLoggedInstance(loggedInstance);
     loggedInstance = undefined;

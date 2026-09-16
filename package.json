@@ -24,6 +24,7 @@
     "gate:attribution-selftest": "bash scripts/attribution-shape-check.sh selftest",
     "gate:verify-check": "bash scripts/verify-check.sh",
     "start": "node dist/packages/control-plane/src/main.js",
+    "migrate:admin": "node dist/packages/control-plane/src/migrate-cli.js",
     "phase2:runs": "node dist/packages/run-harness/src/cli.js",
     "phase3:counted-run": "bash scripts/phase3-counted-run.sh",
     "test:storage": "npm run build && node dist/test/support/require-test-database-url.js && node --test dist/test/*.storage.test.js",

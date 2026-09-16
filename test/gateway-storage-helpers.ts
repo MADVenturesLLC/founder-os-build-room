@@ -90,6 +90,27 @@ export interface GatewayHarness {
 }
 
 /**
+ * The migration selection every consumer of this helper runs.
+ *
+ * Pre-journal tranche, through `0005_phase3_run_evidence` — explicitly, not
+ * by default. Migration `0006_command_journal_authority_split` creates three
+ * CLUSTER-WIDE roles with production names; applied by fifteen parallel
+ * suites against the one shared CI container it collides on `42710` and its
+ * per-suite cleanup cannot satisfy role absence while siblings hold
+ * references. The suites consuming this helper (gateway-* and phase3-*)
+ * exercise no journal authority; their fixtures are truthfully labeled as
+ * qualified THROUGH 0005 ONLY — success here is not evidence that 0006
+ * passed. Journal-authority qualification runs the full canonical sequence
+ * on exclusively owned instances (test/journal-authority.storage.test.ts,
+ * test/journal-append-atomicity.storage.test.ts, test/migrate-cli.test.ts).
+ *
+ * Authority: Founder ruling — Gate III shared storage migration selection
+ * (CAPABILITY-2) and its fixture-completion supplement §3 (the explicit
+ * through-id selection in the migrator).
+ */
+export const HELPER_MIGRATION_THROUGH = '0005_phase3_run_evidence';
+
+/**
  * Create the suite's database, migrate it, and return a pool on it.
  *
  * `statementTimeoutMs` is raised well above the service default because the
@@ -113,7 +134,7 @@ export async function createGatewayHarness(label: string): Promise<GatewayHarnes
     PG_POOL_MAX: '12',
   });
   const pool = createPool(config);
-  await migrate(pool);
+  await migrate(pool, { through: HELPER_MIGRATION_THROUGH });
   return { pool, config, databaseName };
 }
 

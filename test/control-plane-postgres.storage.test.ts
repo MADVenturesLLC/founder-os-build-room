@@ -30,7 +30,13 @@
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { realpathSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import pgDefault from 'pg';
 import type { Pool } from 'pg';
 import { loadConfig } from '../packages/control-plane/src/config.js';
 import { createPool } from '../packages/control-plane/src/db.js';
@@ -39,14 +45,159 @@ import { PostgresLedgerStore, RoomNotFoundError } from '../packages/control-plan
 import { snapshot } from '../packages/ledger/src/index.js';
 import { makeEvent } from './helpers.js';
 
-const DATABASE_URL = process.env['TEST_DATABASE_URL'];
+const { Pool: PgPool } = pgDefault;
+
+const TEST_DATABASE_URL = process.env['TEST_DATABASE_URL'];
 // Config requires a shared secret. This suite exercises the store directly
 // rather than through the HTTP surface, so the value is never presented — it
 // only has to satisfy the loader.
 const TEST_TOKEN = 'integration-suite-token-long-enough';
-const skip = DATABASE_URL === undefined || DATABASE_URL.trim() === '';
-const skipReason = 'TEST_DATABASE_URL is not set — the Postgres integration suite did not run';
 
+/*
+ * Canonical fixture on an exclusively owned disposable instance (Founder
+ * ruling — Gate III storage fixture completion §2, the authorized
+ * alternative).
+ *
+ * This suite is the canonical applier: it runs the FULL migration sequence
+ * through 0006_command_journal_authority_split and re-invokes the migrator
+ * against that same migrated fixture to prove idempotency. 0006 creates three
+ * CLUSTER-WIDE roles, and exclusive ownership of them cannot be established
+ * on the shared TEST_DATABASE_URL container: its `buildroom_test` database
+ * persists across CI's two storage invocations, so cleanup that removes the
+ * roles and objects would leave a recorded-but-absent 0006 for the second
+ * invocation — which would then apply nothing and prove nothing about 0006.
+ * An owned instance per run gives both invocations a genuine apply →
+ * re-apply → cleanup → role-absence cycle. The TEST_DATABASE_URL gate is
+ * retained (the storage command refuses to start without it); the server
+ * binaries are the additional binding this fixture needs, named on skip.
+ */
+interface ServerBins {
+  readonly initdb: string;
+  readonly pgCtl: string;
+}
+
+function resolveServerBinaries(): ServerBins | undefined {
+  const override = process.env['BUILDROOM_TEST_PG_BINDIR'];
+  if (override !== undefined && override !== '') {
+    const initdb = join(override, 'initdb');
+    const pgCtl = join(override, 'pg_ctl');
+    if (existsSync(initdb) && existsSync(pgCtl) && existsSync(join(override, 'postgres'))) {
+      return { initdb, pgCtl };
+    }
+  }
+  const pgConfig = spawnSync('pg_config', ['--bindir'], { timeout: 10_000, encoding: 'utf8' });
+  if (pgConfig.status === 0 && pgConfig.stdout !== undefined) {
+    const dir = pgConfig.stdout.trim();
+    if (existsSync(join(dir, 'initdb')) && existsSync(join(dir, 'pg_ctl')) && existsSync(join(dir, 'postgres'))) {
+      return { initdb: join(dir, 'initdb'), pgCtl: join(dir, 'pg_ctl') };
+    }
+  }
+  // PATH probe: initdb requires `postgres` in ITS OWN directory, and a
+  // client-only package (Homebrew libpq) can put initdb/pg_ctl on PATH from a
+  // different directory than the server package's `postgres`. Resolve the
+  // real directory of `pg_ctl` and require all three binaries co-located.
+  const onPath = spawnSync('which', ['pg_ctl'], { timeout: 10_000, encoding: 'utf8' });
+  if (onPath.status === 0 && onPath.stdout !== undefined && onPath.stdout.trim() !== '') {
+    const dir = dirname(realpathSync(onPath.stdout.trim()));
+    if (existsSync(join(dir, 'initdb')) && existsSync(join(dir, 'pg_ctl')) && existsSync(join(dir, 'postgres'))) {
+      return { initdb: join(dir, 'initdb'), pgCtl: join(dir, 'pg_ctl') };
+    }
+  }
+  const multiarch = '/usr/lib/postgresql';
+  if (existsSync(multiarch)) {
+    const versions = readdirSync(multiarch).sort().reverse();
+    for (const v of versions) {
+      const dir = join(multiarch, v, 'bin');
+      if (existsSync(join(dir, 'initdb')) && existsSync(join(dir, 'pg_ctl')) && existsSync(join(dir, 'postgres'))) {
+        return { initdb: join(dir, 'initdb'), pgCtl: join(dir, 'pg_ctl') };
+      }
+    }
+  }
+  return undefined;
+}
+
+const BINS = resolveServerBinaries();
+const skip =
+  TEST_DATABASE_URL === undefined || TEST_DATABASE_URL.trim() === '' || BINS === undefined;
+const skipReason =
+  TEST_DATABASE_URL === undefined || TEST_DATABASE_URL.trim() === ''
+    ? 'TEST_DATABASE_URL is not set — the Postgres integration suite did not run'
+    : 'PostgreSQL server binaries (initdb/pg_ctl) not resolvable — the canonical Postgres integration suite did not run (set BUILDROOM_TEST_PG_BINDIR or put pg_ctl on PATH)';
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      probe.close(() => {
+        if (typeof address === 'object' && address !== null) resolve(address.port);
+        else reject(new Error('could not reserve an ephemeral port'));
+      });
+    });
+  });
+}
+
+interface OwnedInstance {
+  readonly rootDir: string;
+  readonly clusterDir: string;
+  readonly pgCtl: string;
+  readonly port: number;
+  /** True only after `pg_ctl start -w` returned 0. */
+  started: boolean;
+}
+
+/**
+ * Ownership is registered (via `register`) BEFORE initdb/start so a later
+ * failure still reaches after()'s destroy; initdb/start failure destroys the
+ * never-started cluster here and rethrows.
+ */
+function startOwnedInstance(bins: ServerBins, port: number, register: (instance: OwnedInstance) => void): OwnedInstance {
+  // Short prefix: the Unix socket path must stay under the kernel sun_path
+  // limit (103 bytes on macOS) even under a long per-user TMPDIR.
+  const rootDir = mkdtempSync(join(tmpdir(), 'cpp-'));
+  const clusterDir = join(rootDir, 'cluster');
+  const socketDir = join(rootDir, 'sock');
+  const instance: OwnedInstance = { rootDir, clusterDir, pgCtl: bins.pgCtl, port, started: false };
+  register(instance);
+  try {
+    const init = spawnSync(
+      bins.initdb,
+      ['-D', clusterDir, '--auth=trust', '--username=postgres', '--no-sync'],
+      { timeout: 120_000, encoding: 'utf8' },
+    );
+    assert.equal(init.status, 0, `initdb failed:\n${String(init.stdout)}\n${String(init.stderr)}`);
+    mkdirSync(socketDir, { recursive: true });
+    const start = spawnSync(
+      bins.pgCtl,
+      ['-D', clusterDir, '-l', join(rootDir, 'server.log'), 'start', '-w', '-t', '60',
+       '-o', `-p ${port} -c listen_addresses=127.0.0.1 -c unix_socket_directories=${socketDir} -c fsync=off`],
+      { timeout: 120_000, encoding: 'utf8' },
+    );
+    assert.equal(start.status, 0, `pg_ctl start failed:\n${String(start.stdout)}\n${String(start.stderr)}`);
+    instance.started = true;
+    return instance;
+  } catch (error) {
+    destroyOwnedInstance(instance);
+    throw error;
+  }
+}
+
+/** Stop only a started postmaster, then remove the directory. */
+function destroyOwnedInstance(instance: OwnedInstance | undefined): void {
+  if (instance === undefined) return;
+  if (instance.started) {
+    spawnSync(instance.pgCtl, ['-D', instance.clusterDir, 'stop', '-m', 'immediate', '-w'], { timeout: 60_000 });
+    instance.started = false;
+  }
+  rmSync(instance.rootDir, { recursive: true, force: true });
+}
+
+const JOURNAL_ROLES = ['br_journal_owner', 'command_journal_writer', 'br_app_runtime'] as const;
+
+let instance: OwnedInstance | undefined;
+/** The owned fixture database this run migrates and exercises. */
+let DATABASE_URL = '';
 let pool: Pool | undefined;
 let store: PostgresLedgerStore | undefined;
 
@@ -66,14 +217,67 @@ function nextRoomId(): string {
 
 before(async () => {
   if (skip) return;
+  const port = await freePort();
+  instance = startOwnedInstance(BINS!, port, (owned) => { instance = owned; });
+  const admin = new PgPool({ connectionString: `postgresql://postgres@127.0.0.1:${port}/postgres`, max: 1 });
+  try {
+    await admin.query('CREATE DATABASE buildroom_test');
+  } finally {
+    await admin.end();
+  }
+  DATABASE_URL = `postgresql://postgres@127.0.0.1:${port}/buildroom_test`;
   const config = loadConfig({ DATABASE_URL, CONTROL_PLANE_TOKEN: TEST_TOKEN });
   pool = createPool(config);
-  await migrate(pool);
+  // The canonical sequence, selection omitted: every entry through 0006.
+  const first = await migrate(pool);
+  assert.deepEqual(
+    first.applied,
+    [
+      '0001_ledger_core',
+      '0002_pending_rows_carry_no_transition_fields',
+      '0003_gateway_registry',
+      '0004_validate_pending_is_bare',
+      '0005_phase3_run_evidence',
+      '0006_command_journal_authority_split',
+    ],
+    'the full canonical sequence through 0006 applied in order on the owned instance',
+  );
   store = new PostgresLedgerStore(pool);
 });
 
 after(async () => {
-  await pool?.end();
+  // Enumerated same-run cleanup of the 0006 objects and roles, then the
+  // pg_roles absence assertion — BEFORE the owned instance is destroyed. A
+  // failure here fails the suite; destruction afterwards only contains it.
+  // Never DROP OWNED BY.
+  if (pool !== undefined) {
+    try {
+      await pool.query('DROP TABLE IF EXISTS public.command_journal_events, public.command_journal_chain_head CASCADE');
+      await pool.query('DROP FUNCTION IF EXISTS public.command_journal_append(text, text, text, bigint, bytea)');
+      await pool.query('DROP FUNCTION IF EXISTS public.command_journal_immutable()');
+      for (const role of JOURNAL_ROLES) {
+        await pool.query(`DROP ROLE IF EXISTS ${role}`);
+      }
+      const { rows } = await pool.query<{ rolname: string }>(
+        `SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[]) ORDER BY rolname`,
+        [[...JOURNAL_ROLES]],
+      );
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          at: 'test.canonical_fixture_teardown',
+          database: 'buildroom_test',
+          residualRoles: rows.map((r) => r.rolname),
+        }),
+      );
+      assert.deepEqual(rows, [], 'every 0006 role must be absent from pg_roles before the owned instance is destroyed');
+    } finally {
+      await pool.end().catch(() => undefined);
+      pool = undefined;
+    }
+  }
+  destroyOwnedInstance(instance);
+  instance = undefined;
 });
 
 describe('control plane — schema and migrations', { skip: skip ? skipReason : false }, () => {
@@ -81,6 +285,7 @@ describe('control plane — schema and migrations', { skip: skip ? skipReason : 
     const second = await migrate(pool!);
     assert.deepEqual(second.applied, [], 'a migrated database should apply nothing');
     assert.ok(second.alreadyApplied.includes('0001_ledger_core'));
+    assert.ok(second.alreadyApplied.includes('0006_command_journal_authority_split'));
   });
 
   it('created the tables the ledger needs', async () => {

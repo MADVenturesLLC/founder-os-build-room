@@ -26,9 +26,13 @@
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { realpathSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import pgDefault from 'pg';
 import type { PoolClient } from 'pg';
 import {
   STORAGE_SKIP,
@@ -36,11 +40,16 @@ import {
   destroyGatewayHarness,
   type GatewayHarness,
 } from './gateway-storage-helpers.js';
+import { loadConfig } from '../packages/control-plane/src/config.js';
+import { createPool } from '../packages/control-plane/src/db.js';
+import { migrate } from '../packages/control-plane/src/migrations.js';
 import {
   SchemaPreflightError,
   auditRuntimePrivileges,
   schemaPreflight,
 } from '../packages/control-plane/src/schema-preflight.js';
+
+const { Pool: PgPool } = pgDefault;
 
 const MAIN_JS = fileURLToPath(
   new URL('../packages/control-plane/src/main.js', import.meta.url),
@@ -187,6 +196,14 @@ async function catalogSnapshot(harness: GatewayHarness): Promise<string> {
 
 const harnesses: GatewayHarness[] = [];
 
+/**
+ * Pre-journal fixture on the shared TEST_DATABASE_URL server: the helper's
+ * explicit selection through `0005_phase3_run_evidence`. Used ONLY by the
+ * sections that never evaluate the full preflight (the F1 synthetic-catalog
+ * walk and the F2-mirror trigger control) — their proofs do not depend on
+ * `0006` being present. Labeled legacy: success here is not evidence that
+ * 0006 passed.
+ */
 async function fixture(label: string): Promise<GatewayHarness> {
   const harness = await createGatewayHarness(label);
   harnesses.push(harness);
@@ -199,9 +216,222 @@ after(async () => {
   }
 });
 
-describe('schema preflight — fail closed on missing schema (A-R1)', { skip: STORAGE_SKIP ? STORAGE_SKIP : false }, () => {
+/* ------------------------------------------------------------------ */
+/* MS-2 — exclusively owned disposable instances for the fixtures that */
+/* require the full canonical sequence through 0006.                   */
+/*                                                                     */
+/* `schemaPreflight()` requires every id in MIGRATIONS, which now ends */
+/* at 0006_command_journal_authority_split; 0006 creates cluster-wide  */
+/* roles, so it cannot be applied per-fixture on the shared container. */
+/* Each canonical fixture below owns its own initdb'd instance, applies */
+/* the FULL canonical sequence (selection omitted), and — before the   */
+/* instance is destroyed — explicitly removes this run's enumerated    */
+/* 0006 objects and roles and asserts their absence from pg_roles.     */
+/* Authority: Founder ruling — Gate III storage fixture completion §1  */
+/* (MS-2) and §2/§4 (per-fixture explicit cleanup and role absence).   */
+/* ------------------------------------------------------------------ */
+
+interface ServerBins {
+  readonly initdb: string;
+  readonly pgCtl: string;
+}
+
+/**
+ * Resolve PostgreSQL server binaries: explicit env override first (the CI
+ * storage-integration job pins the bindir matching its postgres:16
+ * service), then pg_config --bindir, then PATH, then the Debian/Ubuntu
+ * multiarch layout.
+ */
+function resolveServerBinaries(): ServerBins | undefined {
+  const override = process.env['BUILDROOM_TEST_PG_BINDIR'];
+  if (override !== undefined && override !== '') {
+    const initdb = join(override, 'initdb');
+    const pgCtl = join(override, 'pg_ctl');
+    if (existsSync(initdb) && existsSync(pgCtl) && existsSync(join(override, 'postgres'))) {
+      return { initdb, pgCtl };
+    }
+  }
+  const pgConfig = spawnSync('pg_config', ['--bindir'], { timeout: 10_000, encoding: 'utf8' });
+  if (pgConfig.status === 0 && pgConfig.stdout !== undefined) {
+    const dir = pgConfig.stdout.trim();
+    if (existsSync(join(dir, 'initdb')) && existsSync(join(dir, 'pg_ctl')) && existsSync(join(dir, 'postgres'))) {
+      return { initdb: join(dir, 'initdb'), pgCtl: join(dir, 'pg_ctl') };
+    }
+  }
+  // PATH probe: initdb requires `postgres` in ITS OWN directory, and a
+  // client-only package (Homebrew libpq) can put initdb/pg_ctl on PATH from a
+  // different directory than the server package's `postgres`. Resolve the
+  // real directory of `pg_ctl` and require all three binaries co-located.
+  const onPath = spawnSync('which', ['pg_ctl'], { timeout: 10_000, encoding: 'utf8' });
+  if (onPath.status === 0 && onPath.stdout !== undefined && onPath.stdout.trim() !== '') {
+    const dir = dirname(realpathSync(onPath.stdout.trim()));
+    if (existsSync(join(dir, 'initdb')) && existsSync(join(dir, 'pg_ctl')) && existsSync(join(dir, 'postgres'))) {
+      return { initdb: join(dir, 'initdb'), pgCtl: join(dir, 'pg_ctl') };
+    }
+  }
+  const multiarch = '/usr/lib/postgresql';
+  if (existsSync(multiarch)) {
+    const versions = readdirSync(multiarch).sort().reverse();
+    for (const v of versions) {
+      const dir = join(multiarch, v, 'bin');
+      if (existsSync(join(dir, 'initdb')) && existsSync(join(dir, 'pg_ctl')) && existsSync(join(dir, 'postgres'))) {
+        return { initdb: join(dir, 'initdb'), pgCtl: join(dir, 'pg_ctl') };
+      }
+    }
+  }
+  return undefined;
+}
+
+const CANONICAL_BINS = resolveServerBinaries();
+
+/** The canonical sections' skip reason, or false when they can run. */
+const CANONICAL_SKIP: string | false = (() => {
+  if (STORAGE_SKIP) return STORAGE_SKIP;
+  return CANONICAL_BINS === undefined
+    ? 'canonical preflight fixtures: PostgreSQL server binaries (initdb/pg_ctl) not resolvable — set BUILDROOM_TEST_PG_BINDIR or put pg_ctl on PATH; these fixtures did not run'
+    : false;
+})();
+
+interface OwnedFixture {
+  harness: GatewayHarness | undefined;
+  readonly rootDir: string;
+  readonly clusterDir: string;
+  readonly pgCtl: string;
+  /** True only after `pg_ctl start -w` returned 0. */
+  started: boolean;
+}
+
+const owned: OwnedFixture[] = [];
+
+/** The three cluster-wide roles 0006 creates; asserted absent at teardown. */
+const JOURNAL_ROLES = ['br_journal_owner', 'command_journal_writer', 'br_app_runtime'] as const;
+
+/**
+ * initdb + start an exclusively owned instance, create the fixture database,
+ * apply the FULL canonical sequence through 0006, and hand back a
+ * GatewayHarness-shaped handle so the existing observation helpers
+ * (`installDdlObservation`, `observedDdlTags`, `catalogSnapshot`) and
+ * `runBoot` work unchanged.
+ *
+ * Lifecycle: the ownership record is pushed to `owned` BEFORE initdb/start,
+ * so the suite-level after() destroys it whatever fails later; an
+ * initdb/start failure destroys the never-started cluster immediately and
+ * rethrows (destruction after failed setup contains — it never qualifies).
+ */
+async function canonicalFixture(label: string): Promise<GatewayHarness> {
+  assert.ok(CANONICAL_BINS !== undefined, 'server binaries were probed present');
+  const port = await freePort();
+  // Short prefix: the Unix socket path must stay under the kernel sun_path
+  // limit (103 bytes on macOS) even under a long per-user TMPDIR.
+  const rootDir = mkdtempSync(join(tmpdir(), 'pf-'));
+  const clusterDir = join(rootDir, 'cluster');
+  const socketDir = join(rootDir, 'sock');
+  const record: OwnedFixture = { harness: undefined, rootDir, clusterDir, pgCtl: CANONICAL_BINS.pgCtl, started: false };
+  owned.push(record);
+  try {
+    const init = spawnSync(
+      CANONICAL_BINS.initdb,
+      ['-D', clusterDir, '--auth=trust', '--username=postgres', '--no-sync'],
+      { timeout: 120_000, encoding: 'utf8' },
+    );
+    assert.equal(init.status, 0, `initdb failed:\n${String(init.stdout)}\n${String(init.stderr)}`);
+    mkdirSync(socketDir, { recursive: true });
+    const start = spawnSync(
+      CANONICAL_BINS.pgCtl,
+      ['-D', clusterDir, '-l', join(rootDir, 'server.log'), 'start', '-w', '-t', '60',
+       '-o', `-p ${port} -c listen_addresses=127.0.0.1 -c unix_socket_directories=${socketDir} -c fsync=off`],
+      { timeout: 120_000, encoding: 'utf8' },
+    );
+    assert.equal(start.status, 0, `pg_ctl start failed:\n${String(start.stdout)}\n${String(start.stderr)}`);
+    record.started = true;
+  } catch (error) {
+    owned.splice(owned.indexOf(record), 1);
+    rmSync(rootDir, { recursive: true, force: true });
+    throw error;
+  }
+
+  const databaseName = `preflight_${label.replace(/[^a-z0-9]/gi, '_')}`;
+  const adminPool = new PgPool({
+    connectionString: `postgresql://postgres@127.0.0.1:${port}/postgres`,
+    max: 1,
+  });
+  try {
+    await adminPool.query(`CREATE DATABASE ${databaseName}`);
+  } finally {
+    await adminPool.end();
+  }
+
+  const config = loadConfig({
+    DATABASE_URL: `postgresql://postgres@127.0.0.1:${port}/${databaseName}`,
+    CONTROL_PLANE_TOKEN: SUITE_TOKEN,
+    STATEMENT_TIMEOUT_MS: '60000',
+    PG_POOL_MAX: '12',
+  });
+  const pool = createPool(config);
+  const harness: GatewayHarness = { pool, config, databaseName };
+  record.harness = harness;
+
+  // Full canonical sequence — selection omitted — on the owned instance.
+  const result = await migrate(pool);
+  assert.ok(
+    result.applied.includes('0006_command_journal_authority_split'),
+    `the canonical sequence through 0006 must apply on the owned instance; applied=${JSON.stringify(result.applied)}`,
+  );
+  return harness;
+}
+
+/**
+ * Enumerated same-run cleanup of the 0006 objects and roles on one owned
+ * instance, then the pg_roles absence assertion, then destruction. A failure
+ * in cleanup or the assertion fails the fixture; destruction afterwards only
+ * contains it. A never-migrated harness (setup failed after start) has
+ * nothing to clean and no qualification to claim; a never-started cluster
+ * has no postmaster to stop.
+ */
+async function teardownOwnedFixture(fixture: OwnedFixture): Promise<void> {
+  const pool = fixture.harness?.pool;
+  try {
+    if (pool !== undefined) {
+      await pool.query('DROP TABLE IF EXISTS public.command_journal_events, public.command_journal_chain_head CASCADE');
+      await pool.query('DROP FUNCTION IF EXISTS public.command_journal_append(text, text, text, bigint, bytea)');
+      await pool.query('DROP FUNCTION IF EXISTS public.command_journal_immutable()');
+      for (const role of JOURNAL_ROLES) {
+        await pool.query(`DROP ROLE IF EXISTS ${role}`);
+      }
+      const { rows } = await pool.query<{ rolname: string }>(
+        `SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[]) ORDER BY rolname`,
+        [[...JOURNAL_ROLES]],
+      );
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          at: 'test.canonical_fixture_teardown',
+          database: fixture.harness?.databaseName,
+          residualRoles: rows.map((r) => r.rolname),
+        }),
+      );
+      assert.deepEqual(rows, [], 'every 0006 role must be absent from pg_roles before the owned instance is destroyed');
+    }
+  } finally {
+    await pool?.end().catch(() => undefined);
+    if (fixture.started) {
+      spawnSync(fixture.pgCtl, ['-D', fixture.clusterDir, 'stop', '-m', 'immediate', '-w'], { timeout: 60_000 });
+      fixture.started = false;
+    }
+    rmSync(fixture.rootDir, { recursive: true, force: true });
+  }
+}
+
+after(async () => {
+  while (owned.length > 0) {
+    const next = owned.pop();
+    if (next !== undefined) await teardownOwnedFixture(next);
+  }
+});
+
+describe('schema preflight — fail closed on missing schema (A-R1)', { skip: CANONICAL_SKIP ? CANONICAL_SKIP : false }, () => {
   it('rejects on a missing required schema_migrations id, issuing no DDL', async (t) => {
-    const harness = await fixture('preflight-missing-id');
+    const harness = await canonicalFixture('preflight-missing-id');
     await installDdlObservation(harness);
     // Deliberate damage (DML, not DDL): the recorded id disappears.
     await harness.pool.query('DELETE FROM schema_migrations WHERE id = $1', [
@@ -225,7 +455,7 @@ describe('schema preflight — fail closed on missing schema (A-R1)', { skip: ST
   });
 
   it('boot exits non-zero on a missing required id, with zero DDL observed', async (t) => {
-    const harness = await fixture('preflight-missing-id-boot');
+    const harness = await canonicalFixture('preflight-missing-id-boot');
     await installDdlObservation(harness);
     await harness.pool.query('DELETE FROM schema_migrations WHERE id = $1', [
       REQUIRED_ID_TO_REMOVE,
@@ -256,14 +486,14 @@ describe('schema preflight — fail closed on missing schema (A-R1)', { skip: ST
   });
 });
 
-describe('schema preflight — privilege audit is detection-only (A-R3)', { skip: STORAGE_SKIP ? STORAGE_SKIP : false }, () => {
+describe('schema preflight — privilege audit is detection-only (A-R3)', { skip: CANONICAL_SKIP ? CANONICAL_SKIP : false }, () => {
   let harness: GatewayHarness | undefined;
   let client: PoolClient | undefined;
   let roleCreated = false;
 
   before(async () => {
-    if (STORAGE_SKIP) return;
-    harness = await fixture('preflight-role-detection');
+    if (CANONICAL_SKIP) return;
+    harness = await canonicalFixture('preflight-role-detection');
     /*
      * pg_roles is cluster-wide, not per-database: a crashed prior run could
      * leave the fixture role behind and fail this run's CREATE ROLE. Same
@@ -357,9 +587,9 @@ describe('schema preflight — privilege audit is detection-only (A-R3)', { skip
   });
 });
 
-describe('schema preflight — incompatible schema fails boot unchanged (A-R4)', { skip: STORAGE_SKIP ? STORAGE_SKIP : false }, () => {
+describe('schema preflight — incompatible schema fails boot unchanged (A-R4)', { skip: CANONICAL_SKIP ? CANONICAL_SKIP : false }, () => {
   it('boot fails, catalog state is identical before/after, zero DDL', async (t) => {
-    const harness = await fixture('preflight-boot-reject');
+    const harness = await canonicalFixture('preflight-boot-reject');
     // Deliberate incompatibility: a required recorded id is removed, and a
     // stray object the preflight must NOT clean up is added (fixture DDL on
     // the suite connection, before the observation window opens).
@@ -388,9 +618,9 @@ describe('schema preflight — incompatible schema fails boot unchanged (A-R4)',
   });
 });
 
-describe('schema preflight — never repairs (A-R5)', { skip: STORAGE_SKIP ? STORAGE_SKIP : false }, () => {
+describe('schema preflight — never repairs (A-R5)', { skip: CANONICAL_SKIP ? CANONICAL_SKIP : false }, () => {
   it('leaves a deliberately damaged schema exactly as found', async (t) => {
-    const harness = await fixture('preflight-no-repair');
+    const harness = await canonicalFixture('preflight-no-repair');
     // Damage: a required id removed AND a conflicting stray table present.
     await harness.pool.query('DELETE FROM schema_migrations WHERE id = $1', [
       REQUIRED_ID_TO_REMOVE,
@@ -425,15 +655,18 @@ describe('schema preflight — never repairs (A-R5)', { skip: STORAGE_SKIP ? STO
   });
 });
 
-describe('schema preflight — a compatible schema passes read-only (GREEN control)', { skip: STORAGE_SKIP ? STORAGE_SKIP : false }, () => {
+describe('schema preflight — a compatible schema passes read-only (GREEN control)', { skip: CANONICAL_SKIP ? CANONICAL_SKIP : false }, () => {
   it('resolves on a fully migrated schema with a pending_cutover audit', async (t) => {
-    const harness = await fixture('preflight-compatible');
+    const harness = await canonicalFixture('preflight-compatible');
     await installDdlObservation(harness);
     const report = await schemaPreflight(harness.pool);
     t.diagnostic(`report: ${JSON.stringify(report)}`);
     assert.equal(report.ok, true);
     assert.equal(report.privilegeAudit.status, 'pending_cutover');
     assert.ok(report.migrationsPresent.includes(REQUIRED_ID_TO_REMOVE));
+    // MS-2: the newly appended 0006 is a required id and must be present on
+    // a fully migrated canonical fixture (explicit literal, not derived).
+    assert.ok(report.migrationsPresent.includes('0006_command_journal_authority_split'));
     const tags = await observedDdlTags(harness);
     assert.deepEqual(tags, [], 'a passing preflight issues no DDL either');
   });

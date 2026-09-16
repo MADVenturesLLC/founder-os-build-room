@@ -102,6 +102,26 @@ jobs:
       - name: Locked install
         run: npm ci
 
+      # PR 2b Tranche B (B-M4): the journal-authority suites and the fixtures
+      # that require canonical migration 0006 run on exclusively owned
+      # disposable PostgreSQL instances (initdb/pg_ctl), because 0006 creates
+      # cluster-wide roles that cannot be applied per-suite on the one shared
+      # service container. The ubuntu-24.04 runner image ships PostgreSQL 16
+      # server binaries (service disabled); this step resolves and pins that
+      # bindir for the suites. It creates nothing outside the runner's temp
+      # dir and does not touch the service container. Same major as the
+      # `postgres:16` service, so both shapes qualify the same server line.
+      - name: Resolve PostgreSQL 16 server binaries for owned test instances
+        run: |
+          set -euo pipefail
+          BINDIR="$(pg_config --bindir 2>/dev/null || true)"
+          if [ -z "$BINDIR" ] || [ ! -x "$BINDIR/initdb" ]; then
+            BINDIR="/usr/lib/postgresql/16/bin"
+          fi
+          test -x "$BINDIR/initdb" && test -x "$BINDIR/pg_ctl"
+          "$BINDIR/pg_ctl" --version
+          echo "BUILDROOM_TEST_PG_BINDIR=$BINDIR" >> "$GITHUB_ENV"
+
       # `npm run test:storage` rather than `npm test`, and the difference is not
       # cosmetic: the storage command refuses to start without
       # TEST_DATABASE_URL, so this job can no longer report success by skipping

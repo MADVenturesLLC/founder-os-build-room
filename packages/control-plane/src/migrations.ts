@@ -1322,6 +1322,243 @@ export const MIGRATIONS: readonly Migration[] = [
          FOR EACH ROW EXECUTE FUNCTION phase3_run_events_immutable()`,
     ],
   },
+  {
+    /*
+     * PR 2b Tranche B — journal database authority split (C-3 §6.1 steps
+     * 1–13 exactly, per FD-B4; step 14 defers to Tranche D; steps 15 and 16
+     * are test carriers B-R11 / B-R8 and carry NO SQL here).
+     *
+     * Authority split (C-2 §3, §4):
+     *   br_journal_owner        NOLOGIN, no credential — owns tables, trigger
+     *                           function, and both append-only triggers
+     *   command_journal_writer  NOLOGIN, no credential — owns ONLY the
+     *                           SECURITY DEFINER append routine, deliberately
+     *                           NOT the tables (so its body cannot inherit
+     *                           trigger-disabling power)
+     *   br_app_runtime          LOGIN, no attributes, ZERO memberships —
+     *                           EXECUTE on the routine + SELECT on both tables,
+     *                           nothing else on journal objects
+     *
+     * Ordering is load-bearing: ownership is transferred in the same
+     * transaction as creation (step 4), PUBLIC is revoked BEFORE any grant
+     * (steps 7, 10), and the genesis head row is the table's sole insert,
+     * ever (C-1 §4.1). The migrator wraps this entry in one transaction
+     * (BEGIN/COMMIT below), which is what makes steps 4–13 atomic.
+     *
+     * Cluster scope: steps 1–3 create CLUSTER-WIDE roles with the real
+     * production names, literally as C-3 specifies. Applying this entry to a
+     * second database in the same cluster therefore fails on step 1
+     * (42710 duplicate role) — by design, not by defect: a cluster hosts one
+     * journal authority. Test fixtures that need this tranche provision an
+     * exclusively owned instance (Founder fixture-topology ruling, Option B).
+     *
+     * The append routine (FD-B5, Builder's choice, recorded in the handoff):
+     *   public.command_journal_append(
+     *     p_record_class text, p_command_id text, p_event_type text,
+     *     p_seq bigint, p_row_bytes bytea) RETURNS TABLE(seq bigint, chain_hash text)
+     * The CALLER supplies the row's canonical bytes per spec (c)/(d) —
+     * `packages/journal` remains the sole encoder and vector source (draft §9:
+     * "no alternate journal implementation"). The routine: locks the singleton
+     * head FOR UPDATE, verifies head.seq/chain_hash against the recomputed
+     * events tail (aborts on divergence — contract §4.1 fail-closed), refuses
+     * a p_seq that is not head+1, frames chain_hash = pg_catalog.sha256(
+     * prior_hash_ascii || row_bytes) exactly as packages/journal/chain.ts,
+     * inserts the event, advances the head, and returns (seq, chain_hash).
+     * Builtin sha256 only (S6); search_path pinned to pg_catalog, pg_temp with
+     * public ABSENT; every non-builtin reference schema-qualified; no dynamic
+     * SQL (C-2 §16.3, §16.5).
+     */
+    id: '0006_command_journal_authority_split',
+    statements: [
+      // 1–3: roles. NOLOGIN roles carry no credential; the runtime LOGIN is
+      // created with no password here — the per-run fixture password (tests)
+      // or the sealed Railway credential (Tranche D) is set outside this
+      // migration, never inside repository text.
+      `CREATE ROLE br_journal_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION`,
+      `CREATE ROLE command_journal_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION`,
+      `CREATE ROLE br_app_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION INHERIT`,
+
+      // 4: tables, ownership transferred immediately (same transaction).
+      //    seq carries NO default — the routine assigns it (PC-8, no sequence).
+      //    record_class is an explicit column (contract §2/§6.2: never inferred).
+      //    row_bytes holds the canonical bytes the chain hash covers so
+      //    verify() can recompute from genesis over the events alone.
+      `CREATE TABLE public.command_journal_events (
+         seq          bigint      NOT NULL,
+         record_class text        NOT NULL,
+         command_id   text        NOT NULL,
+         event_type   text        NOT NULL,
+         chain_hash   text        NOT NULL,
+         row_bytes    bytea       NOT NULL,
+         recorded_at  timestamptz NOT NULL DEFAULT now(),
+         CONSTRAINT command_journal_events_pkey PRIMARY KEY (seq),
+         CONSTRAINT command_journal_events_seq_positive CHECK (seq > 0),
+         CONSTRAINT command_journal_events_chain_hash_unique UNIQUE (chain_hash),
+         CONSTRAINT command_journal_events_chain_hash_hex64
+           CHECK (chain_hash ~ '^[0-9a-f]{64}$'),
+         CONSTRAINT command_journal_events_record_class_known
+           CHECK (record_class IN ('command', 'decision')),
+         CONSTRAINT command_journal_events_command_id_namespace
+           CHECK (record_class <> 'command' OR command_id LIKE 'cmd\\_%'),
+         CONSTRAINT command_journal_events_event_type_known
+           CHECK (
+             (record_class = 'command' AND event_type IN
+               ('journaled','identity_bound','dispatched','completed','failed','unresolved','resolved'))
+             OR
+             (record_class = 'decision' AND event_type IN
+               ('plan.revision_requested','plan.approved','founder.cancel'))
+           )
+       )`,
+      // At-most-once event types per command (contract §4.1 uniqueness).
+      `CREATE UNIQUE INDEX command_journal_events_once_per_command
+         ON public.command_journal_events (command_id, event_type)
+         WHERE record_class = 'command'
+           AND event_type IN ('journaled','identity_bound','dispatched','resolved')`,
+      `CREATE TABLE public.command_journal_chain_head (
+         head_id    integer NOT NULL,
+         seq        bigint  NOT NULL,
+         chain_hash text    NOT NULL,
+         CONSTRAINT command_journal_chain_head_pkey PRIMARY KEY (head_id),
+         CONSTRAINT command_journal_chain_head_singleton CHECK (head_id = 1),
+         CONSTRAINT command_journal_chain_head_seq_nonneg CHECK (seq >= 0),
+         CONSTRAINT command_journal_chain_head_hash_hex64
+           CHECK (chain_hash ~ '^[0-9a-f]{64}$')
+       )`,
+      `ALTER TABLE public.command_journal_events OWNER TO br_journal_owner`,
+      `ALTER TABLE public.command_journal_chain_head OWNER TO br_journal_owner`,
+
+      // 5: trigger function, owned by the table owner (PC-9).
+      `CREATE FUNCTION public.command_journal_immutable()
+         RETURNS trigger
+         LANGUAGE plpgsql
+         AS $$
+       BEGIN
+         RAISE EXCEPTION '% is append-only: % rejected', TG_TABLE_NAME, TG_OP
+           USING ERRCODE = 'restrict_violation';
+       END;
+       $$`,
+      `ALTER FUNCTION public.command_journal_immutable() OWNER TO br_journal_owner`,
+
+      // 6: both append-only triggers — exactly two objects, as C-3 §6.1 lists
+      //    them. Statement-level so one trigger per table covers TRUNCATE too
+      //    (row-level triggers cannot fire on TRUNCATE). Events: no UPDATE,
+      //    DELETE, or TRUNCATE. Head: the row is mutable by design (UPDATE is
+      //    the latch path, C-1 §4.1); DELETE and TRUNCATE are rejected, and
+      //    INSERT is denied to every application role by grant (the migration
+      //    owns the sole genesis insert).
+      `CREATE TRIGGER command_journal_events_append_only
+         BEFORE UPDATE OR DELETE OR TRUNCATE ON public.command_journal_events
+         FOR EACH STATEMENT EXECUTE FUNCTION public.command_journal_immutable()`,
+      `CREATE TRIGGER command_journal_chain_head_append_only
+         BEFORE DELETE OR TRUNCATE ON public.command_journal_chain_head
+         FOR EACH STATEMENT EXECUTE FUNCTION public.command_journal_immutable()`,
+
+      // 7: PUBLIC revoked BEFORE any grant.
+      `REVOKE ALL ON public.command_journal_events, public.command_journal_chain_head FROM PUBLIC`,
+
+      // 8: the writer's minimum — not ALL.
+      `GRANT SELECT, INSERT ON public.command_journal_events TO command_journal_writer`,
+      `GRANT SELECT, UPDATE ON public.command_journal_chain_head TO command_journal_writer`,
+
+      // 9: the SECURITY DEFINER append routine, owned by the writer.
+      `CREATE FUNCTION public.command_journal_append(
+         p_record_class text,
+         p_command_id   text,
+         p_event_type   text,
+         p_seq          bigint,
+         p_row_bytes    bytea
+       ) RETURNS TABLE (seq bigint, chain_hash text)
+         LANGUAGE plpgsql
+         SECURITY DEFINER
+         SET search_path = pg_catalog, pg_temp
+         AS $$
+       DECLARE
+         v_head_seq   bigint;
+         v_head_hash  text;
+         v_tail_seq   bigint;
+         v_tail_hash  text;
+         v_chain_hash text;
+       BEGIN
+         RAISE NOTICE 'command_journal_append.definer_user:%', current_user;
+
+         IF p_row_bytes IS NULL OR pg_catalog.length(p_row_bytes) = 0 THEN
+           RAISE EXCEPTION 'command_journal_append: row bytes are required'
+             USING ERRCODE = 'invalid_parameter_value';
+         END IF;
+
+         -- Exclusive lock on the single head row (contract §4.1 append serialization).
+         SELECT h.seq, h.chain_hash INTO v_head_seq, v_head_hash
+           FROM public.command_journal_chain_head AS h
+          WHERE h.head_id = 1
+            FOR UPDATE;
+         IF NOT FOUND THEN
+           RAISE EXCEPTION 'command_journal_append: chain head row is absent (integrity finding)'
+             USING ERRCODE = 'integrity_constraint_violation';
+         END IF;
+
+         -- Verify the locked head against the recomputed events tail BEFORE writing.
+         SELECT e.seq, e.chain_hash INTO v_tail_seq, v_tail_hash
+           FROM public.command_journal_events AS e
+          ORDER BY e.seq DESC
+          LIMIT 1;
+         IF v_tail_seq IS NULL THEN
+           v_tail_seq  := 0;
+           v_tail_hash := pg_catalog.repeat('0', 64);
+         END IF;
+         IF v_tail_seq <> v_head_seq OR v_tail_hash <> v_head_hash THEN
+           RAISE EXCEPTION 'command_journal_append: chain head divergence from events tail (head seq=%, tail seq=%) — integrity finding, append aborted',
+             v_head_seq, v_tail_seq
+             USING ERRCODE = 'integrity_constraint_violation';
+         END IF;
+
+         IF p_seq <> v_head_seq + 1 THEN
+           RAISE EXCEPTION 'command_journal_append: seq % is not the next position (% expected) — divergence, append aborted',
+             p_seq, v_head_seq + 1
+             USING ERRCODE = 'integrity_constraint_violation';
+         END IF;
+
+         -- chain_hash = sha256(prior_hash as 64 ascii bytes || canonical row bytes),
+         -- exactly the framing in packages/journal/src/chain.ts. Builtin only.
+         v_chain_hash := pg_catalog.encode(
+           pg_catalog.sha256(
+             pg_catalog.convert_to(v_head_hash, 'UTF8') || p_row_bytes
+           ),
+           'hex'
+         );
+
+         INSERT INTO public.command_journal_events
+           (seq, record_class, command_id, event_type, chain_hash, row_bytes)
+         VALUES
+           (p_seq, p_record_class, p_command_id, p_event_type, v_chain_hash, p_row_bytes);
+
+         UPDATE public.command_journal_chain_head AS h
+            SET seq = p_seq, chain_hash = v_chain_hash
+          WHERE h.head_id = 1;
+
+         seq := p_seq;
+         chain_hash := v_chain_hash;
+         RETURN NEXT;
+       END;
+       $$`,
+      `ALTER FUNCTION public.command_journal_append(text, text, text, bigint, bytea)
+         OWNER TO command_journal_writer`,
+
+      // 10: PUBLIC EXECUTE revoked — mandatory, before the single grant.
+      `REVOKE ALL ON FUNCTION public.command_journal_append(text, text, text, bigint, bytea) FROM PUBLIC`,
+
+      // 11: the single explicit grant.
+      `GRANT EXECUTE ON FUNCTION public.command_journal_append(text, text, text, bigint, bytea) TO br_app_runtime`,
+
+      // 12: SELECT only, for verify() chain recomputation.
+      `GRANT SELECT ON public.command_journal_events, public.command_journal_chain_head TO br_app_runtime`,
+
+      // 13: the singleton genesis head row — the table's sole insert, ever.
+      //     The literal equals packages/journal GENESIS_CHAIN_HASH ('0' x 64);
+      //     B-T1 asserts that equality against the constant.
+      `INSERT INTO public.command_journal_chain_head (head_id, seq, chain_hash)
+         VALUES (1, 0, '0000000000000000000000000000000000000000000000000000000000000000')`,
+    ],
+  },
 ];
 
 /** Advisory-lock key. Arbitrary but fixed — any value works if it never changes. */
@@ -1343,6 +1580,51 @@ export interface MigrationResult {
 }
 
 /**
+ * Explicit, optional migration selection (Founder ruling — Gate III storage
+ * fixture completion, §3; expressly NOT an inference from PO-6).
+ *
+ * `through` names the LAST migration id to apply. The selection is an
+ * ORDERED PREFIX of the one canonical `MIGRATIONS` array — there is no second
+ * list, no filter predicate, and no global state: the default (option
+ * omitted) is the full canonical sequence, byte-for-byte the pre-ruling
+ * behavior. An unknown id fails BEFORE a connection is taken or a lock is
+ * acquired, so a typo can never partially migrate. Transaction and
+ * `schema_migrations` record semantics per migration are unchanged.
+ *
+ * Intended consumers: test fixtures that must stop at the pre-journal
+ * tranche (`0005_phase3_run_evidence`) because the entry after it creates
+ * cluster-wide roles. Production boot passes nothing.
+ */
+export interface MigrateOptions {
+  readonly through?: string;
+}
+
+/**
+ * Resolve the ordered prefix of `MIGRATIONS` ending at `through`. Exported so
+ * callers can validate a selection without a pool (the administrative runner
+ * validates before it connects).
+ *
+ * Throws on an unknown or empty id — the failure names the id and the valid
+ * set so the caller need not consult the source.
+ */
+export function selectMigrations(options: MigrateOptions = {}): readonly Migration[] {
+  const { through } = options;
+  if (through === undefined) {
+    return MIGRATIONS;
+  }
+  if (typeof through !== 'string' || through.length === 0) {
+    throw new Error('migrate: `through` must be a non-empty migration id when provided');
+  }
+  const index = MIGRATIONS.findIndex((migration) => migration.id === through);
+  if (index === -1) {
+    throw new Error(
+      `migrate: unknown migration id '${through}'; valid ids in order: ${MIGRATIONS.map((m) => m.id).join(', ')}`,
+    );
+  }
+  return MIGRATIONS.slice(0, index + 1);
+}
+
+/**
  * Apply every migration not yet recorded, in order, under an advisory lock.
  * Returns which ran and which were already present, so a boot log can say
  * plainly what it did rather than "migrations ok".
@@ -1359,7 +1641,10 @@ function quoteLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-export async function migrate(pool: Pool): Promise<MigrationResult> {
+export async function migrate(pool: Pool, options: MigrateOptions = {}): Promise<MigrationResult> {
+  // Validated before any connection, lock, or statement (ruling §3: an
+  // unknown or invalid selection fails before migration execution).
+  const selected = selectMigrations(options);
   const client: PoolClient = await pool.connect();
   const applied: string[] = [];
   const alreadyApplied: string[] = [];
@@ -1408,7 +1693,7 @@ export async function migrate(pool: Pool): Promise<MigrationResult> {
     const { rows } = await client.query<{ id: string }>('SELECT id FROM schema_migrations');
     const present = new Set(rows.map((row) => row.id));
 
-    for (const migration of MIGRATIONS) {
+    for (const migration of selected) {
       if (present.has(migration.id)) {
         alreadyApplied.push(migration.id);
         continue;
