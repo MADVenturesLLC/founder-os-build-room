@@ -1,0 +1,151 @@
+{
+  "note": "Synthetic AE-01-style RoomSnapshotBody fixtures for RoomStatus IR dogfooding (Lane 1). All ids, seqs, and refs are invented test vectors — no production occupancy is claimed anywhere in this package. 'expected' is the full projected RoomStatus (blockReason/slotPhases keys omitted when absent).",
+  "cases": [
+    {
+      "name": "occupied-running",
+      "snapshot": {
+        "room_id": "fixture-room-alpha",
+        "occupancy": "OCCUPIED",
+        "block_reason": "NONE",
+        "input_authority": { "kind": "UNOWNED" },
+        "executions": [
+          {
+            "execution_id": "exec-fixture-a",
+            "state": "RUNNING",
+            "cursors": { "ptyOutputSeq": 12, "ptyCheckpointSeq": 10, "resizeEpoch": 1, "durableCommittedSeq": 10 },
+            "history_truncated": false
+          }
+        ],
+        "viewers": [{ "viewer_id": "viewer-1", "attachment": "ATTACHED", "caps": "read" }],
+        "room_seq": 41
+      },
+      "expected": {
+        "irVersion": 1,
+        "roomId": "fixture-room-alpha",
+        "occupancy": "occupied",
+        "agentPhase": "running",
+        "slotPhases": [{ "slotId": "exec-fixture-a", "phase": "running" }],
+        "evidenceRefs": [],
+        "observedSeq": 41
+      }
+    },
+    {
+      "name": "waiting-founder-blocked",
+      "snapshot": {
+        "room_id": "fixture-room-bravo",
+        "occupancy": "OCCUPIED",
+        "block_reason": "WAITING_FOUNDER",
+        "input_authority": { "kind": "HELD", "viewerId": "viewer-1", "inputEpoch": 3 },
+        "executions": [
+          {
+            "execution_id": "exec-fixture-b",
+            "state": "RUNNING",
+            "cursors": { "ptyOutputSeq": 7, "ptyCheckpointSeq": 7, "resizeEpoch": 1, "durableCommittedSeq": 7 },
+            "history_truncated": false
+          }
+        ],
+        "viewers": [{ "viewer_id": "viewer-1", "attachment": "ATTACHED", "caps": "read+input" }],
+        "room_seq": 55
+      },
+      "expected": {
+        "irVersion": 1,
+        "roomId": "fixture-room-bravo",
+        "occupancy": "occupied",
+        "agentPhase": "blocked",
+        "blockReason": "human_hold",
+        "slotPhases": [{ "slotId": "exec-fixture-b", "phase": "running" }],
+        "evidenceRefs": [],
+        "observedSeq": 55
+      }
+    },
+    {
+      "name": "exited-verifying-never-completed",
+      "snapshot": {
+        "room_id": "fixture-room-charlie",
+        "occupancy": "OCCUPIED",
+        "block_reason": "NONE",
+        "input_authority": { "kind": "UNOWNED" },
+        "executions": [
+          {
+            "execution_id": "exec-fixture-c",
+            "state": "EXITED",
+            "cursors": { "ptyOutputSeq": 99, "ptyCheckpointSeq": 99, "resizeEpoch": 2, "durableCommittedSeq": 99 },
+            "history_truncated": false
+          }
+        ],
+        "viewers": [],
+        "room_seq": 77
+      },
+      "expected": {
+        "irVersion": 1,
+        "roomId": "fixture-room-charlie",
+        "occupancy": "occupied",
+        "agentPhase": "verifying",
+        "slotPhases": [{ "slotId": "exec-fixture-c", "phase": "verifying" }],
+        "evidenceRefs": [],
+        "observedSeq": 77
+      }
+    },
+    {
+      "name": "interrupted-no-facts-unknown",
+      "snapshot": {
+        "room_id": "fixture-room-delta",
+        "occupancy": "INTERRUPTED",
+        "block_reason": "ADAPTER_HUNG",
+        "input_authority": { "kind": "REVOKED" },
+        "executions": [],
+        "viewers": [],
+        "room_seq": 90
+      },
+      "expected": {
+        "irVersion": 1,
+        "roomId": "fixture-room-delta",
+        "occupancy": "occupied",
+        "agentPhase": "blocked",
+        "blockReason": "other_named",
+        "evidenceRefs": [],
+        "observedSeq": 90
+      }
+    },
+    {
+      "name": "prepared-empty-idle",
+      "snapshot": {
+        "room_id": "fixture-room-echo",
+        "occupancy": "PREPARED",
+        "block_reason": "NONE",
+        "input_authority": { "kind": "UNOWNED" },
+        "executions": [],
+        "viewers": [],
+        "room_seq": 3
+      },
+      "expected": {
+        "irVersion": 1,
+        "roomId": "fixture-room-echo",
+        "occupancy": "empty",
+        "agentPhase": "idle",
+        "evidenceRefs": [],
+        "observedSeq": 3
+      }
+    },
+    {
+      "name": "closed-room",
+      "snapshot": {
+        "room_id": "fixture-room-foxtrot",
+        "occupancy": "CLOSED",
+        "block_reason": "NONE",
+        "input_authority": { "kind": "UNOWNED" },
+        "executions": [],
+        "viewers": [],
+        "room_seq": 120
+      },
+      "expected": {
+        "irVersion": 1,
+        "roomId": "fixture-room-foxtrot",
+        "occupancy": "closed",
+        "agentPhase": "idle",
+        "evidenceRefs": [],
+        "observedSeq": 120
+      }
+    }
+  ]
+}

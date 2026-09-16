@@ -25,6 +25,7 @@
     "packages/seat-output-schema/src/**/*.ts",
     "packages/checkpoint-writer/src/**/*.ts",
     "packages/quarantine-advisor/src/**/*.ts",
+    "packages/room-status/src/**/*.ts",
     "packages/redaction/src/**/*.ts",
     "packages/completion-gate/src/**/*.ts",
     "test/**/*.ts"
