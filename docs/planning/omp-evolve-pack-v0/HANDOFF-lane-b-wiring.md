@@ -195,14 +195,56 @@ Mapping to the act's tests:
   done, landed on `main` as `57690fb` (`sinks.ts` gains `err(text)`, redacting
   plain text to the err stream under the same `guarded` boundary as `log`), with
   its own handoff at `HANDOFF-redaction-v0.1-stderr-path.md`.
-- Journal sink: parked until the command-journal **write path** exists (PR2b
-  Tranche D). **`packages/journal` existing is not that dependency** — as of
-  `d01742c7` it is the record model only (`event-row`, `decision-row`,
-  `envelope`, `chain`, `bytes`, `plandoc`) and exports no append/write/insert;
-  `packages/journal/src/envelope.ts` says so itself: "Redaction enforcement
-  belongs to the write path (2b and later)." The earlier wording here — "when a
-  journal store exists" — reads as satisfied by that package and is not. There
-  is nothing for a redaction sink to attach to until the write path lands.
+- Journal sink: parked, but **not on the dependency an earlier revision of this
+  line named**. That revision said "the command-journal write path (PR2b
+  Tranche D)". Tranche D is the *application runtime cutover* — a Railway
+  `DATABASE_URL` variable swap and a variable audit, of which the plan says
+  "Database objects affected by D: none created"
+  (`docs/planning/command-journal/pr2b-implementation-plan-r1.md` §4.4). It is
+  not the write path and never was.
+
+  The write path is **Tranche B**, and its code has **merged**: PR #54, on
+  `main` at `ddbcbb3fe5f71367fd39ce264cc4c52d138d23f9`, adds migration
+  `0006_command_journal_authority_split` with
+  `CREATE FUNCTION public.command_journal_append(…) SECURITY DEFINER` owned by
+  `command_journal_writer`, the append-only triggers
+  `command_journal_events_append_only` and
+  `command_journal_chain_head_append_only`, and the B-T2 atomicity proofs in
+  `test/journal-append-atomicity.storage.test.ts` (repo-root `test/`, where
+  this repository keeps its suites).
+
+  Line numbers are given **as of `ddbcbb3`** and only alongside the symbol
+  names, because `migrations.ts` only ever grows and a bare line number goes
+  stale on the next migration: `migrations.ts:1371` (the migration id),
+  `:1464` (the `CREATE FUNCTION`), `:1449` and `:1452` (the two triggers).
+  Grep the symbols if the numbers have drifted.
+
+  **`packages/journal` still exports no append/write/insert, and that is now
+  expected rather than pending.** The append is a `SECURITY DEFINER` Postgres
+  routine the runtime invokes, not a TypeScript function, so the record model
+  was never going to grow one. Its own note —
+  `packages/journal/src/envelope.ts`: "Redaction enforcement belongs to the
+  write path (2b and later)" — still holds; the write path simply lives in
+  SQL.
+
+  What the sink is actually waiting on, both parts:
+  1. **Execution authority.** Tranche B's *code* has landed; its *execution* —
+     running 0006 against the real database — requires Gate III and, per the
+     plan's hard edge "C before B executes", the Tranche C administrative
+     migration plane. **As of `ddbcbb3`, neither has happened.** Dated
+     deliberately: this is the one sentence here that can become false with
+     nobody editing the file.
+  2. **A runtime caller — and this, not the SQL, is the sink's actual scope.**
+     The append is SQL, but `envelope.ts` assigns *redaction enforcement* to
+     the write path, and enforcement has to run in TypeScript before the SQL
+     call is made. So the sink attaches to the code that invokes
+     `command_journal_append`, not to the routine itself. No such caller
+     exists yet, and the PR2b plan does not name the package it will live in
+     — it specifies only the database grant
+     (`GRANT EXECUTE ON FUNCTION public.command_journal_append(...) TO
+     br_app_runtime`, plan step 11). Whoever resumes this picks the attach
+     point up with that still undetermined; it is not recorded anywhere.
+
 - Merge is a separate exact-SHA Founder act; this file asserts none.
 
 Attribution: Role-Id builder; Actor-Id
