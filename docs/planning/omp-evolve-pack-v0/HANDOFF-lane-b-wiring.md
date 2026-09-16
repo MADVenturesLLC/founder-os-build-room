@@ -279,14 +279,22 @@ Mapping to the act's tests:
      `docs/planning/command-journal/` holds sixteen documents; the answer is in
      `pr2b-implementation-plan-r1-addendum-02-r6.md`, row **B-N2**:
 
-     > `packages/control-plane/src/journal-append.ts` —
-     > `appendJournalRecord(client, boundary, record)`: (1) `boundary.require()`,
-     > refused → throw before any SQL of its own; (2) `redactValue(record)`;
-     > (3) build the closed-key `p_fields` … (4) `EXECUTE
-     > public.command_journal_append(...)` on the caller's `client`; (5) return
-     > `seq`, `recorded_at`, `envelope_digest`, `chain_hash`. Encodes nothing;
-     > imports nothing from `packages/journal` except types. **Dormant on
-     > merge: nothing calls it**
+     > **File:** `packages/control-plane/src/journal-append.ts`
+     >
+     > `appendJournalRecord(client, boundary, record)`: (1)
+     > `boundary.require()`, refused → throw before any SQL of its own;
+     > (2) `redactValue(record)`; (3) build the closed-key `p_fields`
+     > object and, for a `journaled` row, the closed-key `p_envelope`
+     > object (§2.4a) from the redacted record, snake-cased by a fixed
+     > name map; (4) `EXECUTE public.command_journal_append(class,
+     > fields, envelope)` on the caller's `client`; (5) return the
+     > routine's `seq`, `recorded_at`, `envelope_digest`, `chain_hash`.
+     > Encodes nothing; imports nothing from `packages/journal` except
+     > types. **Dormant on merge: nothing calls it**
+
+     Quoted in full rather than elided: an earlier revision of this entry cut
+     the `p_envelope` clause with an ellipsis, and a blockquote that looks
+     complete but is not is exactly the failure this document exists to avoid.
 
      That also answers what an earlier revision called the remaining "open
      design question" about how control-plane obtains redaction: it does not
