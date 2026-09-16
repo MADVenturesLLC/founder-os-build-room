@@ -230,7 +230,24 @@ in `test/`.
   the act author, not for this package.
 - Registering additional seat-output-schema ids is a code change to
   `handoff-schemas.ts` under a future act.
-- The 3 daemon-lifecycle tests are environment-sensitive locally (fail on
+- ~~The 3 daemon-lifecycle tests are environment-sensitive locally (fail on
   10 s timeouts without `TMPDIR=/tmp`; pass with it), on the base and on
-  this branch alike — flagged for whoever owns that environment question.
+  this branch alike — flagged for whoever owns that environment question.~~
+  **CLOSED** by PR #63, on `main` at
+  `e251c146a1e4a6c4a97bda306253c0fabc107d2e` (2026-09-16). It was not an
+  environment question, and `TMPDIR=/tmp` was a workaround rather than a
+  fix. The socket path this suite builds is `os.tmpdir()` plus an 85-byte
+  fixed tail; on macOS the default base is 48 bytes, so the path came to 133
+  and `bind` returned `EINVAL` against Darwin's 104-byte `sun_path` field
+  (which includes the terminating NUL). `waitForIpc` then polled 100 times
+  at 100 ms against a daemon that could never answer — the 10 seconds,
+  exactly. It never reproduced on Linux CI because Linux truncates rather
+  than refusing, and truncates `bind` and `connect` identically, so an
+  over-long path appears to work until two paths alias. The observation
+  recorded above was accurate; only its diagnosis was wrong, and the
+  diagnosis is what this entry had handed forward. PR #63 adds
+  `assertSocketPathFits` in the daemon's own IPC layer and has the suite
+  choose and assert a base that fits, so a future overgrowth fails in one
+  sentence naming the length instead of three silent timeouts. Nothing here
+  needs `TMPDIR` set.
 - Merge remains a separate Founder act naming the exact head SHA.
