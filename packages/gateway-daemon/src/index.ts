@@ -112,7 +112,15 @@ export {
   type RoomResult,
   type RoomRuntimeDeps,
 } from './room-runtime.js';
-export { IpcServer, ipcRequest, type IpcHandlers, type IpcRequest, type IpcStatus } from './ipc.js';
+export {
+  IpcServer,
+  SUN_PATH_MAX,
+  assertSocketPathFits,
+  ipcRequest,
+  type IpcHandlers,
+  type IpcRequest,
+  type IpcStatus,
+} from './ipc.js';
 export { createDaemonClock } from './clock.js';
 export { GatewayDaemon, type GatewayDaemonDeps } from './daemon.js';
 

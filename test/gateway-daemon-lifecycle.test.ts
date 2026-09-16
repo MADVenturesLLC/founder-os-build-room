@@ -24,7 +24,12 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gatewayPaths, ipcRequest } from '../packages/gateway-daemon/src/index.js';
+import {
+  SUN_PATH_MAX,
+  assertSocketPathFits,
+  gatewayPaths,
+  ipcRequest,
+} from '../packages/gateway-daemon/src/index.js';
 
 const DAEMON_ENTRY = fileURLToPath(new URL('../packages/gateway-daemon/src/main.js', import.meta.url));
 
@@ -40,9 +45,60 @@ interface Launch {
  * the executable path, a HOME of its own, and a control-plane URL where nothing
  * listens.
  */
+/**
+ * The temp base this suite builds its redirected HOME under.
+ *
+ * NOT simply `os.tmpdir()`, and not a hardcoded `/tmp` either. The daemon's
+ * socket sits at `<home>/Library/Application Support/founder-os/gateway/
+ * ipc.sock` — a fixed 56-byte tail the test cannot shorten, because the test
+ * redirects HOME and the daemon derives that chain itself. Add `mkdtemp`'s own
+ * component and the base has to be small for the whole thing to fit `sun_path`.
+ *
+ * Measured 2026-09-16 on macOS: the default base `/var/folders/.../T` is 48
+ * bytes, the socket path came to 133, and bind returned EINVAL. The three
+ * lifecycle tests then failed on 10-second timeouts, because `waitForIpc`
+ * polls 100 times at 100ms against a daemon that could never answer. With
+ * `TMPDIR=/tmp` the same path is 89 bytes and they pass.
+ *
+ * Shortening the `mkdtemp` prefix cannot rescue it: even a minimal one leaves
+ * 48 + 8 + 56 = 112 bytes, still over Darwin's 104. The base itself must be
+ * smaller than 40 bytes, so the base is what this chooses.
+ *
+ * It PREFERS `os.tmpdir()` and falls back only when that would not fit, so on
+ * a platform where the default is already short nothing changes.
+ */
+function daemonTempBase(): string {
+  // What the socket path costs beyond the base: `mkdtemp`'s component (the
+  // prefix plus the six characters it appends), then the daemon's own chain.
+  // Measured by running the SAME calls `launch()` makes against a probe base
+  // and subtracting it back out, so this tracks those calls instead of being a
+  // second hardcoded copy of them -- separators and the `ipc.sock` that
+  // `gatewayPaths` appends included. An earlier revision restated the chain as
+  // a literal and was one byte short, which is exactly the drift this avoids.
+  const probe = '/probe';
+  const probeHome = join(probe, 'buildroom-daemon-home-XXXXXX');
+  const suffixBytes =
+    Buffer.byteLength(
+      gatewayPaths(join(probeHome, 'Library', 'Application Support', 'founder-os', 'gateway'))
+        .socketPath,
+    ) - Buffer.byteLength(probe);
+  for (const base of [tmpdir(), '/tmp']) {
+    if (Buffer.byteLength(base) + suffixBytes < SUN_PATH_MAX) return base;
+  }
+  throw new Error(
+    `no temp base short enough for a ${String(suffixBytes)}-byte socket suffix ` +
+      `under the ${String(SUN_PATH_MAX)}-byte sun_path limit; tried ` +
+      `${tmpdir()} and /tmp`,
+  );
+}
+
 function launch(): Launch {
-  const home = mkdtempSync(join(tmpdir(), 'buildroom-daemon-home-'));
+  const home = mkdtempSync(join(daemonTempBase(), 'buildroom-daemon-home-'));
   const paths = gatewayPaths(join(home, 'Library', 'Application Support', 'founder-os', 'gateway'));
+  // Asserted, not assumed. If the chain ever outgrows the chosen base this
+  // fails in one sentence naming the length, rather than as three tests
+  // timing out after ten seconds each with no stated cause.
+  assertSocketPathFits(paths.socketPath);
   const child = spawn(process.execPath, [DAEMON_ENTRY], {
     env: {
       ...process.env,

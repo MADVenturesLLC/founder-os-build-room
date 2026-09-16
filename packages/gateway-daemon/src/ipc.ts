@@ -112,6 +112,57 @@ function encodeV2FrameChecked(type: number, payload: Buffer): Buffer {
   return encodeV2Frame(type, payload);
 }
 
+/**
+ * `sun_path` — the fixed-size field a UNIX-domain socket address carries —
+ * is 104 bytes on Darwin and 108 on Linux, INCLUDING the terminating NUL. A
+ * longer path is not a slow bind; it is a broken one, and the two platforms
+ * break differently, which is why neither symptom is legible without this.
+ *
+ * Measured 2026-09-16:
+ *   Darwin  a 133-byte socket path -> bind returns EINVAL. Hard refusal.
+ *   Linux   the kernel TRUNCATES instead of refusing, and bind and connect
+ *           truncate identically, so an over-long path appears to work. Two
+ *           DISTINCT 200-byte paths differing only past the cut were observed
+ *           to alias: the first bound, the second returned EADDRINUSE on a
+ *           path nothing was listening on.
+ *
+ * Both were previously invisible. The Darwin case surfaced as `boot()`
+ * rejecting with a bare errno and a caller polling for ten seconds against an
+ * endpoint that would never answer, with nothing anywhere naming the path that
+ * was too long. This refuses up front and says which path and by how much.
+ *
+ * Production reaches this too, not only tests: the daemon's directory is
+ * derived from `homedir()`, so a long enough home directory overflows the same
+ * field.
+ *
+ * Only Linux gets 108; every other platform gets the conservative 104. That is
+ * deliberate, and it is the direction the asymmetry points: a limit that is too
+ * PERMISSIVE lets a silently-truncated path through, which is the bug this
+ * exists to prevent, while one that is too strict refuses a working path with a
+ * message naming exactly why. The BSDs are in fact 104, so they are correct
+ * here rather than merely safe. `win32` has no `sun_path` at all — a named pipe
+ * is not a UNIX socket — but it is not a supported host either: the gateway
+ * directory is `~/Library/Application Support/...` on every platform, so a
+ * Windows daemon has never been reachable by this code.
+ */
+export const SUN_PATH_MAX = process.platform === 'linux' ? 108 : 104;
+
+/**
+ * Refuse a socket path that cannot fit `sun_path`, naming it and both lengths.
+ * Exported so a caller can assert with the same rule the daemon enforces with,
+ * rather than restating the limit and drifting from it.
+ */
+export function assertSocketPathFits(socketPath: string): void {
+  // The path plus its NUL must fit, so the longest usable path is one less.
+  const bytes = Buffer.byteLength(socketPath);
+  if (bytes < SUN_PATH_MAX) return;
+  throw new Error(
+    `gateway IPC socket path is ${String(bytes)} bytes, which does not fit the ` +
+      `${String(SUN_PATH_MAX)}-byte sun_path limit on ${process.platform} ` +
+      `(longest usable path is ${String(SUN_PATH_MAX - 1)} bytes): ${socketPath}`,
+  );
+}
+
 export class IpcServer {
   private server: Server | null = null;
   /** R5 §7: coalesced room-delivery scheduling, keyed by room id. */
@@ -155,6 +206,7 @@ export class IpcServer {
   }
 
   async start(): Promise<void> {
+    assertSocketPathFits(this.paths.socketPath);
     await mkdir(this.paths.directory, { recursive: true, mode: DIRECTORY_MODE });
     // A stale socket file from a crashed daemon would refuse the bind. This is
     // the daemon's own socket path and carries no mutual-exclusion meaning —
@@ -798,6 +850,19 @@ export async function ipcRequest(
   timeoutMs = 2_000,
 ): Promise<{ readonly ok: true; readonly body: Record<string, unknown> } | { readonly ok: false; readonly reason: string }> {
   const { createConnection } = await import('node:net');
+
+  // The connect side needs this as much as the bind side. On Linux `connect`
+  // truncates a long path exactly as `bind` does, so an over-long path does not
+  // fail -- it reaches whatever is listening on the TRUNCATED path, which is a
+  // different daemon's socket. On Darwin it fails, but the `error` handler
+  // below would report it as `daemon not running`, which is a false statement
+  // about a daemon that may well be running. Reported as a reason rather than
+  // thrown: this function's contract is to resolve, never to throw.
+  try {
+    assertSocketPathFits(socketPath);
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
 
   return new Promise((resolve) => {
     const socket = createConnection(socketPath);
