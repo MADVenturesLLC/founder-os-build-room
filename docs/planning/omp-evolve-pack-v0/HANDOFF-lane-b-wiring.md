@@ -231,19 +231,91 @@ Mapping to the act's tests:
   1. **Execution authority.** Tranche B's *code* has landed; its *execution* —
      running 0006 against the real database — requires Gate III and, per the
      plan's hard edge "C before B executes", the Tranche C administrative
-     migration plane. **As of `ddbcbb3`, neither has happened.** Dated
-     deliberately: this is the one sentence here that can become false with
-     nobody editing the file.
+     migration plane. **As of `f701c2c` (re-verified 2026-09-16), neither has
+     happened in this repository:** Tranche C appears only in planning prose,
+     with no code under `packages/`. Dated deliberately, and re-dated on
+     purpose: this is the one sentence here that can become false with nobody
+     editing the file, so the date is the claim's whole warranty.
+
+     Scope of that check, stated so it is not read as more than it is: it is a
+     **repository** check, not a live-database one. Whether 0006 has been
+     executed against the real instance is not decidable from this tree, and
+     `DEC-20260801-02` bar 4 (FounderOS
+     `07-decisions/DEC-20260801-02-founder-authorization-handoff-readiness.md`)
+     forbids asserting a live-state negative without a named live check.
+     **No such check is recorded in this handoff** — a statement about this
+     document, not about the world. Saying "nobody has run one" would itself
+     be the live-state negative the bar forbids, so it is not said. That is
+     why this reads "in this repository" rather than "in production".
   2. **A runtime caller — and this, not the SQL, is the sink's actual scope.**
      The append is SQL, but `envelope.ts` assigns *redaction enforcement* to
      the write path, and enforcement has to run in TypeScript before the SQL
      call is made. So the sink attaches to the code that invokes
-     `command_journal_append`, not to the routine itself. No such caller
-     exists yet, and the PR2b plan does not name the package it will live in
-     — it specifies only the database grant
-     (`GRANT EXECUTE ON FUNCTION public.command_journal_append(...) TO
-     br_app_runtime`, plan step 11). Whoever resumes this picks the attach
-     point up with that still undetermined; it is not recorded anywhere.
+     `command_journal_append`, not to the routine itself. **No such caller
+     exists.** At `f701c2c`, stated as narrowly as the evidence supports:
+     `packages/journal` has **zero runtime importers** — its only `import`
+     statements come from `test/`. An earlier revision said it was "imported by
+     `migrations.ts` and tests only"; that was wrong, and wrong because the
+     check was. `migrations.ts` imports only `type { Pool, PoolClient } from
+     'pg'`; every "journal" occurrence in it is prose or SQL text, and a
+     content grep counted those as imports. The same correction applies to
+     `command_journal_append`: outside `test/` it appears only inside
+     `migrations.ts` comments and SQL strings, never as a call.
+
+     **The attach point is NAMED in the plan — in an addendum, as a proposal
+     awaiting review.** This sentence has now been wrong three times, in three
+     different directions, and the reason was the same every time: it was
+     reasoned about instead of looked up. The record, so the pattern is
+     visible rather than quietly overwritten:
+
+     - Revision 1 said the attach point "is not recorded anywhere." Wrong.
+     - Revision 2 said it was "DETERMINED" by the plan's grant. Wrong
+       reasoning — a `GRANT` binds a database role, not a package — and wrong
+       conclusion-by-luck.
+     - Revision 3 said it was "derivable from the plan, though not named in
+       it." Still wrong: it *is* named.
+
+     The root cause was reading `pr2b-implementation-plan-r1.md` and stopping.
+     `docs/planning/command-journal/` holds sixteen documents; the answer is in
+     `pr2b-implementation-plan-r1-addendum-02-r6.md`, row **B-N2**:
+
+     > **File:** `packages/control-plane/src/journal-append.ts`
+     >
+     > `appendJournalRecord(client, boundary, record)`: (1)
+     > `boundary.require()`, refused → throw before any SQL of its own;
+     > (2) `redactValue(record)`; (3) build the closed-key `p_fields`
+     > object and, for a `journaled` row, the closed-key `p_envelope`
+     > object (§2.4a) from the redacted record, snake-cased by a fixed
+     > name map; (4) `EXECUTE public.command_journal_append(class,
+     > fields, envelope)` on the caller's `client`; (5) return the
+     > routine's `seq`, `recorded_at`, `envelope_digest`, `chain_hash`.
+     > Encodes nothing; imports nothing from `packages/journal` except
+     > types. **Dormant on merge: nothing calls it**
+
+     Quoted in full rather than elided: an earlier revision of this entry cut
+     the `p_envelope` clause with an ellipsis, and a blockquote that looks
+     complete but is not is exactly the failure this document exists to avoid.
+
+     That also answers what an earlier revision called the remaining "open
+     design question" about how control-plane obtains redaction: it does not
+     take a dependency. The boundary is a **parameter**, and enforcement is
+     `boundary.require()` before any SQL. The question was not open; it was
+     unread.
+
+     **Three qualifications, none of which the above cancels.**
+
+     1. **That addendum is advisory, not ratified.** Its own header:
+        "PROPOSED SCOPE ADDITIONS FOR `br-architect` REVIEW. NO IMPLEMENTATION
+        AUTHORITY IS CREATED, IMPLIED, OR CARRIED BY THIS ARTIFACT." Next role
+        is `br-architect` review. So B-N2 is a named proposal, not a settled
+        specification, and `r1` itself still does not name a package.
+     2. **B-N2 has not landed.** At `f701c2c`,
+        `packages/control-plane/src/journal-append.ts` is absent, as is its
+        test `test/journal-redaction.storage.test.ts` (B-T4).
+     3. **B-N2 landing would not, by itself, unblock the sink.** It is
+        "dormant on merge: nothing calls it" by design. The sink needs a
+        *caller of B-N2*, and no plan row assigns one — that, and not the file
+        location, is the genuinely unassigned piece.
 
 - Merge is a separate exact-SHA Founder act; this file asserts none.
 
