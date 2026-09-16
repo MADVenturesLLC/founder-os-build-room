@@ -20,6 +20,7 @@ import { MIGRATIONS, GATEWAY_REGISTRY_LOCK_KEY } from '../packages/control-plane
 import {
   createGatewayHarness,
   destroyGatewayHarness,
+  HELPER_MIGRATION_THROUGH,
   STORAGE_SKIP,
   type GatewayHarness,
 } from './gateway-storage-helpers.js';
@@ -68,7 +69,10 @@ describe('0003_gateway_registry — the migration is present and idempotent', { 
 
   it('applies nothing on a second run', async () => {
     const { migrate } = await import('../packages/control-plane/src/migrations.js');
-    const second = await migrate(harness!.pool);
+    // MS-3: the harness applied the explicit pre-journal selection (through
+    // 0005_phase3_run_evidence); the idempotency re-run selects the same
+    // prefix so "applies nothing" measures the same sequence.
+    const second = await migrate(harness!.pool, { through: HELPER_MIGRATION_THROUGH });
     assert.deepEqual(second.applied, []);
     assert.ok(second.alreadyApplied.includes('0003_gateway_registry'));
   });
