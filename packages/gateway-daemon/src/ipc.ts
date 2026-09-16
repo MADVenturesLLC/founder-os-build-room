@@ -112,6 +112,42 @@ function encodeV2FrameChecked(type: number, payload: Buffer): Buffer {
   return encodeV2Frame(type, payload);
 }
 
+/**
+ * `sun_path` — the fixed-size field a UNIX-domain socket address carries —
+ * is 104 bytes on Darwin and 108 on Linux, INCLUDING the terminating NUL. A
+ * longer path is not a slow bind; it is a broken one, and the two platforms
+ * break differently, which is why neither symptom is legible without this.
+ *
+ * Measured 2026-09-16:
+ *   Darwin  a 133-byte socket path -> bind returns EINVAL. Hard refusal.
+ *   Linux   the kernel TRUNCATES instead of refusing, and bind and connect
+ *           truncate identically, so an over-long path appears to work. Two
+ *           DISTINCT 200-byte paths differing only past the cut were observed
+ *           to alias: the first bound, the second returned EADDRINUSE on a
+ *           path nothing was listening on.
+ *
+ * Both were previously invisible. The Darwin case surfaced as `boot()`
+ * rejecting with a bare errno and a caller polling for ten seconds against an
+ * endpoint that would never answer, with nothing anywhere naming the path that
+ * was too long. This refuses up front and says which path and by how much.
+ *
+ * Production reaches this too, not only tests: the daemon's directory is
+ * derived from `homedir()`, so a long enough home directory overflows the same
+ * field.
+ */
+const SUN_PATH_MAX = process.platform === 'darwin' ? 104 : 108;
+
+export function assertSocketPathFits(socketPath: string): void {
+  // The path plus its NUL must fit, so the longest usable path is one less.
+  const bytes = Buffer.byteLength(socketPath);
+  if (bytes < SUN_PATH_MAX) return;
+  throw new Error(
+    `gateway IPC socket path is ${String(bytes)} bytes, which does not fit the ` +
+      `${String(SUN_PATH_MAX)}-byte sun_path limit on ${process.platform} ` +
+      `(longest usable path is ${String(SUN_PATH_MAX - 1)} bytes): ${socketPath}`,
+  );
+}
+
 export class IpcServer {
   private server: Server | null = null;
   /** R5 §7: coalesced room-delivery scheduling, keyed by room id. */
@@ -155,6 +191,7 @@ export class IpcServer {
   }
 
   async start(): Promise<void> {
+    assertSocketPathFits(this.paths.socketPath);
     await mkdir(this.paths.directory, { recursive: true, mode: DIRECTORY_MODE });
     // A stale socket file from a crashed daemon would refuse the bind. This is
     // the daemon's own socket path and carries no mutual-exclusion meaning —
