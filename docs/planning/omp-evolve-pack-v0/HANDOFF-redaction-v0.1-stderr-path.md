@@ -63,20 +63,34 @@ the refusal line are unchanged.
 
 ## Open items
 
-- ~~Journal sink: parked until the command-journal write path exists
+- **Journal sink: still parked.** Its live status, its two blockers and its
+  attach point are tracked in `HANDOFF-lane-b-wiring.md` and are deliberately
+  not restated here — one authority, so the next correction has one place to
+  land. The correction below is about why this file's old citation was wrong,
+  not about the sink's current state.
+
+  ~~Journal sink: parked until the command-journal write path exists
   (PR2b Tranche D, per `docs/planning/command-journal/pr2b-implementation-plan-r1.md`).~~
   **Corrected 2026-09-16.** Tranche D is the *application runtime cutover* — a
   Railway `DATABASE_URL` swap — and the plan states "Database objects affected
   by D: none created" (`pr2b-implementation-plan-r1.md` §4.4). It is not the
-  write path. The write path is **Tranche B**, whose code merged in PR #54.
+  write path; the write path is Tranche B. **The tranche was misnamed; the item
+  remains parked** — correcting which letter names the write path does not
+  clear the parking condition, and the blockers are the wiring handoff's to
+  state.
+
   This line was the second copy of an error corrected in
   `HANDOFF-lane-b-wiring.md` by PR #62. It landed 2026-09-14 in `1e58049` and
   survived that correction on 2026-09-16, because the fix was applied to the
   one file that prompted it without checking whether the same claim appeared
   elsewhere — a grep for the claim, not the file, would have caught both.
-  The live status of the sink is tracked in
-  `HANDOFF-lane-b-wiring.md` and is **not** duplicated here — one authority,
-  so the next correction has one place to land.
+  That grep has now been run, multiline-aware because the claim spans line
+  breaks and a line-scoped grep returns a false clean: across all 47 markdown
+  files under `docs/planning/` at `f701c2c`, exactly two assert a Tranche D
+  claim about the write path or the sink — this file and
+  `HANDOFF-lane-b-wiring.md`. Recording the sweep rather than only its lesson, because a lesson
+  the diff does not evidence is the same failure one file later.
+
 - Merge is a separate exact-SHA Founder act; this file asserts none.
 
 Attribution: Role-Id builder; Actor-Id

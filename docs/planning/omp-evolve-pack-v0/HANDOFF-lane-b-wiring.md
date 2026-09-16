@@ -240,8 +240,9 @@ Mapping to the act's tests:
      Scope of that check, stated so it is not read as more than it is: it is a
      **repository** check, not a live-database one. Whether 0006 has been
      executed against the real instance is not decidable from this tree, and
-     `DEC-20260801-02` bar 4 forbids asserting a live-state negative without a
-     named live check. Nobody has run one; that is why this reads "in this
+     `DEC-20260801-02` bar 4 (FounderOS
+     `07-decisions/DEC-20260801-02-founder-authorization-handoff-readiness.md`)
+     forbids asserting a live-state negative without a named live check. Nobody has run one; that is why this reads "in this
      repository" rather than "in production".
   2. **A runtime caller — and this, not the SQL, is the sink's actual scope.**
      The append is SQL, but `envelope.ts` assigns *redaction enforcement* to
@@ -252,25 +253,38 @@ Mapping to the act's tests:
      TypeScript is in `test/`, and `packages/journal` is imported by
      `migrations.ts` and tests only — it has no runtime consumer at all.
 
-     **The attach point is, however, DETERMINED — by the plan's own grant.**
-     An earlier revision of this entry said it "is not recorded anywhere."
-     That was wrong, and wrong in the more expensive direction: it invited the
-     next operator to choose a package. The chain, all of it from the plan:
+     **The attach point is DERIVABLE from the plan, though the plan does not
+     name it.** An earlier revision of this entry said it "is not recorded
+     anywhere," which was literally true of the plan and unhelpful in
+     practice: it invited the next operator to free-choose a package. A
+     revision after that said "DETERMINED," which overcorrected. The accurate
+     statement is in between, and the chain is worth writing out:
 
      - Step 11 grants `EXECUTE` on the routine to `br_app_runtime`, and the
        plan calls it "the single explicit grant."
      - Row D-R1 requires that "the role in the application's `DATABASE_URL` is
        `br_app_runtime`", verified as `current_user` **from the app's own
        connection**.
-     - The application holding that connection is `packages/control-plane`:
+     - The process holding that connection today is `packages/control-plane`:
        `src/main.ts` builds its pool from `DATABASE_URL` via `createPool`, and
        its own header describes the privilege audit hard-failing "from Tranche
        D after the `br_app_runtime` cutover."
 
-     So the caller must live in `packages/control-plane`, because that is the
-     only process that will hold the grant. Nothing else may call the routine;
-     anything else would have to be granted `EXECUTE` separately, which step 11
-     forecloses by being *the single* grant.
+     So the caller must live **wherever the `br_app_runtime` connection is
+     held, which today is `packages/control-plane`**.
+
+     Note precisely what that grant does and does not settle, because an
+     earlier revision of this paragraph got it wrong. A `GRANT` constrains
+     which database **role** may execute the routine — not which package or
+     process. Any process connecting with `br_app_runtime` credentials (a
+     worker, a migration runner, a CLI sharing `DATABASE_URL`) would execute
+     under the same grant with no second grant needed, so "step 11 forecloses
+     it by being the single grant" does not follow. The step that actually
+     picks the package is a **deployment-topology fact** — control-plane is
+     today the only process holding that connection string — and that fact is
+     contingent, so it is stated here rather than smuggled in as an
+     entailment. If a second process is ever given that `DATABASE_URL`, this
+     conclusion moves with it.
 
      **What is genuinely still open is smaller, and it is a design choice
      rather than a lookup.** `packages/control-plane` has today **no**
