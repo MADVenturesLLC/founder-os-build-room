@@ -30,6 +30,24 @@
 #      which stops an expression beginning with `-` being parsed as an option
 #      such as `-i` or `-f`.
 #
+#      A receipt may spell its OWN published recipe several ways and be read
+#      the same from each: read-only options before or after `-n`, `-n` also
+#      spelled `--quiet` or `--silent`, an `-e` introducer, and single quotes
+#      (or double quotes when the body carries no `$`, backtick or backslash,
+#      so the shell hands it to sed unchanged). READ THE SECOND HALF OF THAT
+#      SENTENCE: a double-quoted body containing `$` is refused, because the
+#      shell eats it before sed sees it — `sed -n "/^ANCHOR$/,$p"` pasted
+#      into bash becomes `sed -n '/^ANCHOR$/,'` and exits 1.
+#
+#      NOT read, deliberately: a combined cluster such as `-ne`, and any
+#      recipe carrying `-i`/`--in-place` or `-f`/`--file`. The first is
+#      unsupported and fails closed; the second two are options a reader's
+#      shell would honour, so a recipe carrying them does not extract at all.
+#
+#      What is never widened is the fail-closed contract: a recipe this cannot
+#      parse yields no expression, and a dispatched-text row with no expression
+#      FAILS. It is never downgraded to a check that quietly did not apply.
+#
 #      WHAT THAT DOES AND DOES NOT BOUND, stated precisely because an earlier
 #      wording here got it wrong. It said that without the flag "anyone able to
 #      open a pull request could run commands on the CI runner". That is false.
@@ -270,7 +288,7 @@ selftest_case() {
 # touching either counter, and a simulated failure produced "PASS — 19 case(s)"
 # and exit 0. Counting cases against a fixed expectation closes the class
 # rather than that one instance.
-SELFTEST_EXPECTED_CASES=25
+SELFTEST_EXPECTED_CASES=32
 
 run_selftest() {
   selftest_failures=0
@@ -381,6 +399,69 @@ run_selftest() {
   selftest_case "a recipe with no readable P= is reported, not silently unchecked" 1 \
     "no readable \`P=\` assignment" \
     "sed -i '/^    P=/d' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  # The spellings below are the ones the matcher used to be blind to, and the
+  # ones it must keep refusing. Each PASSING case is the SAME recipe as the
+  # fixture publishes, rewritten; each asserts the success line rather than
+  # merely exit 0, so a case cannot go green having tested nothing. The
+  # mutation guard in selftest_case already proves the rewrite landed.
+  #
+  # `--sandbox` is the case that made this worth fixing rather than
+  # documenting: the script REQUIRES that flag to run at all and its header
+  # recommends writing recipes with it, so a record author following this
+  # file's own guidance was the one getting the red gate.
+  selftest_case "a recipe written with --sandbox is read, not treated as absent" 0 \
+    "via published recipe" \
+    "sed -i 's#    sed -n #    sed --sandbox -n #' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  selftest_case "a recipe written with --quiet is read, not treated as absent" 0 \
+    "via published recipe" \
+    "sed -i 's#    sed -n #    sed --quiet #' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  # `-e <expr> --` is the anti-injection form this repository settled on,
+  # after measuring that an expression beginning with `-` is otherwise parsed
+  # as OPTIONS (see the re-measured note beside run_recipe). The hardened
+  # spelling being unreadable to the matcher was the same defect wearing its
+  # safest clothes.
+  selftest_case "a recipe using -e and -- is read, not treated as absent" 0 \
+    "via published recipe" \
+    "sed -i 's#    sed -n #    sed -n -e #; s# | sha256sum# -- | sha256sum#' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  # A double-quoted body is read ONLY when the shell would hand it to sed
+  # unchanged. `2,3p` extracts the same two lines as the fixture's anchored
+  # range, so the declared dispatched hash still matches — the expression
+  # changes, the bytes do not. \x22 is the quote character itself; writing it
+  # literally would need three levels of escaping (source, eval, sed).
+  selftest_case "a shell-inert double-quoted expression is read" 0 \
+    "via published recipe" \
+    "sed -i 's#\\x27/\\^ANCHOR[$]/,[$]p\\x27#\\x222,3p\\x22#' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  # The other half of that rule, and the one that matters. A double-quoted
+  # body containing `$` does NOT survive the shell: pasted into bash,
+  # `sed -n "/^ANCHOR$/,$p"` becomes `sed -n '/^ANCHOR$/,'` and exits 1.
+  # Reading it verbatim would verify the declared hash against an extraction
+  # no reader can reproduce. It must fail closed, exactly as an unparseable
+  # recipe does — this case is the guard on that, and it is the reason the
+  # `dq` body excludes `$`, backtick and backslash.
+  selftest_case "a double-quoted expression the shell would mangle is refused" 1 \
+    "publishes no sed recipe" \
+    "sed -i 's#\\x27/\\^ANCHOR[$]/,[$]p\\x27#\\x22/^ANCHOR\\x24/,\\x24p\\x22#' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  # `-i` is an option a reader's shell honours, so a recipe carrying it edits
+  # rather than extracts. Matching it and ignoring it would have this gate
+  # bless a recipe that does not do what the row claims.
+  selftest_case "a recipe carrying -i is refused, not read as an extraction" 1 \
+    "publishes no sed recipe" \
+    "sed -i 's#    sed -n #    sed -i -n #' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  # `\s` spans newlines. With it, a bare `sed` ending a line of prose stitched
+  # to a `-n` opening the next line and produced a PHANTOM second recipe —
+  # and two distinct recipes are refused as ambiguous, so a receipt that had
+  # been passing would start FAILING. Exit 0 with the success line proves no
+  # phantom was matched; a stitch would give "distinct sed recipes", exit 1.
+  selftest_case "a bare sed in prose does not stitch to the next line" 0 \
+    "via published recipe" \
+    "printf '\\nProse that happens to end in the word sed\\n-n \\x27ONE,[$]p\\x27\\n' >> docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
 
   selftest_case "an inline pin written with a colon is read, not passed over" 0 \
     "inline pin on sample.txt" \
@@ -628,9 +709,88 @@ def resolve(decl_path):
 
 
 ROW = re.compile(r"^\|\s*(?P<key>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$")
-# The quoted expression of a published `sed -n '<expr>' ...` recipe, captured
-# verbatim so it can be handed straight back to sed.
-SED_EXPR = re.compile(r"sed -n '(?P<expr>[^']*)'")
+# The quoted expression of a published `sed ... -n ... '<expr>'` recipe,
+# captured verbatim so it can be handed straight back to sed.
+#
+# The spelling is deliberately wide, because a narrow one was self-
+# contradictory: this script REQUIRES a sed supporting `--sandbox` (the
+# preflight at the top refuses to run without it) and its header recommends
+# writing recipes that way, yet `sed -n '<expr>'` as a literal prefix cannot
+# read `sed --sandbox -n '<expr>'`. A record author following this file's own
+# guidance was read as publishing NO recipe, and a dispatched-text row then
+# failed with "publishes no sed recipe" — a red gate on a correct record.
+# The same applied to `-e <expr> --`, which is the anti-injection form this
+# repository settled on (an expression beginning with `-` is otherwise parsed
+# as an OPTION), and to double quotes.
+#
+# So: options may sit on either side of `-n`, `-e` may introduce the script,
+# and either quote style carries it. What is NOT widened is the fail-closed
+# contract — a recipe this cannot parse still yields no expression, and a row
+# declaring a dispatched-text hash with no expression is still a FAILURE, never
+# a skipped check.
+# Option words an extraction recipe may legitimately carry. This is a
+# WHITELIST rather than "any -word", and that is the point: `-i`/`--in-place`
+# and `-f`/`--file` are options a reader's shell WILL honour — the first edits
+# the file, the second takes the script from somewhere else — so a recipe
+# carrying them does not extract anything. Matching them and then quietly
+# ignoring them would have this gate bless such a recipe as a valid extraction.
+# Anything not listed here is unrecognised, which means no expression, which
+# means a dispatched-text row declaring a hash FAILS.
+SED_OPTION = (
+    r"(?:--sandbox|--posix|--debug|--regexp-extended|--null-data"
+    r"|--separate|--unbuffered|-[Erszu]|-e)"
+)
+# `-n` and its long spellings. A combined cluster such as `-ne` is NOT read:
+# it fails closed, which is the safe direction, and widening to clusters is
+# not worth the parser.
+SED_QUIET = r"(?:-n|--quiet|--silent)"
+
+SED_EXPR = re.compile(
+    # Not `\bsed`: that also matches the tail of a filename, so
+    # `sed -f evil.sed -n '<expr>'` re-anchored on `evil.sed` and read as a
+    # plain recipe the `-f` rejection above is meant to refuse. A leading
+    # `/` is still fine, so `/usr/bin/sed -n '<expr>'` is read.
+    r"(?<![\w.\-])sed"
+    rf"(?:[ \t]+{SED_OPTION})*"
+    rf"[ \t]+{SED_QUIET}"
+    rf"(?:[ \t]+{SED_OPTION})*"
+    # `[ \t]` throughout, never `\s`: `\s` spans newlines, and a bare `sed`
+    # ending one line of prose then stitched to a `-n '<expr>'` opening the
+    # next produced a PHANTOM recipe. Because two distinct expressions are
+    # refused as ambiguous, that turned receipts that had been passing into
+    # a FAIL. The quoted bodies exclude newlines for the same reason.
+    r"[ \t]+(?:'(?P<sq>[^'\n]*)'"
+    # A double-quoted body is accepted ONLY when the shell would hand it to
+    # sed unchanged — no `$`, backtick or backslash. This is not fastidious:
+    # measured, `sed -n "/^ANCHOR$/,$p"` pasted into bash becomes
+    # `sed -n '/^ANCHOR$/,'` because `$p` expands to nothing, and sed exits 1
+    # with "unexpected `,'". Reading that recipe verbatim would verify a hash
+    # against an extraction NO READER CAN REPRODUCE — the exact failure the
+    # `P=` cross-check exists to prevent, one layer down. So it fails closed.
+    r"|\"(?P<dq>[^\"\n$`\\]*)\")"
+)
+
+
+def sed_expressions(text):
+    """Every distinct published recipe expression, however it was spelled.
+
+    The two quote styles are separate capture groups because Python's `re` has
+    no branch reset, so they are folded here rather than at each call site.
+    Folding matters: the same expression written with different quoting must
+    collapse to ONE entry, or a receipt that merely restates its recipe would
+    be reported as publishing two distinct recipes and refused as ambiguous.
+
+    The `is not None` test is load-bearing — `sed -n ''` captures an empty
+    string, which is falsy, and a truthiness test would drop it and report the
+    receipt as publishing no recipe at all.
+    """
+    out = set()
+    for m in SED_EXPR.finditer(text):
+        sq = m.group("sq")
+        out.add(sq if sq is not None else m.group("dq"))
+    return sorted(out)
+
+
 # The published recipes give sed NO filename operand — they pipe into it
 # (`git show "$REF:$P" | sed -n '...'`), and the file is named by the `P=`
 # assignment above. So the checker supplies the file itself, and that would
@@ -742,7 +902,7 @@ for receipt in receipts:
     # Every published extraction recipe in this receipt. More than one distinct
     # expression is ambiguous: this script will not guess which table row a
     # given recipe belongs to.
-    exprs = sorted({m.group("expr") for m in SED_EXPR.finditer(text)})
+    exprs = sed_expressions(text)
     recipe_paths = {m.group("path").strip("\"'`") for m in P_ASSIGN.finditer(text)}
 
     for block in table_blocks(lines):
@@ -876,10 +1036,20 @@ for receipt in receipts:
                 # begins with "-", and `--` ends option parsing before the
                 # filename. Without both, a document supplying `-i ...` or
                 # `-f ...` is parsed as OPTIONS: --sandbox blocks the e/r/w
-                # COMMANDS, it does not stop sed being handed -i, and -i
-                # rewrites files. Verified: `sed --sandbox -n '-i s/a/b/' f`
-                # edits f in place; with `-e ... --` it is rejected as an
-                # unknown command while a normal range still runs.
+                # COMMANDS, it does not stop sed being handed -i or -f.
+                #
+                # Re-measured on GNU sed 4.9, because an earlier wording here
+                # asserted something this run did NOT reproduce. It claimed
+                # `sed --sandbox -n '-i s/a/b/' victim` "exits 0 and rewrites
+                # the file". Observed instead: exit 1, no rewrite, and the
+                # message "expected newer version of sed" — sed took `-i`
+                # with the suffix " s/a/b/", which left `victim` to be read as
+                # the SCRIPT, whose first character is sed's `v` command. The
+                # option parsing is real and is the hazard; the rewrite was
+                # not what happened, and the specific consequence depends on
+                # the operands. With `-e ... --` the same string is rejected
+                # as `unknown command: \`-'` while a normal range still runs
+                # (both measured).
                 try:
                     rc, extract, errout = run_recipe(expr, target)
                 except RecipeLimit as limit:
