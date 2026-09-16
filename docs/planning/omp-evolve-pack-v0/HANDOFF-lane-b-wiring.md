@@ -231,19 +231,60 @@ Mapping to the act's tests:
   1. **Execution authority.** Tranche B's *code* has landed; its *execution* —
      running 0006 against the real database — requires Gate III and, per the
      plan's hard edge "C before B executes", the Tranche C administrative
-     migration plane. **As of `ddbcbb3`, neither has happened.** Dated
-     deliberately: this is the one sentence here that can become false with
-     nobody editing the file.
+     migration plane. **As of `f701c2c` (re-verified 2026-09-16), neither has
+     happened in this repository:** Tranche C appears only in planning prose,
+     with no code under `packages/`. Dated deliberately, and re-dated on
+     purpose: this is the one sentence here that can become false with nobody
+     editing the file, so the date is the claim's whole warranty.
+
+     Scope of that check, stated so it is not read as more than it is: it is a
+     **repository** check, not a live-database one. Whether 0006 has been
+     executed against the real instance is not decidable from this tree, and
+     `DEC-20260801-02` bar 4 forbids asserting a live-state negative without a
+     named live check. Nobody has run one; that is why this reads "in this
+     repository" rather than "in production".
   2. **A runtime caller — and this, not the SQL, is the sink's actual scope.**
      The append is SQL, but `envelope.ts` assigns *redaction enforcement* to
      the write path, and enforcement has to run in TypeScript before the SQL
      call is made. So the sink attaches to the code that invokes
-     `command_journal_append`, not to the routine itself. No such caller
-     exists yet, and the PR2b plan does not name the package it will live in
-     — it specifies only the database grant
-     (`GRANT EXECUTE ON FUNCTION public.command_journal_append(...) TO
-     br_app_runtime`, plan step 11). Whoever resumes this picks the attach
-     point up with that still undetermined; it is not recorded anywhere.
+     `command_journal_append`, not to the routine itself. **No such caller
+     exists**: as of `f701c2c`, every `command_journal_append` reference in
+     TypeScript is in `test/`, and `packages/journal` is imported by
+     `migrations.ts` and tests only — it has no runtime consumer at all.
+
+     **The attach point is, however, DETERMINED — by the plan's own grant.**
+     An earlier revision of this entry said it "is not recorded anywhere."
+     That was wrong, and wrong in the more expensive direction: it invited the
+     next operator to choose a package. The chain, all of it from the plan:
+
+     - Step 11 grants `EXECUTE` on the routine to `br_app_runtime`, and the
+       plan calls it "the single explicit grant."
+     - Row D-R1 requires that "the role in the application's `DATABASE_URL` is
+       `br_app_runtime`", verified as `current_user` **from the app's own
+       connection**.
+     - The application holding that connection is `packages/control-plane`:
+       `src/main.ts` builds its pool from `DATABASE_URL` via `createPool`, and
+       its own header describes the privilege audit hard-failing "from Tranche
+       D after the `br_app_runtime` cutover."
+
+     So the caller must live in `packages/control-plane`, because that is the
+     only process that will hold the grant. Nothing else may call the routine;
+     anything else would have to be granted `EXECUTE` separately, which step 11
+     forecloses by being *the single* grant.
+
+     **What is genuinely still open is smaller, and it is a design choice
+     rather than a lookup.** `packages/control-plane` has today **no**
+     dependency on redaction — verified: zero matches for `redaction` under
+     `packages/control-plane/src/`. Redaction enforcement must run there before
+     the SQL call, so the sink's landing requires giving control-plane that
+     capability. `packages/redaction` is the shared primitive and carries no
+     package manifest, consumed by relative source import — which is how
+     `packages/run-harness/src/cli.ts` already reaches it
+     (`from '../../redaction/src/index.js'`), so the same import works from
+     control-plane with no workspace change. Whether the boundary is consumed
+     that way, or lifted into a shared seam first, is the decision left for
+     whoever resumes — but it is now a decision about *wiring*, not about
+     *where*.
 
 - Merge is a separate exact-SHA Founder act; this file asserts none.
 

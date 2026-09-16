@@ -63,8 +63,20 @@ the refusal line are unchanged.
 
 ## Open items
 
-- Journal sink: parked until the command-journal write path exists
-  (PR2b Tranche D, per `docs/planning/command-journal/pr2b-implementation-plan-r1.md`).
+- ~~Journal sink: parked until the command-journal write path exists
+  (PR2b Tranche D, per `docs/planning/command-journal/pr2b-implementation-plan-r1.md`).~~
+  **Corrected 2026-09-16.** Tranche D is the *application runtime cutover* — a
+  Railway `DATABASE_URL` swap — and the plan states "Database objects affected
+  by D: none created" (`pr2b-implementation-plan-r1.md` §4.4). It is not the
+  write path. The write path is **Tranche B**, whose code merged in PR #54.
+  This line was the second copy of an error corrected in
+  `HANDOFF-lane-b-wiring.md` by PR #62. It landed 2026-09-14 in `1e58049` and
+  survived that correction on 2026-09-16, because the fix was applied to the
+  one file that prompted it without checking whether the same claim appeared
+  elsewhere — a grep for the claim, not the file, would have caught both.
+  The live status of the sink is tracked in
+  `HANDOFF-lane-b-wiring.md` and is **not** duplicated here — one authority,
+  so the next correction has one place to land.
 - Merge is a separate exact-SHA Founder act; this file asserts none.
 
 Attribution: Role-Id builder; Actor-Id
