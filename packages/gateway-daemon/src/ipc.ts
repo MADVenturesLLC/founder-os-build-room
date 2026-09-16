@@ -596,6 +596,13 @@ class ConnectionState {
     const roomId = this.roomId;
     const viewerId = this.viewerId;
     if (roomId === null || viewerId === null) return;
+    // Replacement ownership (multi-viewer-reconnect-v0; AE-01 XG1 spirit): a
+    // SUPERSEDED connection — its viewer binding claimed by a replacement —
+    // never drains the shared viewer outbox. Frames belong to the OWNER
+    // connection; otherwise a stale socket could steal the new binding's
+    // delivery. The stale socket keeps answering only its OWN requests.
+    const owner = this.server.ownerOf(roomId, viewerId);
+    if (owner !== undefined && owner !== this) return;
     // P1 ordering: a terminal condition overrides ordinary blocked delivery —
     // check pendingDisconnect BEFORE any write attempt, so a blocked peer is
     // never left waiting for 'drain' to learn its session ended.
