@@ -30,6 +30,14 @@
 #      which stops an expression beginning with `-` being parsed as an option
 #      such as `-i` or `-f`.
 #
+#      A receipt may spell its OWN published recipe any of the usual ways —
+#      options before or after `-n`, an `-e` introducer, either quote style —
+#      and the same expression is read from each, so a record written the way
+#      this header recommends is read the way it is written. What is not
+#      widened is the fail-closed contract: a recipe this cannot parse yields
+#      no expression, and a dispatched-text row with no expression FAILS. It is
+#      never downgraded to a check that quietly did not apply.
+#
 #      WHAT THAT DOES AND DOES NOT BOUND, stated precisely because an earlier
 #      wording here got it wrong. It said that without the flag "anyone able to
 #      open a pull request could run commands on the CI runner". That is false.
@@ -270,7 +278,7 @@ selftest_case() {
 # touching either counter, and a simulated failure produced "PASS — 19 case(s)"
 # and exit 0. Counting cases against a fixed expectation closes the class
 # rather than that one instance.
-SELFTEST_EXPECTED_CASES=25
+SELFTEST_EXPECTED_CASES=28
 
 run_selftest() {
   selftest_failures=0
@@ -381,6 +389,41 @@ run_selftest() {
   selftest_case "a recipe with no readable P= is reported, not silently unchecked" 1 \
     "no readable \`P=\` assignment" \
     "sed -i '/^    P=/d' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  # The three spellings below are the ones the matcher used to be blind to.
+  # Each is the SAME recipe as the fixture publishes, rewritten; each must
+  # still verify the dispatched-text hash, so the needle is the success line
+  # rather than merely exit 0. The mutation guard in selftest_case already
+  # proves the rewrite landed, so a silently-unapplied edit cannot make one of
+  # these pass by leaving the bare form in place.
+  #
+  # `--sandbox` is the case that made this worth fixing rather than
+  # documenting: the script REQUIRES that flag to run at all and its header
+  # recommends writing recipes with it, so a record author following this
+  # file's own guidance was the one getting the red gate.
+  selftest_case "a recipe written with --sandbox is read, not treated as absent" 0 \
+    "via published recipe" \
+    "sed -i 's#    sed -n #    sed --sandbox -n #' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  # \x27, \x22 and \x24 are ' " and $ themselves. They are written as hex
+  # escapes because getting those three characters through the source string,
+  # eval, and sed intact otherwise needs three levels of escaping — and an
+  # earlier version of this case got it wrong in exactly that way: `[$]` is a
+  # correct PATTERN for a literal $, but it was also left in the REPLACEMENT,
+  # which rewrote the recipe to `/^ANCHOR[$]/,[$]p`. The matcher read that
+  # fine; sed then rejected the expression, and the case failed for a reason
+  # that had nothing to do with quoting.
+  selftest_case "a double-quoted recipe expression is read, not treated as absent" 0 \
+    "via published recipe" \
+    "sed -i 's#\\x27/^ANCHOR[$]/,[$]p\\x27#\\x22/^ANCHOR\\x24/,\\x24p\\x22#' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
+
+  # `-e <expr> --` is the anti-injection form this repository settled on in
+  # PR #50, after measuring that `sed --sandbox -n '-i s/a/b/' victim` exits 0
+  # and rewrites the file. The hardened spelling being unreadable to the
+  # matcher was the same defect wearing its safest clothes.
+  selftest_case "a recipe using -e and -- is read, not treated as absent" 0 \
+    "via published recipe" \
+    "sed -i 's#    sed -n #    sed -n -e #; s# | sha256sum# -- | sha256sum#' docs/planning/command-journal/custody/CUSTODY-RECEIPT-sample.md"
 
   selftest_case "an inline pin written with a colon is read, not passed over" 0 \
     "inline pin on sample.txt" \
@@ -628,9 +671,51 @@ def resolve(decl_path):
 
 
 ROW = re.compile(r"^\|\s*(?P<key>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$")
-# The quoted expression of a published `sed -n '<expr>' ...` recipe, captured
-# verbatim so it can be handed straight back to sed.
-SED_EXPR = re.compile(r"sed -n '(?P<expr>[^']*)'")
+# The quoted expression of a published `sed ... -n ... '<expr>'` recipe,
+# captured verbatim so it can be handed straight back to sed.
+#
+# The spelling is deliberately wide, because a narrow one was self-
+# contradictory: this script REQUIRES a sed supporting `--sandbox` (the
+# preflight at the top refuses to run without it) and its header recommends
+# writing recipes that way, yet `sed -n '<expr>'` as a literal prefix cannot
+# read `sed --sandbox -n '<expr>'`. A record author following this file's own
+# guidance was read as publishing NO recipe, and a dispatched-text row then
+# failed with "publishes no sed recipe" — a red gate on a correct record.
+# The same applied to `-e <expr> --`, which is the anti-injection form this
+# repository settled on (an expression beginning with `-` is otherwise parsed
+# as an OPTION), and to double quotes.
+#
+# So: options may sit on either side of `-n`, `-e` may introduce the script,
+# and either quote style carries it. What is NOT widened is the fail-closed
+# contract — a recipe this cannot parse still yields no expression, and a row
+# declaring a dispatched-text hash with no expression is still a FAILURE, never
+# a skipped check.
+SED_EXPR = re.compile(
+    r"\bsed"
+    r"(?:\s+-[-\w]+)*?"  # options before -n, e.g. --sandbox
+    r"\s+-n"
+    r"(?:\s+-[-\w]+)*?"  # options after -n
+    r"(?:\s+-e)?"         # the explicit script introducer
+    r"\s+(?:'(?P<sq>[^']*)'|\"(?P<dq>[^\"]*)\")"
+)
+
+
+def sed_expressions(text):
+    """Every distinct published recipe expression, however it was spelled.
+
+    The two quote styles are separate capture groups because Python's `re` has
+    no branch reset, so they are folded here rather than at each call site.
+    Folding matters: the same expression written with different quoting must
+    collapse to ONE entry, or a receipt that merely restates its recipe would
+    be reported as publishing two distinct recipes and refused as ambiguous.
+    """
+    out = set()
+    for m in SED_EXPR.finditer(text):
+        sq = m.group("sq")
+        out.add(sq if sq is not None else m.group("dq"))
+    return sorted(out)
+
+
 # The published recipes give sed NO filename operand — they pipe into it
 # (`git show "$REF:$P" | sed -n '...'`), and the file is named by the `P=`
 # assignment above. So the checker supplies the file itself, and that would
@@ -742,7 +827,7 @@ for receipt in receipts:
     # Every published extraction recipe in this receipt. More than one distinct
     # expression is ambiguous: this script will not guess which table row a
     # given recipe belongs to.
-    exprs = sorted({m.group("expr") for m in SED_EXPR.finditer(text)})
+    exprs = sed_expressions(text)
     recipe_paths = {m.group("path").strip("\"'`") for m in P_ASSIGN.finditer(text)}
 
     for block in table_blocks(lines):
