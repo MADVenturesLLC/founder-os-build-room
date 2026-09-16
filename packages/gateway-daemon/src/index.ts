@@ -114,6 +114,7 @@ export {
 } from './room-runtime.js';
 export {
   IpcServer,
+  SUN_PATH_MAX,
   assertSocketPathFits,
   ipcRequest,
   type IpcHandlers,

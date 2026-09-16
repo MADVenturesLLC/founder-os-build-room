@@ -24,7 +24,12 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertSocketPathFits, gatewayPaths, ipcRequest } from '../packages/gateway-daemon/src/index.js';
+import {
+  SUN_PATH_MAX,
+  assertSocketPathFits,
+  gatewayPaths,
+  ipcRequest,
+} from '../packages/gateway-daemon/src/index.js';
 
 const DAEMON_ENTRY = fileURLToPath(new URL('../packages/gateway-daemon/src/main.js', import.meta.url));
 
@@ -63,18 +68,26 @@ interface Launch {
  * a platform where the default is already short nothing changes.
  */
 function daemonTempBase(): string {
-  const limit = process.platform === 'darwin' ? 104 : 108;
-  // What gets appended to the base: mkdtemp's component, then the daemon's
-  // own fixed chain. Derived rather than hardcoded so it tracks the call below.
-  const suffix =
-    '/buildroom-daemon-home-XXXXXX' +
-    join('', 'Library', 'Application Support', 'founder-os', 'gateway', 'ipc.sock');
+  // What the socket path costs beyond the base: `mkdtemp`'s component (the
+  // prefix plus the six characters it appends), then the daemon's own chain.
+  // Measured by running the SAME calls `launch()` makes against a probe base
+  // and subtracting it back out, so this tracks those calls instead of being a
+  // second hardcoded copy of them -- separators and the `ipc.sock` that
+  // `gatewayPaths` appends included. An earlier revision restated the chain as
+  // a literal and was one byte short, which is exactly the drift this avoids.
+  const probe = '/probe';
+  const probeHome = join(probe, 'buildroom-daemon-home-XXXXXX');
+  const suffixBytes =
+    Buffer.byteLength(
+      gatewayPaths(join(probeHome, 'Library', 'Application Support', 'founder-os', 'gateway'))
+        .socketPath,
+    ) - Buffer.byteLength(probe);
   for (const base of [tmpdir(), '/tmp']) {
-    if (Buffer.byteLength(base) + Buffer.byteLength(suffix) < limit) return base;
+    if (Buffer.byteLength(base) + suffixBytes < SUN_PATH_MAX) return base;
   }
   throw new Error(
-    `no temp base short enough for a ${String(Buffer.byteLength(suffix))}-byte ` +
-      `socket suffix under the ${String(limit)}-byte sun_path limit; tried ` +
+    `no temp base short enough for a ${String(suffixBytes)}-byte socket suffix ` +
+      `under the ${String(SUN_PATH_MAX)}-byte sun_path limit; tried ` +
       `${tmpdir()} and /tmp`,
   );
 }

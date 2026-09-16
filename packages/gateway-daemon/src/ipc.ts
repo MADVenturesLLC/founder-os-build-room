@@ -134,9 +134,24 @@ function encodeV2FrameChecked(type: number, payload: Buffer): Buffer {
  * Production reaches this too, not only tests: the daemon's directory is
  * derived from `homedir()`, so a long enough home directory overflows the same
  * field.
+ *
+ * Only Linux gets 108; every other platform gets the conservative 104. That is
+ * deliberate, and it is the direction the asymmetry points: a limit that is too
+ * PERMISSIVE lets a silently-truncated path through, which is the bug this
+ * exists to prevent, while one that is too strict refuses a working path with a
+ * message naming exactly why. The BSDs are in fact 104, so they are correct
+ * here rather than merely safe. `win32` has no `sun_path` at all — a named pipe
+ * is not a UNIX socket — but it is not a supported host either: the gateway
+ * directory is `~/Library/Application Support/...` on every platform, so a
+ * Windows daemon has never been reachable by this code.
  */
-const SUN_PATH_MAX = process.platform === 'darwin' ? 104 : 108;
+export const SUN_PATH_MAX = process.platform === 'linux' ? 108 : 104;
 
+/**
+ * Refuse a socket path that cannot fit `sun_path`, naming it and both lengths.
+ * Exported so a caller can assert with the same rule the daemon enforces with,
+ * rather than restating the limit and drifting from it.
+ */
 export function assertSocketPathFits(socketPath: string): void {
   // The path plus its NUL must fit, so the longest usable path is one less.
   const bytes = Buffer.byteLength(socketPath);
@@ -835,6 +850,19 @@ export async function ipcRequest(
   timeoutMs = 2_000,
 ): Promise<{ readonly ok: true; readonly body: Record<string, unknown> } | { readonly ok: false; readonly reason: string }> {
   const { createConnection } = await import('node:net');
+
+  // The connect side needs this as much as the bind side. On Linux `connect`
+  // truncates a long path exactly as `bind` does, so an over-long path does not
+  // fail -- it reaches whatever is listening on the TRUNCATED path, which is a
+  // different daemon's socket. On Darwin it fails, but the `error` handler
+  // below would report it as `daemon not running`, which is a false statement
+  // about a daemon that may well be running. Reported as a reason rather than
+  // thrown: this function's contract is to resolve, never to throw.
+  try {
+    assertSocketPathFits(socketPath);
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
 
   return new Promise((resolve) => {
     const socket = createConnection(socketPath);
