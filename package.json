@@ -19,6 +19,8 @@
     "lint": "eslint .",
     "gate:secret-scan": "bash scripts/secret-scan.sh",
     "gate:path-audit": "bash scripts/path-audit.sh",
+    "gate:custody-pin-check": "bash scripts/custody-pin-check.sh",
+    "gate:custody-pin-selftest": "bash scripts/custody-pin-check.sh selftest",
     "gate:attribution-selftest": "bash scripts/attribution-shape-check.sh selftest",
     "gate:verify-check": "bash scripts/verify-check.sh",
     "start": "node dist/packages/control-plane/src/main.js",

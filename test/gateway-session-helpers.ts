@@ -26,6 +26,7 @@ import type { GatewayHarness } from './gateway-storage-helpers.js';
 import { generateTestKeypair, hex32, makeHeartbeat, makeSessionStart, type TestKeypair } from './gateway-helpers.js';
 import { mintAndRedeem } from './gateway-registry-helpers.js';
 import { registerLeadership } from './gateway-leadership-helpers.js';
+import { closeServer } from './support/close-server.js';
 
 export interface SessionNode {
   readonly surface: GatewaySurface;
@@ -257,6 +258,6 @@ export async function startNodeServer(
 
   return {
     url: `http://127.0.0.1:${port}`,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => closeServer(server),
   };
 }
