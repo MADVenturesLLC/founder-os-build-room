@@ -180,12 +180,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
         run: |
           set -euo pipefail
           # An empty head SHA makes `?ref=` resolve to the DEFAULT branch:
           # main's text would reach the reviewer labelled as PR-head text. That
           # failure must be impossible, so it is refused up front.
           : "${HEAD_SHA:?head sha not resolved}"
+          : "${PR_NUMBER:?pr number not resolved}"
           umask 077
           # A file over the per-file cap, and any file past the total, is NAMED in the
           # context rather than dropped. A reviewer given less than the change touches
@@ -213,35 +215,85 @@ jobs:
           rm -f /tmp/context.md /tmp/context.state
           : > /tmp/context.partial
           printf '<file-context>\n' >> /tmp/context.partial
-          # The diff step truncates at a byte cap and appends a marker; the
-          # context then cannot list files whose `+++` lines were cut off. They
-          # are absent AND unlisted, so they are named here as a class, or the
-          # "NAMED rather than dropped" rule would be silently broken.
-          if { read -r lastline < <(tail -n1 /tmp/pr.diff); } 2>/dev/null              && case "$lastline" in *'[diff truncated at'*) true ;; *) false ;; esac; then
-            printf '(the diff was truncated at its byte cap, so files whose +++ lines were cut off are absent from this context and are not listed anywhere)\n' >> /tmp/context.partial
-            echo "::warning::context: the diff was truncated; files past the cut are absent from the context and unlisted"
-          fi
-          # Both plain and git-C-quoted post-image paths. Git quotes a path that
-          # contains a control character or a quote, as `+++ "b/pa\tth"`; the
-          # quotes are stripped here but the escapes inside them are NOT decoded,
-          # so such a path is reported unresolved rather than silently misread.
+          # WHICH FILES THIS PR TOUCHES COMES FROM THE API, NOT FROM THE
+          # DIFF TEXT. The previous spelling grepped `^+++ "?b/` out of
+          # /tmp/pr.diff, which matches the diff BODY as well as its
+          # post-image headers: in a unified diff an ADDED line is emitted
+          # with a `+` prefix, so a file containing the literal line
+          # `++ b/anything` renders as `+++ b/anything` and was harvested as
+          # a touched path, indistinguishable from a real header.
           #
-          # Deletions are NOT matched (`+++ /dev/null`): there is no content at
-          # the head to fetch for a file this PR removes. Binary files,
-          # mode-only changes and pure 100%-similarity renames also produce no
-          # `+++` line and are absent AND unnamed — the further classes of
-          # absence this step knows about, next to truncation, named here
-          # rather than silently. Admitting the line
-          # would leave a phantom path literally named `+++ /dev/null` after
-          # the sed (neither expression strips that prefix), and on a
-          # deletion-only PR that phantom would trip the all-unresolved guard
-          # and drop the context for a PR with nothing legitimate to fetch.
-          grep -E '^\+\+\+ "?b/' /tmp/pr.diff \
-            | sed -e 's|^+++ b/||' -e 's|^+++ "b/||' -e 's|"$||' \
-            | LC_ALL=C sort -u > /tmp/context.paths || true
+          # Measured on a synthetic PR that adds a document quoting a diff:
+          # the old expression returned `docs/example.md` AND
+          # `secrets/notes.md`, where only the first is touched. Not
+          # hypothetical here — PRs in this repository routinely add
+          # documents and fixtures that quote diffs, including this file's
+          # own pull requests.
+          #
+          # It never escaped the repository: the per-file fetch below is
+          # `contents: read` and this list call is `pull-requests: read`, both
+          # against this repository, and the job is gated to same-repo PRs.
+          # The `review` job grants exactly those two scopes. What a phantom could do is burn MAX_FILES slots
+          # and the byte budget that genuinely touched files need, inflate
+          # `unresolved` (the counter the all-unresolved guard keys on), and
+          # — when the forged path names a real file — present that file's
+          # text inside <file-context> labelled as one the diff touches.
+          #
+          # `--paginate` with an EXPLICIT `per_page=100`. Paginated because
+          # MAX_FILES is 60 and the default page size is smaller than that, so
+          # without it the cap would never be the thing that limited a large
+          # PR and the "named rather than dropped" accounting below would be
+          # counting against a list that was already silently short. The page
+          # size is passed rather than assumed so this comment cannot drift
+          # from the call, and 100 is ~3x fewer requests than the default on a
+          # large PR.
+          #
+          # `status` and `previous_filename` come back too, so a rename is a
+          # NAMED class below rather than an absence inferred from a missing
+          # `+++` line. A path containing a tab or a newline is escaped by
+          # jq's @tsv and is reported unresolved rather than silently
+          # misread — the same discipline the old git-quoting path followed.
+          # The last field is "-" when there is no previous name, never empty.
+          # Tab is IFS WHITESPACE, so `read` collapses runs of tabs and drops
+          # trailing empties: with a genuinely empty final field that happens
+          # to be harmless today, but it would silently shift every value if a
+          # field were ever appended. A sentinel removes the hazard instead of
+          # relying on field order never changing.
+          if gh api --paginate -F per_page=100 \
+               "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+               --jq '.[] | select(.status != "removed")
+                     | [ .filename, .status,
+                         (if .patch == null then "nopatch" else "patch" end),
+                         (.previous_filename // "-") ] | @tsv' \
+               </dev/null > /tmp/context.files.tsv 2>/tmp/context.list.err; then
+            # Deduped on FIELD 1 ONLY. A bare `sort -u` compares whole rows, so
+            # two rows naming the same file with different metadata would both
+            # survive and the file would be fetched and counted twice — a
+            # guarantee the old dedupe-by-path had and this call must keep.
+            # Reachable: `--paginate` issues several requests, and a push
+            # between pages can repeat a file across the window.
+            LC_ALL=C sort -u -t"$(printf '\t')" -k1,1 \
+              -o /tmp/context.files.tsv /tmp/context.files.tsv
+            cut -f1 /tmp/context.files.tsv > /tmp/context.paths
+          else
+            # Fail LOUD, not empty. An empty list here would look exactly like
+            # a PR that touches nothing, and the reviewer would be told it had
+            # every touched file while having none. `removed`-only PRs reach
+            # the no-paths branch below legitimately; a failed call must not.
+            #
+            # This does NOT red-X the pull request and does not cost the
+            # advisory review: the step carries `continue-on-error: true`, so
+            # exiting here leaves /tmp/context.md absent, the gemini step reads
+            # CTX_STATE="none", and the reviewer is told in its own prompt that
+            # it has the diff alone. That is the same degradation the old
+            # `|| true` gave, with the difference that the absence is now
+            # STATED rather than presented as an empty list of touched files.
+            echo "::error::context: could not list the PR's files: $(head -c 200 /tmp/context.list.err | tr -d '\n')"
+            exit 1
+          fi
           if [ ! -s /tmp/context.paths ]; then
-            printf '(no file paths could be parsed out of the diff)\n' >> /tmp/context.partial
-            echo "::warning::no file paths parsed from the diff; the reviewer gets the diff alone"
+            printf '(no files with content at the head: this pull request only removes files, or the API returned none)\n' >> /tmp/context.partial
+            echo "::warning::no files to fetch; the reviewer gets the diff alone"
           fi
           strip_markers() {
             # One sanitizer for paths, contents and error text: a marker that
@@ -252,8 +304,43 @@ jobs:
                 -e 's|<file-context>|[file-context-tag-stripped]|g' \
                 -e 's|</file-context>|[file-context-tag-stripped]|g'
           }
-          while IFS= read -r path; do
+          while IFS="$(printf '\t')" read -r path status patchstate prev; do
             [ -n "$path" ] || continue
+            # A rename is a NAMED class. The old path discovery could not see
+            # one at all: a pure rename produces no `+++` line, so the file was
+            # absent from the context AND unnamed. "-" is the sentinel for "no
+            # previous name", so an absent value can never be confused with a
+            # field that shifted.
+            renamed_from=""
+            if [ "$status" = "renamed" ] && [ -n "$prev" ] && [ "$prev" != "-" ]; then
+              renamed_from=" (renamed from $(printf '%s' "$prev" | strip_markers))"
+            fi
+            # A file the API returns with no textual patch: binary content, a
+            # mode-only change, a pure rename with no content change, or a diff
+            # too large for the API to render. The old discovery saw none of
+            # these — all four produce no `+++` line. They are NAMED and not
+            # fetched. Not fetched because the four are not distinguishable
+            # here (a binary modification and a pure rename both report
+            # additions 0 / deletions 0 / patch null), and running raw bytes
+            # through `iconv -c` would put mojibake in the context under a
+            # heading claiming to be the file's text. Saying what is missing
+            # beats showing something that is not the file — and being named at
+            # all is already more than the old discovery managed.
+            #
+            # Handled BEFORE `seen` is incremented, so these do not consume
+            # MAX_FILES slots. They cost no API call, and counting them would
+            # let a PR carrying many binary assets push fetchable source files
+            # past the cap — spending the budget on entries that contribute no
+            # text is exactly what the cap exists to prevent.
+            if [ "$patchstate" = "nopatch" ]; then
+              disp=$(printf '%s' "$path" | strip_markers)
+              declared=$((declared + 1))
+              omitted=$((omitted + 1))
+              printf '\n### %s%s\n(not fetched: the API returned no textual patch for this file — binary content, a mode-only change, a pure rename, or a diff too large to render)\n\n' \
+                "$disp" "$renamed_from" >> /tmp/context.partial
+              echo "::warning::context: no textual patch for $path (binary, mode-only, pure rename, or oversized)"
+              continue
+            fi
             seen=$((seen + 1))
             if [ "$seen" -gt "$MAX_FILES" ]; then
               file_cap_skips=$((file_cap_skips + 1))
@@ -319,7 +406,7 @@ jobs:
                  -H "Accept: application/vnd.github.raw" </dev/null 2>/tmp/context.err \
                | strip_markers \
                | iconv -c -f utf-8 -t utf-8 > /tmp/context.one; then
-              printf '\n### %s (%s bytes, at %s)\n' "$disp" "$size" "$HEAD_SHA" >> /tmp/context.partial
+              printf '\n### %s%s (%s bytes, at %s)\n' "$disp" "$renamed_from" "$size" "$HEAD_SHA" >> /tmp/context.partial
               cat /tmp/context.one >> /tmp/context.partial
               declared_bytes=$((declared_bytes + size))
               resolved=$((resolved + 1))
@@ -333,7 +420,7 @@ jobs:
             fi
             printf '\n' >> /tmp/context.partial
             rm -f /tmp/context.one /tmp/context.err
-          done < /tmp/context.paths
+          done < /tmp/context.files.tsv
           if [ "$seen" -gt "$MAX_FILES" ]; then
             printf '(fetched the first %s files; %s more were not fetched — the per-run file cap omits them as a class, named here by count rather than one stanza per file, because for a large PR the stanzas would blow the very budget the cap protects)\n' "$MAX_FILES" "$((seen - MAX_FILES))" >> /tmp/context.partial
             echo "::warning::context: file cap reached; $((seen - MAX_FILES)) file(s) not fetched"
@@ -356,7 +443,11 @@ jobs:
             CTX_CLAUSE=""
             if { read -r lastline < <(tail -n1 /tmp/pr.diff); } 2>/dev/null \
                && case "$lastline" in *'[diff truncated at'*) true ;; *) false ;; esac; then
-              CTX_CLAUSE="the diff was truncated at its byte cap, so files past the cut are absent and unlisted"
+              # Truncation now bounds the DIFF only. The file list and the
+              # file text come from the API, so they are complete whether or
+              # not the diff was cut — which is exactly the limitation this
+              # clause used to have to confess.
+              CTX_CLAUSE="the diff was truncated at its byte cap, so changes past the cut are not shown; the file list and file text below are unaffected, because they come from the API and not from the diff"
             fi
             if [ $((unresolved + omitted + file_cap_skips)) -gt 0 ]; then
               CTX_COUNTS="$unresolved path(s) unresolved and $((omitted + file_cap_skips)) omitted or skipped by caps"
