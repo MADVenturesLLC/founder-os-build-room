@@ -1,0 +1,16 @@
+{
+  "spec": "BRJ:a:1",
+  "digest": "f89a6aa60d3fb2e7575891005557d26a3f0834be8b7d799672d4c08bdca627f0",
+  "canonicalHex": "0000000742524a3a613a310101000000013102010000000e706c616e6e65722e696e766f6b65030100000003000000062d2d676f616c000000197068617365342d6a6f75726e616c2d666f756e646174696f6e000000092d2d6472792d72756e0401000000244d414456656e74757265734c4c432f666f756e6465722d6f732d6275696c642d726f6f6d05010000001473636f70653a7068617365342d372e312d372e33",
+  "value": {
+    "envelopeVersion": "1",
+    "commandKind": "planner.invoke",
+    "argv": [
+      "--goal",
+      "phase4-journal-foundation",
+      "--dry-run"
+    ],
+    "targetRepository": "MADVenturesLLC/founder-os-build-room",
+    "scopeRef": "scope:phase4-7.1-7.3"
+  }
+}

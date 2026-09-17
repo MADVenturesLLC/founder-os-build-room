@@ -16,6 +16,7 @@
     "clean": "rm -rf dist packages/*/dist packages/*/*.tsbuildinfo *.tsbuildinfo",
     "typecheck": "tsc --build tsconfig.json --force",
     "test": "npm run build && node --test dist/test/*.test.js",
+    "test:journal": "npm run build && node --test dist/test/journal-*.test.js",
     "gate:path-audit": "bash scripts/path-audit.sh",
     "gate:attribution-selftest": "bash scripts/attribution-shape-check.sh selftest",
     "gate:verify-check": "bash scripts/verify-check.sh",

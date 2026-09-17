@@ -1,0 +1,11 @@
+{
+  "name": "@build-room/journal",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build Room canonical command journal — Phase 4 §7.1–7.3 foundation (append-only, tamper-evident, singular, fail-closed dispatch, secret-safe envelopes). Pure core + in-memory proof store; Neon append path is a later tranche.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {}
+}
