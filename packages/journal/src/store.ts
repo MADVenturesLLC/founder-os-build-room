@@ -255,6 +255,14 @@ export class MemoryCommandJournal {
           headChainHash: prior,
         };
       }
+      if (Buffer.from(canonical).toString('hex') !== record.canonicalHex) {
+        return {
+          ok: false,
+          reason: `stored canonical bytes disagree with the row at seq ${record.row.seq}`,
+          headSeq: i,
+          headChainHash: prior,
+        };
+      }
       if (record.priorChainHash !== prior) {
         return {
           ok: false,
@@ -290,6 +298,15 @@ export class MemoryCommandJournal {
       throw new RangeError(`no record at seq ${seq}`);
     }
     this.records[seq - 1] = { ...existing, chainHash: bogus };
+  }
+
+  /** Test-only: corrupt the stored canonical bytes, leaving the row intact. */
+  corruptCanonicalHexForTest(seq: number, bogusHex: string): void {
+    const existing = this.records[seq - 1];
+    if (!existing) {
+      throw new RangeError(`no record at seq ${seq}`);
+    }
+    this.records[seq - 1] = { ...existing, canonicalHex: bogusHex };
   }
 
   /** Test-only: mutate a row payload in place to prove `verify()` sees it. */

@@ -23,9 +23,10 @@ import {
   MemoryCommandJournal,
   dispatchGovernedCommand,
   executeWithoutJournal,
-  resetActiveJournalForTests,
   type GovernedCommandRequest,
 } from '../packages/journal/src/index.js';
+// Test-only: not on the package's public surface, by design.
+import { resetActiveJournalForTests } from '../packages/journal/src/store.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DISPATCH_SOURCE = join(REPO_ROOT, 'packages/journal/src/dispatch.ts');

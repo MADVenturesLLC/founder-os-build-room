@@ -23,10 +23,11 @@ import {
   chainHash,
   encodeCommandEventRow,
   envelopeDigest,
-  resetActiveJournalForTests,
   type CommandEventRow,
   type NormalizedCommandEnvelope,
 } from '../packages/journal/src/index.js';
+// Test-only: not on the package's public surface, by design.
+import { resetActiveJournalForTests } from '../packages/journal/src/store.js';
 
 function envelopeFor(kind: string): NormalizedCommandEnvelope {
   return {
@@ -219,6 +220,17 @@ describe('§7.1 journal foundation — append-only, tamper-evident, reconstructa
       // The stored head now reads as the corrupted value, and verify still
       // refuses it rather than treating it as the chain's state.
       assert.equal(journal.verify().ok, false);
+    });
+
+    it('detects stored canonical bytes that disagree with the row', () => {
+      // The chain hash is recomputed from the ROW, so a mutation of the
+      // stored bytes alone would otherwise pass while `recordsSnapshot()`
+      // hands out bytes that were never the ones hashed.
+      journal.append(journaledRow('a', T1));
+      journal.corruptCanonicalHexForTest(1, 'dead');
+      const result = journal.verify();
+      assert.equal(result.ok, false);
+      assert.match(String(result.reason), /stored canonical bytes disagree/);
     });
 
     it('aborts an append over a diverged chain with no insert (§5.1)', () => {

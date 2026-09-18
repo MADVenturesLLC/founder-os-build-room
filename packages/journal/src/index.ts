@@ -82,11 +82,16 @@ export {
   redactArgv,
 } from './redact.js';
 
+// `resetActiveJournalForTests` is deliberately NOT re-exported: it drops the
+// singularity latch, and a consumer able to do that through the package's
+// public surface would undercut the §1 claim this package makes. Tests reach
+// it through `./store.js` directly. The `corrupt*ForTest` methods on
+// MemoryCommandJournal remain reachable and are a known residual — closing
+// that needs a separate `/testing` entry point.
 export {
   JournalAppendError,
   MemoryCommandJournal,
   getActiveJournal,
-  resetActiveJournalForTests,
   type ChainedJournalRecord,
   type JournalAppendErrorCode,
   type VerifyResult,

@@ -26,11 +26,12 @@ import {
   dispatchGovernedCommand,
   envelopeDigest,
   redactArgv,
-  resetActiveJournalForTests,
   type CommandEventRow,
   type GovernedCommandRequest,
   type NormalizedCommandEnvelope,
 } from '../packages/journal/src/index.js';
+// Test-only: not on the package's public surface, by design.
+import { resetActiveJournalForTests } from '../packages/journal/src/store.js';
 
 const PAT = `ghp_${'Z'.repeat(36)}`;
 const FINE_GRAINED_PAT = `github_pat_${'A'.repeat(30)}`;
@@ -122,6 +123,25 @@ describe('§7.3 secrets are not persisted', () => {
         assert.equal(containsCredentialMaterial(redactArgv([secret])), false);
       }
       assert.equal(containsCredentialMaterial([`GITHUB_TOKEN=${REDACTED}`]), false);
+    });
+
+    it('flags a live credential sitting alongside a redaction marker', () => {
+      // The defect this guard is written against: testing the raw value and
+      // excusing it because a marker appears SOMEWHERE lets a partially
+      // redacted argument through carrying a live token.
+      for (const secret of [PAT, API_KEY, DB_URL]) {
+        assert.equal(containsCredentialMaterial([`${REDACTED} ${secret}`]), true);
+        assert.equal(containsCredentialMaterial([`${secret} ${REDACTED}`]), true);
+      }
+    });
+
+    it('does not flag a label whose value is only the marker', () => {
+      // The over-correction in the other direction: `api_key=` with nothing
+      // after it is not a credential, and flagging it would make the
+      // write-path guard refuse correctly redacted rows.
+      for (const clean of [`api_key=${REDACTED}`, `password: ${REDACTED}`, REDACTED]) {
+        assert.equal(containsCredentialMaterial([clean]), false, clean);
+      }
     });
 
     it('does not treat a high-entropy blob as evidence of a credential', () => {

@@ -109,17 +109,32 @@ export function redactArgv(argv: readonly string[]): string[] {
   return out;
 }
 
+/** Every redaction marker removed, so detection sees only what survived. */
+function withoutMarkers(value: string): string {
+  return value.split(REDACTED).join('');
+}
+
 /**
  * True when any value still carries credential-shaped material. This is the
  * write-path guard (§6.3) and the honesty check behind the §7.3 proofs: it
  * runs against values a caller CLAIMS are already redacted, so a value that
  * still contains a specific credential shape, or a secret env binding whose
  * value was left intact, fails closed.
+ *
+ * Detection runs against the value with redaction MARKERS REMOVED, never
+ * against the raw value gated on "does it contain a marker anywhere". That
+ * gate is the defect this function is written to avoid: a partially
+ * redacted value such as `[REDACTED] ghp_<live token>` carries a marker and
+ * a live credential at once, and a marker-anywhere test would call it
+ * clean. Removing the markers instead leaves exactly the material that
+ * survived redaction, so `api_key=[REDACTED]` reduces to `api_key=` and
+ * matches nothing, while the live token still matches.
  */
 export function containsCredentialMaterial(values: readonly string[]): boolean {
   for (const value of values) {
+    const surviving = withoutMarkers(value);
     for (const shape of CREDENTIAL_SHAPES) {
-      if (shape.pattern.test(value) && !value.includes(REDACTED)) {
+      if (shape.pattern.test(surviving)) {
         return true;
       }
     }
@@ -127,8 +142,8 @@ export function containsCredentialMaterial(values: readonly string[]): boolean {
       if (!value.startsWith(`${key}=`)) {
         continue;
       }
-      const raw = value.slice(key.length + 1);
-      if (raw.length > 0 && raw !== REDACTED) {
+      // Anything left once the markers are gone is a value that survived.
+      if (withoutMarkers(value.slice(key.length + 1)).length > 0) {
         return true;
       }
     }
