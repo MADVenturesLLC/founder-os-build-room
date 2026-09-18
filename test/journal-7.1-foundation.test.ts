@@ -271,6 +271,23 @@ describe('§7.1 journal foundation — append-only, tamper-evident, reconstructa
       );
     });
 
+    it('does not alias caller arrays into the stored row', () => {
+      // Ingress aliasing is the dangerous direction: a caller mutating the
+      // argv it already handed over would silently rewrite a chained row,
+      // and since every append re-verifies from genesis, the journal would
+      // then refuse every later append with no way back.
+      const mutableArgv = ['--dry-run'];
+      const row = journaledRow('a', T1);
+      journal.append({
+        ...row,
+        commandEnvelope: { ...row.commandEnvelope!, argv: mutableArgv },
+        envelopeDigest: envelopeDigest({ ...row.commandEnvelope!, argv: mutableArgv }),
+      });
+      mutableArgv.push('--now-with-extra');
+      assert.equal(journal.verify().ok, true, 'a caller mutation reached the chained row');
+      assert.doesNotThrow(() => journal.append(journaledRow('b', T2)));
+    });
+
     it('hands back copies, so a caller cannot mutate journal state', () => {
       journal.append(journaledRow('a', T1));
       const [row] = journal.reconstruct();

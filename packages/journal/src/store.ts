@@ -73,18 +73,46 @@ export function resetActiveJournalForTests(): void {
   ACTIVE_JOURNAL = null;
 }
 
-/** Every string in a row that could carry operator-supplied text. */
+/**
+ * Every string in a row that could carry operator-supplied text.
+ *
+ * This must cover the WHOLE row, not just the envelope: `actorId`,
+ * `scopeRef`, `authorizationRef` and the routing identities are all
+ * caller-supplied and all reach the persisted bytes. A guard that scanned
+ * only `commandEnvelope.argv` would let a secret through in any of them.
+ * Each value is scanned separately, never concatenated, so a credential
+ * cannot hide beside a redaction marker contributed by another field.
+ */
 function credentialSurfaceOf(row: Omit<CommandEventRow, 'seq'>): string[] {
-  const surface: string[] = [];
   const envelope = row.commandEnvelope;
-  if (envelope !== undefined) {
-    surface.push(envelope.commandKind, ...envelope.argv);
-    if (envelope.targetRepository !== undefined) surface.push(envelope.targetRepository);
-    if (envelope.scopeRef !== undefined) surface.push(envelope.scopeRef);
-  }
-  surface.push(...row.evidenceRefs);
-  if (row.authorizationRef !== undefined) surface.push(row.authorizationRef);
-  return surface;
+  return [
+    row.commandId,
+    row.eventType,
+    ...row.evidenceRefs,
+    ...(envelope === undefined
+      ? []
+      : [
+          envelope.commandKind,
+          ...envelope.argv,
+          envelope.targetRepository,
+          envelope.scopeRef,
+        ]),
+    row.roomId,
+    row.runId,
+    row.executionId,
+    row.actorId,
+    row.roleId,
+    row.repository,
+    row.scopeRef,
+    row.authorizationRef,
+    row.intendedProvider,
+    row.intendedModel,
+    row.intendedSurface,
+    row.provider,
+    row.model,
+    row.executionSurface,
+    row.failureClassification,
+  ].filter((value): value is string => value !== undefined);
 }
 
 function copyRow(row: CommandEventRow): CommandEventRow {
@@ -190,7 +218,12 @@ export class MemoryCommandJournal {
     }
 
     const prior = verified.headChainHash;
-    const row: CommandEventRow = { ...rowInput, seq };
+    // Copy on ingress. A shallow spread would leave the stored row sharing
+    // `argv` and `evidenceRefs` with the caller, so a later mutation of the
+    // caller's own array would silently rewrite an already-chained row — and
+    // since every append re-verifies from genesis, the journal would then
+    // refuse every subsequent append with no recovery path.
+    const row: CommandEventRow = copyRow({ ...rowInput, seq });
     const canonical = encodeCommandEventRow(row);
     const record: ChainedJournalRecord = {
       row,

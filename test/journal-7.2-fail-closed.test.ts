@@ -28,6 +28,7 @@ import {
 // Test-only: not on the package's public surface, by design.
 import { resetActiveJournalForTests } from '../packages/journal/src/store.js';
 
+const CLOCK = () => new Date('2026-09-17T12:00:00.000Z');
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DISPATCH_SOURCE = join(REPO_ROOT, 'packages/journal/src/dispatch.ts');
 
@@ -43,8 +44,7 @@ function request(overrides: Partial<GovernedCommandRequest> = {}): GovernedComma
     intendedProvider: 'anthropic',
     intendedModel: 'claude-opus-5',
     intendedSurface: 'claude-code',
-    recordedAt: '2026-09-17T11:00:00.000000Z',
-    commandId: 'cmd_faildosed',
+    commandId: 'cmd_fail_closed',
     ...overrides,
   };
 }
@@ -60,7 +60,7 @@ describe('§7.2 fail-closed dispatch — no bypass of the journal path', () => {
 
   it('refuses to dispatch when no journal is open', () => {
     assert.throws(
-      () => dispatchGovernedCommand(request()),
+      () => dispatchGovernedCommand(request(), { now: CLOCK }),
       (err: unknown) => err instanceof DispatchError && err.code === 'journal_unavailable',
     );
   });
@@ -69,12 +69,25 @@ describe('§7.2 fail-closed dispatch — no bypass of the journal path', () => {
     const journal = MemoryCommandJournal.open();
     try {
       assert.equal(journal.length, 0);
-      const result = dispatchGovernedCommand(request());
+      const result = dispatchGovernedCommand(request(), { now: CLOCK });
       assert.equal(journal.length, 1, 'the journaled row landed before the permit');
       assert.equal(result.executionPermit.journalSeq, '1');
-      assert.equal(result.executionPermit.commandId, 'cmd_faildosed');
+      assert.equal(result.executionPermit.commandId, 'cmd_fail_closed');
       assert.equal(result.journalRecord.row.eventType, 'journaled');
       assert.equal(journal.verify().ok, true);
+    } finally {
+      journal.close();
+    }
+  });
+
+  it('takes recorded_at from the dispatch clock, not from the request', () => {
+    // Contract §2 element 11: `recorded_at` and `seq` are server-generated.
+    // GovernedCommandRequest carries neither, so a caller cannot backdate.
+    const journal = MemoryCommandJournal.open();
+    try {
+      const { journalRecord } = dispatchGovernedCommand(request(), { now: CLOCK });
+      assert.equal(journalRecord.row.recordedAt, '2026-09-17T12:00:00.000000Z');
+      assert.equal(journalRecord.row.seq, '1');
     } finally {
       journal.close();
     }
@@ -83,7 +96,7 @@ describe('§7.2 fail-closed dispatch — no bypass of the journal path', () => {
   it('journals the intended route before contact, per §5.2', () => {
     const journal = MemoryCommandJournal.open();
     try {
-      const { journalRecord } = dispatchGovernedCommand(request());
+      const { journalRecord } = dispatchGovernedCommand(request(), { now: CLOCK });
       assert.equal(journalRecord.row.intendedProvider, 'anthropic');
       assert.equal(journalRecord.row.intendedModel, 'claude-opus-5');
       assert.equal(journalRecord.row.intendedSurface, 'claude-code');
@@ -99,10 +112,10 @@ describe('§7.2 fail-closed dispatch — no bypass of the journal path', () => {
   it('yields no permit when the journal append fails', () => {
     const journal = MemoryCommandJournal.open();
     try {
-      dispatchGovernedCommand(request());
+      dispatchGovernedCommand(request(), { now: CLOCK });
       journal.corruptChainHashForTest(1, 'c'.repeat(64));
       assert.throws(
-        () => dispatchGovernedCommand(request({ commandId: 'cmd_second' })),
+        () => dispatchGovernedCommand(request({ commandId: 'cmd_second' }), { now: CLOCK }),
         (err: unknown) =>
           err instanceof DispatchError && err.code === 'journal_append_failed',
       );
@@ -136,14 +149,21 @@ describe('§7.2 fail-closed dispatch — no bypass of the journal path', () => {
     const source = readFileSync(DISPATCH_SOURCE, 'utf8');
     // `ok: true,` is the CONSTRUCTION; the `readonly ok: true;` field on
     // DispatchResult is the type declaration and is not a second path.
-    const successPaths = source.match(/\bok:\s*true,/g) ?? [];
+    // Drop the `readonly ok: true;` field declaration, then count success
+    // CONSTRUCTIONS. Anchoring on a trailing comma would miss a second path
+    // that wrote the property last, or one a formatter had reflowed.
+    const withoutTypeDecls = source
+      .split('\n')
+      .filter((line) => !/^\s*readonly\s+ok:/.test(line))
+      .join('\n');
+    const successPaths = withoutTypeDecls.match(/\bok:\s*true\b/g) ?? [];
     assert.equal(
       successPaths.length,
       1,
       `dispatch.ts must have exactly one success construction, found ${successPaths.length}`,
     );
-    const appendAt = source.indexOf('journal.append(');
-    const successAt = source.search(/\bok:\s*true,/);
+    const appendAt = withoutTypeDecls.indexOf('journal.append(');
+    const successAt = withoutTypeDecls.search(/\bok:\s*true\b/);
     assert.ok(appendAt > -1, 'dispatch.ts must append to the journal');
     assert.ok(
       appendAt < successAt,

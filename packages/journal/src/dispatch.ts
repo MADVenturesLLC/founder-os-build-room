@@ -21,11 +21,10 @@
 
 import {
   ENVELOPE_VERSION,
-  encodeEnvelope,
   envelopeDigest,
   type NormalizedCommandEnvelope,
 } from './envelope.js';
-import { REDACTED, containsCredentialMaterial, redactArgv } from './redact.js';
+import { containsCredentialMaterial, redactArgv } from './redact.js';
 import {
   JournalAppendError,
   MemoryCommandJournal,
@@ -70,12 +69,34 @@ export interface GovernedCommandRequest {
   readonly intendedProvider: string;
   readonly intendedModel: string;
   readonly intendedSurface: string;
-  /** Canonical RFC 3339 UTC, six fractional digits. */
-  readonly recordedAt: string;
   /** Recorded order, never re-sorted (§6.2). May be empty. */
   readonly evidenceRefs?: readonly string[];
   /** Fixed command id, for deterministic tests. Minted when absent. */
   readonly commandId?: string;
+}
+
+/**
+ * Dispatch-side inputs that are NOT request data.
+ *
+ * `recorded_at` and `seq` are server-generated (contract §2 element 11), so
+ * neither is a field of GovernedCommandRequest: a caller able to supply
+ * `recorded_at` could backdate or future-date a journal event. `seq` is
+ * assigned by the store; the timestamp is taken here, from an injectable
+ * clock so tests stay deterministic without handing the capability to
+ * callers.
+ */
+export interface DispatchOptions {
+  readonly now?: () => Date;
+}
+
+/** Canonical RFC 3339 UTC with six fractional digits (contract §2). */
+function canonicalRecordedAt(at: Date): string {
+  const iso = at.toISOString();
+  if (!iso.endsWith('Z') || Number.isNaN(at.getTime())) {
+    throw new RangeError('clock returned a value with no canonical UTC form');
+  }
+  // toISOString gives milliseconds; the canonical form is microseconds.
+  return iso.replace(/\.(\d{3})Z$/, '.$1000Z');
 }
 
 export interface DispatchResult {
@@ -101,7 +122,15 @@ export function normalizeForJournal(
   request: Pick<GovernedCommandRequest, 'commandKind' | 'argv' | 'repository' | 'scopeRef'>,
 ): NormalizedCommandEnvelope {
   const argv = redactArgv(request.argv);
-  if (containsCredentialMaterial([request.commandKind, ...argv])) {
+  // Every field that lands in the envelope is checked, not just argv —
+  // otherwise this function's "ahead of the store's own guard" claim would
+  // be false for the two it passes through unredacted.
+  if (containsCredentialMaterial([
+    request.commandKind,
+    request.repository,
+    request.scopeRef,
+    ...argv,
+  ])) {
     throw new DispatchError(
       'credential_material',
       'secrets and credentials must not be persisted in journal records',
@@ -120,7 +149,10 @@ export function normalizeForJournal(
  * The sole governed-command dispatch path. Journals first; returns an
  * execution permit only once the `journaled` record is on the chain.
  */
-export function dispatchGovernedCommand(request: GovernedCommandRequest): DispatchResult {
+export function dispatchGovernedCommand(
+  request: GovernedCommandRequest,
+  options: DispatchOptions = {},
+): DispatchResult {
   const journal = getActiveJournal();
   if (journal === null) {
     throw new DispatchError(
@@ -147,7 +179,7 @@ export function dispatchGovernedCommand(request: GovernedCommandRequest): Dispat
     intendedModel: request.intendedModel,
     intendedSurface: request.intendedSurface,
     evidenceRefs: request.evidenceRefs ?? [],
-    recordedAt: request.recordedAt,
+    recordedAt: canonicalRecordedAt((options.now ?? (() => new Date()))()),
   };
 
   let journalRecord: ChainedJournalRecord;
@@ -155,6 +187,13 @@ export function dispatchGovernedCommand(request: GovernedCommandRequest): Dispat
     journalRecord = journal.append(row);
   } catch (err) {
     if (err instanceof JournalAppendError) {
+      // `credential_material` keeps its identity — it is a §6 secrets
+      // refusal, not a generic write failure, and a caller reacts to it
+      // differently. `second_writer` deliberately does NOT get its own code:
+      // this path fetches the journal through `getActiveJournal()` on every
+      // call, so `append` cannot see a stale instance here. A dedicated code
+      // would be an untested fail-closed branch, and the original error's
+      // own code is preserved in the message either way.
       throw new DispatchError(
         err.code === 'credential_material' ? 'credential_material' : 'journal_append_failed',
         `governed command refused: journal append failed (${err.code}: ${err.message})`,
@@ -195,5 +234,3 @@ export function requireJournalOrThrow(): MemoryCommandJournal {
   }
   return journal;
 }
-
-export { REDACTED, encodeEnvelope };

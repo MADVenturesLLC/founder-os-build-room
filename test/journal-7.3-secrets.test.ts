@@ -33,6 +33,8 @@ import {
 // Test-only: not on the package's public surface, by design.
 import { resetActiveJournalForTests } from '../packages/journal/src/store.js';
 
+const CLOCK = () => new Date('2026-09-17T12:00:00.000Z');
+
 const PAT = `ghp_${'Z'.repeat(36)}`;
 const FINE_GRAINED_PAT = `github_pat_${'A'.repeat(30)}`;
 const API_KEY = `sk-${'q'.repeat(32)}`;
@@ -57,7 +59,6 @@ function request(overrides: Partial<GovernedCommandRequest> = {}): GovernedComma
     intendedProvider: 'anthropic',
     intendedModel: 'claude-opus-5',
     intendedSurface: 'claude-code',
-    recordedAt: '2026-09-17T12:00:00.000000Z',
     commandId: 'cmd_secrets',
     ...overrides,
   };
@@ -92,6 +93,19 @@ describe('§7.3 secrets are not persisted', () => {
         '--token',
         REDACTED,
         '--verbose',
+      ]);
+    });
+
+    it('does not swallow the next flag when the secret flag has no value', () => {
+      // `--token --verbose` must not consume `--verbose`: dropping it would
+      // remove an argument from the history §7.1 claims is reconstructable.
+      assert.deepEqual(redactArgv(['--token', '--verbose']), ['--token', '--verbose']);
+    });
+
+    it('redacts a secret-bearing flag written inline', () => {
+      assert.deepEqual(redactArgv([`--token=${PAT}`, '--password=hunter2']), [
+        `--token=${REDACTED}`,
+        `--password=${REDACTED}`,
       ]);
     });
 
@@ -145,12 +159,16 @@ describe('§7.3 secrets are not persisted', () => {
     });
 
     it('does not treat a high-entropy blob as evidence of a credential', () => {
-      // A digest is 64 hex characters and matches the entropy shape. It is
-      // redacted defensively but must never make the write-path guard
-      // refuse a legitimate row, or every row carrying a hash would fail.
-      const digest = 'a'.repeat(64);
-      assert.equal(containsCredentialMaterial([digest]), false);
-      assert.equal(redactArgv([digest])[0], REDACTED);
+      // A hex digest matches the broad base64-ish shape but is not a
+      // credential, and redacting it would corrupt the argv the §7.1
+      // reconstruction property depends on. Preserved, and never flagged.
+      for (const hex of ['a'.repeat(64), 'f0e1d2c3b4a596879687a5b4c3d2e1f0a1b2c3d4']) {
+        assert.equal(containsCredentialMaterial([hex]), false);
+        assert.equal(redactArgv([hex])[0], hex);
+      }
+      // A genuinely base64-shaped blob is still redacted defensively.
+      const blob = `Zm9vYmFy${'A'.repeat(40)}`;
+      assert.equal(redactArgv([blob])[0], REDACTED);
     });
   });
 
@@ -166,9 +184,7 @@ describe('§7.3 secrets are not persisted', () => {
     it('persists no seeded credential in the canonical row bytes', () => {
       const journal = MemoryCommandJournal.open();
       try {
-        const result = dispatchGovernedCommand(
-          request({ argv: ['--token', PAT, `ANTHROPIC_API_KEY=${'x'.repeat(40)}`, DB_URL] }),
-        );
+        const result = dispatchGovernedCommand(request({ argv: ['--token', PAT, `ANTHROPIC_API_KEY=${'x'.repeat(40)}`, DB_URL] }), { now: CLOCK });
         const persisted = Buffer.from(result.journalRecord.canonicalHex, 'hex').toString('utf8');
         for (const secret of [PAT, DB_URL, 'x'.repeat(40)]) {
           assert.ok(!persisted.includes(secret), 'a seeded credential reached the row bytes');
@@ -195,10 +211,58 @@ describe('§7.3 secrets are not persisted', () => {
       const journal = MemoryCommandJournal.open();
       try {
         assert.throws(
-          () => dispatchGovernedCommand(request({ commandKind: `planner.invoke ${PAT}` })),
+          () => dispatchGovernedCommand(request({ commandKind: `planner.invoke ${PAT}` }), { now: CLOCK }),
           (err: unknown) => err instanceof DispatchError && err.code === 'credential_material',
         );
         assert.equal(journal.length, 0, 'the refused dispatch journalled nothing');
+      } finally {
+        journal.close();
+      }
+    });
+
+    it('refuses credential material in a row field outside the envelope', () => {
+      // The guard must cover the whole row: actorId, scopeRef and the
+      // routing identities all reach the persisted bytes, and a guard
+      // scanning only the envelope would let a secret through in any.
+      const journal = MemoryCommandJournal.open();
+      try {
+        for (const patch of [
+          { actorId: `session:${PAT}` },
+          { scopeRef: DB_URL },
+          { intendedSurface: API_KEY },
+        ]) {
+          const envelope: NormalizedCommandEnvelope = {
+            envelopeVersion: '1',
+            commandKind: 'planner.invoke',
+            argv: ['--dry-run'],
+            targetRepository: 'MADVenturesLLC/founder-os-build-room',
+            scopeRef: 'scope/phase4',
+          };
+          const row: Omit<CommandEventRow, 'seq'> = {
+            eventType: 'journaled',
+            commandId: 'cmd_fielded',
+            actorId: 'session:test/journal-7.3',
+            roleId: 'builder',
+            repository: 'MADVenturesLLC/founder-os-build-room',
+            scopeRef: 'scope/phase4',
+            commandEnvelope: envelope,
+            envelopeDigest: envelopeDigest(envelope),
+            authorizationRef: 'HO-20260831-01',
+            intendedProvider: 'anthropic',
+            intendedModel: 'claude-opus-5',
+            intendedSurface: 'claude-code',
+            evidenceRefs: [],
+            recordedAt: '2026-09-17T12:00:02.000000Z',
+            ...patch,
+          };
+          assert.throws(
+            () => journal.append(row),
+            (err: unknown) =>
+              err instanceof JournalAppendError && err.code === 'credential_material',
+            JSON.stringify(patch),
+          );
+        }
+        assert.equal(journal.length, 0);
       } finally {
         journal.close();
       }

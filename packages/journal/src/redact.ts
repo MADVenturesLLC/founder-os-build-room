@@ -45,8 +45,18 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   { name: 'url_userinfo_credential', pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@/i },
 ];
 
-/** Redaction-only: too broad to be treated as evidence. */
-const ENTROPY_SHAPES: readonly RegExp[] = [/\b[A-Za-z0-9+/]{40,}={0,2}\b/g];
+/**
+ * Redaction-only: too broad to be treated as evidence.
+ *
+ * The negative lookahead excludes runs that are entirely hexadecimal. A
+ * 40-character Git SHA-1 and a 64-character SHA-256 digest both match the
+ * base64-ish shape, and redacting them would corrupt exactly the argv a
+ * governed `git` command needs for the §7.1 reconstruction property. A hex
+ * run is a digest or an object id, not a credential.
+ */
+const ENTROPY_SHAPES: readonly RegExp[] = [
+  /\b(?![0-9a-fA-F]+\b)[A-Za-z0-9+/]{40,}={0,2}\b/g,
+];
 
 /** Global counterparts of CREDENTIAL_SHAPES, derived once for replacement. */
 const CREDENTIAL_SHAPES_GLOBAL: readonly RegExp[] = CREDENTIAL_SHAPES.map(
@@ -70,6 +80,10 @@ const SECRET_ENV_KEYS: ReadonlySet<string> = new Set([
 
 /** Flags whose FOLLOWING argument is the secret (`--token <value>`). */
 const SECRET_BEARING_FLAG = /^--?(?:token|api-?key|secret|password|passwd|credential)$/i;
+
+/** The same flags written inline (`--token=<value>`). */
+const SECRET_BEARING_FLAG_INLINE =
+  /^(--?(?:token|api-?key|secret|password|passwd|credential))=/i;
 
 function redactString(value: string): string {
   let out = value;
@@ -98,7 +112,16 @@ export function redactArgv(argv: readonly string[]): string[] {
       out.push(`${arg.slice(0, eq)}=${REDACTED}`);
       continue;
     }
-    if (SECRET_BEARING_FLAG.test(arg) && i + 1 < argv.length) {
+    const inline = SECRET_BEARING_FLAG_INLINE.exec(arg);
+    if (inline) {
+      out.push(`${inline[1]}=${REDACTED}`);
+      continue;
+    }
+    // Only consume the next argument when it plausibly IS the value. A
+    // following token that starts with `-` is the next flag, and swallowing
+    // it would drop it from the record the journal must reconstruct.
+    const next = argv[i + 1];
+    if (SECRET_BEARING_FLAG.test(arg) && next !== undefined && !next.startsWith('-')) {
       out.push(arg);
       out.push(REDACTED);
       i += 1;

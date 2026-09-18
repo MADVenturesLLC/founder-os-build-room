@@ -104,6 +104,7 @@ export {
   normalizeForJournal,
   requireJournalOrThrow,
   type DispatchErrorCode,
+  type DispatchOptions,
   type DispatchResult,
   type GovernedCommandRequest,
 } from './dispatch.js';
