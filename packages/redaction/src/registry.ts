@@ -73,14 +73,28 @@ export function looksLikeSecretName(name: string): boolean {
   return ENV_NAME_HEURISTICS.some((rule) => rule.test(name));
 }
 
-/** Built-in shapes, opt-in by name. Patterns carry no `g` flag (the redactor adds it). */
+/**
+ * Built-in shapes, opt-in by name. Patterns carry no `g` flag (the redactor
+ * adds it).
+ *
+ * ANCHORING, and why it is not `\b`. A JavaScript word boundary does not fire
+ * between `_` and a letter, because both are word characters. Every prefixed
+ * shape below was originally written `\b<prefix>…\b`, which made all of them
+ * blind to a token glued after an underscore: `ghp_…` was caught, and
+ * `anything_ghp_…` was not. That is not a corner case — identifiers routinely
+ * carry a namespace prefix, and a value pasted into one is exactly the shape
+ * a leak takes. The leading guard is therefore a negative lookbehind for
+ * `[A-Za-z0-9]` and the trailing guard a negative lookahead for the same
+ * class, so `_` and `-` read as the separators they are while a match inside
+ * a longer alphanumeric run is still refused.
+ */
 export const BUILTIN_SHAPES: readonly ShapeRule[] = [
   { name: 'pem-private-key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/ },
-  { name: 'openai-style-sk', pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/ },
-  { name: 'github-pat', pattern: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/ },
-  { name: 'aws-access-key-id', pattern: /\bAKIA[0-9A-Z]{16}\b/ },
-  { name: 'slack-token', pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
-  { name: 'jwt', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/ },
+  { name: 'openai-style-sk', pattern: /(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9])/ },
+  { name: 'github-pat', pattern: /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{36,}(?![A-Za-z0-9])/ },
+  { name: 'aws-access-key-id', pattern: /(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}(?![A-Za-z0-9])/ },
+  { name: 'slack-token', pattern: /(?<![A-Za-z0-9])xox[baprs]-[A-Za-z0-9-]{10,}(?![A-Za-z0-9])/ },
+  { name: 'jwt', pattern: /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9])/ },
 ];
 
 export const BUILTIN_SHAPE_NAMES: readonly string[] = BUILTIN_SHAPES.map((s) => s.name);
