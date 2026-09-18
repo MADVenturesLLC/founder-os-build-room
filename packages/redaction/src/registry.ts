@@ -84,9 +84,20 @@ export function looksLikeSecretName(name: string): boolean {
  * `anything_ghp_…` was not. That is not a corner case — identifiers routinely
  * carry a namespace prefix, and a value pasted into one is exactly the shape
  * a leak takes. The leading guard is therefore a negative lookbehind for
- * `[A-Za-z0-9]` and the trailing guard a negative lookahead for the same
- * class, so `_` and `-` read as the separators they are while a match inside
- * a longer alphanumeric run is still refused.
+ * `[A-Za-z0-9]`: it is what makes `_` and `-` read as the separators they
+ * are, while still refusing a match that would start inside a longer
+ * alphanumeric run.
+ *
+ * The two guards are NOT symmetric, and it would mislead to imply they are.
+ * The trailing negative lookahead can only ever reject for
+ * `aws-access-key-id`, whose `{16}` is a fixed count with nothing to give
+ * back. Every other shape below ends in a greedy open-ended class that
+ * already contains `[A-Za-z0-9]`, so it consumes any trailing alphanumerics
+ * before the lookahead is evaluated and the lookahead cannot fail —
+ * `ghp_<36>XY` still matches and is still redacted, which for a redactor is
+ * the safe direction. The trailing guard is kept on every shape for
+ * uniformity, and so that a future fixed-length shape inherits the
+ * rejecting behaviour rather than having to remember to ask for it.
  */
 export const BUILTIN_SHAPES: readonly ShapeRule[] = [
   { name: 'pem-private-key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/ },

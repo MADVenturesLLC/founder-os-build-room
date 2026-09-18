@@ -403,6 +403,27 @@ describe('redaction · SecretRegistry', () => {
     }
   });
 
+  it('records the asymmetry between the leading and trailing guards', () => {
+    // The leading lookbehind does the real work. The trailing lookahead can
+    // only reject for the one fixed-length shape; the open-ended shapes end
+    // in a greedy class that swallows a trailing alphanumeric run before the
+    // lookahead is evaluated. That divergence is real behaviour, so it is
+    // pinned here — a later edit to any quantifier would otherwise flip it
+    // silently.
+    const registry = new SecretRegistry();
+    for (const name of BUILTIN_SHAPE_NAMES) registry.enableShape(name);
+    const r = createRedactor({ mode: 'replace', registry, hmacKey: KEY_A });
+
+    // Open-ended: the suffix is swallowed and the whole run is redacted.
+    // Over-redaction, which is the safe direction for a redactor.
+    const pat = `ghp_${'Z'.repeat(36)}`;
+    assert.ok(!r.redactString(`${pat}XY`).includes(pat));
+
+    // Fixed length: the trailing guard rejects, so this is left alone.
+    const akia = `AKIA${'A'.repeat(16)}`;
+    assert.equal(r.redactString(`${akia}XY`), `${akia}XY`);
+  });
+
   it('built-in shapes are opt-in and redact by shape with a keyed digest', () => {
     assert.deepEqual([...BUILTIN_SHAPE_NAMES], ['pem-private-key', 'openai-style-sk', 'github-pat', 'aws-access-key-id', 'slack-token', 'jwt']);
     const registry = new SecretRegistry();
