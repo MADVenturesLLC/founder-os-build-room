@@ -127,6 +127,11 @@ function credentialSurfaceOf(row: Omit<CommandEventRow, 'seq'>): string[] {
     row.model,
     row.executionSurface,
     row.failureClassification,
+    // `lifecycleEventRef` is a nested pair, legal on `journaled` and on
+    // several later event types, and both halves are encoded into the
+    // chained bytes — so a credential placed there would otherwise survive.
+    row.lifecycleEventRef?.roomId,
+    row.lifecycleEventRef?.eventId,
   ].filter((value): value is string => value !== undefined);
 }
 

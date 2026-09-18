@@ -234,6 +234,8 @@ describe('§7.3 secrets are not persisted', () => {
           { actorId: `session:${PAT}` },
           { scopeRef: DB_URL },
           { intendedSurface: API_KEY },
+          { lifecycleEventRef: { roomId: `room-${PAT}`, eventId: 'event-1' } },
+          { lifecycleEventRef: { roomId: 'room-1', eventId: `event-${JWT}` } },
         ]) {
           const envelope: NormalizedCommandEnvelope = {
             envelopeVersion: '1',
