@@ -1,0 +1,212 @@
+/**
+ * Phase 4 stop-gate item 2 (§7.2): a governed command cannot bypass the
+ * required journal path.
+ *
+ * Contract sections under test, per the §10 test map: §1 (singularity) and
+ * §5 (command events and the fail-closed rule). §5.1 is the operative
+ * clause — a governed command may not be dispatched unless its `journaled`
+ * event is durably committed; write failure, timeout, or unavailability
+ * means no dispatch, fail closed, never journal-after.
+ *
+ * The last test in this file is a SOURCE-honesty check. A function that
+ * throws cannot prove that no second success path exists; only reading the
+ * dispatch module can, and that is what it does.
+ */
+
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  DispatchError,
+  MemoryCommandJournal,
+  dispatchGovernedCommand,
+  executeWithoutJournal,
+  type GovernedCommandRequest,
+} from '../packages/journal/src/index.js';
+// Test-only: not on the package's public surface, by design.
+import { resetActiveJournalForTests } from '../packages/journal/src/store.js';
+
+const CLOCK = () => new Date('2026-09-17T12:00:00.000Z');
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const DISPATCH_SOURCE = join(REPO_ROOT, 'packages/journal/src/dispatch.ts');
+
+function request(overrides: Partial<GovernedCommandRequest> = {}): GovernedCommandRequest {
+  return {
+    commandKind: 'planner.invoke',
+    argv: ['--goal', 'ship the stop gate'],
+    actorId: 'session:test/journal-7.2',
+    roleId: 'builder',
+    authorizationRef: 'HO-20260831-01',
+    repository: 'MADVenturesLLC/founder-os-build-room',
+    scopeRef: 'scope/phase4',
+    intendedProvider: 'anthropic',
+    intendedModel: 'claude-opus-5',
+    intendedSurface: 'claude-code',
+    commandId: 'cmd_fail_closed',
+    ...overrides,
+  };
+}
+
+describe('§7.2 fail-closed dispatch — no bypass of the journal path', () => {
+  beforeEach(() => {
+    resetActiveJournalForTests();
+  });
+
+  afterEach(() => {
+    resetActiveJournalForTests();
+  });
+
+  it('refuses to dispatch when no journal is open', () => {
+    assert.throws(
+      () => dispatchGovernedCommand(request(), { now: CLOCK }),
+      (err: unknown) => err instanceof DispatchError && err.code === 'journal_unavailable',
+    );
+  });
+
+  it('returns an execution permit only after the journaled row is on the chain', () => {
+    const journal = MemoryCommandJournal.open();
+    try {
+      assert.equal(journal.length, 0);
+      const result = dispatchGovernedCommand(request(), { now: CLOCK });
+      assert.equal(journal.length, 1, 'the journaled row landed before the permit');
+      assert.equal(result.executionPermit.journalSeq, '1');
+      assert.equal(result.executionPermit.commandId, 'cmd_fail_closed');
+      assert.equal(result.journalRecord.row.eventType, 'journaled');
+      assert.equal(journal.verify().ok, true);
+    } finally {
+      journal.close();
+    }
+  });
+
+  it('takes recorded_at from the dispatch clock, not from the request', () => {
+    // Contract §2 element 11: `recorded_at` and `seq` are server-generated.
+    // GovernedCommandRequest carries neither, so a caller cannot backdate.
+    const journal = MemoryCommandJournal.open();
+    try {
+      const { journalRecord } = dispatchGovernedCommand(request(), { now: CLOCK });
+      assert.equal(journalRecord.row.recordedAt, '2026-09-17T12:00:00.000000Z');
+      assert.equal(journalRecord.row.seq, '1');
+    } finally {
+      journal.close();
+    }
+  });
+
+  it('journals the intended route before contact, per §5.2', () => {
+    const journal = MemoryCommandJournal.open();
+    try {
+      const { journalRecord } = dispatchGovernedCommand(request(), { now: CLOCK });
+      assert.equal(journalRecord.row.intendedProvider, 'anthropic');
+      assert.equal(journalRecord.row.intendedModel, 'claude-opus-5');
+      assert.equal(journalRecord.row.intendedSurface, 'claude-code');
+      // The observed identity belongs to `dispatched`, never to `journaled`.
+      assert.equal(journalRecord.row.provider, undefined);
+      assert.equal(journalRecord.row.model, undefined);
+      assert.equal(journalRecord.row.executionSurface, undefined);
+    } finally {
+      journal.close();
+    }
+  });
+
+  it('yields no permit when the journal append fails', () => {
+    const journal = MemoryCommandJournal.open();
+    try {
+      dispatchGovernedCommand(request(), { now: CLOCK });
+      journal.corruptChainHashForTest(1, 'c'.repeat(64));
+      assert.throws(
+        () => dispatchGovernedCommand(request({ commandId: 'cmd_second' }), { now: CLOCK }),
+        (err: unknown) =>
+          err instanceof DispatchError && err.code === 'journal_append_failed',
+      );
+      assert.equal(journal.length, 1, 'the refused dispatch journalled nothing');
+    } finally {
+      journal.close();
+    }
+  });
+
+  it('issues no second permit for a command_id already journaled', () => {
+    // `command_id` is the dispatch idempotency key (contract §4.1): a
+    // repeated dispatch must not hand out a second execution permit.
+    const journal = MemoryCommandJournal.open();
+    try {
+      dispatchGovernedCommand(request(), { now: CLOCK });
+      assert.throws(
+        () => dispatchGovernedCommand(request(), { now: CLOCK }),
+        // Distinct from `journal_append_failed`: a caller retrying against
+        // the idempotency key must be able to tell "already done" from
+        // "storage failed" without parsing the message.
+        (err: unknown) => err instanceof DispatchError && err.code === 'duplicate_event',
+      );
+      assert.equal(journal.length, 1, 'the duplicate journalled nothing');
+    } finally {
+      journal.close();
+    }
+  });
+
+  it('never echoes caller-controlled text into the bypass refusal', () => {
+    // `commandKind` and argv are treated as credential-bearing by
+    // `normalizeForJournal`; quoting them in a refusal would route a secret
+    // into logs along the one path that never redacts.
+    const secretish = `planner.invoke ghp_${'Z'.repeat(36)}`;
+    try {
+      executeWithoutJournal(request({ commandKind: secretish }));
+      assert.fail('expected a bypass refusal');
+    } catch (err) {
+      assert.ok(err instanceof DispatchError);
+      assert.equal(err.code, 'bypass_forbidden');
+      assert.ok(!err.message.includes('ghp_'), 'the refusal quoted caller text');
+      assert.ok(!err.message.includes('planner.invoke'));
+    }
+  });
+
+  it('refuses a bypass even while a journal is open', () => {
+    const journal = MemoryCommandJournal.open();
+    try {
+      assert.throws(
+        () => executeWithoutJournal(request()),
+        (err: unknown) => err instanceof DispatchError && err.code === 'bypass_forbidden',
+      );
+      assert.equal(journal.length, 0);
+    } finally {
+      journal.close();
+    }
+  });
+
+  it('refuses a bypass when no journal is open', () => {
+    assert.throws(
+      () => executeWithoutJournal(request()),
+      (err: unknown) => err instanceof DispatchError && err.code === 'bypass_forbidden',
+    );
+  });
+
+  it('source honesty: dispatch.ts has exactly one success path, behind the append', () => {
+    const source = readFileSync(DISPATCH_SOURCE, 'utf8');
+    // `ok: true,` is the CONSTRUCTION; the `readonly ok: true;` field on
+    // DispatchResult is the type declaration and is not a second path.
+    // Drop the `readonly ok: true;` field declaration, then count success
+    // CONSTRUCTIONS. Anchoring on a trailing comma would miss a second path
+    // that wrote the property last, or one a formatter had reflowed.
+    const withoutTypeDecls = source
+      .split('\n')
+      .filter((line) => !/^\s*readonly\s+ok:/.test(line))
+      .join('\n');
+    const successPaths = withoutTypeDecls.match(/\bok:\s*true\b/g) ?? [];
+    assert.equal(
+      successPaths.length,
+      1,
+      `dispatch.ts must have exactly one success construction, found ${successPaths.length}`,
+    );
+    const appendAt = withoutTypeDecls.indexOf('journal.append(');
+    const successAt = withoutTypeDecls.search(/\bok:\s*true\b/);
+    assert.ok(appendAt > -1, 'dispatch.ts must append to the journal');
+    assert.ok(
+      appendAt < successAt,
+      'the only success path must be constructed after the journal append',
+    );
+    assert.ok(
+      source.includes("'journal_unavailable'"),
+      'dispatch.ts must carry the §5.1 unavailability refusal',
+    );
+  });
+});

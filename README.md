@@ -21,7 +21,7 @@ Monorepo. Present today:
 - `packages/cost-meter` — the ratified spend rule as a function. Carries no rate data; the canonical price table lives in `founder-os-console` (`DEC-20260722-01`).
 - `packages/gateway-protocol` — the shared signed-message protocol: canonical bytes, envelope validation, bounds, encodings, and the clock-reliability evaluator. Zero dependencies, so both sides of the wire derive signed bytes from one implementation.
 - `packages/gateway-registry` — the gateway lifecycle vocabulary and the pure projection reducer.
-- `packages/journal` — the four ratified command-journal canonical serialization contracts (envelope, plan digest, command-event row, decision record row) and chain framing, per `docs/command-journal-contract.md` §6.2. Pure, zero I/O.
+- `packages/journal` — the four ratified command-journal canonical serialization contracts (envelope, plan digest, command-event row, decision record row) and chain framing, per `docs/command-journal-contract.md` §6.2; plus the §7.1–7.3 proof substrate built on them (redaction, the append-only singular in-memory journal, fail-closed governed dispatch). No disk or network I/O; the ruled Neon storage locus of §3 is not implemented here.
 
 **Impure by design:**
 
