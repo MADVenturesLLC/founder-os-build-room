@@ -24,10 +24,18 @@
  * `packages/redaction` already owns this concern by design: its
  * `sinks.ts` names "journal append" as one of the three sinks it exists to
  * guard and ships a `JournalAppendSink` for it. That wiring is
- * deliberately NOT done — its own header records why, and the package
- * README's "Not wired" section is the authority: a boundary with no
- * provisioned HMAC key refuses every write, which is a live behaviour
- * change its authorizing act did not grant.
+ * deliberately NOT done, and `sinks.ts`'s own header states the operative
+ * reason: a boundary with no provisioned HMAC key refuses every write,
+ * which is a live behaviour change its authorizing act did not grant.
+ *
+ * Do NOT read that package's README as the authority on this point. Its
+ * "Still not wired" entry gives the reason as "no journal store exists
+ * yet", and THIS PACKAGE'S `store.ts` makes that premise false — the
+ * citation was stale the moment this module landed. What remains true is
+ * narrower and is the actual argument: the store here is in-memory and is
+ * NOT the ruled Neon locus of contract §3, and the key-provisioning
+ * behaviour change is unauthorized. Updating that README to say so is the
+ * redaction package owner's act, not this module's.
  *
  * This module therefore does NOT replace, wrap, or reimplement that
  * boundary. It is the §6.1 pre-write guard the stop-gate proofs need,
