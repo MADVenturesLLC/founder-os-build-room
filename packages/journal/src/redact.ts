@@ -18,6 +18,27 @@
  * copies used for replacement are derived once, below.
  */
 
+/**
+ * OVERLAP, STATED SO IT IS NOT DISCOVERED LATER.
+ *
+ * `packages/redaction` already owns this concern by design: its
+ * `sinks.ts` names "journal append" as one of the three sinks it exists to
+ * guard and ships a `JournalAppendSink` for it. That wiring is
+ * deliberately NOT done — its own header records why, and the package
+ * README's "Not wired" section is the authority: a boundary with no
+ * provisioned HMAC key refuses every write, which is a live behaviour
+ * change its authorizing act did not grant.
+ *
+ * This module therefore does NOT replace, wrap, or reimplement that
+ * boundary. It is the §6.1 pre-write guard the stop-gate proofs need,
+ * which must journal unconditionally and so cannot sit behind a
+ * fail-closed-on-absent-key boundary. The consequence is real and worth
+ * naming: two independently evolving credential-shape lists now govern
+ * the same write path, and whoever is authorized to wire
+ * `JournalAppendSink` into the journal store must reconcile them rather
+ * than stack them. That reconciliation is a Founder act, not a refactor.
+ */
+
 export const REDACTED = '[REDACTED]';
 
 interface CredentialShape {
