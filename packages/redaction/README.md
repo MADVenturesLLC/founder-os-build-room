@@ -1,5 +1,17 @@
 # redaction — the secret boundary (v0)
 
+> **Amendment above v0.1 — `BUILTIN_SHAPES` anchoring.** Every prefixed shape
+> (`openai-style-sk`, `github-pat`, `aws-access-key-id`, `slack-token`, `jwt`)
+> was anchored on `\b`. A JavaScript word boundary does not fire between `_`
+> and a letter, so all five missed a token glued after a namespace prefix —
+> `ghp_…` was caught, `anything_ghp_…` was not. They now use a negative
+> lookbehind for `[A-Za-z0-9]`. **These shapes match strictly more input than
+> at v0.1**: a consumer holding snapshots over redacted output may see new
+> redactions. `pem-private-key` is unchanged. `src/registry.ts` is re-pinned
+> above the v0.1 base in `test/run-harness-redaction-wiring.test.ts`; every
+> other source file stays at its v0.1 digest.
+
+
 **Lane B of the OMP→MAD Evolve Pack v0** (Founder act of 2026-09-13,
 "mechanism steal, not clone"). Status: controlled/fixture-honest work under
 the AE-01 boundaries — NOT production, NOT live occupancy, NO provider

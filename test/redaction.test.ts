@@ -371,6 +371,59 @@ describe('redaction · SecretRegistry', () => {
     assert.throws(() => registry.register('X', 'short', 'env'), /refused, not skipped/);
   });
 
+  it('built-in shapes catch a token glued after an underscore or hyphen', () => {
+    // Regression. Every prefixed shape was anchored on `\b`, which does not
+    // fire between `_` and a letter, so a token carrying a namespace prefix
+    // — `cmd_ghp_...`, `origin_sk-...` — passed the boundary untouched.
+    // The mid-run cases must still NOT match: the guards are separators, not
+    // a licence to match inside a longer alphanumeric run.
+    const registry = new SecretRegistry();
+    for (const name of BUILTIN_SHAPE_NAMES) registry.enableShape(name);
+    const r = createRedactor({ mode: 'replace', registry, hmacKey: KEY_A });
+
+    const samples: readonly (readonly [string, string])[] = [
+      ['github-pat', 'ghp_' + 'Z'.repeat(36)],
+      ['openai-style-sk', 'sk-' + 'q'.repeat(24)],
+      ['aws-access-key-id', 'AKIA' + 'A'.repeat(16)],
+      ['slack-token', 'xoxb-' + 'a'.repeat(14)],
+      ['jwt', 'eyJ' + 'a'.repeat(10) + '.eyJ' + 'b'.repeat(10) + '.' + 'c'.repeat(12)],
+    ];
+
+    for (const [shape, value] of samples) {
+      for (const prefix of ['', 'cmd_', 'origin_', 'run-']) {
+        const redacted = r.redactString(`${prefix}${value}`);
+        assert.ok(
+          !redacted.includes(value),
+          `${shape} survived redaction when written as ${prefix}<token>`,
+        );
+        assert.match(redacted, new RegExp(`\\[REDACTED:shape:${shape}:[0-9a-f]{16}\\]`));
+      }
+      // Glued to alphanumerics it is part of a longer identifier, not a token.
+      assert.equal(r.redactString(`XY${value}`), `XY${value}`, `${shape} matched mid-identifier`);
+    }
+  });
+
+  it('records the asymmetry between the leading and trailing guards', () => {
+    // The leading lookbehind does the real work. The trailing lookahead can
+    // only reject for the one fixed-length shape; the open-ended shapes end
+    // in a greedy class that swallows a trailing alphanumeric run before the
+    // lookahead is evaluated. That divergence is real behaviour, so it is
+    // pinned here — a later edit to any quantifier would otherwise flip it
+    // silently.
+    const registry = new SecretRegistry();
+    for (const name of BUILTIN_SHAPE_NAMES) registry.enableShape(name);
+    const r = createRedactor({ mode: 'replace', registry, hmacKey: KEY_A });
+
+    // Open-ended: the suffix is swallowed and the whole run is redacted.
+    // Over-redaction, which is the safe direction for a redactor.
+    const pat = `ghp_${'Z'.repeat(36)}`;
+    assert.ok(!r.redactString(`${pat}XY`).includes(pat));
+
+    // Fixed length: the trailing guard rejects, so this is left alone.
+    const akia = `AKIA${'A'.repeat(16)}`;
+    assert.equal(r.redactString(`${akia}XY`), `${akia}XY`);
+  });
+
   it('built-in shapes are opt-in and redact by shape with a keyed digest', () => {
     assert.deepEqual([...BUILTIN_SHAPE_NAMES], ['pem-private-key', 'openai-style-sk', 'github-pat', 'aws-access-key-id', 'slack-token', 'jwt']);
     const registry = new SecretRegistry();

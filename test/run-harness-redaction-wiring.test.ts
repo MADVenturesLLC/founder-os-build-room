@@ -447,7 +447,14 @@ describe('static boundaries (T4)', () => {
     }
   });
 
-  it('the redaction package is byte-pinned at redaction v0.1 (stderr path act, base d052cb4) and reads no process environment', async () => {
+  it('the redaction package is byte-pinned at redaction v0.1 (stderr path act, base d052cb4) plus the BUILTIN_SHAPES anchoring amendment, and reads no process environment', async () => {
+    // Base pin: redaction v0.1, stderr path act, base d052cb4. `registry.ts`
+    // is re-pinned above that base for one security amendment: BUILTIN_SHAPES
+    // anchored every prefixed shape on `\b`, which does not fire between `_`
+    // and a letter, so a token glued after a namespace prefix evaded all five.
+    // The pin is the control that made that hole hold still — re-pinning it
+    // is the deliberate, visible act it is meant to force, not a bypass.
+    // Every other file remains at the v0.1 digest.
     // Parallel arrays, not a name→digest map: a file name containing "key"
     // next to a hex digest reads as a credential to the secret scanner.
     const pinnedFiles = ['index.ts', 'key-custody.ts', 'redactor.ts', 'registry.ts', 'sinks.ts'];
@@ -455,7 +462,7 @@ describe('static boundaries (T4)', () => {
       '23ae58a6b84d3c1f828c0f9e1d4d776acc7ae095e9e98540a4b8a2419af8d652',
       '4d62f9d792a28f268ebad4953101455a08bcac0f13a6b6f0d422990417f28151',
       'a3b108aedb6d162fd8e9fe51cf87ab943b085f28c26026a9c07e940e90610b2d',
-      '86db125565c92d80f5ba57a69cde713d7598c6be2999b751bdd7fa6a24b049a3',
+      'e151d67f9d6a86df570ca50918f11ea7c7a9b64670d24ad2043fe9e792bbeacd',
       'ccc06b573140db5b7d2d3a1f2bfb4cc139527196890fb927166571e7107ef1d6',
     ];
     const forbidden = ['process', 'env'].join('.');
