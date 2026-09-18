@@ -38,6 +38,7 @@ export type DispatchErrorCode =
   | 'journal_unavailable'
   | 'journal_append_failed'
   | 'credential_material'
+  | 'duplicate_event'
   | 'bypass_forbidden';
 
 export class DispatchError extends Error {
@@ -187,15 +188,24 @@ export function dispatchGovernedCommand(
     journalRecord = journal.append(row);
   } catch (err) {
     if (err instanceof JournalAppendError) {
-      // `credential_material` keeps its identity — it is a §6 secrets
-      // refusal, not a generic write failure, and a caller reacts to it
-      // differently. `second_writer` deliberately does NOT get its own code:
-      // this path fetches the journal through `getActiveJournal()` on every
-      // call, so `append` cannot see a stale instance here. A dedicated code
-      // would be an untested fail-closed branch, and the original error's
-      // own code is preserved in the message either way.
+      // Two codes keep their identity, because a caller reacts to each
+      // differently from a generic write failure: `credential_material` is
+      // a §6 secrets refusal, and `duplicate_event` says this command_id
+      // was already journaled — §4.1 makes command_id the idempotency key,
+      // so a caller retrying idempotently must be able to tell "already
+      // done" from "storage failed" without parsing a message string.
+      //
+      // `second_writer` deliberately does NOT get its own code: this path
+      // fetches the journal through `getActiveJournal()` on every call, so
+      // `append` cannot see a stale instance here. A dedicated code would
+      // be an untested fail-closed branch. The originating code is
+      // preserved in the message in every case.
+      const code: DispatchErrorCode =
+        err.code === 'credential_material' || err.code === 'duplicate_event'
+          ? err.code
+          : 'journal_append_failed';
       throw new DispatchError(
-        err.code === 'credential_material' ? 'credential_material' : 'journal_append_failed',
+        code,
         `governed command refused: journal append failed (${err.code}: ${err.message})`,
       );
     }

@@ -133,8 +133,10 @@ describe('§7.2 fail-closed dispatch — no bypass of the journal path', () => {
       dispatchGovernedCommand(request(), { now: CLOCK });
       assert.throws(
         () => dispatchGovernedCommand(request(), { now: CLOCK }),
-        (err: unknown) =>
-          err instanceof DispatchError && err.code === 'journal_append_failed',
+        // Distinct from `journal_append_failed`: a caller retrying against
+        // the idempotency key must be able to tell "already done" from
+        // "storage failed" without parsing the message.
+        (err: unknown) => err instanceof DispatchError && err.code === 'duplicate_event',
       );
       assert.equal(journal.length, 1, 'the duplicate journalled nothing');
     } finally {
