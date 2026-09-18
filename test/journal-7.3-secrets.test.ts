@@ -132,6 +132,22 @@ describe('§7.3 secrets are not persisted', () => {
       }
     });
 
+    it('flags a credential glued after an underscore or hyphen', () => {
+      // `\b` does not fire between `_` and a letter, so an anchor of `\b`
+      // made every prefix below invisible the moment a token was appended
+      // to one — and `command_id` is REQUIRED to live in the `cmd_`
+      // namespace, so `cmd_<live token>` reached the chained bytes.
+      for (const glued of [
+        `cmd_${PAT}`,
+        `origin_${PAT}`,
+        `x_${API_KEY}`,
+        `y_${FINE_GRAINED_PAT}`,
+        `run-${XAI_KEY}`,
+      ]) {
+        assert.equal(containsCredentialMaterial([glued]), true, glued.slice(0, 20));
+      }
+    });
+
     it('flags a secret environment binding whose value was left intact', () => {
       assert.equal(containsCredentialMaterial([`GITHUB_TOKEN=${'t'.repeat(20)}`]), true);
     });
@@ -203,6 +219,22 @@ describe('§7.3 secrets are not persisted', () => {
           // is not the credential.
           `${REDACTED}db.example.invalid/journal`,
         ]);
+      } finally {
+        journal.close();
+      }
+    });
+
+    it('refuses a command_id that hides a credential in the cmd_ namespace', () => {
+      // The namespace prefix is mandatory, so this is the one field where a
+      // caller can append a token and still satisfy the row's own format
+      // rule. The write-path guard has to catch it.
+      const journal = MemoryCommandJournal.open();
+      try {
+        assert.throws(
+          () => dispatchGovernedCommand(request({ commandId: `cmd_${PAT}` }), { now: CLOCK }),
+          (err: unknown) => err instanceof DispatchError && err.code === 'credential_material',
+        );
+        assert.equal(journal.length, 0, 'the refused dispatch journalled nothing');
       } finally {
         journal.close();
       }

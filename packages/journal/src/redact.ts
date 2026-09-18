@@ -26,32 +26,42 @@ interface CredentialShape {
   readonly pattern: RegExp;
 }
 
-/** Specific credential forms — positive evidence when matched. */
+/**
+ * Specific credential forms — positive evidence when matched.
+ *
+ * These deliberately use `(?<![A-Za-z0-9])` rather than `\b` at the front.
+ * `\b` does not fire between `_` and a letter, so every prefix below was
+ * invisible the moment a token was glued after an underscore — and
+ * `command_id` is REQUIRED to live in the `cmd_` namespace, so
+ * `cmd_<live token>` passed the write-path guard straight into the chained
+ * bytes. The lookaround treats `_` and `-` as separators, which is what a
+ * credential prefix actually sits behind in the wild.
+ */
 const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   {
     name: 'pem_private_key',
     pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/,
   },
-  { name: 'provider_api_key', pattern: /\b(?:sk|pk|rk|ak)-[A-Za-z0-9_-]{16,}\b/ },
-  { name: 'github_token', pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/ },
-  { name: 'github_fine_grained_pat', pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/ },
-  { name: 'xai_key', pattern: /\bxai-[A-Za-z0-9_-]{20,}\b/ },
+  { name: 'provider_api_key', pattern: /(?<![A-Za-z0-9])(?:sk|pk|rk|ak)-[A-Za-z0-9_-]{16,}(?![A-Za-z0-9])/ },
+  { name: 'github_token', pattern: /(?<![A-Za-z0-9])(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/ },
+  { name: 'github_fine_grained_pat', pattern: /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9])/ },
+  { name: 'xai_key', pattern: /(?<![A-Za-z0-9])xai-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9])/ },
   {
     name: 'labelled_secret',
-    pattern: /\b(?:token|api[_-]?key|secret|password|passwd|credential)\s*[:=]\s*\S+/i,
+    pattern: /(?<![A-Za-z0-9])(?:token|api[_-]?key|secret|password|passwd|credential)\s*[:=]\s*\S+/i,
   },
   // `Bearer <token>` is written with a space and no separator, so it needs
   // its own shape: requiring `:` or `=` missed the standard HTTP form.
-  { name: 'bearer_token', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/i },
+  { name: 'bearer_token', pattern: /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+/=-]{8,}/i },
   // A JWT is base64URL, whose `-` and `_` fall outside the entropy shape's
   // alphabet, so it would otherwise reach a row untouched.
   {
     name: 'json_web_token',
-    pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
+    pattern: /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
   },
   // `scheme://user:password@host` — a connection string carries its
   // credential inline and no env-key rule below would catch it.
-  { name: 'url_userinfo_credential', pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@/i },
+  { name: 'url_userinfo_credential', pattern: /(?<![A-Za-z0-9])[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@/i },
 ];
 
 /**
