@@ -125,6 +125,39 @@ describe('§7.2 fail-closed dispatch — no bypass of the journal path', () => {
     }
   });
 
+  it('issues no second permit for a command_id already journaled', () => {
+    // `command_id` is the dispatch idempotency key (contract §4.1): a
+    // repeated dispatch must not hand out a second execution permit.
+    const journal = MemoryCommandJournal.open();
+    try {
+      dispatchGovernedCommand(request(), { now: CLOCK });
+      assert.throws(
+        () => dispatchGovernedCommand(request(), { now: CLOCK }),
+        (err: unknown) =>
+          err instanceof DispatchError && err.code === 'journal_append_failed',
+      );
+      assert.equal(journal.length, 1, 'the duplicate journalled nothing');
+    } finally {
+      journal.close();
+    }
+  });
+
+  it('never echoes caller-controlled text into the bypass refusal', () => {
+    // `commandKind` and argv are treated as credential-bearing by
+    // `normalizeForJournal`; quoting them in a refusal would route a secret
+    // into logs along the one path that never redacts.
+    const secretish = `planner.invoke ghp_${'Z'.repeat(36)}`;
+    try {
+      executeWithoutJournal(request({ commandKind: secretish }));
+      assert.fail('expected a bypass refusal');
+    } catch (err) {
+      assert.ok(err instanceof DispatchError);
+      assert.equal(err.code, 'bypass_forbidden');
+      assert.ok(!err.message.includes('ghp_'), 'the refusal quoted caller text');
+      assert.ok(!err.message.includes('planner.invoke'));
+    }
+  });
+
   it('refuses a bypass even while a journal is open', () => {
     const journal = MemoryCommandJournal.open();
     try {

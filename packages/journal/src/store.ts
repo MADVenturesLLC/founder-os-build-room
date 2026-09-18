@@ -32,8 +32,23 @@ export type JournalAppendErrorCode =
   | 'append_only_violation'
   | 'chain_divergence'
   | 'credential_material'
+  | 'duplicate_event'
   | 'second_writer'
   | 'immutable_row';
+
+/**
+ * Event types that may appear at most once per `command_id` (contract §4.1
+ * "Uniqueness, enforced in schema": `(command_id, event_type)` unique for
+ * these). In the ruled Neon locus this is a unique index; here it is an
+ * explicit check, because the invariant belongs to the journal and not to
+ * whichever caller happens to reach it.
+ */
+const AT_MOST_ONCE_EVENTS: ReadonlySet<string> = new Set([
+  'journaled',
+  'identity_bound',
+  'dispatched',
+  'resolved',
+]);
 
 export class JournalAppendError extends Error {
   readonly code: JournalAppendErrorCode;
@@ -122,7 +137,16 @@ function copyRow(row: CommandEventRow): CommandEventRow {
     ...(row.commandEnvelope === undefined
       ? {}
       : { commandEnvelope: { ...row.commandEnvelope, argv: [...row.commandEnvelope.argv] } }),
+    // `lifecycleEventRef` is nested too: a shallow spread would leave it
+    // shared, so mutating it through a snapshot would rewrite stored state.
+    ...(row.lifecycleEventRef === undefined
+      ? {}
+      : { lifecycleEventRef: { ...row.lifecycleEventRef } }),
   };
+}
+
+function copyRecord(record: ChainedJournalRecord): ChainedJournalRecord {
+  return { ...record, row: copyRow(record.row) };
 }
 
 export class MemoryCommandJournal {
@@ -174,7 +198,7 @@ export class MemoryCommandJournal {
 
   /** Snapshot of appended records, copied deeply enough to be immutable. */
   recordsSnapshot(): readonly ChainedJournalRecord[] {
-    return this.records.map((record) => ({ ...record, row: copyRow(record.row) }));
+    return this.records.map(copyRecord);
   }
 
   /**
@@ -190,6 +214,19 @@ export class MemoryCommandJournal {
       throw new JournalAppendError(
         'second_writer',
         'this journal instance is not the active singular journal',
+      );
+    }
+    if (
+      AT_MOST_ONCE_EVENTS.has(rowInput.eventType)
+      && this.records.some(
+        (record) =>
+          record.row.commandId === rowInput.commandId
+          && record.row.eventType === rowInput.eventType,
+      )
+    ) {
+      throw new JournalAppendError(
+        'duplicate_event',
+        `${rowInput.eventType} is at most once per command_id: ${rowInput.commandId} already has one`,
       );
     }
     if (containsCredentialMaterial(credentialSurfaceOf(rowInput))) {
@@ -232,7 +269,9 @@ export class MemoryCommandJournal {
       canonicalHex: Buffer.from(canonical).toString('hex'),
     };
     this.records.push(record);
-    return record;
+    // Hand back a copy: returning the stored record would let a caller
+    // mutate an already-chained row through `result.journalRecord`.
+    return copyRecord(record);
   }
 
   /**

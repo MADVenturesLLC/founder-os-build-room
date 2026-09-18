@@ -38,7 +38,16 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   { name: 'xai_key', pattern: /\bxai-[A-Za-z0-9_-]{20,}\b/ },
   {
     name: 'labelled_secret',
-    pattern: /\b(?:Bearer|token|api[_-]?key|secret|password|passwd|credential)\s*[:=]\s*\S+/i,
+    pattern: /\b(?:token|api[_-]?key|secret|password|passwd|credential)\s*[:=]\s*\S+/i,
+  },
+  // `Bearer <token>` is written with a space and no separator, so it needs
+  // its own shape: requiring `:` or `=` missed the standard HTTP form.
+  { name: 'bearer_token', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/i },
+  // A JWT is base64URL, whose `-` and `_` fall outside the entropy shape's
+  // alphabet, so it would otherwise reach a row untouched.
+  {
+    name: 'json_web_token',
+    pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
   },
   // `scheme://user:password@host` — a connection string carries its
   // credential inline and no env-key rule below would catch it.

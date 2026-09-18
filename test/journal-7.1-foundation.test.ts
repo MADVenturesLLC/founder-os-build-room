@@ -140,6 +140,22 @@ describe('§7.1 journal foundation — append-only, tamper-evident, reconstructa
       journal = MemoryCommandJournal.open();
     });
 
+    it('refuses a second journaled event for the same command_id', () => {
+      // Contract §4.1 "Uniqueness, enforced in schema": (command_id,
+      // event_type) is unique for the at-most-once event types. In the
+      // ruled Neon locus that is an index; here it is an explicit check,
+      // because the invariant belongs to the journal, not to the caller.
+      journal.append(journaledRow('a', T1));
+      assert.throws(
+        () => journal.append(journaledRow('a', T2)),
+        (err: unknown) =>
+          err instanceof JournalAppendError && err.code === 'duplicate_event',
+      );
+      assert.equal(journal.length, 1, 'the duplicate inserted nothing');
+      // A different command_id is unaffected.
+      assert.doesNotThrow(() => journal.append(journaledRow('b', T2)));
+    });
+
     it('assigns seq densely from 1 and refuses a caller-chosen seq that diverges', () => {
       assert.equal(journal.append(journaledRow('a', T1)).row.seq, '1');
       assert.equal(journal.append(journaledRow('b', T2)).row.seq, '2');
@@ -286,6 +302,27 @@ describe('§7.1 journal foundation — append-only, tamper-evident, reconstructa
       mutableArgv.push('--now-with-extra');
       assert.equal(journal.verify().ok, true, 'a caller mutation reached the chained row');
       assert.doesNotThrow(() => journal.append(journaledRow('b', T2)));
+    });
+
+    it('returns a copy from append, not the stored record', () => {
+      const argv = ['--dry-run'];
+      const base = journaledRow('a', T1);
+      const envelope = { ...base.commandEnvelope!, argv };
+      const record = journal.append({
+        ...base,
+        commandEnvelope: envelope,
+        envelopeDigest: envelopeDigest(envelope),
+        lifecycleEventRef: { roomId: 'room-1', eventId: 'event-1' },
+      });
+      // Mutating what append handed back must not reach journal state.
+      (record.row.evidenceRefs as string[]).push('injected');
+      (record.row.commandEnvelope!.argv as string[]).push('--injected');
+      (record.row.lifecycleEventRef as { roomId: string }).roomId = 'room-2';
+      assert.equal(journal.verify().ok, true);
+      const [stored] = journal.reconstruct();
+      assert.deepEqual(stored?.evidenceRefs, []);
+      assert.deepEqual(stored?.commandEnvelope?.argv, ['--dry-run']);
+      assert.equal(stored?.lifecycleEventRef?.roomId, 'room-1');
     });
 
     it('hands back copies, so a caller cannot mutate journal state', () => {

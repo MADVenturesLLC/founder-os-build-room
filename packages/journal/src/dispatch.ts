@@ -217,9 +217,14 @@ export function dispatchGovernedCommand(
  * path. Its existence is not the proof — the source-honesty test is.
  */
 export function executeWithoutJournal(request: GovernedCommandRequest): never {
+  // The request is deliberately NOT echoed into the message. `commandKind`
+  // and `argv` are caller-controlled and treated as credential-bearing by
+  // `normalizeForJournal`, so quoting them here would route a secret into
+  // logs and error reporting along the one path that never redacts.
+  void request;
   throw new DispatchError(
     'bypass_forbidden',
-    `governed commands cannot bypass the required journal path: ${request.commandKind} refused`,
+    'governed commands cannot bypass the required journal path',
   );
 }
 

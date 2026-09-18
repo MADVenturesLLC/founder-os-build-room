@@ -39,6 +39,8 @@ const PAT = `ghp_${'Z'.repeat(36)}`;
 const FINE_GRAINED_PAT = `github_pat_${'A'.repeat(30)}`;
 const API_KEY = `sk-${'q'.repeat(32)}`;
 const XAI_KEY = `xai-${'w'.repeat(28)}`;
+const BEARER = `Bearer ${'k'.repeat(24)}`;
+const JWT = `eyJ${'a'.repeat(18)}.eyJ${'b'.repeat(18)}.${'c'.repeat(24)}`;
 const DB_URL = `postgres://admin:${'p'.repeat(12)}@db.example.invalid/journal`;
 // Assembled for the same reason as the tokens above: the scanner's
 // private-key rule would read a literal PEM block in this file as a leak.
@@ -73,6 +75,8 @@ describe('§7.3 secrets are not persisted', () => {
       ['an xAI key', XAI_KEY],
       ['a PEM private key block', PEM],
       ['a connection string with inline credentials', DB_URL],
+      ['a bearer token written with a space', BEARER],
+      ['a JSON web token', JWT],
     ] as const) {
       it(`strips ${name}`, () => {
         const [redacted] = redactArgv([secret]);
@@ -123,7 +127,7 @@ describe('§7.3 secrets are not persisted', () => {
 
   describe('the honesty check (§6.3)', () => {
     it('flags unredacted credential material', () => {
-      for (const secret of [PAT, FINE_GRAINED_PAT, API_KEY, XAI_KEY, PEM, DB_URL]) {
+      for (const secret of [PAT, FINE_GRAINED_PAT, API_KEY, XAI_KEY, PEM, DB_URL, BEARER, JWT]) {
         assert.equal(containsCredentialMaterial([secret]), true, secret.slice(0, 12));
       }
     });
@@ -133,7 +137,7 @@ describe('§7.3 secrets are not persisted', () => {
     });
 
     it('clears values that redaction has actually handled', () => {
-      for (const secret of [PAT, FINE_GRAINED_PAT, API_KEY, XAI_KEY, PEM, DB_URL]) {
+      for (const secret of [PAT, FINE_GRAINED_PAT, API_KEY, XAI_KEY, PEM, DB_URL, BEARER, JWT]) {
         assert.equal(containsCredentialMaterial(redactArgv([secret])), false);
       }
       assert.equal(containsCredentialMaterial([`GITHUB_TOKEN=${REDACTED}`]), false);
