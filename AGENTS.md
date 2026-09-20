@@ -72,3 +72,33 @@ Execution-Surface: <surface_id>
   and no agent should scaffold one without a separate Founder ruling binding
   it.
 - **Data:** Postgres (Neon) for operational data; evidence store per `DEC-20260815-02`
+
+## Spend broker v0 — blast radius (GLM-20260913-SPEND-BROKER-V0)
+
+OFF-ROADMAP Build Room side bet (Open-Inspect S3 evolved). Claim language:
+`SPEND_BROKER_V0` / `COST_CEILING_ENFORCEMENT` only.
+
+- **Touches exactly:** `packages/spend-broker/**` (new), `test/spend-broker.test.ts`
+  (new), one `include` line in `tsconfig.json`, one `spend-broker:demo` script
+  in the root `package.json`, and this section.
+- **Does NOT touch:** `packages/gateway-daemon/**` — the AE-01 A2 candidate is
+  FROZEN (`CHANGES_REQUESTED`) and this work did not modify, integrate, or
+  call it. No Room Runtime / Occupancy / Execution / freeze-stack files. No
+  Phase 0 proofs under `test/phase0/**`. No live credential stores, no
+  Keychain writes, no network in tests.
+- **Fixture-first:** the gateway is a fixture (`fix_…` tokens); the only live
+  integration is a read-only adapter to `@build-room/cost-meter`'s public
+  API. The meter's boundary semantics — including the `perRoomTokenLimb`
+  `FOUNDER_DECISION_REQUIRED` question — are used as-is, not re-decided; see
+  `packages/spend-broker/README.md`.
+- **Credential classes (Founder ruling 2026-09-13, verbatim: "Only API
+  ceiling is $85. OAuth should be unlimited."):** `MintRequest.credentialKind`
+  routes `'api'` (default, fail-closed) through the ceiling gate and
+  `'oauth'` around it — no meter call, no reservation, no spend-ground
+  interrupt; gateway refusals still deny. Broker routing only: the meter, the
+  monthly ledger, and the ratified USD 85 total-spend ceiling are untouched.
+- **Status:** left UNCOMMITTED on branch `build/spend-broker-v0` (off
+  `origin/main`) pending Founder authorization. Merge remains a Founder act
+  naming the head SHA. Tests passing here are fixture-level evidence only and
+  are NOT evidence of Phase 0, occupancy proof, gateway honesty, Room
+  Runtime, an AE-01 fix, or any production merge authority.

@@ -33,7 +33,8 @@
     "gate:integrity": "bash scripts/contract-integrity-scan.sh",
     "vectors:journal": "npm run build && node dist/test/support/generate-journal-vectors.js",
     "smoke:gateway": "npm run build && bash scripts/gateway-smoke.sh",
-    "phase1:fixture": "npm run build && node dist/test/support/phase1-acceptance-gateway.js"
+    "phase1:fixture": "npm run build && node dist/test/support/phase1-acceptance-gateway.js",
+    "spend-broker:demo": "npm run build && node dist/packages/spend-broker/src/cli.js deny-demo"
   },
   "devDependencies": {
     "@types/express": "5.0.0",

@@ -1,0 +1,10 @@
+{
+  "name": "@build-room/spend-broker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Build Room spend broker v0 (GLM-20260913-SPEND-BROKER-V0) — refuses to hand an LLM provider a usable credential when the room/run is at or over its spend ceiling. Fixture-first; reads the live cost meter's public API only; never contacts packages/gateway-daemon.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts"
+}

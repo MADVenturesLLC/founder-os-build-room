@@ -18,6 +18,7 @@
     "packages/gateway-registry/src/**/*.ts",
     "packages/control-plane/src/**/*.ts",
     "packages/cost-meter/src/**/*.ts",
+    "packages/spend-broker/src/**/*.ts",
     "packages/run-harness/src/**/*.ts",
     "packages/gateway-daemon/src/**/*.ts",
     "packages/gateway-cli/src/**/*.ts",
