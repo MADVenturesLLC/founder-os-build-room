@@ -66,7 +66,7 @@ export const MAX_V2_FRAME_BYTES = 256 * 1024;
 // Length-prefixed mux (r4 §7.7; r4.1 §3)
 // ---------------------------------------------------------------------------
 
-/** UTF-8 JSON control: JoinRoom, LeaveRoom, FollowRoom, nacks, occupancy facts. */
+/** UTF-8 JSON control: CreateRoom, JoinRoom, LeaveRoom, FollowRoom, nacks, occupancy facts. */
 export const FRAME_TYPE_CONTROL = 0x01;
 /** VT patch: {execution_id, pty_output_seq, resize_epoch, vt_codec_version, checkpoint_or_patch}. */
 export const FRAME_TYPE_VT_PATCH = 0x02;
@@ -123,9 +123,17 @@ export function decodeV2Frames(buffer: Buffer): V2DecodeStep {
  * RoomDelta, InputFrame, ResizeFrame, OccupancyState, WorktreeLease,
  * ReceiptRef, Nack, Disconnect, plus r4: Gap, TakeoverInput,
  * FixtureVerificationResult."
+ *
+ * AMENDMENT (Founder ruling 2026-09-20, Act GLM-20260920-FIRST-LIVE-ROOM-JOIN,
+ * Option A): `CreateRoom` is added as the one production room-create control
+ * name. The Gateway mints the room_id; the room is born PREPARED with ZERO
+ * execution slots; the fixture surface (`createFixtureRoom`) is never called
+ * by it. This is a documented widening of the r4 §7.15 frozen set — recorded
+ * in the amending PR body, never a silent one.
  */
 export const V2_CONTROL_NAMES = [
   'Hello',
+  'CreateRoom',
   'JoinRoom',
   'LeaveRoom',
   'FollowRoom',
@@ -348,6 +356,18 @@ export interface FollowRoomPayload {
   readonly viewer_capability?: string;
 }
 
+/**
+ * CreateRoom (2026-09-20 Founder amendment — see V2_CONTROL_NAMES). The
+ * requester supplies ONLY an idempotency key: the Gateway MINTS the room_id,
+ * mirroring the r4.1 §5 minting rule for viewers. A live room is born
+ * PREPARED with zero execution slots; the fixture two-slot shape never
+ * applies to it.
+ */
+export interface CreateRoomPayload {
+  readonly op: 'CreateRoom';
+  readonly idempotency_key: string;
+}
+
 export interface TakeoverInputPayload {
   readonly op: 'TakeoverInput';
   readonly room_id: string;
@@ -374,6 +394,7 @@ export interface ResizeFramePayload {
 
 export type ProjectorRequest =
   | HelloPayload
+  | CreateRoomPayload
   | JoinRoomPayload
   | LeaveRoomPayload
   | FollowRoomPayload
@@ -388,6 +409,22 @@ export interface HelloAck {
   readonly ipc_version: 2;
   readonly supported: readonly number[];
   readonly limits: { readonly max_frame_bytes: number; readonly viewer_queue_frames: number };
+}
+
+/**
+ * Gateway → requester: the minted room. `fixture: false` is an honesty label
+ * — a CreateRoom mint is live construction, never fixture occupancy, and the
+ * snapshot's `executions` is empty by construction (zero slots at birth).
+ */
+export interface CreateRoomAck {
+  readonly op: 'CreateRoom';
+  readonly ok: true;
+  /** Gateway-minted; the requester never chose it. */
+  readonly room_id: string;
+  /** Live create, honestly labeled: the fixture surface was not used. */
+  readonly fixture: false;
+  readonly created_via: 'CreateRoom';
+  readonly snapshot: RoomSnapshotBody;
 }
 
 export interface JoinAck {
@@ -555,9 +592,15 @@ export function parseControlPayload(payload: Buffer): ControlParseResult {
   return { ok: true, value: record };
 }
 
-/** The subset of the closed vocabulary a projector may SEND (r4 §7.15). */
+/**
+ * The subset of the closed vocabulary a projector may SEND (r4 §7.15).
+ * `CreateRoom` joined this set by the documented 2026-09-20 Founder
+ * amendment (see V2_CONTROL_NAMES): the operator surface may REQUEST a live
+ * room; every minted id is still the Gateway's.
+ */
 export const PROJECTOR_REQUEST_OPS = [
   'Hello',
+  'CreateRoom',
   'JoinRoom',
   'LeaveRoom',
   'FollowRoom',

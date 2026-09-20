@@ -734,9 +734,13 @@ function sha256Of(relativePath: string): string {
  */
 const REGRESSION_PINS: Record<string, string> = {
   'package-lock.json': '82a2ff7c9bb9430571fcb0180ea9cb270d30c098a020b97e45827a53169c2c38',
-  'test/room-runtime-phase1-ipc.test.ts': '33ce996e00f098dd4fc0802624f973498b0562639d5230ad4851ae2fe2663c42',
-  'test/room-runtime-phase1-runtime.test.ts': 'b93f375be4eb30d8735008eae86c18d4573d8e15c0067e36d9091784a82e087c',
-  'test/room-runtime-phase1-protocol.test.ts': '6a0ec8d4bc1fd25330ce7e5bfe242f3d1b8951891cd484b485f5358e044f3c7b',
+  // The three Phase 1 suite pins below were DELIBERATELY updated in the same
+  // change as the 2026-09-20 Founder-ruled CreateRoom amendment (Act
+  // GLM-20260920-FIRST-LIVE-ROOM-JOIN, Option A): the protocol vocabulary,
+  // runtime, and wire suites each gained CreateRoom coverage.
+  'test/room-runtime-phase1-ipc.test.ts': 'dbb399a1a52afde9e76c312a305f5c062b2f2672b7c127822c7df1c2a9521efd',
+  'test/room-runtime-phase1-runtime.test.ts': 'dfcd41051ce04987acecd2f985610460b6ba1e8459e80b735cf3c58180f990e8',
+  'test/room-runtime-phase1-protocol.test.ts': 'bc430396f48f7447d54d1cea8b0a8640eb011cb75925e19858b06accb619f0ca',
   'test/room-runtime-phase1-c2.storage.test.ts': '37d70e85c6ad61bcfa821b4f921e21243fc348e37aef5bce49645e40579a42a0',
 };
 

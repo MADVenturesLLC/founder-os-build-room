@@ -369,3 +369,47 @@ describe('G/L — fixture occupancy only; receipts stay at or below the fixture 
     assert.ok(refs.some((r) => r['kind'] === 'input-lease-transfer' && r['rung'] === 'prepared'));
   });
 });
+
+describe('M — live room construction via CreateRoom (2026-09-20 Founder amendment)', () => {
+  it('mints a room born PREPARED with ZERO execution slots and a fixture:false room-created receipt', () => {
+    const rt = newRuntime();
+    const result = rt.createRoom('create-key-1');
+    assert.equal(result.ok, true, JSON.stringify(result));
+    if (!result.ok) throw new Error('unreachable');
+    const body = result.body as { room_id: string; fixture: boolean; snapshot: { occupancy: string; executions: unknown[] } };
+    assert.match(body.room_id, /^room-id-\d{4}$/);
+    assert.equal(body.fixture, false);
+    assert.equal(body.snapshot.occupancy, 'PREPARED');
+    assert.equal(body.snapshot.executions.length, 0);
+    const snap = rt.snapshot(body.room_id)!;
+    assert.equal(snap.executions.length, 0, 'live create never registers fixture slots');
+    const receipts = rt.receiptsFor(body.room_id);
+    assert.ok(receipts.some((r) => r.kind === 'room-created' && r.facts['fixture'] === false));
+  });
+
+  it('idempotent replay returns the SAME minted room; a different key mints a different room', () => {
+    const rt = newRuntime();
+    const first = rt.createRoom('k1');
+    const replay = rt.createRoom('k1');
+    assert.equal(first.ok, true);
+    assert.equal(replay.ok, true);
+    if (!first.ok || !replay.ok) throw new Error('unreachable');
+    assert.equal((replay.body as { room_id: string }).room_id, (first.body as { room_id: string }).room_id);
+    const second = rt.createRoom('k2');
+    assert.equal(second.ok, true);
+    if (!second.ok) throw new Error('unreachable');
+    assert.notEqual((second.body as { room_id: string }).room_id, (first.body as { room_id: string }).room_id);
+    assert.equal(rt.listRooms().length, 2);
+  });
+
+  it('join works on a created room; recovery is HISTORY_REPLAY from PREPARED', () => {
+    const rt = newRuntime();
+    const created = rt.createRoom('k1');
+    assert.equal(created.ok, true);
+    if (!created.ok) throw new Error('unreachable');
+    const roomId = (created.body as { room_id: string }).room_id;
+    const v = join(rt, roomId, 'join-1', 'read');
+    assert.equal(v.recovery_kind, 'HISTORY_REPLAY');
+    assert.equal((v.snapshot['executions'] as unknown[]).length, 0);
+  });
+});

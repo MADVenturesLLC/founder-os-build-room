@@ -350,3 +350,45 @@ describe('NEGATIVE CONTROLS — transport (r3 stops 4–7)', () => {
     assert.equal(process.env['MADV_SOCKET_PATH'], undefined);
   });
 });
+
+describe('K — CreateRoom over the wire (2026-09-20 Founder amendment, Act GLM-20260920)', () => {
+  it('Hello → CreateRoom mints a room; FollowRoom "rooms" lists it; JoinRoom attaches with zero executions', async () => {
+    const c = await connectV2();
+    await hello(c);
+    c.send({ op: 'CreateRoom', idempotency_key: 'wire-create-1' });
+    const ack = await nextOp(c, 'CreateRoom');
+    assert.equal(ack.body['ok'], true);
+    assert.equal(ack.body['fixture'], false);
+    assert.equal(typeof ack.body['room_id'], 'string');
+    const roomId = String(ack.body['room_id']);
+    const snapshot = ack.body['snapshot'] as { occupancy: string; executions: unknown[] };
+    assert.equal(snapshot.occupancy, 'PREPARED');
+    assert.equal(snapshot.executions.length, 0);
+
+    c.send({ op: 'FollowRoom', target: 'rooms' });
+    const list = await nextOp(c, 'FollowRoom');
+    const roomsList = list.body['rooms'] as { room_id: string }[];
+    assert.ok(roomsList.some((r) => r.room_id === roomId), 'the minted room appears in rooms facts');
+
+    c.send({ op: 'JoinRoom', room_id: roomId, idempotency_key: 'wire-join-1', viewer_caps: 'read' });
+    const joined = await nextOp(c, 'JoinRoom');
+    assert.equal(joined.body['ok'], true);
+    assert.equal(typeof joined.body['viewer_id'], 'string', 'the Gateway minted the viewer');
+    c.socket.destroy();
+  });
+
+  it('CreateRoom without an idempotency_key is nacked invalid_request; a daemon-scoped key replays the same room', async () => {
+    const c = await connectV2();
+    await hello(c);
+    c.send({ op: 'CreateRoom' });
+    const nack = await nextOp(c, 'Nack');
+    assert.equal(nack.body['reason'], 'invalid_request');
+
+    c.send({ op: 'CreateRoom', idempotency_key: 'replay-key' });
+    const first = await nextOp(c, 'CreateRoom');
+    c.send({ op: 'CreateRoom', idempotency_key: 'replay-key' });
+    const replay = await nextOp(c, 'CreateRoom');
+    assert.equal(first.body['room_id'], replay.body['room_id']);
+    c.socket.destroy();
+  });
+});
