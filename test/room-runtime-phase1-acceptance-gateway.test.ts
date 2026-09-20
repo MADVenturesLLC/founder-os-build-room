@@ -733,7 +733,7 @@ function sha256Of(relativePath: string): string {
  * deliberately in the same change.
  */
 const REGRESSION_PINS: Record<string, string> = {
-  'package-lock.json': '82a2ff7c9bb9430571fcb0180ea9cb270d30c098a020b97e45827a53169c2c38',
+  'package-lock.json': 'e1ddcfe951ad3569252555c322d0db0ae7bb5aee207fb9e0e479c08a0f52e3e4',
   'test/room-runtime-phase1-ipc.test.ts': '33ce996e00f098dd4fc0802624f973498b0562639d5230ad4851ae2fe2663c42',
   'test/room-runtime-phase1-runtime.test.ts': 'b93f375be4eb30d8735008eae86c18d4573d8e15c0067e36d9091784a82e087c',
   'test/room-runtime-phase1-protocol.test.ts': '6a0ec8d4bc1fd25330ce7e5bfe242f3d1b8951891cd484b485f5358e044f3c7b',
