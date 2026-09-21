@@ -20,12 +20,14 @@ import {
   MAX_V2_FRAME_BYTES,
   OCCUPANCY_STATES,
   PROJECTOR_FORBIDDEN_OPS,
+  PROJECTOR_REQUEST_OPS,
   RECOVERY_KINDS,
   SUPPORTED_IPC_VERSIONS,
   V2_CONTROL_NAMES,
   VIEWER_ATTACHMENT_STATES,
   decodeV2Frames,
   encodeV2Frame,
+  isV2ControlName,
   looksLikeV2Hello,
   parseControlPayload,
 } from '../packages/gateway-protocol/src/index.js';
@@ -71,9 +73,9 @@ describe('closed vocabularies (r4 Table 9, §7.15)', () => {
     assert.deepEqual([...BLOCK_REASONS], ['NONE', 'WAITING_FOUNDER', 'CLOCK_UNRELIABLE', 'DISK', 'DUPLICATE', 'PGID_REUSE', 'CUSTODY', 'CRASH_LOOP', 'ADAPTER_HUNG']);
   });
 
-  it('v2 control names are the r4 §7.15 closed set; EvidencePromote and PrDelta are absent', () => {
+  it('v2 control names are the r4 §7.15 closed set plus the documented 2026-09-20 CreateRoom amendment; EvidencePromote and PrDelta are absent', () => {
     assert.deepEqual([...V2_CONTROL_NAMES], [
-      'Hello', 'JoinRoom', 'LeaveRoom', 'FollowRoom', 'RoomSnapshot', 'RoomDelta', 'InputFrame', 'ResizeFrame',
+      'Hello', 'CreateRoom', 'JoinRoom', 'LeaveRoom', 'FollowRoom', 'RoomSnapshot', 'RoomDelta', 'InputFrame', 'ResizeFrame',
       'OccupancyState', 'WorktreeLease', 'ReceiptRef', 'Nack', 'Disconnect', 'Gap', 'TakeoverInput', 'FixtureVerificationResult',
     ]);
     assert.equal((V2_CONTROL_NAMES as readonly string[]).includes('EvidencePromote'), false);
@@ -111,5 +113,15 @@ describe('parseControlPayload — shape only, authority elsewhere', () => {
     for (const op of PROJECTOR_FORBIDDEN_OPS) {
       assert.equal((V2_CONTROL_NAMES as readonly string[]).includes(op), false, op);
     }
+  });
+
+  it('CreateRoom (2026-09-20 Founder amendment) is a recognized projector-request op, never a forbidden one', () => {
+    const ok = parseControlPayload(Buffer.from('{"op":"CreateRoom","idempotency_key":"k1"}'));
+    assert.equal(ok.ok, true);
+    if (ok.ok) assert.equal(ok.value['op'], 'CreateRoom');
+    assert.equal(isV2ControlName('CreateRoom'), true);
+    assert.equal((PROJECTOR_REQUEST_OPS as readonly string[]).includes('CreateRoom'), true);
+    assert.equal((PROJECTOR_FORBIDDEN_OPS as readonly string[]).includes('CreateRoom'), false);
+    assert.equal((PROJECTOR_FORBIDDEN_OPS as readonly string[]).includes('MintViewerId'), true, 'authority minting stays the forbidden class');
   });
 });

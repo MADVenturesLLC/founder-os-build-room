@@ -224,6 +224,11 @@ export class RoomRuntime {
   private readonly rooms = new Map<string, Room>();
   /** viewer_id → room_id, for connection-close bookkeeping. */
   private readonly viewerRoom = new Map<string, string>();
+  /**
+   * CreateRoom idempotency is DAEMON-scoped: the key must resolve to the room
+   * it minted, and that room did not exist to hang a per-room record on.
+   */
+  private readonly createIdempotency = new Map<string, IdempotencyRecord>();
 
   constructor(private readonly deps: RoomRuntimeDeps) {}
 
@@ -446,6 +451,72 @@ export class RoomRuntime {
     }
     this.broadcastDelta(room, { occupancy: room.occupancy });
     this.notifyRoom(room.roomId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Live room construction (CreateRoom — the ONLY production room-create path)
+  // -------------------------------------------------------------------------
+
+  /**
+   * CreateRoom (AMENDMENT, Founder ruling 2026-09-20 — Act
+   * GLM-20260920-FIRST-LIVE-ROOM-JOIN, Option A). The Gateway MINTS the
+   * room_id through the injected id factory; the room is born PREPARED with
+   * ZERO execution stream identities — executions bind later through the
+   * execution-stream path (Phase 2), never fixture slots. This method never
+   * calls createFixtureRoom or registerFixtureExecution; the fixture surface
+   * stays test/fixture-only (ruling clause 3).
+   *
+   * Idempotency is daemon-scoped (`createIdempotency`): a replayed key
+   * returns the SAME minted room; the payload is the key alone, so a
+   * conflicting-payload replay is structurally impossible but checked anyway
+   * to mirror JoinRoom/LeaveRoom semantics.
+   */
+  createRoom(idempotencyKey: string): RoomResult {
+    const payloadHash = stableHash({ op: 'CreateRoom', idempotencyKey });
+    const prior = this.createIdempotency.get(idempotencyKey);
+    if (prior !== undefined) {
+      if (prior.payloadHash !== payloadHash) {
+        return { ok: false, reason: 'idempotency_conflict', detail: `idempotency_key ${idempotencyKey} reused with a different payload` };
+      }
+      return prior.outcome;
+    }
+    // Mint until unused (a randomUUID collision is negligible; the loop makes
+    // the invariant absolute rather than probabilistic).
+    let roomId = `room-${this.deps.newId()}`;
+    while (this.rooms.has(roomId)) roomId = `room-${this.deps.newId()}`;
+    const room: Room = {
+      roomId,
+      occupancy: 'PREPARED',
+      occupancyEpoch: 0,
+      blockReason: 'NONE',
+      inputAuthority: { kind: 'UNOWNED' },
+      inputEpoch: 0,
+      roomSeq: 0,
+      executions: new Map(),
+      viewers: new Map(),
+      capabilities: new Map(),
+      receipts: [],
+      idempotency: new Map(),
+    };
+    this.rooms.set(roomId, room);
+    // Audit contrast with fixture receipts (`fixture: true`): a live mint.
+    this.pushReceipt(room, 'room-created', 'prepared', {
+      fixture: false,
+      created_via: 'CreateRoom',
+    });
+    const outcome: RoomOutcome = {
+      ok: true,
+      body: {
+        op: 'CreateRoom',
+        ok: true,
+        room_id: roomId,
+        fixture: false,
+        created_via: 'CreateRoom',
+        snapshot: this.snapshotBody(room),
+      },
+    };
+    this.createIdempotency.set(idempotencyKey, { payloadHash, outcome });
+    return outcome;
   }
 
   // -------------------------------------------------------------------------

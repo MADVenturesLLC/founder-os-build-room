@@ -461,6 +461,23 @@ class ConnectionState {
         });
         return;
       }
+      if (op === 'CreateRoom') {
+        // AMENDMENT (Founder ruling 2026-09-20): the one production
+        // room-create path. The Gateway mints the room_id; the fixture
+        // surface is never called from here.
+        const idempotencyKey = record['idempotency_key'];
+        if (typeof idempotencyKey !== 'string' || idempotencyKey.length === 0) {
+          nack('invalid_request', 'CreateRoom requires a non-empty idempotency_key string');
+          return;
+        }
+        const result = rooms.createRoom(idempotencyKey);
+        if (!result.ok) {
+          nack(result.reason, result.detail);
+          return;
+        }
+        writeV2(FRAME_TYPE_CONTROL, result.body);
+        return;
+      }
       if (op === 'JoinRoom') {
         const roomId = record['room_id'];
         const idempotencyKey = record['idempotency_key'];
