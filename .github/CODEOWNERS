@@ -1,0 +1,4 @@
+# CODEOWNERS — MAD Ventures LLC
+# Every path is owned by the owners team (Founder).
+# Ratified: no agent or bot may merge without Founder review.
+* @MADVenturesLLC/owners
