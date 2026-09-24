@@ -29,6 +29,23 @@ Monorepo. Present today:
 - `packages/run-harness` — performs the Phase 2 run cycle, judges it against the Founder's three conditions, and emits the evidence bundle.
 - `packages/gateway-daemon` — the macOS-local gateway host: Keychain custody through `/usr/bin/security`, two identity lanes, timers, an IPC socket and a ring buffer.
 - `packages/gateway-cli` — the `buildroom` five-verb surface: `enroll`, `status`, `doctor`, `providers`, `tail`.
+- `packages/spend-broker` — mints a provider credential only while the room or run is under its spend ceiling; `api` mints go through the cost meter's ceiling gate, `oauth` mints around it (Founder ruling 2026-09-13). Fixture gateway in v0; merged as PR #69.
+
+**Side-track packages, all fixture-honest by their own labels.** None of these
+is a workspace member: they carry no `package.json`, because the lockfile is
+pinned by the AE-01 T18 test and workspace membership needs its own
+authorization (Founder workspace/lockfile ruling, 2026-09-05). They compile
+through the root `tsconfig.json` include list and are consumed by relative
+source import. Each names the Founder act that commissioned it.
+
+- `packages/seat-registry` — Seat Registry V1 (`DEC-20260902-02`): the seat vocabulary and schema, hash-pinned doctrine fixtures, `resolveSeat` (refuses every request in V1 by design), dispatch policy and the handoff validator. Merged as PR #20; the V1.1 non-activating control-plane gate (`packages/control-plane/src/seat-policy.ts`, pure and unwired) as PR #23. Pure apart from reading its own fixtures. Not in the `tsconfig.json` include list; it compiles transitively through its importers.
+- `packages/seat-output-schema` — OMP evolve pack Lane A: a strict-or-permissive evaluator for structured seat outputs returning `accepted`, `accepted_with_flags` or `rejected`. Pure. PR #33.
+- `packages/redaction` — OMP Lane B: the secret registry, an HMAC replace-mode redactor with read-only Keychain key custody, and fail-closed sinks. Wired under the run-harness writers. Impure (Keychain read). PRs #34, #38, #40, #68.
+- `packages/worker-supervisor` — the Phase 1 C2 supervisor (execution stream registry, room binding, fixture-gated) plus OMP Lane C's readiness, restart and stop contract with probes and a stub. Impure (process and TCP probes injected). PR #35.
+- `packages/quarantine-advisor` — OMP Lane E: an injected reviewer seat returns `nit`, `concern` or `blocker` findings and per-scope state drives a pre-dispatch block through a Lane D hook. Pure with an injected clock. PR #37. Lane D itself lives in `packages/gateway-daemon/src/hooks` (PR #36; runtime wiring: none).
+- `packages/completion-gate` — MiMo pack Lane 1: `verifyCompletion` checks a claimed finish against a success contract and returns `pass`, `gap` or `impossible`. Pure, library-only. PR #57.
+- `packages/checkpoint-writer` — MiMo Lane 2: the `checkpoint/v1` IR, triggers at 20/45/70% with rebuild at 90%, a single-writer file store and a budgeted rebuild assembler. Impure (filesystem), library-only, not wired to the daemon. PR #58.
+- `packages/room-status` — Superlogical pack Lane 1: a closed RoomStatus IR v1, a single-writer publisher store and a projection from the IPC v2 room snapshot. Pure. PR #52. Consumed by `madventures-tui` as a vendored copy behind a drift pin.
 
 The web surface is not created (`DEC-20260815-08`), and remains deferred. `DEC-20260815-01` clause 2 fixes the repository identity, not the internal layout, and defers the exact package boundaries to later Step 2 decisions.
 
@@ -235,3 +252,12 @@ npm run build && npm run phase2:runs
 - `docs/phase-2-known-limits.md` — review findings recorded rather than fixed in this phase
 - WF-04 — PRD to Build workflow
 - WF-17 — Repository onboarding
+- `source/fable-architecture-implementation-planning-package-v1.0.md` — the
+  2026-08-09 planning package. Planning evidence only, not authority. Its §12
+  JSON graph manifest and §29 manifest validator (intended for a docs/graph
+  directory and a CI step) were never carried into this repository; the
+  transition table in `packages/contracts` is the oracle here, not the
+  manifest. Recorded 2026-09-24 so the absence is not mistaken for an
+  omission in the repository's own gates.
+- `docs/planning/build-room-end-state/build-room-end-state-r1.md` — a
+  2026-09-24 end-state design review. Proposal only; authorizes nothing.

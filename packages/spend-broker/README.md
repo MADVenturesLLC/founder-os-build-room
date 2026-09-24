@@ -132,9 +132,13 @@ Passing the test suite is evidence of fixture-level behavior only. It is
 - `AE01_FIX`
 - `PRODUCTION_MERGE_AUTHORITY`
 
-`packages/gateway-daemon/**` was not modified and is not integrated — it is
-the AE-01 A2 candidate and is FROZEN (`CHANGES_REQUESTED`). No socketpair, no
-Keychain, no real GatewayDaemon calls, no network in v0.
+`packages/gateway-daemon/**` was not modified and is not integrated. (This
+sentence originally read that the daemon "is the AE-01 A2 candidate and is
+FROZEN (`CHANGES_REQUESTED`)". That described the original candidate
+`a721b7a` on 2026-09-13; the corrected candidate merged the same day as
+PR #30 at `736b12b`, with a fix in PR #42. Corrected 2026-09-24 so a reader
+does not take the daemon for frozen.) No socketpair, no Keychain, no real
+GatewayDaemon calls, no network in v0.
 
 ## Usage
 
