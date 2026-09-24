@@ -81,9 +81,14 @@ OFF-ROADMAP Build Room side bet (Open-Inspect S3 evolved). Claim language:
 - **Touches exactly:** `packages/spend-broker/**` (new), `test/spend-broker.test.ts`
   (new), one `include` line in `tsconfig.json`, one `spend-broker:demo` script
   in the root `package.json`, and this section.
-- **Does NOT touch:** `packages/gateway-daemon/**` — the AE-01 A2 candidate is
-  FROZEN (`CHANGES_REQUESTED`) and this work did not modify, integrate, or
-  call it. No Room Runtime / Occupancy / Execution / freeze-stack files. No
+- **Does NOT touch:** `packages/gateway-daemon/**` — this work did not
+  modify, integrate, or call it. (When this section was written, the
+  original AE-01 A2 candidate `a721b7a` was frozen under `CHANGES_REQUESTED`;
+  the corrected candidate merged the same day as PR #30 at `736b12b`, with a
+  follow-up fix in PR #42 at `9e5d799`. The daemon has since changed again
+  under separately named acts, in PRs #36, #53, #63 and #70. The
+  "frozen" wording here was accurate on 2026-09-13 and is stale now;
+  corrected 2026-09-24.) No Room Runtime / Occupancy / Execution / freeze-stack files. No
   Phase 0 proofs under `test/phase0/**`. No live credential stores, no
   Keychain writes, no network in tests.
 - **Fixture-first:** the gateway is a fixture (`fix_…` tokens); the only live
@@ -97,8 +102,10 @@ OFF-ROADMAP Build Room side bet (Open-Inspect S3 evolved). Claim language:
   `'oauth'` around it — no meter call, no reservation, no spend-ground
   interrupt; gateway refusals still deny. Broker routing only: the meter, the
   monthly ledger, and the ratified USD 85 total-spend ceiling are untouched.
-- **Status:** left UNCOMMITTED on branch `build/spend-broker-v0` (off
-  `origin/main`) pending Founder authorization. Merge remains a Founder act
-  naming the head SHA. Tests passing here are fixture-level evidence only and
-  are NOT evidence of Phase 0, occupancy proof, gateway honesty, Room
-  Runtime, an AE-01 fix, or any production merge authority.
+- **Status:** merged to `main` as PR #69 (`f031cdf`, 2026-09-20) under a
+  Founder act naming the head SHA. (This line previously read "left
+  UNCOMMITTED on branch `build/spend-broker-v0` pending Founder
+  authorization", which was true when written and stale after the merge;
+  corrected 2026-09-24.) Tests passing here are fixture-level evidence only
+  and are NOT evidence of Phase 0, occupancy proof, gateway honesty, Room
+  Runtime, an AE-01 fix, or any production activation.
