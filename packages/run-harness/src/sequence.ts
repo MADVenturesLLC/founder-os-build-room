@@ -16,7 +16,8 @@
  *   passes, and reporting it as such would be the defect the criterion was
  *   written to prevent.
  *
- * Pure. The clock and the storage live elsewhere.
+ * Pure. The clock and the storage live elsewhere — the persisted sequence in
+ * the control plane (`0007_gate_runs`), reached through `gate-runs.ts`.
  *
  * Architecture §3.17 also rules that *"Completing three runs authorizes
  * nothing"*, which `DEC-20260815-17` restates for this phase. So the satisfied
@@ -45,42 +46,58 @@ export interface RunDraft {
   readonly commit: string;
   readonly steps: readonly StepRecord[];
   readonly conditions: readonly ConditionRecord[];
+  /**
+   * Set when the run did not finish: the harness threw mid-flight. The run
+   * is still recorded — failed, with this as the first part of its failure
+   * reason — because an interruption is part of the sequence, not absent
+   * from it (`DEC-20260815-17` exit criterion 4).
+   */
+  readonly interruption?: string;
 }
 
+/** A run record before the store has placed it in the sequence. */
+export type UnsequencedRunRecord = Omit<RunRecord, 'seq'>;
+
 /**
- * Append a run and return the new sequence. The verdict is derived here rather
- * than accepted from the caller, so a run cannot be recorded as passing
- * against conditions that say otherwise.
+ * The run record a draft becomes, without its `seq`. The verdict is derived
+ * here rather than accepted from the caller, so a run cannot be recorded as
+ * passing against conditions that say otherwise — and an interrupted run
+ * cannot pass at all, whatever conditions it had reached.
  */
-/**
- * The sequence is IN-MEMORY, and the gate counts within one invocation.
- *
- * `seq` comes from the current sequence's length, and the CLI starts from
- * `emptySequence()` each time it runs. So an invocation that recorded a
- * failure could be followed by a fresh one recording three passes, and the
- * second bundle read alone would show a satisfied gate. What actually prevents
- * that is the retention rule — bundles are committed, never edited, and a
- * missing one is visible in a diff — which is an audit control rather than a
- * mechanical one. Recorded as a known limit in
- * `docs/phase-2-known-limits.md` §2 rather than papered over. Raised by
- * CodeRabbit on PR #2.
- */
-export function appendRun(sequence: RunSequence, draft: RunDraft): {
-  readonly sequence: RunSequence;
-  readonly run: RunRecord;
-} {
-  const { verdict, failureReason } = verdictFor(draft.conditions);
-  const run: RunRecord = {
-    seq: sequence.runs.length + 1,
+export function recordFor(draft: RunDraft): UnsequencedRunRecord {
+  const derived = verdictFor(draft.conditions);
+  const parts = [
+    ...(draft.interruption === undefined ? [] : [`run interrupted: ${draft.interruption}`]),
+    ...(derived.failureReason === undefined ? [] : [derived.failureReason]),
+  ];
+  const failed = parts.length > 0;
+  return {
     runId: draft.runId,
     startedAt: draft.startedAt,
     endedAt: draft.endedAt,
     commit: draft.commit,
     steps: draft.steps,
     conditions: draft.conditions,
-    verdict,
-    ...(failureReason === undefined ? {} : { failureReason }),
+    verdict: failed ? 'failed' : 'passed',
+    ...(failed ? { failureReason: parts.join(' — ') } : {}),
   };
+}
+
+/**
+ * Append a run to an IN-MEMORY sequence and return the new sequence.
+ *
+ * Pure composition, kept for callers that hold a sequence themselves. The
+ * Phase 2 CLI does NOT count with this: it loads the persisted sequence from
+ * the control plane (`gate-runs.ts`), appends each run there, and computes
+ * the gate over what the store holds afterwards — so a re-run continues the
+ * record instead of restarting it (`docs/phase-2-known-limits.md` §2, closed
+ * by migration `0007_gate_runs`).
+ */
+export function appendRun(sequence: RunSequence, draft: RunDraft): {
+  readonly sequence: RunSequence;
+  readonly run: RunRecord;
+} {
+  const run: RunRecord = { seq: sequence.runs.length + 1, ...recordFor(draft) };
   return { sequence: { runs: [...sequence.runs, run] }, run };
 }
 

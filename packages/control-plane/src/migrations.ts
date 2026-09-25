@@ -1559,6 +1559,70 @@ export const MIGRATIONS: readonly Migration[] = [
          VALUES (1, 0, '0000000000000000000000000000000000000000000000000000000000000000')`,
     ],
   },
+
+  {
+    /*
+     * The persisted gate-run sequence (`docs/phase-2-known-limits.md` §2).
+     *
+     * The three-run gate used to count within one harness invocation, from a
+     * sequence held in memory, so a re-run restarted the record. This table
+     * is that record, and the design decided on 2026-08-18 fixes its shape:
+     *
+     * - **Global to the database and never reset** — not scoped per commit.
+     *   Scoping to a commit would make a trivial push a way to clear a
+     *   failure. A re-invocation appends; it never begins a new sequence.
+     * - **`seq` is assigned by the control plane, under a lock**, inside the
+     *   write transaction (`PostgresLedgerStore.appendGateRun`). There is no
+     *   sequence object and no default: a rolled-back `bigserial` would burn
+     *   a value, and "gapless" is what makes a failure an interruption of the
+     *   sequence rather than a hole in it. The harness cannot choose `seq`.
+     * - **Append-only at the database**, with the same
+     *   `build_room_events_immutable()` function the ledger uses — for UPDATE
+     *   and DELETE per row, and for TRUNCATE per statement, because "the
+     *   record never truncates" should not rest on nobody typing it.
+     *
+     * `gate` names the gate the run counts toward. Only the Phase 2 three-run
+     * gate exists; another gate is a new migration, not a new string.
+     * `record` is the run exactly as the harness posted it (after its
+     * redaction boundary) — steps, conditions and observations — so the row
+     * is its own evidence. The scalar columns duplicate the fields the gate
+     * and the constraints need.
+     */
+    id: '0007_gate_runs',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS build_room_gate_runs (
+         seq             bigint      PRIMARY KEY CHECK (seq > 0),
+         gate            text        NOT NULL CHECK (gate IN ('phase2_three_run')),
+         run_id          uuid        NOT NULL UNIQUE,
+         started_at      timestamptz NOT NULL,
+         ended_at        timestamptz NOT NULL,
+         commit_sha      text        NOT NULL CHECK (length(commit_sha) BETWEEN 1 AND 128),
+         verdict         text        NOT NULL CHECK (verdict IN ('passed','failed')),
+         failure_reason  text        CHECK (failure_reason IS NULL OR length(failure_reason) > 0),
+         record          jsonb       NOT NULL CHECK (jsonb_typeof(record) = 'object'),
+         recorded_at     timestamptz NOT NULL DEFAULT now(),
+         CONSTRAINT build_room_gate_runs_failure_reason_agrees
+           CHECK ((verdict = 'failed') = (failure_reason IS NOT NULL)),
+         CONSTRAINT build_room_gate_runs_ended_after_started
+           CHECK (ended_at >= started_at)
+       )`,
+
+      `DROP TRIGGER IF EXISTS build_room_gate_runs_no_update ON build_room_gate_runs`,
+      `CREATE TRIGGER build_room_gate_runs_no_update
+         BEFORE UPDATE ON build_room_gate_runs
+         FOR EACH ROW EXECUTE FUNCTION build_room_events_immutable()`,
+
+      `DROP TRIGGER IF EXISTS build_room_gate_runs_no_delete ON build_room_gate_runs`,
+      `CREATE TRIGGER build_room_gate_runs_no_delete
+         BEFORE DELETE ON build_room_gate_runs
+         FOR EACH ROW EXECUTE FUNCTION build_room_events_immutable()`,
+
+      `DROP TRIGGER IF EXISTS build_room_gate_runs_no_truncate ON build_room_gate_runs`,
+      `CREATE TRIGGER build_room_gate_runs_no_truncate
+         BEFORE TRUNCATE ON build_room_gate_runs
+         FOR EACH STATEMENT EXECUTE FUNCTION build_room_events_immutable()`,
+    ],
+  },
 ];
 
 /** Advisory-lock key. Arbitrary but fixed — any value works if it never changes. */

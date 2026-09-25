@@ -45,6 +45,7 @@ import {
   normalizeHarnessEnvironment,
   openHarnessRedactionBoundary,
 } from '../packages/run-harness/src/redaction-boundary.js';
+import type { RunRecord } from '../packages/run-harness/src/record.js';
 import type { RunnerDeps } from '../packages/run-harness/src/runner.js';
 import {
   InMemoryHmacKeyCustody,
@@ -200,6 +201,19 @@ describe('Phase 2 bundle writer (W1, T1)', () => {
       deps: (_config, _platform, token) => {
         receivedToken = token;
         return fakeDeps();
+      },
+      // Test double for the control plane's persisted gate-run store (§2);
+      // the CLI itself has no in-memory store.
+      gateRuns: () => {
+        const runs: RunRecord[] = [];
+        return {
+          load: async () => ({ runs: [...runs] }),
+          append: async (run) => {
+            const persisted = { seq: runs.length + 1, ...run };
+            runs.push(persisted);
+            return persisted;
+          },
+        };
       },
     });
     assert.equal(code, 0, c.err.join(''));
