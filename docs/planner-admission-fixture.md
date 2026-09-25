@@ -75,7 +75,9 @@ must never be reverted merely to keep this characterization test green.
 Nothing here implements or qualifies:
 
 - the command journal (durable pre-dispatch recording; A2 dependency —
-  PR #27 lane is the active other writer);
+  the PR #27 lane, Tranche A schema preflight, merged 2026-09-13 and is no
+  longer an active writer; the journal schema came later with Tranche B,
+  PR #54, and no production caller of `command_journal_append` exists);
 - budget reservation or settlement (A3; blocked pending a landed, qualified,
   separately assigned WF-04 Step 3 inclusive-meter correction, or an
   explicit Founder exception — neither exists at this base);
