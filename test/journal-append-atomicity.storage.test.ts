@@ -55,6 +55,7 @@ const TRANCHE_ORDER = [
   '0004_validate_pending_is_bare',
   '0005_phase3_run_evidence',
   '0006_command_journal_authority_split',
+  '0007_gate_runs',
 ] as const;
 
 /* ---------------- dedicated disposable instance ---------------- */
