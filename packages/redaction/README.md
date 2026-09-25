@@ -76,8 +76,14 @@ A refused boundary makes either harness exit **3** with one line,
 `redaction refused: <code>`, before any request, reservation, or write.
 There is no switch that turns the boundary off.
 
-Still not wired: `JournalAppendSink` (no journal store exists yet;
-`packages/journal/src/envelope.ts` defers redaction to write path 2b).
+Still not wired: `JournalAppendSink`. A journal store does exist — the
+in-memory `packages/journal/src/store.ts`, landed in PR #67 — but it is not
+the ruled Neon locus of contract §3, and wiring this sink without a
+provisioned key would make the journal write path refuse every write, a
+behaviour change no act has authorized (see `src/sinks.ts`). The §6.1
+pre-write guard in `packages/journal/src/redact.ts` is a separate check, not
+this boundary; `packages/journal/src/envelope.ts` defers redaction to write
+path 2b.
 The Keychain item `mad.redaction.hmac` / `hmac-v1` is a Founder custody act;
 until it exists on the gateway host, the wired harnesses refuse there.
 
