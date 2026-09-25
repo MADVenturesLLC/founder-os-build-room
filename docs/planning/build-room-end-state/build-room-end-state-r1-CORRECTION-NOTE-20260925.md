@@ -32,9 +32,14 @@ merged, and merging defines a migration. It does not apply one. What `main`
 proves is narrower:
 
 - Migration `0006_command_journal_authority_split` is defined in
-  `packages/control-plane/src/migrations.ts` and is applied only by the
-  one-shot admin runner `packages/control-plane/src/migrate-cli.ts` (PR #54).
-  The service does not run DDL at boot (PR #27) [Certain].
+  `packages/control-plane/src/migrations.ts`. The only *production*
+  application path is the one-shot admin runner
+  `packages/control-plane/src/migrate-cli.ts` (PR #54); the service does not
+  run DDL at boot (PR #27) [Certain]. The storage test suites
+  (`test/journal-authority.storage.test.ts`,
+  `test/journal-append-atomicity.storage.test.ts`) also call the migrator
+  directly, but only against disposable databases they create and destroy
+  per run [Certain] — not a second production path.
 - No production TypeScript code calls `command_journal_append`. Only the
   storage tests invoke it [Certain]. So even where the tables exist, nothing
   in the deployed service writes to them.
