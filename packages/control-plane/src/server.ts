@@ -27,6 +27,7 @@ import { snapshot, type LifecycleEvent } from '../../ledger/src/index.js';
 import type { Config } from './config.js';
 import { probe } from './db.js';
 import { phase3RunRouter } from './phase3-run-routes.js';
+import { gateRunRouter } from './gate-run-routes.js';
 import { PostgresLedgerStore, RoomNotFoundError } from './store.js';
 import {
   ROOM_BODY_LIMIT,
@@ -282,6 +283,11 @@ export function createServer(deps: ServerDeps): Express {
   };
   app.use(gatewayRouter(routeDeps));
   app.use(founderRouter(routeDeps));
+  /*
+   * The persisted gate-run sequence (`docs/phase-2-known-limits.md` §2),
+   * behind the same shared-token guard as the room routes.
+   */
+  app.use(gateRunRouter({ store, requireToken }));
   app.use(
     phase3RunRouter({
       store: deps.gateway.phase3Runs,

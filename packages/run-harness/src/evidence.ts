@@ -34,8 +34,24 @@ export interface BundleContext {
   };
 }
 
+/**
+ * Where the bundle's sequence came from.
+ *
+ * `@1` bundles counted within one harness invocation, from memory, and a
+ * re-run restarted the record (`docs/phase-2-known-limits.md` §2). `@2`
+ * says where its runs were read from, and the Phase 2 CLI only ever writes
+ * `persisted` — the whole record the control plane holds, read back after
+ * the run loop. Under the §8 rule an `@1` bundle is not evidence for this
+ * harness: its verdict was computed from less than the whole record.
+ */
+export type SequenceSource =
+  | { readonly kind: 'persisted'; readonly gate: string; readonly route: '/gate/runs' }
+  /** Built from a sequence the caller holds, e.g. a test. Never what the CLI writes. */
+  | { readonly kind: 'caller_supplied' };
+
 export interface EvidenceBundle {
-  readonly schema: 'build-room/phase-2-run-evidence@1';
+  readonly schema: 'build-room/phase-2-run-evidence@2';
+  readonly sequenceSource: SequenceSource;
   readonly context: BundleContext;
   readonly gate: ReturnType<typeof gateStatus>;
   readonly runs: RunSequence['runs'];
@@ -43,9 +59,14 @@ export interface EvidenceBundle {
   readonly authorizes: string;
 }
 
-export function buildBundle(sequence: RunSequence, context: BundleContext): EvidenceBundle {
+export function buildBundle(
+  sequence: RunSequence,
+  context: BundleContext,
+  sequenceSource: SequenceSource = { kind: 'caller_supplied' },
+): EvidenceBundle {
   return {
-    schema: 'build-room/phase-2-run-evidence@1',
+    schema: 'build-room/phase-2-run-evidence@2',
+    sequenceSource,
     context,
     gate: gateStatus(sequence),
     runs: sequence.runs,

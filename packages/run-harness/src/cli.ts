@@ -20,12 +20,30 @@
  * are not on record, so a scripted caller cannot mistake an incomplete
  * sequence for a satisfied one. The evidence is written either way — a failed
  * sequence is exactly the evidence exit criterion 4 wants retained.
+ *
+ * **The sequence is the control plane's, not this process's**
+ * (`docs/phase-2-known-limits.md` §2, migration `0007_gate_runs`). The CLI
+ * loads the persisted gate-run history before the first run, appends each run
+ * as it completes — an interrupted run included — and computes the gate over
+ * what the store holds after the loop. A re-run continues the record; it
+ * never restarts it. If the store cannot be read or written, the CLI stops
+ * with exit 4 (`GATE_STORE_UNAVAILABLE_EXIT`) and writes no bundle: there is
+ * no fallback to counting in memory.
  */
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { HarnessStreams, HmacKeyCustody } from '../../redaction/src/index.js';
+import { ControlPlaneClient } from './client.js';
 import { buildBundle, summarizeBundle } from './evidence.js';
+import {
+  GATE_STORE_UNAVAILABLE_EXIT,
+  GateRunHistoryError,
+  HttpGateRunStore,
+  PHASE2_GATE,
+  validateHistory,
+  type GateRunStore,
+} from './gate-runs.js';
 import { CommandPlatform, ExternalPlatform, type Platform } from './platform.js';
 import {
   REDACTION_REFUSED_EXIT,
@@ -42,7 +60,7 @@ import {
   type RunnerConfig,
   type RunnerDeps,
 } from './runner.js';
-import { appendRun, emptySequence, gateStatus, type RunSequence } from './sequence.js';
+import { gateStatus, recordFor, type RunDraft, type RunSequence, type UnsequencedRunRecord } from './sequence.js';
 
 function required(environment: HarnessEnvironment, name: string): string {
   const value = environment[name];
@@ -86,6 +104,12 @@ export interface Phase2MainOptions {
   readonly writeBundle?: (path: string, content: string) => Promise<void>;
   /** Runner collaborators; defaults to `defaultDeps`. Never called when the boundary refuses. */
   readonly deps?: (config: RunnerConfig, platform: Platform, token: string) => RunnerDeps;
+  /**
+   * The persisted gate-run store; defaults to the control plane's
+   * `/gate/runs`. Never called when the boundary refuses. There is no
+   * in-memory store in this module — a test supplies its own double.
+   */
+  readonly gateRuns?: (baseUrl: string, token: string, timeoutMs: number) => GateRunStore;
 }
 
 export async function main(
@@ -177,31 +201,51 @@ export async function main(
   };
 
   try {
+    /*
+     * The persisted history is read FIRST — before any run collaborator
+     * exists — so a store that cannot be read stops the harness before a
+     * single deploy or restart is requested. Nothing below counts from
+     * memory.
+     */
+    const gateRuns = (options.gateRuns ?? defaultGateRuns)(baseUrl, token, config.requestTimeoutMs);
+    const history = validateHistory(await gateRuns.load());
+    log(`gate history: ${history.runs.length} run(s) already on record for ${PHASE2_GATE}`);
+
     const deps: RunnerDeps = {
       ...(options.deps?.(config, platform, token) ?? defaultDeps(config, platform, token)),
       log,
     };
+    // The record leaves this process for the store; it crosses the same
+    // boundary the bundle does, before it is sent.
+    const redactor = boundary.require();
 
-    let sequence: RunSequence = emptySequence();
     let commit = 'unknown';
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       log(`\n=== Phase 2 run attempt ${attempt} of ${attempts} ===`);
-      const draft = await performRun(config, deps);
-      const appended = appendRun(sequence, draft);
-      sequence = appended.sequence;
+      const draft = await performOrInterrupt(config, deps);
+      const record = redactor.redactValue(recordFor(draft)) as UnsequencedRunRecord;
+      const persisted = await gateRuns.append(record);
       if (draft.commit !== 'unknown') commit = draft.commit;
-      log(`--- run #${appended.run.seq}: ${appended.run.verdict.toUpperCase()}`);
+      log(`--- run #${persisted.seq}: ${persisted.verdict.toUpperCase()}`);
     }
 
-    const bundle = buildBundle(sequence, {
-      assembledAt: new Date().toISOString(),
-      commit,
-      baseUrl,
-      environment: bundleEnvironment,
-      platformKind: platform.kind,
-      attribution,
-    });
+    // The gate is computed over what the STORE holds now — the whole record,
+    // including runs other invocations appended — never over this loop.
+    const sequence: RunSequence = validateHistory(await gateRuns.load());
+
+    const bundle = buildBundle(
+      sequence,
+      {
+        assembledAt: new Date().toISOString(),
+        commit,
+        baseUrl,
+        environment: bundleEnvironment,
+        platformKind: platform.kind,
+        attribution,
+      },
+      { kind: 'persisted', gate: PHASE2_GATE, route: '/gate/runs' },
+    );
 
     await mkdir(evidencePath, { recursive: true });
     const file = join(evidencePath, `phase2-runs-${bundle.context.assembledAt.replace(/[:.]/g, '-')}.json`);
@@ -215,10 +259,49 @@ export async function main(
 
     return gateStatus(sequence).satisfied ? 0 : 1;
   } catch (error) {
+    /*
+     * The gate-run store could not be read or written. One line, code and
+     * operation only, and a distinct exit — no bundle, because a bundle
+     * written now would describe a sequence the store does not hold.
+     */
+    if (error instanceof GateRunHistoryError) {
+      await out.err(`gate run history: ${error.code} during ${error.operation}\n`);
+      return GATE_STORE_UNAVAILABLE_EXIT;
+    }
     // Post-boundary failures leave through the redacting error path; the
     // pre-boundary ones above carry variable names only and never reach here.
     await out.error(error);
     return 1;
+  }
+}
+
+function defaultGateRuns(baseUrl: string, token: string, timeoutMs: number): GateRunStore {
+  return new HttpGateRunStore(new ControlPlaneClient(baseUrl, timeoutMs, token));
+}
+
+/**
+ * Perform one run; if the harness itself throws mid-flight, the run becomes an
+ * interruption draft rather than vanishing. It fails — `recordFor` makes an
+ * interrupted run fail whatever it had reached — and it is appended like any
+ * other run, because an interruption is part of the sequence, not absent
+ * from it (`DEC-20260815-17` exit criterion 4).
+ */
+async function performOrInterrupt(config: RunnerConfig, deps: RunnerDeps): Promise<RunDraft> {
+  const startedAt = deps.now();
+  try {
+    return await performRun(config, deps);
+  } catch (error) {
+    const interruption = error instanceof Error ? error.message : String(error);
+    deps.log?.(`--- run interrupted: ${interruption}`);
+    return {
+      runId: deps.newId(),
+      startedAt,
+      endedAt: deps.now(),
+      commit: 'unknown',
+      steps: [],
+      conditions: [],
+      interruption,
+    };
   }
 }
 

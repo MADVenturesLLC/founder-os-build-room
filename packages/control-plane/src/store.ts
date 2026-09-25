@@ -21,6 +21,7 @@
  */
 
 import type { Pool, PoolClient } from 'pg';
+import { isCanonicalUuid } from '../../gateway-protocol/src/index.js';
 import {
   apply,
   applyAll,
@@ -384,6 +385,293 @@ export class PostgresLedgerStore {
       client.release();
     }
   }
+
+  /**
+   * Append one run to the persisted gate sequence (`0007_gate_runs`,
+   * `docs/phase-2-known-limits.md` §2).
+   *
+   * `seq` is allocated HERE, inside the write transaction, under an advisory
+   * lock held to COMMIT: the next value is `MAX(seq) + 1` read after the lock
+   * is taken, so concurrent appends serialize and the sequence stays gapless.
+   * No counter lives in the application, and the caller cannot choose `seq`.
+   *
+   * A replay — the same run id with the same content — returns the stored row
+   * with `created: false`, so a retried request after a lost response is safe.
+   * The same run id with different content is a `GateRunConflictError`: the
+   * record is append-only, and a second story for one run is not an append.
+   *
+   * An unreachable database is a `GateRunStoreUnavailableError`. It is never
+   * answered from anywhere else.
+   */
+  async appendGateRun(input: GateRunInput): Promise<{ readonly run: PersistedGateRun; readonly created: boolean }> {
+    const client = await acquire(this.pool);
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [GATE_RUN_LOCK_KEY]);
+
+      const existing = await client.query<GateRunRow & { readonly same: boolean }>(
+        `SELECT ${GATE_RUN_COLUMNS},
+                (gate = $2 AND verdict = $3 AND failure_reason IS NOT DISTINCT FROM $4
+                 AND record = $5::jsonb) AS same
+           FROM build_room_gate_runs WHERE run_id = $1`,
+        [input.runId, input.gate, input.verdict, input.failureReason ?? null, JSON.stringify(input.record)],
+      );
+      const prior = existing.rows[0];
+      if (prior !== undefined) {
+        await client.query('COMMIT');
+        if (!prior.same) throw new GateRunConflictError(input.runId);
+        return { run: toPersistedGateRun(prior), created: false };
+      }
+
+      const inserted = await client.query<GateRunRow>(
+        `INSERT INTO build_room_gate_runs
+           (seq, gate, run_id, started_at, ended_at, commit_sha, verdict, failure_reason, record)
+         SELECT COALESCE(MAX(seq), 0) + 1, $1, $2, $3, $4, $5, $6, $7, $8::jsonb
+           FROM build_room_gate_runs
+         RETURNING ${GATE_RUN_COLUMNS}`,
+        [
+          input.gate,
+          input.runId,
+          input.startedAt,
+          input.endedAt,
+          input.commit,
+          input.verdict,
+          input.failureReason ?? null,
+          JSON.stringify(input.record),
+        ],
+      );
+      await client.query('COMMIT');
+      return { run: toPersistedGateRun(inserted.rows[0]!), created: true };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw gateRunStoreError(error);
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * The full persisted gate sequence, in `seq` order. Never empty because the
+   * store could not be read — that is a `GateRunStoreUnavailableError`.
+   */
+  async listGateRuns(): Promise<readonly PersistedGateRun[]> {
+    try {
+      const { rows } = await this.pool.query<GateRunRow>(
+        `SELECT ${GATE_RUN_COLUMNS} FROM build_room_gate_runs ORDER BY seq ASC`,
+      );
+      return rows.map(toPersistedGateRun);
+    } catch (error) {
+      throw gateRunStoreError(error);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The persisted gate-run sequence (`0007_gate_runs`)
+// ---------------------------------------------------------------------------
+
+/** The gates a run may count toward — the `gate` CHECK in `0007_gate_runs`. */
+export const GATE_RUN_GATES = ['phase2_three_run'] as const;
+export type GateId = (typeof GATE_RUN_GATES)[number];
+
+/**
+ * The conditions a passing run must show held — the Founder's three Phase 2
+ * run conditions (`DEC-20260815-17`). The harness derives the verdict; the
+ * store refuses a `passed` its own conditions contradict, so a pass cannot be
+ * recorded by assertion alone.
+ */
+export const GATE_RUN_REQUIRED_CONDITIONS = ['deploys_and_stays_up', 'reads_and_writes', 'survives_restart'] as const;
+
+/**
+ * Advisory-lock key for gate-run `seq` allocation. Distinct from
+ * `MIGRATION_LOCK_KEY` and `GATEWAY_REGISTRY_LOCK_KEY`, so a gate-run append
+ * serializes only against other gate-run appends.
+ */
+export const GATE_RUN_LOCK_KEY = 8_190_925;
+
+export interface GateRunInput {
+  readonly gate: GateId;
+  readonly runId: string;
+  /** `Date.prototype.toISOString()` form. */
+  readonly startedAt: string;
+  readonly endedAt: string;
+  readonly commit: string;
+  readonly verdict: 'passed' | 'failed';
+  /** Present exactly when the run failed. */
+  readonly failureReason?: string;
+  /** The run as the harness posted it: steps, conditions, observations. */
+  readonly record: Readonly<Record<string, unknown>>;
+}
+
+export interface PersistedGateRun extends GateRunInput {
+  readonly seq: number;
+  readonly recordedAt: string;
+}
+
+/** The store could not be reached. Never degraded into an empty or remembered answer. */
+export class GateRunStoreUnavailableError extends Error {
+  override readonly name = 'GateRunStoreUnavailableError';
+  readonly code = 'gate_run_store_unavailable';
+  constructor(cause?: unknown) {
+    super('gate run store unavailable', cause === undefined ? undefined : { cause });
+  }
+}
+
+/** A run id already recorded with different content. */
+export class GateRunConflictError extends Error {
+  override readonly name = 'GateRunConflictError';
+  constructor(readonly runId: string) {
+    super(`gate run ${runId} is already recorded with different content`);
+  }
+}
+
+export type GateRunValidation =
+  | { readonly ok: true; readonly value: GateRunInput }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Validate a `POST /gate/runs` body: `{ gate, run }`, where `run` is the
+ * harness's run record without a `seq` — the store assigns `seq`, so a body
+ * that carries one is refused rather than silently overridden.
+ */
+export function validateGateRunBody(body: unknown): GateRunValidation {
+  if (!isPlainObject(body)) return { ok: false, reason: 'body must be an object' };
+  const gate = body['gate'];
+  if (typeof gate !== 'string' || !(GATE_RUN_GATES as readonly string[]).includes(gate)) {
+    return { ok: false, reason: `gate must be one of ${GATE_RUN_GATES.join(', ')}` };
+  }
+  const run = body['run'];
+  if (!isPlainObject(run)) return { ok: false, reason: 'run must be an object' };
+  if ('seq' in run) return { ok: false, reason: 'run.seq is assigned by the store and must not be supplied' };
+
+  const { runId, startedAt, endedAt, commit, steps, conditions, verdict, failureReason } = run;
+  if (typeof runId !== 'string' || !isCanonicalUuid(runId)) {
+    return { ok: false, reason: 'run.runId must be a canonical lowercase UUID' };
+  }
+  if (!isIsoInstant(startedAt) || !isIsoInstant(endedAt)) {
+    return { ok: false, reason: 'run.startedAt and run.endedAt must be ISO-8601 UTC instants' };
+  }
+  if (Date.parse(endedAt) < Date.parse(startedAt)) {
+    return { ok: false, reason: 'run.endedAt must not precede run.startedAt' };
+  }
+  if (typeof commit !== 'string' || commit.length < 1 || commit.length > 128) {
+    return { ok: false, reason: 'run.commit must be a string of 1..128 characters' };
+  }
+  if (!Array.isArray(steps)) return { ok: false, reason: 'run.steps must be an array' };
+  if (
+    !Array.isArray(conditions) ||
+    !conditions.every(
+      (c) =>
+        isPlainObject(c) &&
+        typeof c['condition'] === 'string' &&
+        typeof c['held'] === 'boolean' &&
+        typeof c['evidence'] === 'string',
+    )
+  ) {
+    return { ok: false, reason: 'run.conditions must be an array of { condition, held, evidence }' };
+  }
+  if (verdict !== 'passed' && verdict !== 'failed') {
+    return { ok: false, reason: "run.verdict must be 'passed' or 'failed'" };
+  }
+  if (verdict === 'failed' && (typeof failureReason !== 'string' || failureReason.length === 0)) {
+    return { ok: false, reason: 'a failed run must carry a failureReason' };
+  }
+  if (verdict === 'passed' && failureReason !== undefined) {
+    return { ok: false, reason: 'a passed run must not carry a failureReason' };
+  }
+  if (verdict === 'passed') {
+    const held = conditions as ReadonlyArray<{ condition: string; held: boolean }>;
+    const contradicted =
+      held.some((c) => !c.held) ||
+      GATE_RUN_REQUIRED_CONDITIONS.some((required) => !held.some((c) => c.condition === required && c.held));
+    if (contradicted) {
+      return { ok: false, reason: 'a passed run must show every required condition held and none broken' };
+    }
+  }
+
+  return {
+    ok: true,
+    value: {
+      gate: gate as GateId,
+      runId,
+      startedAt,
+      endedAt,
+      commit,
+      verdict,
+      ...(verdict === 'failed' ? { failureReason: failureReason as string } : {}),
+      record: run,
+    },
+  };
+}
+
+const GATE_RUN_COLUMNS =
+  'seq, gate, run_id, started_at, ended_at, commit_sha, verdict, failure_reason, record, recorded_at';
+
+interface GateRunRow {
+  readonly seq: string;
+  readonly gate: GateId;
+  readonly run_id: string;
+  readonly started_at: Date;
+  readonly ended_at: Date;
+  readonly commit_sha: string;
+  readonly verdict: 'passed' | 'failed';
+  readonly failure_reason: string | null;
+  readonly record: Record<string, unknown>;
+  readonly recorded_at: Date;
+}
+
+function toPersistedGateRun(row: GateRunRow): PersistedGateRun {
+  return {
+    seq: Number(row.seq),
+    gate: row.gate,
+    runId: row.run_id,
+    startedAt: row.started_at.toISOString(),
+    endedAt: row.ended_at.toISOString(),
+    commit: row.commit_sha,
+    verdict: row.verdict,
+    ...(row.failure_reason === null ? {} : { failureReason: row.failure_reason }),
+    record: row.record,
+    recordedAt: row.recorded_at.toISOString(),
+  };
+}
+
+/** Acquire a connection, or report the store unreachable — never a fallback. */
+async function acquire(pool: Pool): Promise<PoolClient> {
+  try {
+    return await pool.connect();
+  } catch (error) {
+    throw new GateRunStoreUnavailableError(error);
+  }
+}
+
+/**
+ * Connection-class failures become `GateRunStoreUnavailableError`; anything
+ * else — a constraint violation, a conflict — is rethrown as itself.
+ */
+function gateRunStoreError(error: unknown): unknown {
+  if (error instanceof GateRunStoreUnavailableError || error instanceof GateRunConflictError) return error;
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === 'string') {
+    // SQLSTATE class 08 (connection exception), 57P01–57P03 (shutdown / cannot connect now).
+    if (code.startsWith('08') || /^57P0[123]$/.test(code)) return new GateRunStoreUnavailableError(error);
+    if (['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH'].includes(code)) {
+      return new GateRunStoreUnavailableError(error);
+    }
+  }
+  const message = error instanceof Error ? error.message : '';
+  if (/Connection terminated|connection timeout/i.test(message)) return new GateRunStoreUnavailableError(error);
+  return error;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Exactly the form `Date.prototype.toISOString()` produces — the harness's own clock format. */
+function isIsoInstant(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
 }
 
 async function roomExists(client: PoolClient, roomId: string): Promise<boolean> {

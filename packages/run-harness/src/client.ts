@@ -70,6 +70,16 @@ export class ControlPlaneClient {
     return this.get(`/rooms/${roomId}/export`);
   }
 
+  /** The persisted gate-run sequence (`GET /gate/runs`). */
+  listGateRuns(): Promise<Probe> {
+    return this.get('/gate/runs');
+  }
+
+  /** Append one run to the persisted gate sequence (`POST /gate/runs`). */
+  appendGateRun(body: unknown): Promise<Probe> {
+    return this.request('POST', '/gate/runs', body);
+  }
+
   private get(path: string): Promise<Probe> {
     return this.request('GET', path);
   }
