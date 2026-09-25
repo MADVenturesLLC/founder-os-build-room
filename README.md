@@ -112,6 +112,14 @@ that it is merged and in force for Phase 4 implementation is recorded here,
 not by editing the contract's own wording. Phase 5 remains unauthorized, and
 the three counted Phase 4 runs require separate Founder entry authorization.
 
+**Journal persistence (PR 2b) and live rooms — what is merged, as of `main@57fbcea` (2026-09-25).**
+
+- **Gate II Tranche A — merged (PR #27, 2026-09-13).** Boot-time migration replaced by a read-only staged schema preflight (`packages/control-plane/src/schema-preflight.ts`); its privilege audit is always `pending_cutover` and does not block boot.
+- **Tranche B — merged (PR #54, 2026-09-15).** Migration `0006_command_journal_authority_split` (journal tables, `command_journal_append`, role split) and the one-shot admin runner `packages/control-plane/src/migrate-cli.ts`. Merging defines the migration; it does not apply it to any database, and this README makes no claim about production Neon.
+- **Journal §7.1–7.3 proofs — merged (PR #67, 2026-09-17).** Run against the in-memory store `packages/journal/src/store.ts`, which is not the ruled Neon locus (contract §3).
+- **`CreateRoom` — merged (PR #70, 2026-09-21).** The Gateway mints a room that is born `PREPARED` with zero executions; this runtime room is not yet bound to the lifecycle room.
+- **Not done.** No production TypeScript caller of `command_journal_append` exists (only the storage tests invoke it). Tranche C (the administrative migration workflow, whose workflow file db-admin-migration.yml is absent) and Tranche D (the `br_app_runtime` runtime cutover) are not done.
+
 ## Verifying
 
 ```sh
