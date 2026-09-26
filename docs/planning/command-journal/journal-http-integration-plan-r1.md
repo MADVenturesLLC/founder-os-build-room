@@ -211,11 +211,16 @@ from I-11), never `dispatch.ts` or `store.ts`'s stateful proof code.
 
 - **This is not hypothetical** — it is already proven to work.
   `test/journal-append-atomicity.storage.test.ts` (I-18) imports exactly
-  those four pure exports from `packages/journal/src/index.js`, builds a row,
-  and calls `command_journal_append` over a real `pg` connection
-  authenticated as `br_app_runtime`. Productionizing this plan's caller is
-  extending that already-working pattern into `packages/control-plane`, not
-  inventing a new one.
+  those four pure exports from `packages/journal/src/index.js` (the `.js`
+  extension is the ESM import specifier this repository's TypeScript
+  sources use for each other under `tsconfig.base.json`'s `NodeNext`
+  module resolution and `package.json`'s `"type": "module"` — verified
+  directly against both files. I-11's table entry names the same file by
+  its on-disk `.ts` source path; the two are the same file, cited two
+  different ways for two different purposes), builds a row, and calls `command_journal_append` over a real
+  `pg` connection authenticated as `br_app_runtime`. Productionizing this
+  plan's caller is extending that already-working pattern into
+  `packages/control-plane`, not inventing a new one.
 - **Reuses** the migration's own stated design intent: `migrations.ts`
   (I-13)'s comment on the append routine is explicit — *"`packages/journal`
   remains the sole encoder and vector source (draft §9: 'no alternate
