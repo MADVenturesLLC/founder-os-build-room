@@ -74,7 +74,12 @@ export const DEFAULT_MAX_SEQ_RACE_RETRIES = 5;
 export interface JournalStoreOptions {
   /** Injectable clock for `recorded_at` (tests). Never a request field. */
   readonly now?: () => Date;
-  /** Bound on seq-race retries; defaults to `DEFAULT_MAX_SEQ_RACE_RETRIES`. */
+  /**
+   * Bound on seq-race retries; defaults to `DEFAULT_MAX_SEQ_RACE_RETRIES`.
+   * Must be a finite integer >= 0, or the constructor throws a `RangeError`:
+   * `Infinity` would loop forever under contention, and `NaN` or a negative
+   * value would skip attempts and report a nonsensical count.
+   */
   readonly maxSeqRaceRetries?: number;
 }
 
@@ -250,7 +255,7 @@ export class JournalStore {
     options: JournalStoreOptions = {},
   ) {
     this.now = options.now ?? (() => new Date());
-    this.maxSeqRaceRetries = options.maxSeqRaceRetries ?? DEFAULT_MAX_SEQ_RACE_RETRIES;
+    this.maxSeqRaceRetries = validMaxSeqRaceRetries(options.maxSeqRaceRetries);
   }
 
   /**
@@ -268,7 +273,16 @@ export class JournalStore {
     try {
       const attempts = this.maxSeqRaceRetries + 1;
       for (let attempt = 1; attempt <= attempts; attempt++) {
-        const seq = await nextSeq(client);
+        let seq: string;
+        try {
+          seq = await nextSeq(client);
+        } catch (error) {
+          // The head read is classified by the SAME mapper as the routine
+          // call. A login without SELECT on the head table fails here, first,
+          // with 42501 — after `0006` and before Tranche D that is production's
+          // failure — and it must answer runtime-not-authorized, not a bare 500.
+          throw classifyStoreFailure(error, rowInput.commandId);
+        }
         // Encoded INSIDE the loop, at THIS attempt's seq: `seq` is part of the
         // canonical bytes (`event-row.ts` TAG_SEQ) and the routine does not
         // cross-check it against `p_seq`.
@@ -294,7 +308,7 @@ export class JournalStore {
           };
         } catch (error) {
           if (isSeqRace(error)) continue;
-          throw classifyAppendFailure(error, row.commandId);
+          throw classifyStoreFailure(error, row.commandId);
         }
       }
       throw new JournalContendedError(attempts);
@@ -304,6 +318,15 @@ export class JournalStore {
       client.release();
     }
   }
+}
+
+/** A finite integer >= 0, or a `RangeError`: a retry bound that does not bound is not a bound. */
+function validMaxSeqRaceRetries(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_MAX_SEQ_RACE_RETRIES;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new RangeError('maxSeqRaceRetries must be a finite integer >= 0');
+  }
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,7 +498,13 @@ function isSeqRace(error: unknown): boolean {
 /** The at-most-once index on `(command_id, event_type)` — migration 0006, statement 5. */
 const ONCE_PER_COMMAND_INDEX = 'command_journal_events_once_per_command';
 
-function classifyAppendFailure(error: unknown, commandId: string): unknown {
+/**
+ * One mapper for both statements the store issues — the head read and the
+ * routine call — so a privilege failure on either answers the same way.
+ * Returns the error to throw; connection-class failures are left as they
+ * are for the caller's connection wrapper.
+ */
+function classifyStoreFailure(error: unknown, commandId: string): unknown {
   if (error instanceof JournalIntegrityError) return error;
   const shape = pgShape(error);
   if (shape === null) return error;

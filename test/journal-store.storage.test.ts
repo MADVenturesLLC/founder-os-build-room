@@ -24,10 +24,13 @@
  * showing why: the routine does not cross-check the embedded seq); retries
  * are bounded; an integrity finding is surfaced, never retried, and writes
  * nothing; a duplicate `journaled` event is refused by constraint; a login
- * without EXECUTE is `42501` mapped to runtime-not-authorized; an
- * unreachable database is store-unavailable; and, last, every row the
- * suite left behind re-encodes to its own column `seq` and re-chains from
- * genesis.
+ * without EXECUTE is `42501` mapped to runtime-not-authorized; a login
+ * without SELECT on the head table fails at the head read with `42501`,
+ * mapped the same way and answered `503` through the real `createServer`
+ * with the routine never called (review finding fixed under Founder
+ * authorization); an unreachable database is store-unavailable; and, last,
+ * every row the suite left behind re-encodes to its own column `seq` and
+ * re-chains from genesis.
  */
 
 import { after, before, describe, it } from 'node:test';
@@ -38,8 +41,15 @@ import { realpathSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync }
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createServer } from 'node:net';
+import type { AddressInfo } from 'node:net';
+import type { Server } from 'node:http';
 import pgDefault from 'pg';
 import type { Client as PgClient, Pool as PgPool, PoolClient, QueryResult } from 'pg';
+import { createServer as createControlPlane } from '../packages/control-plane/src/server.js';
+import { createGatewaySurface } from '../packages/control-plane/src/gateway/index.js';
+import type { PostgresLedgerStore } from '../packages/control-plane/src/store.js';
+import { loadConfig } from '../packages/control-plane/src/config.js';
+import { closeServer } from './support/close-server.js';
 import {
   GENESIS_CHAIN_HASH,
   chainHash,
@@ -322,7 +332,7 @@ after(async () => {
       }
       const absent = await admin.query(
         `SELECT count(*)::int AS n FROM pg_roles
-          WHERE rolname IN ('br_journal_owner','command_journal_writer','br_app_runtime','br_js_no_execute')`,
+          WHERE rolname IN ('br_journal_owner','command_journal_writer','br_app_runtime','br_js_no_execute','br_js_no_select')`,
       );
       assert.equal(absent.rows[0]?.n, 0, 'fixture roles must be absent from pg_roles at teardown');
     } finally {
@@ -431,6 +441,75 @@ function interceptingPool(
     end: async () => undefined,
   } as unknown as PgPool;
   return { pool, counts };
+}
+
+/* ---------------- a real control plane over an injected journal store ---------------- */
+
+const HTTP_TOKEN = 'journal-store-storage-token-that-is-long-enough';
+const HTTP_CONFIG = loadConfig({
+  DATABASE_URL: 'postgresql://user:secret@host.neon.tech/db?sslmode=require',
+  CONTROL_PLANE_TOKEN: HTTP_TOKEN,
+  COMMIT_SHA: 'deadbeef',
+});
+
+/** Answers only the lease statements leadership issues; everything else is empty (as in the route tests). */
+function fakeLeaderPool(): PgPool {
+  let ownerId: string | null = null;
+  const challenge = 'a'.repeat(64);
+  const answer = async (sql: string, params: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> => {
+    if (/UPDATE control_plane_lease\s+SET owner_id = \$1, generation/.test(sql)) {
+      ownerId = String(params[0]);
+      return { rows: [{ generation: '1', challenge: String(params[1]) }], rowCount: 1 };
+    }
+    if (/FROM control_plane_lease WHERE id = 1 FOR UPDATE/.test(sql)) {
+      return {
+        rows: [{ id: 1, owner_id: ownerId, generation: '1', heartbeat_at: new Date(), challenge, challenge_published_at: new Date() }],
+        rowCount: 1,
+      };
+    }
+    if (/SELECT now\(\)/.test(sql)) return { rows: [{ now: new Date() }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  };
+  const client = { query: (sql: string, params?: unknown[]) => answer(sql, params), release: () => undefined };
+  return {
+    query: (sql: string, params?: unknown[]) => answer(sql, params),
+    connect: async () => client,
+    on: () => undefined,
+    end: async () => undefined,
+  } as unknown as PgPool;
+}
+
+/** The room routes are not under test here; reaching the ledger store is a failure. */
+const explodingLedgerStore = new Proxy(
+  {},
+  {
+    get: () => () => {
+      throw new Error('a journal storage test reached the ledger store');
+    },
+  },
+) as unknown as PostgresLedgerStore;
+
+/** The real `createServer`, with the journal store under test injected through `ServerDeps.journalStore`. */
+async function startControlPlane(journalStore: JournalStore): Promise<{ url: string; stop: () => Promise<void> }> {
+  const gateway = createGatewaySurface({ pool: fakeLeaderPool(), config: HTTP_CONFIG, log: () => undefined });
+  const dummyPool = { query: async () => ({ rows: [] }) } as unknown as PgPool;
+  const app = createControlPlane({
+    config: HTTP_CONFIG,
+    pool: dummyPool,
+    store: explodingLedgerStore,
+    startedAt: Date.now(),
+    gateway,
+    journalStore,
+  });
+  const server: Server = app.listen(0);
+  await gateway.leadership.attemptAcquisition();
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    stop: async () => {
+      await gateway.stop();
+      await closeServer(server);
+    },
+  };
 }
 
 /* ---------------- the suite ---------------- */
@@ -655,6 +734,47 @@ describe('journal store — authorization and reachability map to distinct, fail
       await noExecute.end();
       await admin!.query('REVOKE SELECT ON public.command_journal_chain_head FROM br_js_no_execute');
       await admin!.query('DROP ROLE br_js_no_execute');
+    }
+  });
+
+  it('a login WITHOUT SELECT on command_journal_chain_head fails at the head read with 42501: 503 journal_runtime_not_authorized, the routine never called, nothing written', async () => {
+    const password = randomBytes(24).toString('base64url');
+    await admin!.query(`CREATE ROLE br_js_no_select LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '${password.replace(/'/g, "''")}'`);
+    // EXECUTE on the routine is granted on purpose: the ONLY privilege this
+    // login lacks is SELECT on the head table, so the head read is the one
+    // place a 42501 can come from — which is what this case isolates.
+    await admin!.query('GRANT EXECUTE ON FUNCTION public.command_journal_append(text, text, text, bigint, bytea) TO br_js_no_select');
+    const base = new Pool({ host: '127.0.0.1', port: instance!.port, user: 'br_js_no_select', password, database: instance!.database, max: 2 });
+    const { pool, counts } = interceptingPool(base);
+    const noSelect = new JournalStore(pool, { now });
+    const plane = await startControlPlane(noSelect);
+    try {
+      // The store: the typed error, carrying the SQLSTATE, from the head read.
+      await assert.rejects(
+        noSelect.appendJournaled(request('cmd_js_no_select')),
+        (err: unknown) =>
+          err instanceof JournalRuntimeNotAuthorizedError
+          && (err.cause as { code?: string } | undefined)?.code === '42501',
+      );
+      assert.equal(counts.headReads, 0, 'the head read itself was refused, so no head value was ever returned');
+      assert.equal(counts.routineCalls, 0, 'the routine was never called: the head read failed first');
+
+      // The HTTP boundary: the real createServer answers 503 with the promised code.
+      const response = await fetch(`${plane.url}/journal/commands`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${HTTP_TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify(request('cmd_js_no_select_http')),
+      });
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), { error: 'journal_runtime_not_authorized' });
+      assert.equal(counts.routineCalls, 0);
+      assert.equal(await rowCount('cmd_js_no_select'), 0, 'nothing written');
+      assert.equal(await rowCount('cmd_js_no_select_http'), 0, 'nothing written over HTTP either');
+    } finally {
+      await plane.stop();
+      await base.end();
+      await admin!.query('REVOKE EXECUTE ON FUNCTION public.command_journal_append(text, text, text, bigint, bytea) FROM br_js_no_select');
+      await admin!.query('DROP ROLE br_js_no_select');
     }
   });
 
