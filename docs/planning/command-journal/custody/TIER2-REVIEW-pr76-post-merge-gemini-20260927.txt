@@ -1,0 +1,66 @@
+All required artifacts were loaded successfully and read in full.
+
+### WHAT TO JUDGE
+
+Fail-closed: Independent SHA checks
+No path can reach the migrate step or the secret with a mismatched SHA. The workflow implements three independent checks, and each stops execution:
+
+1. Preflight: Validates the SHA and compares it to github.sha using bash [[ "$FOUNDER_AUTHORIZED_SHA" != "$OBSERVED_SHA" ]]. A mismatch correctly triggers exit 1 and stops the job.
+2. Migrate re-assertion: Before checking out code or reaching the secret, the migrate job re-asserts the SHA with an identical bash comparison. A mismatch triggers exit 1 and stops the job.
+3. Runner (migrate-cli.ts): Re-asserts the SHA in TypeScript. If they mismatch, it calls fail() which triggers process.exit(1). (Note: The runner's logic evaluates expectedSha !== null && observedSha !== null
+&& expectedSha !== observedSha, which technically fails open if an environment variable is entirely missing. However, the preceding bash checks are robust against empty strings and guarantee this gap cannot
+be exploited in the workflow context.)
+
+Secret Handling
+MIGRATE_ADMIN_DATABASE_URL is perfectly confined. It is:
+
+• Bound only to the Apply exactly one migration step.
+• Passed exclusively via the environment (never as a CLI argument).
+• Never printed to logs (npm run --silent is used, and the script only emits JSON evidence).
+• Completely unreachable by the preflight job (which declares no environment: or secrets. context).
+
+Injection
+Inputs (founder_authorized_sha, tranche_id) reach the shell strictly through env mappings and are referenced as standard shell variables ("$TRANCHE_ID"). They are never interpolated via ${{ }} into run:
+blocks.
+
+Environment gating, concurrency, least privilege, action pinning, checkout
+All properties are correctly implemented:
+
+• Environment gating: The migrate job correctly declares environment: db-admin-migration.
+• Concurrency: group: pr2b-admin-migration is a constant (non-interpolated), cancel-in-progress: false, and queue: max.
+• Least privilege: Workflow uses permissions: contents: read.
+• Action pinning: actions/checkout and actions/setup-node are strictly pinned by exact commit SHAs.
+• Checkout: The authorized SHA is checked out directly using ref: ${{ inputs.founder_authorized_sha }} and persist-credentials: false.
+
+Workflow's own statement
+The statement "This workflow does not make a migration self-authorizing" is true as written. The workflow creates no infrastructure and grants no access by itself. It strictly depends on the Founder-created
+db-admin-migration environment, its secret, and its required reviewers to actually authorize and execute the migration.
+
+Test Adequacy (Mutant Classes)
+The three disclosed test-suite mutant classes represent regressions the current test suite would miss, but none are Gate IV blockers:
+
+1. continue-on-error on either SHA step: A test inadequacy for a future regression. The current workflow does not contain this mutant and is secure.
+2. Job-level if: always() on migrate: If added, the migrate job would run even if preflight failed. However, the first step of the migrate job re-asserts the SHA and would independently fail-closed and abort
+the job before the secret is reached. The secret remains protected.
+3. Environment dump (env or printenv): A test inadequacy for a future regression. The current workflow contains no such commands.
+
+### FINDINGS
+
+1. Severity: Advisory | test/admin-workflow-shape.test.ts
+What fails: The test suite fails to detect the addition of continue-on-error: true on SHA validation steps.
+Blocks Gate IV: No. The current workflow is secure, and a pending test-only PR addresses this.
+2. Severity: Advisory | test/admin-workflow-shape.test.ts
+What fails: The test suite fails to detect a job-level if: always() on the migrate job.
+Blocks Gate IV: No. The migrate job's internal re-assertion step prevents this mutant from exposing the secret.
+3. Severity: Advisory | test/admin-workflow-shape.test.ts
+What fails: The test suite fails to detect shell environment dumps (env, printenv) that would leak the secret.
+Blocks Gate IV: No. The current workflow does not leak the environment.
+4. Severity: Advisory | packages/control-plane/src/migrate-cli.ts:151
+What fails: The runner's Stage-3 re-assertion (expectedSha !== null && observedSha !== null && expectedSha !== observedSha) fails open if either environment variable is null/missing.
+Blocks Gate IV: No. The workflow's bash preflight and re-assertion steps correctly fail-closed on missing/empty variables, providing robust defense-in-depth before the runner is ever invoked.
+──────
+Attestation ID: gemini-3.1-pro (based on exact model string: Gemini 3.1 Pro (High))
+
+Tier2-Reviewer-Id: gemini-3.1-pro
+Tier2-Head-Sha: 9c7e0447848b8435a98a97aa18f4c0188e46f577
+Tier2-Verdict: PASS-WITH-ADVISORIES***
