@@ -1,0 +1,234 @@
+# DB ADMIN MIGRATION — the administrative migration plane's repository half
+# (PR 2b Tranche C, C-N1). Design of record: pr2b-storage-architecture-r6.md
+# §7–§10 and pr2b-implementation-plan-r1.md §7, §7.1, §7.2.
+#
+# WHAT THIS IS. The one sanctioned route by which a privileged migration
+# reaches the production database (r6 §11.2, Option A). It is dispatched by
+# hand, asserts that the commit this run executes is the exact SHA named in
+# its input, waits for a Founder-controlled approver on the protected GitHub
+# environment named `db-admin-migration`, and then runs the bounded
+# administrative runner (`npm run migrate:admin`,
+# packages/control-plane/src/migrate-cli.ts) for exactly one migration id.
+#
+# WHAT THIS IS NOT. This workflow does not make a migration self-authorizing
+# (plan r1 §7.2). The SHA assertion (C1) is an integrity check: it proves the
+# run's tree is the tree named in the input, and it cannot know whether the
+# Founder named that tree. Authorization is the Founder act naming the exact
+# SHA and the tranche, enforced by the environment's required reviewers,
+# `prevent_self_review`, and the deployment branch policy (r6 §8.3). A run
+# approved without a matching Founder act is an unauthorized migration
+# regardless of the platform's verdict (r6 §7.3).
+#
+# WHAT MUST EXIST BEFORE THIS CAN DO ANYTHING PRIVILEGED — Founder acts, none
+# of them performed by the commit that adds this file (plan r1 §4.3 C-X1 to
+# C-X3, Gate IV):
+#   - the protected GitHub environment `db-admin-migration`;
+#   - one environment-scoped secret named MIGRATE_ADMIN_DATABASE_URL holding
+#     the administrative connection string. Environment scope only: never a
+#     repository or organization secret (S11, PC-26), never a Railway
+#     variable (PC-19);
+#   - required reviewers, `prevent_self_review`, administrator bypass
+#     disabled, deployment branches restricted to `main` (PC-28, PC-29).
+# Until the environment exists the `migrate` job has no secret to resolve
+# and nothing privileged can happen.
+#
+# JOB SHAPE (r6 §10 stages 1–5; plan r1 §7.1).
+#   preflight — ungated: no environment, no secret. Validates the inputs'
+#     shape, compares `founder_authorized_sha` with `github.sha`, prints both
+#     to the run summary whether or not they match, and on mismatch fails
+#     closed with `FAIL CLOSED — UNAUTHORIZED SHA` before approval is ever
+#     requested.
+#   migrate — gated on the environment, `needs: preflight`. Re-asserts the
+#     SHA as its first step, checks out that SHA (not a ref), builds, runs
+#     the runner for the one id with the secret in the runner's documented
+#     environment variable, and puts the runner's stage-5 evidence JSON in
+#     the run summary.
+#
+# INPUTS. Plan r1 §7 lists three: the SHA, `tranche_id`, and "the migration
+# range or identifier being applied". The runner accepts exactly one
+# migration id per invocation and refuses to apply two pending migrations in
+# one run (migrate-cli.ts header, behaviours 3 and 5). `tranche_id` is
+# therefore the migration identifier, passed verbatim as the runner's
+# positional argument. A range cannot be honoured without changing the
+# runner, and a separate identifier input would be a second value the
+# runner never sees and that could disagree with the first.
+#
+# CONCURRENCY (r6 §9, C2). A constant group, never interpolated with the SHA
+# or ref, so two different migrations cannot execute at once;
+# `cancel-in-progress: false` because cancelling mid-DDL is not proven
+# transaction-safe; `queue: max` so a later dispatch waits its turn instead
+# of cancelling a run that is pending Founder approval.
+#
+# Changes to this workflow's triggers, permissions, or steps require founder
+# approval before merge (same rule class as DEC-20260718-02 clause 4; the
+# decision record lives in FounderOS, not in this repository).
+
+name: DB Admin Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      founder_authorized_sha:
+        description: >-
+          The exact 40-character lowercase commit SHA the Founder authorized.
+          Must equal the commit this run executes (github.sha).
+        required: true
+        type: string
+      tranche_id:
+        description: >-
+          Exactly one canonical migration id from MIGRATIONS, for example
+          0006_command_journal_authority_split. One id per run.
+        required: true
+        type: string
+
+concurrency:
+  group: pr2b-admin-migration
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  contents: read
+
+jobs:
+  # Stage 1 (r6 §10). Ungated: no environment key, no secret access.
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate input shape before any other step
+        env:
+          FOUNDER_AUTHORIZED_SHA: ${{ inputs.founder_authorized_sha }}
+          TRANCHE_ID: ${{ inputs.tranche_id }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$FOUNDER_AUTHORIZED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::FAIL CLOSED — MALFORMED founder_authorized_sha (exactly 40 lowercase hex characters required)"
+            exit 1
+          fi
+          if ! [[ "$TRANCHE_ID" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::FAIL CLOSED — MALFORMED tranche_id (one migration id token required)"
+            exit 1
+          fi
+
+      - name: Assert the run's SHA is the authorized SHA
+        env:
+          FOUNDER_AUTHORIZED_SHA: ${{ inputs.founder_authorized_sha }}
+          OBSERVED_SHA: ${{ github.sha }}
+          TRANCHE_ID: ${{ inputs.tranche_id }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Preflight: C1 exact-SHA assertion"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| expected (founder_authorized_sha) | \`$FOUNDER_AUTHORIZED_SHA\` |"
+            echo "| observed (github.sha) | \`$OBSERVED_SHA\` |"
+            echo "| tranche_id | \`$TRANCHE_ID\` |"
+            echo "| ref | \`$GITHUB_REF\` |"
+            echo "| dispatched by | \`$GITHUB_ACTOR\` (the dispatcher, not an approver) |"
+            echo "| run | $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "expected: $FOUNDER_AUTHORIZED_SHA"
+          echo "observed: $OBSERVED_SHA"
+          if [[ "$FOUNDER_AUTHORIZED_SHA" != "$OBSERVED_SHA" ]]; then
+            echo "| verdict | **FAIL CLOSED — UNAUTHORIZED SHA** |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::FAIL CLOSED — UNAUTHORIZED SHA"
+            exit 1
+          fi
+          echo "| verdict | match |" >> "$GITHUB_STEP_SUMMARY"
+
+  # Stages 2 to 5 (r6 §10). Gated on the protected environment: the secret is
+  # unreachable until a required reviewer approves this job (r6 §7.2).
+  migrate:
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment: db-admin-migration
+    steps:
+      # Stage 3, first: before any step that could touch the secret
+      # (r6 §8.2 step 3), so a state change between the two jobs cannot
+      # carry an unasserted tree into the privileged steps.
+      - name: Re-assert the authorized SHA
+        env:
+          FOUNDER_AUTHORIZED_SHA: ${{ inputs.founder_authorized_sha }}
+          OBSERVED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$FOUNDER_AUTHORIZED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::FAIL CLOSED — MALFORMED founder_authorized_sha"
+            exit 1
+          fi
+          {
+            echo "## Migrate: stage 3 re-assertion"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| expected (founder_authorized_sha) | \`$FOUNDER_AUTHORIZED_SHA\` |"
+            echo "| observed (github.sha) | \`$OBSERVED_SHA\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "expected: $FOUNDER_AUTHORIZED_SHA"
+          echo "observed: $OBSERVED_SHA"
+          if [[ "$FOUNDER_AUTHORIZED_SHA" != "$OBSERVED_SHA" ]]; then
+            echo "| verdict | **FAIL CLOSED — UNAUTHORIZED SHA** |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::FAIL CLOSED — UNAUTHORIZED SHA"
+            exit 1
+          fi
+          echo "| verdict | match |" >> "$GITHUB_STEP_SUMMARY"
+
+      # The asserted SHA, not a ref (r6 §8.2 step 6). Action pins are the
+      # ones ci.yml uses.
+      - name: Checkout the asserted SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.founder_authorized_sha }}
+          persist-credentials: false
+
+      - name: Use Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Locked install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Stage 4. Exactly one migration id per run; the runner refuses more.
+      # The secret reaches this step only, and only as the runner's documented
+      # environment variable: never an argument, never printed. The runner
+      # writes the stage-5 evidence JSON to stdout and nothing else;
+      # `--silent` keeps npm's own banner out of that document. GITHUB_SHA is
+      # the platform's default variable, which the runner compares with
+      # FOUNDER_AUTHORIZED_SHA once more before opening any connection.
+      - name: Apply exactly one migration
+        env:
+          MIGRATE_ADMIN_DATABASE_URL: ${{ secrets.MIGRATE_ADMIN_DATABASE_URL }}
+          FOUNDER_AUTHORIZED_SHA: ${{ inputs.founder_authorized_sha }}
+          TRANCHE_ID: ${{ inputs.tranche_id }}
+        run: |
+          set -euo pipefail
+          npm run --silent migrate:admin -- "$TRANCHE_ID" > "$RUNNER_TEMP/stage5-evidence.json"
+
+      # Stage 5. The runner's evidence, verbatim, in the run summary; also on
+      # failure, so a refused run shows whatever the runner recorded next to
+      # the log's marker. The approver identity is platform-recorded on this
+      # run's environment deployment review, not self-reported by the runner.
+      - name: Stage-5 evidence to run summary
+        if: always()
+        run: |
+          set -euo pipefail
+          EVIDENCE="$RUNNER_TEMP/stage5-evidence.json"
+          {
+            echo "## Stage-5 evidence (runner output, verbatim)"
+            echo ""
+            if [[ -s "$EVIDENCE" ]]; then
+              echo '```json'
+              jq . "$EVIDENCE" || cat "$EVIDENCE"
+              echo '```'
+            else
+              echo "_No evidence document: the runner exited before emitting one. The job log carries its marker._"
+            fi
+            echo ""
+            echo "Approver identity: recorded by the platform on this run's environment deployment review, not self-reported here."
+          } >> "$GITHUB_STEP_SUMMARY"
