@@ -43,6 +43,18 @@ same commit as this receipt, and verifies it again here:
   punctuation and line breaks are as pasted, including the `***` that
   follows the verdict on the last line.
 
+## A known imprecision in the signed text
+
+FINDING 3 says the merge commit's message "is the PR title alone". The
+message is the PR title with ` (#76)` appended, on one line with no body:
+`ci(db-admin-migration): add the administrative migration workflow and its
+shape test (Tranche C) (#76)`. The finding's conclusion holds: the message
+carries no attribution trailers, and Attribution Shape Check run
+`36331083888` concluded failure on it. The error was in the builder's
+draft; Copilot review `5331377483` found it (comment `4116298221`). The
+signed text lands unaltered, as its CUSTODY section requires; this receipt
+records the correction.
+
 ## Provenance and transport
 
 | Step | Identity |
