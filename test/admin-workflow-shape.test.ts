@@ -132,6 +132,45 @@ function stepAfter(block: readonly Line[], anchor: Line): Line[] {
   return block.filter((l) => l.index > anchor.index && (next === undefined || l.index < next.index));
 }
 
+/** The steps of a job: the list items under `steps:`, each with its nested lines. */
+function stepsOf(block: readonly Line[]): Line[][] {
+  const first = block.find((l) => /^\s*-\s/.test(l.text));
+  const stepIndent = first === undefined ? -1 : indentOf(first.text);
+  const out: Line[][] = [];
+  for (const line of block) {
+    if (/^\s*-\s/.test(line.text) && indentOf(line.text) === stepIndent) out.push([]);
+    const current = out[out.length - 1];
+    if (current !== undefined) current.push(line);
+  }
+  return out;
+}
+
+/** Every line of shell the platform would execute: `run:` block scalars and inline `run:` values. */
+function runScriptLines(block: readonly Line[]): Line[] {
+  const out: Line[] = [];
+  let i = 0;
+  while (i < block.length) {
+    const line = block[i];
+    i += 1;
+    if (line === undefined) continue;
+    const key = /^(\s*(?:-\s+)?)run:\s*(.*)$/.exec(line.text);
+    if (key === null) continue;
+    const keyIndent = (key[1] ?? '').length;
+    const value = (key[2] ?? '').trim();
+    if (/^[|>][-+]?$/.test(value)) {
+      while (i < block.length) {
+        const body = block[i];
+        if (body === undefined || indentOf(body.text) <= keyIndent) break;
+        out.push(body);
+        i += 1;
+      }
+    } else {
+      out.push(line);
+    }
+  }
+  return out;
+}
+
 describe('db-admin-migration workflow shape (C-T1)', () => {
   it('exists at .github/workflows/db-admin-migration.yml (C-N1)', () => {
     assert.ok(existsSync(WORKFLOW_PATH), `${relative(REPO_ROOT, WORKFLOW_PATH)} does not exist`);
@@ -275,5 +314,56 @@ describe('db-admin-migration workflow shape (C-T1)', () => {
       const text = readFileSync(join(WORKFLOWS_DIR, file), 'utf8');
       assert.ok(!text.includes(ENVIRONMENT_NAME), `${file} must not reference ${ENVIRONMENT_NAME}`);
     }
+  });
+  // PR #76 review finding 5: five mutants the first thirteen cases let through.
+
+  it('run: scripts never interpolate ${{ }} expressions; inputs and context reach the shell through env only', () => {
+    const lines = significantLines(readWorkflow());
+    const scripts = runScriptLines(lines);
+    assert.ok(scripts.length > 0, 'expected run: scripts to inspect');
+    for (const l of scripts) {
+      assert.ok(!l.text.includes('${{'), `expression inside a run: script at line ${l.index + 1}: ${l.text.trim()}`);
+    }
+  });
+
+  it('no run: script names the administrative URL variable, and no shell tracing is enabled anywhere', () => {
+    const lines = significantLines(readWorkflow());
+    for (const l of runScriptLines(lines)) {
+      assert.ok(!l.text.includes('MIGRATE_ADMIN_DATABASE_URL'), `run: script references the secret variable at line ${l.index + 1}`);
+    }
+    assert.equal(countMatching(lines, /\bset\s+-[a-zA-Z]*x|\bxtrace\b|\bbash\s+-x\b/), 0, 'no set -x, set -o xtrace, or bash -x');
+  });
+
+  it('the secret is bound from secrets.MIGRATE_ADMIN_DATABASE_URL only, on the migrate:admin step only', () => {
+    const lines = significantLines(readWorkflow());
+    const binding = 'MIGRATE_ADMIN_DATABASE_URL: ${{ secrets.MIGRATE_ADMIN_DATABASE_URL }}';
+    const named = lines.filter((l) => l.text.includes('MIGRATE_ADMIN_DATABASE_URL'));
+    assert.equal(named.length, 1, 'the variable name appears exactly once outside comments');
+    assert.equal(named[0]?.text.trim(), binding, 'and that once is the exact env binding from the environment secret');
+    const apply = stepsOf(job(lines, 'migrate')).find((step) => step.some((l) => /\bmigrate:admin\b/.test(l.text)));
+    assert.ok(apply !== undefined, 'expected the migrate:admin step');
+    assert.ok(apply.some((l) => l.text.trim() === binding), 'the binding sits on the migrate:admin step');
+  });
+
+  it('every fail-closed marker is followed by exit 1 on the next line', () => {
+    const lines = significantLines(readWorkflow());
+    const markers = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.text.includes('::error::FAIL CLOSED'));
+    assert.ok(markers.length >= 2, 'expected fail-closed markers in both jobs');
+    for (const { l, i } of markers) {
+      assert.equal(lines[i + 1]?.text.trim(), 'exit 1', `marker at line ${l.index + 1} must be followed by exit 1`);
+    }
+    for (const name of ['preflight', 'migrate']) {
+      assert.ok(job(lines, name).some((l) => l.text.includes(FAIL_CLOSED_MARKER)), `${name} carries the UNAUTHORIZED SHA marker`);
+    }
+  });
+
+  it('preflight executes nothing before the input-shape validation', () => {
+    const lines = significantLines(readWorkflow());
+    const preflight = job(lines, 'preflight');
+    const shape = firstMatching(preflight, SHA_SHAPE, 'the shape check in preflight');
+    const executables = preflight.filter((l) => l.index < shape.index && /^\s*(-\s+)?(run|uses):/.test(l.text));
+    assert.equal(executables.length, 1, 'exactly one run:/uses: precedes the shape check');
+    assert.match(executables[0]?.text ?? '', /\brun:/, 'and it is the run: that contains the check, not a uses:');
+    assert.equal(stepsOf(preflight).findIndex((step) => step.some((l) => l.text.includes(SHA_SHAPE))), 0, 'the shape check is in the first step');
   });
 });
