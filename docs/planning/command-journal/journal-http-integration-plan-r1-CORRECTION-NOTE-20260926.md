@@ -148,14 +148,12 @@ disposition. This note does not make it.
 This does not correct r1's content. It corrects the record of how r1 reached
 `main`.
 
-- [Certain] Every GitHub Actions run in this repository from 2026-09-26T17:11:15Z
-  onward concluded `startup_failure` under a synthetic, nameless workflow
-  record (`path: BuildFailed`). That covers every push and `pull_request` run
-  on PR #75's two commits (`da0a540`, `619289d`), the push of the merge commit
-  `41de91d` to `main`, and Copilot's agent-review run. None of `ci.yml`,
-  `path-audit.yml`, `attribution-shape.yml` or `custody-pin-check.yml` executed
-  for PR #75 or its merge. The only check runs recorded on PR #75's head were
-  Cursor Bugbot and Cursor Security Agent.
+- [Certain] The GitHub Actions runs associated with PR #75’s two commits
+  (`da0a540`, `619289d`) and its merge commit
+  (`41de91d9a61b6c4453570370adff60dc005be32c`) concluded `startup_failure`;
+  none of `ci.yml`, `path-audit.yml`, `attribution-shape.yml`, or
+  `custody-pin-check.yml` executed for that PR or its merge. The only check
+  runs recorded on PR #75’s head were Cursor Bugbot and Cursor Security Agent.
 - The builder session that authored PR #75 (this note's author) read those
   failures as residue of a deleted workflow and advised the Founder that
   nothing was gating the merge. That reading was wrong.
