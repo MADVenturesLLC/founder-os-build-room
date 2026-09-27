@@ -1,0 +1,100 @@
+FOUNDER RULING — PR #76 MERGE DISPOSITION
+DISPOSITION: NONCOMPLIANT_MERGE_RECORDED
+I, Michael Alberto Daley, issue the following disposition.
+This disposition records that PR #76 was merged without three things the
+merge required. It does not cure them, excuse them, or treat the review
+that ran after the merge as a review before it. It authorizes no
+migration, no Gate IV act, no dispatch of the workflow, no deployment,
+and no merge. It creates no spend, provisioning, credential, or
+execution authority.
+SUBJECTS BOUND
+  PR #76 merge commit
+    commit:  9c7e0447848b8435a98a97aa18f4c0188e46f577
+    on:      founder-os-build-room main, merged 2026-09-27T15:51:23Z
+    parents: 9153c00ea3ff5c5749e1b9cf7dd9ceb8f4432ad5
+             6bac1e3ce4567c41cc7251d3a88b35cdaa2abcf4 (PR #76 head)
+    tree:    32e0c05fed09a33fca0cd3895ad4fcd3ab5e1a9d, identical to the
+             head's tree
+    change:  two files added
+      .github/workflows/db-admin-migration.yml
+        blob     5061f1d50e0deb3c65bd9ca913dcfd75fc532e13
+        SHA-256  93ccd195587e39dcb4da310eaafd36d4c439a36a2a51284a39a54bc9018d7099
+      test/admin-workflow-shape.test.ts
+        blob     5bc8e705e02f6ff8047c0e7bc0cbbdd8e054472d
+        SHA-256  2b35310d5dd8fc9a5ee0033f08ae767b6fb80cec3ebb1725195218157a2fc7ee
+  Post-merge Tier-2 review, preserved verbatim
+    path:    docs/planning/command-journal/custody/TIER2-REVIEW-pr76-post-merge-gemini-20260927.txt
+    sha256:  d4ba2de082017daa6b3d24b464b00c03c6801c5a48ddba38a3621e91f32c5431
+FINDING
+1. No Tier-2 review preceded the merge. The one review before it, at
+   78d9be8, returned FAIL on test adequacy and issued no Tier-2
+   attestation. Its test finding was addressed at 9ead123; no reviewer
+   re-reviewed before the merge.
+2. No SHA-named merge authorization under DEC-20260718-04 was posted on
+   PR #76. The last comment before the merge, 5857394137 at
+   2026-09-27T15:51:11Z, was a builder instruction, not an
+   authorization. A block was drafted for 6bac1e3 and not posted.
+3. The merge commit's message is the PR title alone and carries no
+   attribution trailers. Attribution Shape Check run 36331083888 on
+   9c7e044 concluded failure.
+4. Three test gaps known before the merge were open at it: the shape
+   test passes with continue-on-error on either SHA step, with a
+   job-level if: always() on migrate, and with a whole-environment dump
+   in a run: script.
+5. The hosted checks did run. On 9c7e044, CI run 36331083896, Path
+   Audit run 36331083880 and Custody Pin Check run 36331083878
+   concluded success. This is not a CI-gate breach of the kind the
+   PR #75 disposition records.
+POST-MERGE REVIEW
+An independent Tier-2 review ran after the merge, on 9c7e044: reviewer
+gemini-3.1-pro (self-reported model "Gemini 3.1 Pro (High)"), verdict
+PASS-WITH-ADVISORIES, four advisory findings, none blocking Gate IV.
+Its findings 1 to 3 are the test gaps in FINDING 4. Its finding 4: the
+runner's own SHA re-assertion (migrate-cli.ts line 151) is skipped when
+FOUNDER_AUTHORIZED_SHA or GITHUB_SHA is absent; inside the workflow
+both are always set, and the workflow's two shell checks reject an
+empty or mismatched SHA first. The review informs Gate IV. It does not
+cure FINDING 1.
+DISPOSITION
+NONCOMPLIANT_MERGE_RECORDED. The merge of PR #76 at 9c7e044 is recorded
+as a noncompliant merge, not as an exception. This disposition does not
+revert it and does not rewrite main.
+REMEDIATION
+1. No revert. The workflow can reach no credential until Gate IV
+   creates the db-admin-migration environment and its secret. The
+   workflow had no runs when the GitHub Actions API was read at
+   2026-09-27T16:45:49Z.
+2. The failed attribution on 9c7e044 stays on main as the record of
+   FINDING 3. main is not rewritten.
+3. No Gate IV act (C-X1 to C-X3) begins before this disposition lands
+   on main. When Gate IV begins, the environment's required reviewers,
+   prevent_self_review and main-only deployment branch policy are set
+   and confirmed before its secret is added.
+4. The three test gaps are to be closed by a test-only pull request.
+   Per the review they do not block Gate IV. No change to
+   .github/workflows/db-admin-migration.yml merges before they are
+   closed.
+5. The runner advisory (review finding 4) is recorded and is not
+   remediated by this disposition.
+WHAT THIS DISPOSITION DOES NOT DO
+- It does not authorize Gate IV or any of C-X1 to C-X3; each remains a
+  separate Founder act.
+- It authorizes no dispatch of the db-admin-migration workflow and no
+  execution of 0006_command_journal_authority_split or 0007_gate_runs.
+- It authorizes no deployment and no merge of any pull request.
+- It rules on nothing in PR #78, D-1, FD-3, or C3.
+- It does not treat the post-merge review as a pre-merge review.
+- It does not rewrite history on main.
+BINDING
+This disposition names two commits:
+9c7e0447848b8435a98a97aa18f4c0188e46f577 (PR #76's merge) and
+6bac1e3ce4567c41cc7251d3a88b35cdaa2abcf4 (PR #76's head at merge).
+CUSTODY
+Preserve this disposition verbatim as a new file in founder-os-build-room
+at exactly this path:
+  docs/planning/command-journal/custody/FOUNDER-RULING-pr76-merge-disposition-20260927.txt
+Land it in one commit with the review text named above and a custody
+receipt. Record its SHA-256, bytes, lines, and trailing-newline status
+in that commit and in the receipt. Do not alter the text.
+Signed: Michael Daley
+Date: 2026-09-27
