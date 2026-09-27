@@ -93,9 +93,12 @@ function unreachablePool(): Pool {
  * the bytes handed to the routine — so the REAL store's redaction can be
  * observed at the HTTP boundary without a database.
  */
-function recordingJournalPool(): { pool: Pool; appendParams: unknown[][] } {
+function recordingJournalPool(identity = 'br_app_runtime'): { pool: Pool; appendParams: unknown[][]; statements: string[] } {
   const appendParams: unknown[][] = [];
+  const statements: string[] = [];
   const query = async (sql: string, params: unknown[] = []): Promise<{ rows: unknown[]; rowCount: number }> => {
+    statements.push(sql);
+    if (/SELECT session_user/.test(sql)) return { rows: [{ session_user: identity, current_user: identity }], rowCount: 1 };
     if (/FROM public\.command_journal_chain_head/.test(sql)) return { rows: [{ seq: '0' }], rowCount: 1 };
     if (/public\.command_journal_append\(/.test(sql)) {
       appendParams.push(params);
@@ -107,6 +110,7 @@ function recordingJournalPool(): { pool: Pool; appendParams: unknown[][] } {
   return {
     pool: { query, connect: async () => client, on: () => undefined, end: async () => undefined } as unknown as Pool,
     appendParams,
+    statements,
   };
 }
 
@@ -431,6 +435,16 @@ describe('journal — store failures map to distinct statuses; a 2xx never prece
     assert.equal(answer.error, 'journal_integrity_failure');
     assert.match(answer.incidentId, /^[0-9a-f-]{36}$/);
     assert.ok(!text.includes('divergence'), 'the finding text stays in the log, not the response');
+  });
+
+  it('answers 503 journal_runtime_not_authorized from the REAL store when the connected role is not br_app_runtime, issuing no journal statement', async () => {
+    const { pool, appendParams, statements } = recordingJournalPool('example_owner_login');
+    const url = await start(new JournalStore(pool, { now: () => new Date('2026-09-27T12:00:00.000Z') }));
+    const response = await post(url, commandBody());
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'journal_runtime_not_authorized' });
+    assert.equal(appendParams.length, 0, 'the routine was never called');
+    assert.deepEqual(statements.filter((sql) => !/SELECT session_user/.test(sql)), [], 'only the identity query was issued: no head read, no routine call');
   });
 
   it('answers 500 internal_error on an unclassified store failure — never a 2xx', async () => {

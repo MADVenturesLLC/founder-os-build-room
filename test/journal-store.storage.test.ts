@@ -24,13 +24,19 @@
  * showing why: the routine does not cross-check the embedded seq); retries
  * are bounded; an integrity finding is surfaced, never retried, and writes
  * nothing; a duplicate `journaled` event is refused by constraint; a login
- * without EXECUTE is `42501` mapped to runtime-not-authorized; a login
- * without SELECT on the head table fails at the head read with `42501`,
- * mapped the same way and answered `503` through the real `createServer`
- * with the routine never called (review finding fixed under Founder
- * authorization); an unreachable database is store-unavailable; and, last,
- * every row the suite left behind re-encodes to its own column `seq` and
- * re-chains from genesis.
+ * without EXECUTE is `42501` mapped to runtime-not-authorized; the runtime
+ * login without SELECT on the head table fails at the head read with
+ * `42501`, mapped the same way and answered `503` through the real
+ * `createServer` with the routine never called; THE IDENTITY LATCH: on a
+ * second cluster whose migrations were applied BY a CREATEROLE
+ * non-superuser admin login (Neon's owner shape, as far as PostgreSQL 16
+ * lets such a login apply `0006` at all), that login is refused before any
+ * journal statement — 503, zero rows — while WITHOUT the latch its append
+ * through the routine succeeds, which is the measured answer to whether
+ * the bypass is real (Founder disposition of review finding 4115032242);
+ * an unreachable database is store-unavailable; and, last, every row the
+ * suite left behind re-encodes to its own column `seq` and re-chains from
+ * genesis.
  */
 
 import { after, before, describe, it } from 'node:test';
@@ -332,7 +338,7 @@ after(async () => {
       }
       const absent = await admin.query(
         `SELECT count(*)::int AS n FROM pg_roles
-          WHERE rolname IN ('br_journal_owner','command_journal_writer','br_app_runtime','br_js_no_execute','br_js_no_select')`,
+          WHERE rolname IN ('br_journal_owner','command_journal_writer','br_app_runtime')`,
       );
       assert.equal(absent.rows[0]?.n, 0, 'fixture roles must be absent from pg_roles at teardown');
     } finally {
@@ -716,36 +722,30 @@ describe('journal store — integrity findings are surfaced, never retried, neve
 });
 
 describe('journal store — authorization and reachability map to distinct, fail-closed errors', { skip: SKIP_REASON }, () => {
-  it('a login without EXECUTE on the routine gets 42501, mapped to runtime-not-authorized, and writes nothing', async () => {
-    const password = randomBytes(24).toString('base64url');
-    await admin!.query(`CREATE ROLE br_js_no_execute LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '${password.replace(/'/g, "''")}'`);
-    await admin!.query('GRANT SELECT ON public.command_journal_chain_head TO br_js_no_execute');
-    const noExecute = new Pool({ host: '127.0.0.1', port: instance!.port, user: 'br_js_no_execute', password, database: instance!.database, max: 1 });
+  it('the runtime login without EXECUTE on the routine (revoked for this case) gets 42501, mapped to runtime-not-authorized, and writes nothing', async () => {
+    // The identity latch refuses every other login before any statement, so
+    // the SQLSTATE path is exercised as br_app_runtime itself, with the one
+    // privilege taken away and given back.
+    await admin!.query('REVOKE EXECUTE ON FUNCTION public.command_journal_append(text, text, text, bigint, bytea) FROM br_app_runtime');
     try {
-      const unauthorized = new JournalStore(noExecute, { now });
+      const { pool, counts } = interceptingPool(runtimePool!);
+      const unauthorized = new JournalStore(pool, { now });
       await assert.rejects(
         unauthorized.appendJournaled(request('cmd_js_no_execute')),
         (err: unknown) =>
           err instanceof JournalRuntimeNotAuthorizedError
           && (err.cause as { code?: string } | undefined)?.code === '42501',
       );
+      assert.equal(counts.routineCalls, 1, 'the refusal came from the routine call itself');
       assert.equal(await rowCount('cmd_js_no_execute'), 0);
     } finally {
-      await noExecute.end();
-      await admin!.query('REVOKE SELECT ON public.command_journal_chain_head FROM br_js_no_execute');
-      await admin!.query('DROP ROLE br_js_no_execute');
+      await admin!.query('GRANT EXECUTE ON FUNCTION public.command_journal_append(text, text, text, bigint, bytea) TO br_app_runtime');
     }
   });
 
-  it('a login WITHOUT SELECT on command_journal_chain_head fails at the head read with 42501: 503 journal_runtime_not_authorized, the routine never called, nothing written', async () => {
-    const password = randomBytes(24).toString('base64url');
-    await admin!.query(`CREATE ROLE br_js_no_select LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '${password.replace(/'/g, "''")}'`);
-    // EXECUTE on the routine is granted on purpose: the ONLY privilege this
-    // login lacks is SELECT on the head table, so the head read is the one
-    // place a 42501 can come from — which is what this case isolates.
-    await admin!.query('GRANT EXECUTE ON FUNCTION public.command_journal_append(text, text, text, bigint, bytea) TO br_js_no_select');
-    const base = new Pool({ host: '127.0.0.1', port: instance!.port, user: 'br_js_no_select', password, database: instance!.database, max: 2 });
-    const { pool, counts } = interceptingPool(base);
+  it('the runtime login without SELECT on command_journal_chain_head (revoked for this case) fails at the head read with 42501: 503 journal_runtime_not_authorized, the routine never called, nothing written', async () => {
+    await admin!.query('REVOKE SELECT ON public.command_journal_chain_head FROM br_app_runtime');
+    const { pool, counts } = interceptingPool(runtimePool!);
     const noSelect = new JournalStore(pool, { now });
     const plane = await startControlPlane(noSelect);
     try {
@@ -772,9 +772,126 @@ describe('journal store — authorization and reachability map to distinct, fail
       assert.equal(await rowCount('cmd_js_no_select_http'), 0, 'nothing written over HTTP either');
     } finally {
       await plane.stop();
-      await base.end();
-      await admin!.query('REVOKE EXECUTE ON FUNCTION public.command_journal_append(text, text, text, bigint, bytea) FROM br_js_no_select');
-      await admin!.query('DROP ROLE br_js_no_select');
+      await admin!.query('GRANT SELECT ON public.command_journal_chain_head TO br_app_runtime');
+    }
+  });
+
+  it('the identity latch: the owner-class login that applied the migrations is refused — 503, no statement past the latch, zero rows — while WITHOUT the latch its append succeeds (the bypass is real)', async (t) => {
+    // Its own cluster: 0006's roles are cluster-wide, and here they must be
+    // CREATED BY the admin login, because that is where the bypass comes
+    // from. Neon's owner shape, as far as PostgreSQL 16 lets a non-superuser
+    // apply 0006 at all (measured 2026-09-27 on 16.15): a CREATEROLE +
+    // CREATEDB login that owns the database, holds SET and INHERIT on the
+    // roles it creates (`createrole_self_grant`), and can hand table
+    // ownership to a role with CREATE on schema public. Without INHERIT the
+    // ownership transfer in 0006 step 4 fails ("must be able to SET ROLE"),
+    // and without CREATE on the schema it fails ("permission denied for
+    // schema public"); with both, the login inherits br_app_runtime's own
+    // EXECUTE grant, which the routine's grant cannot tell apart.
+    let owned: OwnedInstance | undefined;
+    let su: PgClient | undefined;
+    let adminPool: PgPool | undefined;
+    let plane: { url: string; stop: () => Promise<void> } | undefined;
+    const database = 'br_js_owner_class';
+    const adminRole = 'br_js_admin';
+    try {
+      owned = await startOwnedInstance(BINS!, (o) => { owned = o; });
+      su = superClient(owned);
+      await su.connect();
+      const password = randomBytes(24).toString('base64url');
+      await su.query(`CREATE ROLE ${adminRole} LOGIN NOSUPERUSER CREATEROLE CREATEDB NOBYPASSRLS NOREPLICATION PASSWORD '${password.replace(/'/g, "''")}'`);
+      await su.query(`ALTER ROLE ${adminRole} SET createrole_self_grant = 'SET, INHERIT'`);
+      await su.query(`CREATE DATABASE ${database} OWNER ${adminRole}`);
+      await su.end();
+      su = superClient(owned, database);
+      await su.connect();
+      await su.query('GRANT CREATE ON SCHEMA public TO PUBLIC');
+
+      adminPool = new Pool({ host: '127.0.0.1', port: owned.port, user: adminRole, password, database, max: 2 });
+      const { migrate } = await import('../packages/control-plane/src/migrations.js');
+      const applied = await migrate(adminPool);
+      assert.deepEqual(applied.applied, [...TRANCHE_ORDER], 'the admin login applied the canonical sequence through 0007');
+      const who = await adminPool.query<{ s: string; su: boolean; inherits: boolean }>(
+        `SELECT session_user::text AS s,
+                (SELECT rolsuper FROM pg_roles WHERE rolname = session_user) AS su,
+                pg_has_role(session_user, 'br_app_runtime', 'USAGE') AS inherits`,
+      );
+      assert.equal(who.rows[0]?.s, adminRole);
+      assert.equal(who.rows[0]?.su, false, 'a non-superuser');
+      t.diagnostic(`owner-class login ${adminRole}: rolsuper=false, inherits br_app_runtime's privileges=${String(who.rows[0]?.inherits)}`);
+
+      // WITH the latch: the store over the admin's own pool.
+      const { pool, counts } = interceptingPool(adminPool);
+      const ownerStore = new JournalStore(pool, { now });
+      plane = await startControlPlane(ownerStore);
+      await assert.rejects(
+        ownerStore.appendJournaled(request('cmd_js_owner_store')),
+        (err: unknown) => err instanceof JournalRuntimeNotAuthorizedError && /connected role is not br_app_runtime/.test(err.message),
+      );
+      const response = await fetch(`${plane.url}/journal/commands`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${HTTP_TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify(request('cmd_js_owner_http')),
+      });
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), { error: 'journal_runtime_not_authorized' });
+      assert.equal(counts.headReads, 0, 'no head read past the latch');
+      assert.equal(counts.routineCalls, 0, 'no routine call past the latch');
+      const total = await adminPool.query<{ n: number }>('SELECT count(*)::int AS n FROM public.command_journal_events');
+      assert.equal(total.rows[0]?.n, 0, 'zero rows written');
+
+      // WITHOUT the latch: the same login calls the routine directly, inside
+      // a transaction that is rolled back, so the answer is measured without
+      // persisting a row.
+      const direct = await adminPool.connect();
+      let outcome: string;
+      try {
+        await direct.query('BEGIN');
+        try {
+          const appended = await direct.query<{ seq: string }>(
+            `SELECT seq::text AS seq FROM public.command_journal_append('command', $1, 'journaled', $2, $3)`,
+            ['cmd_js_owner_nolatch', '1', Buffer.from(expectedBytes(request('cmd_js_owner_nolatch'), '1'))],
+          );
+          outcome = appended.rows[0]?.seq === '1' ? 'succeeded' : `unexpected result ${JSON.stringify(appended.rows)}`;
+        } catch (error) {
+          outcome = `refused with SQLSTATE ${String((error as { code?: string }).code)}`;
+        }
+        await direct.query('ROLLBACK');
+      } finally {
+        direct.release();
+      }
+      t.diagnostic(`WITHOUT the latch, the owner-class login's append through the routine ${outcome}`);
+      assert.equal(outcome, 'succeeded', 'the bypass is real: the owner-class login executes the routine through its inherited br_app_runtime membership');
+      const after = await adminPool.query<{ n: number }>('SELECT count(*)::int AS n FROM public.command_journal_events');
+      assert.equal(after.rows[0]?.n, 0, 'the rolled-back probe left nothing behind');
+    } finally {
+      await plane?.stop();
+      await adminPool?.end().catch(() => undefined);
+      if (su !== undefined) {
+        await su.end().catch(() => undefined);
+        su = undefined;
+      }
+      if (owned !== undefined && owned.started) {
+        // Enumerated teardown on this run's cluster: the one database, then
+        // the four roles, and pg_roles absence asserted BEFORE destruction.
+        const cleanup = superClient(owned);
+        try {
+          await cleanup.connect();
+          await cleanup.query(`DROP DATABASE IF EXISTS ${database}`);
+          for (const role of ['br_app_runtime', 'command_journal_writer', 'br_journal_owner', adminRole]) {
+            await cleanup.query(`DROP ROLE IF EXISTS ${role}`);
+          }
+          const absent = await cleanup.query<{ n: number }>(
+            `SELECT count(*)::int AS n FROM pg_roles
+              WHERE rolname IN ('br_journal_owner','command_journal_writer','br_app_runtime',$1)`,
+            [adminRole],
+          );
+          assert.equal(absent.rows[0]?.n, 0, 'the owner-class cluster\'s roles must be absent from pg_roles at teardown');
+        } finally {
+          await cleanup.end().catch(() => undefined);
+        }
+      }
+      destroyOwnedInstance(owned);
     }
   });
 

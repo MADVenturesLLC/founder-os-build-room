@@ -16,7 +16,9 @@ import type { Pool } from 'pg';
 import type { GovernedCommandRequest } from '../packages/journal/src/index.js';
 import {
   DEFAULT_MAX_SEQ_RACE_RETRIES,
+  JOURNAL_RUNTIME_ROLE,
   JournalContendedError,
+  JournalRuntimeNotAuthorizedError,
   JournalStore,
 } from '../packages/control-plane/src/journal-store.js';
 
@@ -36,6 +38,9 @@ const untouchablePool = {
 function alwaysRacingPool(): { pool: Pool; calls: { headReads: number; routineCalls: number } } {
   const calls = { headReads: 0, routineCalls: 0 };
   const query = async (sql: string): Promise<{ rows: unknown[]; rowCount: number }> => {
+    if (/SELECT session_user/.test(sql)) {
+      return { rows: [{ session_user: JOURNAL_RUNTIME_ROLE, current_user: JOURNAL_RUNTIME_ROLE }], rowCount: 1 };
+    }
     if (/FROM public\.command_journal_chain_head/.test(sql)) {
       calls.headReads += 1;
       return { rows: [{ seq: '0' }], rowCount: 1 };
@@ -99,6 +104,44 @@ describe('journal store — maxSeqRaceRetries is validated at construction', () 
     assert.doesNotThrow(() => new JournalStore(untouchablePool));
     assert.doesNotThrow(() => new JournalStore(untouchablePool, { maxSeqRaceRetries: undefined }));
     assert.ok(Number.isInteger(DEFAULT_MAX_SEQ_RACE_RETRIES) && DEFAULT_MAX_SEQ_RACE_RETRIES >= 0);
+  });
+});
+
+/** Answers the identity latch with the given pair and records every other statement, which must never arrive. */
+function identityPool(sessionUser: string, currentUser: string): { pool: Pool; others: string[] } {
+  const others: string[] = [];
+  const query = async (sql: string): Promise<{ rows: unknown[]; rowCount: number }> => {
+    if (/SELECT session_user/.test(sql)) return { rows: [{ session_user: sessionUser, current_user: currentUser }], rowCount: 1 };
+    others.push(sql);
+    throw new Error('a journal statement was issued past the identity latch');
+  };
+  const client = { query, release: () => undefined };
+  return { pool: { query, connect: async () => client, on: () => undefined, end: async () => undefined } as unknown as Pool, others };
+}
+
+describe('journal store — the identity latch refuses any role but br_app_runtime before any journal statement', () => {
+  for (const [label, sessionUser, currentUser] of [
+    ['an owner-class login', 'example_owner_login', 'example_owner_login'],
+    ['an owner-class login that SET ROLEd into the runtime (current_user matches, session_user does not)', 'example_owner_login', JOURNAL_RUNTIME_ROLE],
+    ['the runtime login SET ROLEd elsewhere (session_user matches, current_user does not)', JOURNAL_RUNTIME_ROLE, 'example_other_role'],
+    ['a superuser', 'postgres', 'postgres'],
+  ] as const) {
+    it(`refuses ${label} with JournalRuntimeNotAuthorizedError and issues no head read and no routine call`, async () => {
+      const { pool, others } = identityPool(sessionUser, currentUser);
+      const store = new JournalStore(pool, { now: () => new Date('2026-09-27T12:00:00.000Z') });
+      await assert.rejects(
+        store.appendJournaled(request()),
+        (err: unknown) => err instanceof JournalRuntimeNotAuthorizedError && /connected role is not br_app_runtime/.test(err.message),
+      );
+      assert.deepEqual(others, [], 'nothing was issued past the latch');
+    });
+  }
+
+  it('refuses when the identity query returns no row', async () => {
+    const query = async (): Promise<{ rows: unknown[]; rowCount: number }> => ({ rows: [], rowCount: 0 });
+    const client = { query, release: () => undefined };
+    const pool = { query, connect: async () => client, on: () => undefined, end: async () => undefined } as unknown as Pool;
+    await assert.rejects(new JournalStore(pool).appendJournaled(request()), JournalRuntimeNotAuthorizedError);
   });
 });
 

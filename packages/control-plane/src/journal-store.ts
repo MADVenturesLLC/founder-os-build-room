@@ -37,10 +37,22 @@
  *
  * One pool, one login. The store takes the server's existing `Pool`; there
  * is no second connection string and no new environment variable (plan r1
- * §15 stop condition 6). Until Tranche D moves `DATABASE_URL` to
- * `br_app_runtime`, production's identity lacks EXECUTE on the routine and
- * this module answers `JournalRuntimeNotAuthorizedError` — a clean,
- * distinct, fail-closed refusal, not a crash.
+ * §15 stop condition 6).
+ *
+ * THE IDENTITY LATCH (Founder disposition of PR #78 review finding
+ * 4115032242, "owner-class login can journal"). The routine's EXECUTE grant
+ * is not a latch: a non-superuser admin that applied `0006` created the
+ * three roles and, on PostgreSQL 16, holds INHERIT membership in them — so
+ * it executes the routine through `br_app_runtime`'s own grant, and a
+ * superuser bypasses grants outright. Until Tranche D moves `DATABASE_URL`
+ * to `br_app_runtime`, production connects as exactly such an owner-class
+ * login. So the store refuses to append unless the CONNECTED role is
+ * `br_app_runtime` — both `session_user` (the login) and `current_user`
+ * (the effective role, which SET ROLE can change) — answering
+ * `JournalRuntimeNotAuthorizedError`, calling nothing and writing nothing.
+ * The same error covers SQLSTATE 42501 from either statement, so the route
+ * answers `503 journal_runtime_not_authorized` for every "not the runtime"
+ * case: a clean, distinct, fail-closed refusal, not a crash and never a row.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -116,14 +128,21 @@ export class JournalDuplicateEventError extends Error {
 }
 
 /**
- * The connected login lacks EXECUTE on the append routine (SQLSTATE 42501).
- * This is production's answer until Tranche D: distinct and fail-closed.
+ * The connected role is not the journal runtime: either the identity latch
+ * refused it (the connected role is not `br_app_runtime`) or PostgreSQL
+ * refused a statement with SQLSTATE 42501. This is production's answer
+ * until Tranche D: distinct and fail-closed.
  */
 export class JournalRuntimeNotAuthorizedError extends Error {
   override readonly name = 'JournalRuntimeNotAuthorizedError';
   readonly code = 'journal_runtime_not_authorized';
-  constructor(cause?: unknown) {
-    super('journal runtime is not authorized to execute the append routine', cause === undefined ? undefined : { cause });
+  constructor(cause?: unknown, detail?: string) {
+    super(
+      detail === undefined
+        ? 'journal runtime is not authorized to execute the append routine'
+        : `journal runtime is not authorized: ${detail}`,
+      cause === undefined ? undefined : { cause },
+    );
   }
 }
 
@@ -246,6 +265,12 @@ const APPEND_SQL =
 /** `br_app_runtime` holds SELECT on the head (migration 0006, statement 12). */
 const HEAD_SQL = 'SELECT seq::text AS seq FROM public.command_journal_chain_head WHERE head_id = 1';
 
+/** The one role the journal may be written as (migration 0006, statements 3 and 11). */
+export const JOURNAL_RUNTIME_ROLE = 'br_app_runtime';
+
+/** Both the login and the effective role, so a SET ROLE in either direction is visible. */
+const IDENTITY_SQL = 'SELECT session_user::text AS session_user, current_user::text AS current_user';
+
 export class JournalStore {
   private readonly now: () => Date;
   private readonly maxSeqRaceRetries: number;
@@ -262,15 +287,16 @@ export class JournalStore {
    * Append one `journaled` command-class event. Returns only after the
    * routine has committed the row; every other outcome is a typed error.
    *
-   * Order: normalize and redact → whole-row credential guard → read the head
-   * → encode at head + 1 → call the routine → return. A seq race re-enters
-   * at the head read and RE-ENCODES; an integrity finding leaves the loop
-   * immediately.
+   * Order: normalize and redact → whole-row credential guard → identity
+   * latch → read the head → encode at head + 1 → call the routine → return.
+   * A seq race re-enters at the head read and RE-ENCODES; an integrity
+   * finding leaves the loop immediately.
    */
   async appendJournaled(request: GovernedCommandRequest): Promise<JournaledAppendResult> {
     const { rowInput, envelopeDigest: digest } = buildJournaledRow(request, this.now);
     const client = await acquire(this.pool);
     try {
+      await requireRuntimeIdentity(client);
       const attempts = this.maxSeqRaceRetries + 1;
       for (let attempt = 1; attempt <= attempts; attempt++) {
         let seq: string;
@@ -424,6 +450,37 @@ function credentialSurfaceOf(row: Omit<CommandEventRow, 'seq'>): string[] {
     row.lifecycleEventRef?.roomId,
     row.lifecycleEventRef?.eventId,
   ].filter((value): value is string => value !== undefined);
+}
+
+// ---------------------------------------------------------------------------
+// The identity latch
+
+/**
+ * Refuse unless the connected role is `br_app_runtime`, BEFORE any journal
+ * statement: no head read, no routine call, nothing written.
+ *
+ * Checked per request, not cached per pooled connection. The cost is one
+ * round trip on a path that is never hot (a governed command is rare and
+ * the routine's own work dwarfs it); the return is that there is no cache
+ * to reason about across pool reconnects, and no way for a SET ROLE issued
+ * on a reused connection to be answered from a stale verdict. Both halves
+ * must match: `session_user` is the login Tranche D changes, `current_user`
+ * is what SET ROLE changes, and an owner-class login that SET ROLEs into
+ * the runtime is still an owner-class login.
+ */
+async function requireRuntimeIdentity(client: PoolClient): Promise<void> {
+  const { rows } = await client.query<{ session_user: string; current_user: string }>(IDENTITY_SQL);
+  const identity = rows[0];
+  if (
+    identity === undefined
+    || identity.session_user !== JOURNAL_RUNTIME_ROLE
+    || identity.current_user !== JOURNAL_RUNTIME_ROLE
+  ) {
+    throw new JournalRuntimeNotAuthorizedError(
+      undefined,
+      `connected role is not ${JOURNAL_RUNTIME_ROLE} (session_user=${identity?.session_user ?? '?'}, current_user=${identity?.current_user ?? '?'})`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
