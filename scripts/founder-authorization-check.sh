@@ -75,7 +75,7 @@ match="$(jq -c \
           | gsub("\\[(?<t>[^\\]]*)\\]\\([^)]*\\)"; "\(.t)")
           | gsub("\\s+"; " ")
           | ltrimstr(" ")) as $text
-      | ($text | capture("^Authorized: merge (?<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?<pr>[0-9]+) at head `?(?<sha>[0-9A-Fa-f]{40})`?(?![0-9A-Fa-f])")?) as $m
+      | ($text | capture("^Authorized: merge (?<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?<pr>[0-9]+) at head `?(?<sha>[0-9A-Fa-f]{40})(?![0-9A-Za-z_])")?) as $m
       | select($m != null)
       | select(($m.repo | ascii_downcase) == ($repo | ascii_downcase))
       | select($m.pr == $pr)

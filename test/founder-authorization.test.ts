@@ -19,7 +19,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -116,6 +117,8 @@ describe('founder authorization check — refused forms', () => {
     ]],
     ['a short SHA', [comment(16, `Authorized: merge ${REPO}#${PR} at head ${HEAD.slice(0, 7)}`)]],
     ['a longer hex run that only starts with the head', [comment(17, `Authorized: merge ${REPO}#${PR} at head ${HEAD}ab`)]],
+    ['the head followed directly by letters', [comment(19, `Authorized: merge ${REPO}#${PR} at head ${HEAD}xyz`)]],
+    ['the head followed directly by an underscore', [comment(24, `Authorized: merge ${REPO}#${PR} at head ${HEAD}_x`)]],
     ['a linked reference to a different PR', [
       comment(18, `Authorized: merge [${REPO}#80](https://example.invalid/80) at head ${HEAD}`),
     ]],
@@ -206,5 +209,123 @@ describe('founder-authorization workflow shape', () => {
     assert.ok(text.includes('context: "founder-authorization"'), 'status context is founder-authorization');
     assert.ok(lines.some((l) => l.trim() === `FOUNDER_LOGINS: ${FOUNDER}`), `FOUNDER_LOGINS is ${FOUNDER}`);
     assert.ok(text.includes('bash scripts/founder-authorization-check.sh'), 'the decision is the tested script');
+  });
+});
+
+/**
+ * The workflow's own shell, run for real against a fake GitHub API: a `curl`
+ * on PATH that serves fixture JSON by URL and records every status POST. This
+ * is the only way to observe the two behaviours the run: script owns — that a
+ * head shared with another open PR is refused, and that an evaluation which
+ * cannot complete publishes failure instead of leaving an earlier success.
+ */
+describe('founder-authorization workflow script against a fake GitHub API', () => {
+  const FAKE_CURL = `#!/usr/bin/env bash
+url=""; post=0; data=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -X) [[ "$2" == POST ]] && post=1; shift 2 ;;
+    -d) data="$2"; shift 2 ;;
+    -H) shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if [[ -n "\${FAKE_FAIL:-}" && "$url" == *"$FAKE_FAIL"* ]]; then exit 22; fi
+if [[ $post -eq 1 ]]; then printf '%s\\n' "$data" >> "$FAKE_LOG"; echo '{}'; exit 0; fi
+case "$url" in
+  */pulls\\?state=open*) cat "$FAKE_OPEN" ;;
+  */pulls/*) cat "$FAKE_PR" ;;
+  */issues/*/comments*) cat "$FAKE_COMMENTS" ;;
+  *) exit 22 ;;
+esac
+`;
+
+  function runScript(): string {
+    const text = readFileSync(WORKFLOW, 'utf8').split('\n');
+    const start = text.findIndex((l) => /^\s+run: \|$/.test(l));
+    assert.ok(start !== -1, 'expected one run: block');
+    const runIndent = (text[start] ?? '').length - (text[start] ?? '').trimStart().length;
+    const body: string[] = [];
+    for (const l of text.slice(start + 1)) {
+      if (l.trim() !== '' && l.length - l.trimStart().length <= runIndent) break;
+      body.push(l.slice(runIndent + 2));
+    }
+    return body.join('\n');
+  }
+
+  function simulate(opts: { comments: Comment[]; openPrs?: Array<{ number: number; head: { sha: string } }>; failOn?: string }) {
+    const dir = mkdtempSync(join(tmpdir(), 'founder-auth-'));
+    try {
+      const bin = join(dir, 'bin');
+      spawnSync('mkdir', ['-p', bin]);
+      writeFileSync(join(bin, 'curl'), FAKE_CURL);
+      chmodSync(join(bin, 'curl'), 0o755);
+      const files = {
+        FAKE_PR: join(dir, 'pr.json'),
+        FAKE_OPEN: join(dir, 'open.json'),
+        FAKE_COMMENTS: join(dir, 'comments.json'),
+        FAKE_LOG: join(dir, 'posts.log'),
+      };
+      writeFileSync(files.FAKE_PR, JSON.stringify({ number: PR, head: { sha: HEAD } }));
+      writeFileSync(files.FAKE_OPEN, JSON.stringify(opts.openPrs ?? [{ number: PR, head: { sha: HEAD } }]));
+      writeFileSync(files.FAKE_COMMENTS, JSON.stringify(opts.comments));
+      writeFileSync(files.FAKE_LOG, '');
+      const result = spawnSync('bash', ['-c', runScript()], {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          ...files,
+          ...(opts.failOn === undefined ? {} : { FAKE_FAIL: opts.failOn }),
+          PATH: `${bin}:${process.env.PATH ?? ''}`,
+          GH_TOKEN: 'fake-token-for-tests',
+          REPO,
+          PR_NUMBER: String(PR),
+          FOUNDER_LOGINS: FOUNDER,
+        },
+      });
+      const posts = readFileSync(files.FAKE_LOG, 'utf8').split('\n').filter((l) => l !== '')
+        .map((l) => JSON.parse(l) as { state: string; context: string; description: string });
+      return { status: result.status, posts, stderr: result.stderr };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('publishes success when the current head is authorized', () => {
+    const r = simulate({ comments: [comment(30, block())] });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.posts.map((p) => [p.context, p.state]), [['founder-authorization', 'success']]);
+  });
+
+  it('publishes failure when it is not, and the job fails', () => {
+    const r = simulate({ comments: [comment(31, block(PR, OLDER_HEAD))] });
+    assert.notEqual(r.status, 0, 'the job fails too, so its check run cannot stay green');
+    assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+  });
+
+  it('refuses a head shared with another open PR even when this PR is authorized', () => {
+    const r = simulate({
+      comments: [comment(32, block())],
+      openPrs: [{ number: PR, head: { sha: HEAD } }, { number: 99, head: { sha: HEAD } }],
+    });
+    assert.notEqual(r.status, 0, 'the job fails too');
+    assert.equal(r.posts.length, 1);
+    assert.equal(r.posts[0]?.state, 'failure');
+    assert.match(r.posts[0]?.description ?? '', /shared with open PR #99/);
+  });
+
+  it('publishes failure when the comments cannot be fetched, so no earlier success survives', () => {
+    const r = simulate({ comments: [comment(33, block())], failOn: '/comments' });
+    assert.notEqual(r.status, 0, 'the job itself still fails');
+    assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+    assert.match(r.posts[0]?.description ?? '', /did not complete/);
+  });
+
+  it('publishes failure when the open-PR list cannot be fetched', () => {
+    const r = simulate({ comments: [comment(34, block())], failOn: 'state=open' });
+    assert.notEqual(r.status, 0);
+    assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
   });
 });

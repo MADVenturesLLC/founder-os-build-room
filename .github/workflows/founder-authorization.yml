@@ -19,8 +19,20 @@
 #
 # WHAT IT CANNOT PROVE. Founder and agent sessions comment through the same
 # GitHub account, so the status proves which account wrote the comment, not
-# which person or session. It stops accidental merges; the rule that only the
-# Founder posts authorizations still carries the rest.
+# which person or session. And GitHub does not bind a status context or a
+# check name to this workflow: a pull request from a branch in this
+# repository could add its own workflow that posts `founder-authorization`
+# as success. Both are deliberate circumvention, visible in the diff (a
+# workflow change the Founder reviews), not accidents. This guard stops
+# accidental merges; the rule that only the Founder posts authorizations
+# still carries the rest. Binding the status to this workflow alone needs a
+# dedicated GitHub App whose key only a main-restricted environment can
+# read, a Founder provisioning act this file does not perform.
+#
+# FAILS CLOSED. Once the head is known, any step that cannot complete
+# publishes `failure`, so an earlier `success` on the head never outlives an
+# evaluation that errored. A commit status belongs to a SHA, not a PR, so a
+# head shared with another open PR is refused rather than judged.
 #
 # UNTRUSTED INPUT. pull_request_target and issue_comment run with a token
 # that can write statuses, so this workflow never checks out or executes PR
@@ -79,7 +91,39 @@ jobs:
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "$@"
           }
+          publish() {
+            # $1 state, $2 description
+            local payload
+            payload="$(jq -nc --arg s "$1" --arg d "$2" \
+              '{state: $s, context: "founder-authorization", description: ($d | .[0:140])}')"
+            api -X POST "https://api.github.com/repos/$REPO/statuses/$head_sha" -d "$payload" >/dev/null
+            echo "founder-authorization: $1 on $head_sha ($2)"
+          }
           head_sha="$(api "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" | jq -er '.head.sha')"
+          # From here on, any step that fails publishes failure before the job
+          # ends, so an earlier success on this head can never outlive an
+          # evaluation that could not complete.
+          trap 'trap - ERR; publish failure "Evaluation did not complete; re-run to judge this head" || true' ERR
+
+          # A commit status belongs to a SHA, not a PR. If another open PR
+          # shares this head, a success here would show on that PR too, so a
+          # shared head is refused outright.
+          open_prs='[]'
+          page=1
+          while :; do
+            batch="$(api "https://api.github.com/repos/$REPO/pulls?state=open&per_page=100&page=$page")"
+            open_prs="$(jq -c --argjson acc "$open_prs" '$acc + .' <<<"$batch")"
+            if [[ "$(jq 'length' <<<"$batch")" -lt 100 ]]; then break; fi
+            page=$((page + 1))
+          done
+          sharing="$(jq -r --arg h "$head_sha" --argjson n "$PR_NUMBER" \
+            '[.[] | select(.head.sha == $h and .number != $n) | "#\(.number)"] | join(" ")' <<<"$open_prs")"
+          if [[ -n "$sharing" ]]; then
+            trap - ERR
+            publish failure "Head ${head_sha:0:7} is shared with open PR $sharing; refused"
+            exit 1
+          fi
+
           comments='[]'
           page=1
           while :; do
@@ -94,7 +138,8 @@ jobs:
             state=failure
           fi
           description="$(jq -r '.description' <<<"$verdict")"
-          payload="$(jq -nc --arg s "$state" --arg d "$description" \
-            '{state: $s, context: "founder-authorization", description: ($d | .[0:140])}')"
-          api -X POST "https://api.github.com/repos/$REPO/statuses/$head_sha" -d "$payload" >/dev/null
-          echo "founder-authorization: $state on $head_sha ($description)"
+          trap - ERR
+          publish "$state" "$description"
+          # The job's own check run mirrors the status, so either can be the
+          # required check and neither stays green on an unauthorized head.
+          [[ "$state" == success ]]
