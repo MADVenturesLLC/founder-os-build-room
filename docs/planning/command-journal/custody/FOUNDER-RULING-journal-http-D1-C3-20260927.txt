@@ -1,0 +1,62 @@
+FOUNDER RULING — JOURNAL HTTP WRITE PATH: D-1 AND C3
+RULING: D-1 WITHDRAWN; C3 GUARD ACCEPTED; TRANCHE D CONDITIONED
+I, Michael Alberto Daley, issue the following ruling.
+This ruling decides the two questions the journal HTTP plan correction
+note leaves to the Founder in its C1 and C3. It is not a merge
+authorization. It authorizes no merge, migration, Gate IV act, dispatch,
+deployment, Tranche D cutover, key provisioning, or redaction work. It
+creates no spend, provisioning, credential, or execution authority.
+INSTRUMENTS BOUND
+  D-1 scope ruling of 2026-09-14
+    path:  docs/planning/command-journal/custody/FOUNDER-RULING-pr2b-D1-scope-amendment-20260914.txt
+    blob:  6be4e0576533a5a459a19e7338f245d1fa0634b0
+    sha256: da1b3b5f7814f6cdfb623945028d12484e379f94997c768f42edb9885dff3e33
+  Journal HTTP plan r1 correction note
+    path:  docs/planning/command-journal/journal-http-integration-plan-r1-CORRECTION-NOTE-20260926.md
+    blob:  ef1beb2cec43058446253e0f5fa8c6b7b8558ebd
+    sha256: aa28b901c7384206e14ba742645ec4548cf3100cfd88003692ba1734adbfa640
+    both on: founder-os-build-room main at a226380ad28ff96577d786e0ffd929abf0ed2754
+  PR #78, the write path these rulings concern
+    Tier-2 reviewed at c2921d3ee06e639a9d46ac2af3213e9c302e0757
+    (gemini-3.1-pro, PASS-WITH-ADVISORIES); head when this ruling
+    was drafted: 27bc5d4db2f8cb62a44db010a0d8490de1abb795, whose diff
+    against main is identical to the reviewed head's
+D-1 — RULING
+D-1 is withdrawn. For the journal HTTP write path it is superseded by
+Option B: a direct packages/control-plane caller of the landed
+five-argument command_journal_append that reuses packages/journal's pure
+exports, as PR #78 implements it. B-N2 (journal-append.ts), B-N3
+(redaction-boundary.ts), B-T4, the SQL-side encoder and the r6
+three-argument signatures are not to be built for this write path.
+The D-1 ruling's RECONCILIATION sentences bind only a successor Gate
+III draft that adopts D-1, and lapse with it. This withdrawal does not
+depend on the supplementary Addendum-02 disposition PR #54 cites
+(msg 9052), whose text is not in this repository.
+C3 — RULING
+The pre-write guard is accepted for PR #78: packages/journal's
+normalizeForJournal redaction and a containsCredentialMaterial scan of
+every caller-supplied string, both applied before any database contact.
+packages/redaction's JournalAppendSink stays unwired. No Tranche D
+cutover (moving DATABASE_URL to br_app_runtime) occurs until the
+JournalAppendSink reconciliation named in the correction note's C3 has
+been ruled and FD-3 key custody has been resolved. Until that cutover,
+PR #78's identity latch refuses appends from every login other than
+br_app_runtime.
+WHAT THIS RULING DOES NOT DO
+- It does not authorize the merge of PR #78; that is a separate
+  SHA-named act.
+- It does not rule the JournalAppendSink reconciliation or FD-3.
+- It authorizes no Tranche D cutover, key provisioning, migration, Gate
+  IV act, workflow dispatch, or deployment.
+- It does not alter the D-1 ruling or the correction note; both stay as
+  landed.
+- It changes no ratified decision in FounderOS.
+CUSTODY
+Preserve this ruling verbatim as a new file in founder-os-build-room at
+exactly this path:
+  docs/planning/command-journal/custody/FOUNDER-RULING-journal-http-D1-C3-20260927.txt
+Land it in its own commit with a custody receipt. Record its SHA-256,
+bytes, lines, and trailing-newline status in that commit and in the
+receipt. Do not alter the text.
+Signed: Michael Daley
+Date: 2026-09-27
