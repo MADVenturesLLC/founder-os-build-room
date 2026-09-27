@@ -145,7 +145,7 @@ function stepsOf(block: readonly Line[]): Line[][] {
   return out;
 }
 
-/** Every line of shell the platform would execute: `run:` block scalars and inline `run:` values. */
+/** Every line of shell the platform would execute: `run:` block-scalar bodies and inline `run:` values, without the key. */
 function runScriptLines(block: readonly Line[]): Line[] {
   const out: Line[] = [];
   let i = 0;
@@ -165,10 +165,114 @@ function runScriptLines(block: readonly Line[]): Line[] {
         i += 1;
       }
     } else {
-      out.push(line);
+      out.push({ index: line.index, text: value });
     }
   }
   return out;
+}
+
+/** Words that may precede a command without changing which command runs. */
+const COMMAND_PREFIX_WORDS = new Set([
+  '!', 'if', 'elif', 'then', 'else', 'while', 'until', 'do', 'exec', 'command', 'builtin', 'time', 'sudo',
+]);
+/** `env` options that consume the word after them, so that word is not the utility to run. */
+const ENV_OPTIONS_WITH_ARGUMENT = new Set(['-u', '--unset', '-C', '--chdir']);
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * The simple commands one line of shell would run, in order: split at
+ * unquoted `|`, `&`, `;`, newlines and the brackets of groups, subshells
+ * and `$( )` or backtick substitutions, wherever those sit, including
+ * inside double quotes. Quoted text is dropped, so a `|` inside an echoed
+ * table row is not a pipe and never yields a command; an unquoted
+ * backslash keeps the character it escapes, so `\env` is still `env`.
+ */
+function shellCommands(text: string): string[] {
+  const out: string[] = [];
+  const pending: Array<{ closer: string; quote: '"' | undefined }> = [];
+  let quote: '"' | "'" | undefined;
+  let current = '';
+  const cut = (): void => {
+    if (current.trim() !== '') out.push(current.trim());
+    current = '';
+  };
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i] ?? '';
+    const pair = ch + (text[i + 1] ?? '');
+    const closer = pending[pending.length - 1]?.closer;
+    if (quote === "'") {
+      if (ch === "'") quote = undefined;
+    } else if (ch === '\\') {
+      if (quote === undefined) current += text[i + 1] ?? '';
+      i += 1;
+    } else if (pair === '$(' || (ch === '`' && closer !== '`')) {
+      cut();
+      pending.push({ closer: ch === '`' ? '`' : ')', quote });
+      quote = undefined;
+      if (pair === '$(') i += 1;
+    } else if (quote === '"') {
+      if (ch === '"') quote = undefined;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+    } else if (ch === closer) {
+      cut();
+      quote = pending.pop()?.quote;
+    } else if ('|&;(){}\n'.includes(ch)) {
+      cut();
+    } else {
+      current += ch;
+    }
+  }
+  cut();
+  return out;
+}
+
+/** `words` less redirection operators and the targets that follow them. */
+function withoutRedirections(words: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i] ?? '';
+    if (/^(\d*[<>]|&>)/.test(word)) {
+      if (/^(\d*[<>]+|&>>?)$/.test(word)) i += 1;
+      continue;
+    }
+    out.push(word);
+  }
+  return out;
+}
+
+/** `env` runs a utility only if some operand is neither an option, an option's argument nor NAME=value. */
+function envRunsUtility(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i] ?? '';
+    if (ENV_OPTIONS_WITH_ARGUMENT.has(arg)) i += 1;
+    else if (!arg.startsWith('-') && !ASSIGNMENT.test(arg)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether one simple command prints the whole environment, or every shell
+ * variable: `env` with no utility to run, `printenv` in any form, `export`,
+ * `declare` or `typeset` with nothing to set or with -p, and `set` with no
+ * arguments. `set -euo pipefail`, `export NAME=value`, `declare -x
+ * NAME=value` and `env NAME=value utility` are not dumps.
+ */
+function dumpsEnvironment(command: string): boolean {
+  const words = withoutRedirections(command.split(/\s+/).filter((w) => w !== ''));
+  while (words.length > 0 && (COMMAND_PREFIX_WORDS.has(words[0] ?? '') || ASSIGNMENT.test(words[0] ?? ''))) words.shift();
+  const [path, ...args] = words;
+  const name = path?.split('/').pop();
+  const printsOption = args.some((a) => /^-[A-Za-z]*p/.test(a));
+  switch (name) {
+    case 'printenv': return true;
+    case 'set': return args.length === 0;
+    case 'export': return args.length === 0 || printsOption;
+    case 'declare':
+    case 'typeset': return args.every((a) => a.startsWith('-')) || printsOption;
+    case 'env': return !envRunsUtility(args);
+    default: return false;
+  }
 }
 
 describe('db-admin-migration workflow shape (C-T1)', () => {
@@ -365,5 +469,56 @@ describe('db-admin-migration workflow shape (C-T1)', () => {
     assert.equal(executables.length, 1, 'exactly one run:/uses: precedes the shape check');
     assert.match(executables[0]?.text ?? '', /\brun:/, 'and it is the run: that contains the check, not a uses:');
     assert.equal(stepsOf(preflight).findIndex((step) => step.some((l) => l.text.includes(SHA_SHAPE))), 0, 'the shape check is in the first step');
+  });
+
+  // Founder disposition on the PR #76 merge (docs/planning/command-journal/
+  // custody/FOUNDER-RULING-pr76-merge-disposition-20260927.txt), FINDING 4
+  // and REMEDIATION 4: three mutants the first eighteen cases let through.
+
+  it('no step or job carries continue-on-error, so a failed SHA assertion fails its job (disposition FINDING 4)', () => {
+    const lines = significantLines(readWorkflow());
+    for (const l of lines) {
+      assert.ok(!/\bcontinue-on-error\b/.test(l.text), `continue-on-error at line ${l.index + 1}: ${l.text.trim()}`);
+    }
+  });
+
+  it('neither job carries a job-level if:, so migrate cannot run when preflight fails (disposition FINDING 4)', () => {
+    const lines = significantLines(readWorkflow());
+    for (const name of ['preflight', 'migrate']) {
+      const block = job(lines, name);
+      const conditions = block.filter((l) => indentOf(l.text) === 4 && /^["']?if["']?\s*:/.test(l.text.trim()));
+      assert.deepEqual(conditions.map((l) => l.text.trim()), [], `${name} has no job-level if:`);
+      assert.ok(!keysAt(block, 4).includes('if'), `${name} job keys carry no if`);
+    }
+  });
+
+  it('no run: script dumps the environment: no bare env, printenv, export -p, declare -p or -x, or bare set (disposition FINDING 4)', () => {
+    const lines = significantLines(readWorkflow());
+    const scripts = runScriptLines(lines);
+    assert.ok(scripts.length > 0, 'expected run: scripts to inspect');
+    for (const l of scripts) {
+      for (const command of shellCommands(l.text)) {
+        assert.ok(!dumpsEnvironment(command), `environment dump in a run: script at line ${l.index + 1}: ${command}`);
+      }
+    }
+  });
+
+  it('control: the dump detector refuses each ruled form and accepts the shell the workflow uses', () => {
+    const dumps = (line: string): boolean => shellCommands(line).some(dumpsEnvironment);
+    const refused = [
+      'env', 'env | sort', 'env > /dev/null', 'env -0', 'FOO=1 env', '/usr/bin/env', '\\env',
+      'printenv', 'printenv HOME', 'export', 'export -p', 'declare', 'declare -p', 'declare -p HOME',
+      'declare -x', 'typeset -p', 'set', 'set | grep SHA', 'set >> "$GITHUB_STEP_SUMMARY"',
+      'echo "$(env)"', 'echo "`printenv`"', 'if env; then', 'true && env', 'sudo env', '{ env; } 2>&1',
+    ];
+    const accepted = [
+      'set -euo pipefail', 'set -o', 'set -- "$@"', 'export FOO=bar', 'declare -x FOO=bar', 'declare -i N=1',
+      'env FOO=bar npm ci', 'env -u FOO npm ci', 'env -i npm ci', 'echo "| env | set |"', "echo '```json'",
+      'echo "\\`$OBSERVED_SHA\\`" >> "$GITHUB_STEP_SUMMARY"', 'jq . "$EVIDENCE" || cat "$EVIDENCE"',
+      'if ! [[ "$X" =~ ^[0-9a-f]{40}$ ]]; then', 'EVIDENCE="$RUNNER_TEMP/stage5-evidence.json"',
+      '} >> "$GITHUB_STEP_SUMMARY"', 'npm run --silent migrate:admin -- "$TRANCHE_ID" > "$RUNNER_TEMP/out.json"',
+    ];
+    assert.deepEqual(refused.filter((line) => !dumps(line)), [], 'every ruled form is refused');
+    assert.deepEqual(accepted.filter(dumps), [], 'no legitimate form is refused');
   });
 });
