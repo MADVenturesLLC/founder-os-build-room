@@ -162,6 +162,14 @@ This does not correct r1's content. It corrects the record of how r1 reached
 - The Tranche C builder session reported, in its work on PR #76, that the
   failure is org-wide and began before 17:11Z. This note has verified only the
   repository-level fact above.
+- Cause and response, added 2026-09-27. The Founder reported the
+  organization's 2,000-minute Actions quota as exhausted ("my action minutes
+  are used up 2k/2k") and made this repository public. [Certain] Its
+  visibility read back as `public` through the GitHub API at
+  2026-09-27T02:35Z, with the repository last updated at 02:26:03Z. The
+  startup-failure runs cannot be retried: GitHub answers 403, "This workflow
+  run cannot be retried". So whether hosted checks run again is shown by the
+  runs on the commit that adds this bullet, not by this note.
 - Local substitutes that did run:
   - before merge, at PR #75's heads: `gate:path-audit`, `gate:secret-scan`,
     `gate:custody-pin-check`, `gate:attribution-selftest`, and
@@ -180,5 +188,7 @@ This does not correct r1's content. It corrects the record of how r1 reached
 
 This note makes only the four corrections above. It does not edit r1. It does
 not revisit r1's hashes, its §1 scope, or §4.2's two hazards, which remain
-accurate. It rules on none of D-1, FD-2, FD-3, the redaction reconciliation,
-or the execution of `0006`/`0007`.
+accurate. It rules on none of D-1, FD-3, the redaction reconciliation, or the
+execution of `0006`/`0007`. PR 2b `FD-2` is not open: FounderOS
+`DEC-20260917-01`, ratified 2026-09-18 (decision-log v4.67), discharged it.
+An earlier revision of this sentence listed it among the open items.
