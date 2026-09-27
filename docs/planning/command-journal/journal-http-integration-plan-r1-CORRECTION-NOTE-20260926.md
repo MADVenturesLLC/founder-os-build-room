@@ -168,8 +168,19 @@ This does not correct r1's content. It corrects the record of how r1 reached
   visibility read back as `public` through the GitHub API at
   2026-09-27T02:35Z, with the repository last updated at 02:26:03Z. The
   startup-failure runs cannot be retried: GitHub answers 403, "This workflow
-  run cannot be retried". So whether hosted checks run again is shown by the
-  runs on the commit that adds this bullet, not by this note.
+  run cannot be retried". Whether hosted checks ran again is recorded in the
+  next bullet.
+- Recovery, added 2026-09-27. Making the repository public was not enough on
+  its own. [Certain] From 02:36Z to 04:04Z, every job run for this note's
+  second commit (`85dfbbb`) was created as a real job, then failed within
+  about two seconds with no runner assigned (`runner_id` 0, no log). The
+  Founder saw GitHub's message that the spending limit needed to be
+  increased. They then changed the organization's billing settings, including
+  adding a payment card and removing a $0 budget. [Certain] The first job to
+  get a GitHub-hosted runner started at 2026-09-27T04:06:10Z (CI run
+  `36288984538`, attempt 8). An attempt at 04:04Z had still failed. Which
+  change took effect, and whether the gap was propagation delay, is not
+  established.
 - Local substitutes that did run:
   - before merge, at PR #75's heads: `gate:path-audit`, `gate:secret-scan`,
     `gate:custody-pin-check`, `gate:attribution-selftest`, and
