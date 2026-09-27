@@ -1,0 +1,84 @@
+FOUNDER RULING — PR #75 CI GATE DISPOSITION
+DISPOSITION: NONCOMPLIANT_MERGE_RECORDED
+I, Michael Alberto Daley, issue the following disposition.
+This disposition records a breach of the CI gate by the merge of PR #75.
+It does not cure the breach, excuse it, or treat any later hosted CI run
+as having run for PR #75. It authorizes no migration, no redaction work,
+no deployment, and no merge. It creates no spend, provisioning,
+credential, or execution authority.
+SUBJECTS BOUND
+  PR #75 merge commit
+    commit:  41de91d9a61b6c4453570370adff60dc005be32c
+    on:      founder-os-build-room main, committed 2026-09-26T20:02:55Z
+    heads:   da0a540a315d83c9dd12d980f2dbb44e91c62f95
+             619289de63c5f45cb1365a9fbfc17879894804d8
+    change:  one file added,
+             docs/planning/command-journal/journal-http-integration-plan-r1.md
+  Correction note recording the breach (corrected text)
+    path:    docs/planning/command-journal/journal-http-integration-plan-r1-CORRECTION-NOTE-20260926.md
+    blob:    ef1beb2cec43058446253e0f5fa8c6b7b8558ebd
+    sha256:  aa28b901c7384206e14ba742645ec4548cf3100cfd88003692ba1734adbfa640
+    at:      PR #77 head 6a72c39a810ab4d682dbb1ec616ac6b329cc5af2, merged
+             to main as 9fda98771a3016f96e45b707e1228483c885e1d8 on
+             2026-09-27; the note is unchanged by the merge
+FINDING
+1. The GitHub Actions runs associated with PR #75's two commits and its
+   merge commit concluded startup_failure. None of ci.yml,
+   path-audit.yml, attribution-shape.yml, or custody-pin-check.yml
+   executed for that PR or its merge. The only push run recorded for
+   41de91d on main is run 36268150537, which concluded startup_failure
+   at 2026-09-26T20:02:58Z.
+2. founder-os-build-room AGENTS.md, as it stood at 41de91d, lists
+   "Merging to main without required CI checks" as an approval gate and
+   states "CI must pass before merge to main". PR #75 merged without
+   those checks having run. I issued no act waiving that gate for PR #75
+   before the merge.
+3. Local runs of the same gate scripts passed at PR #75's heads and at
+   41de91d, as the correction note's C4 records. They are not the hosted
+   checks and do not satisfy the gate.
+4. Hosted checks later ran and passed on PR #77's heads, including
+   6a72c39a810ab4d682dbb1ec616ac6b329cc5af2. That shows hosted Actions
+   recovered. It is not execution for PR #75's commits or for 41de91d,
+   and this disposition does not treat it as such.
+DISPOSITION
+NONCOMPLIANT_MERGE_RECORDED. The merge of PR #75 at 41de91d breached the
+CI gate. It is recorded as a noncompliant merge, not as an exception.
+This disposition does not revert it.
+REMEDIATION
+1. No revert. PR #75 added one planning document and changed no code,
+   test, workflow, migration, or configuration, so a revert would change
+   no runtime behaviour. The correction note depends on the document
+   staying where it is.
+2. The first hosted runs of ci.yml, path-audit.yml, attribution-shape.yml,
+   and custody-pin-check.yml on a main commit that contains 41de91d are
+   recorded here. They ran on 9fda98771a3016f96e45b707e1228483c885e1d8 on
+   2026-09-27: CI run 36312656971 (build-and-test, hygiene,
+   storage-integration), Path Audit run 36312656974, Attribution Shape
+   Check run 36312656992, and Custody Pin Check run 36312657076, all
+   concluded success. They verify the content PR #75 landed. They do not
+   cure the breach.
+WHAT THIS DISPOSITION DOES NOT DO
+- It authorizes no migration, including 0006_command_journal_authority_split
+  and 0007_gate_runs.
+- It authorizes no redaction work, including the JournalAppendSink
+  reconciliation named in the correction note's C3.
+- It authorizes no deployment.
+- It authorizes no merge of any pull request.
+- It rules on none of D-1, FD-3, or the redaction reconciliation.
+- It does not change the correction note, which remains a DRAFT,
+  descriptive record.
+- It does not rewrite history on main.
+BINDING
+This disposition names three commits: 41de91d9a61b6c4453570370adff60dc005be32c
+(PR #75's merge), 6a72c39a810ab4d682dbb1ec616ac6b329cc5af2 (PR #77's
+reviewed head), and 9fda98771a3016f96e45b707e1228483c885e1d8 (PR #77's
+merge, the first main commit with hosted checks after the breach).
+CUSTODY
+Preserve this disposition verbatim as a new file in founder-os-build-room
+at exactly this path:
+  docs/planning/command-journal/custody/FOUNDER-RULING-pr75-ci-gate-disposition-20260927.txt
+Land it in its own commit, with the custody receipt that accompanies it.
+Record its SHA-256, bytes, lines, and trailing-newline status in that
+commit and in the receipt. Do not alter the text.
+Signed: Michael Daley
+Date: 2026-09-27
