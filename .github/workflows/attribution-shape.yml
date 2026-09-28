@@ -119,6 +119,16 @@ jobs:
           # trailer rules; prose after trailers inside the author body
           # still fails.
           PR_BODY_RAW: ${{ github.event.pull_request.body }}
+          # The merge commit is "<title> (#N)\n\n<body>", so the title is
+          # the first line git reads and a divider-shaped title strips
+          # every trailer below it (Copilot on FounderOS PR #356,
+          # 2026-09-21). The checker prepends it for its git-readability
+          # parse and rejects a divider-shaped one. Untrusted input, env
+          # mapping only, like the body; it bypasses the Cursor sanitizer
+          # below, which touches only the body. A base-revision checker
+          # that predates PR_TITLE ignores the variable. Added under the
+          # Founder's PR #83 merge disposition, REMEDIATION 5.
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           PR_BODY="$(python3 -c '
           import os, re
