@@ -105,6 +105,14 @@ describe('journal store — maxSeqRaceRetries is validated at construction', () 
     assert.doesNotThrow(() => new JournalStore(untouchablePool, { maxSeqRaceRetries: undefined }));
     assert.ok(Number.isInteger(DEFAULT_MAX_SEQ_RACE_RETRIES) && DEFAULT_MAX_SEQ_RACE_RETRIES >= 0);
   });
+
+  it('pins DEFAULT_MAX_SEQ_RACE_RETRIES at 5', () => {
+    assert.equal(
+      DEFAULT_MAX_SEQ_RACE_RETRIES,
+      5,
+      'the seq-race retry bound is a reviewed decision (PR #78, Tier-2 advisory 2): a change to it is deliberate and updates this test with it',
+    );
+  });
 });
 
 /** Answers the identity latch with the given pair and records every other statement, which must never arrive. */
@@ -158,4 +166,17 @@ describe('journal store — the accepted bound actually bounds the attempts', ()
       assert.equal(calls.headReads, retries + 1, 'every attempt re-read the head');
     });
   }
+
+  it('with maxSeqRaceRetries absent, the default bound applies: exactly 6 attempts, then contended', async () => {
+    const now = (): Date => new Date('2026-09-28T12:00:00.000Z');
+    const { pool, calls } = alwaysRacingPool();
+    const store = new JournalStore(pool, { now });
+    await assert.rejects(store.appendJournaled(request()), (err: unknown) => {
+      assert.ok(err instanceof JournalContendedError, 'a race on every attempt ends contended');
+      assert.equal(err.attempts, 6, 'one attempt plus the default five retries');
+      return true;
+    });
+    assert.equal(calls.routineCalls, 6);
+    assert.equal(calls.headReads, 6, 'every attempt re-read the head');
+  });
 });
