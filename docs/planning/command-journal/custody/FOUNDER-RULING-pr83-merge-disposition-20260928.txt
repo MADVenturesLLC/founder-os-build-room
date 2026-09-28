@@ -1,0 +1,97 @@
+FOUNDER RULING — PR #83 MERGE DISPOSITION
+DISPOSITION: NONCOMPLIANT_MERGE_RECORDED
+I, Michael Alberto Daley, issue the following disposition.
+This disposition records that PR #83 was merged without three things the
+merge required. It does not cure them or excuse them. It authorizes no
+merge, dispatch, deployment, or change to repository settings. It creates
+no spend, provisioning, credential, or execution authority.
+SUBJECTS BOUND
+  PR #83 merge commit
+    commit:  69ca61bb0fa516a0e3a4920294bf28fccf35d783
+    on:      founder-os-build-room main, merged 2026-09-28T00:51:50Z
+    parents: a71e96a87fedab3f48a3c67597d8ca5c0f829e0d
+             60a024cfbee4489f1152688e6a87209b3e6340cd (PR #83 head)
+    tree:    74c170b44c609024433836c2bf1d933507945020, identical to the
+             head's tree
+    change:  three files added
+      .github/workflows/founder-authorization.yml
+        blob     63bf3393277d84976851f1c873ff4e635675ea33
+        SHA-256  5f8aec9a563438a7fd97311d5c4e66691d8898e81a6f749873d54a553fb23d0e
+      scripts/founder-authorization-check.sh
+        blob     6c8c04209b67ef837f48a5ccfc767c83f93058ea
+        SHA-256  e8f203c431f2c5615133e272c2a45d1dc9bec1a21750bd08d42011d36ba0631f
+      test/founder-authorization.test.ts
+        blob     34109e1690705f3cc402645bfa04bd3cfee5c499
+        SHA-256  c731ab91b9e6bd5d7b9aa7b584e0fa097f0ef7e270b41c5ae10ffc3924a62dd5
+  Tier-2 review before the merge
+    reviewer gemini-3.1-pro, head 60a024c, verdict FAIL, as attested in
+    its Tier2-Reviewer-Id, Tier2-Head-Sha and Tier2-Verdict lines
+  Remediation, PR #84
+    merge commit cf24db605d20bcde5e288a400abfa6df654d9f3b, merged
+    2026-09-28T09:40:00Z
+FINDING
+1. The Tier-2 review before the merge returned FAIL at 60a024c, and PR
+   #83 merged at that same head. Its blocking finding: a run cancelled
+   or stopped by a signal ends without publishing failure, so an
+   earlier success on the head could stand. The fix existed only as
+   uncommitted work in the builder's session. No review cleared the
+   head before the merge.
+2. No SHA-named merge authorization under DEC-20260718-04 was posted
+   on PR #83. Its only comments before the merge were two Cursor Bugbot
+   usage-limit notices.
+3. The merge commit's message carries the three attribution lines, but
+   a bare "---" line from Cursor Bugbot's summary block (line 55 of the
+   message) precedes them. Git treats everything after that line as a
+   patch, so git interpret-trailers --parse reads no trailers from this
+   commit. The repository's attribution check passes on it, because it
+   does not detect such a line.
+4. The hosted checks did run. On 60a024c, CI run 36359322666, Path Audit
+   run 36359322652, Custody Pin Check run 36359322653, CodeQL and the
+   Cursor Security Agent concluded success, and attribution-shape run
+   36363711772, after the last description edit, concluded success.
+   Cursor Bugbot's review did not run (usage limit). This is not a
+   CI-gate breach.
+5. founder-authorization was not a required check when PR #83 merged,
+   and the workflow did not yet exist on main to judge PR #83 itself.
+DISPOSITION
+NONCOMPLIANT_MERGE_RECORDED. The merge of PR #83 at 69ca61b is recorded
+as a noncompliant merge, not as an exception. This disposition does not
+revert it and does not rewrite main.
+REMEDIATION
+1. No revert. The defect in FINDING 1 is fixed by PR #84, merged at
+   cf24db6: runs queue instead of cancelling each other, and every exit
+   passes through one EXIT trap that publishes failure unless the run's
+   verdict was posted. PR #84 passed Tier-2 review (gemini-3.1-pro, PASS
+   at 856235e) and merged under my SHA-named authorization, comment
+   5867361555, posted before the merge.
+2. 69ca61b stays on main as the record of FINDING 3. main is not
+   rewritten.
+3. On 2026-09-28 I made founder-authorization a required status check
+   on main, with no bypass.
+4. On 2026-09-28 I set Cursor Bugbot to post its PR summary as a comment
+   instead of in the PR description, which removes the source of the
+   line in FINDING 3.
+5. The repository's attribution check is to reject a "---" line in a
+   PR description, as the FounderOS check does, through a separate pull
+   request under its own authorization.
+WHAT THIS DISPOSITION DOES NOT DO
+- It does not treat the review of PR #84 as a review of PR #83 before
+  its merge.
+- It authorizes no merge of any pull request, including the separate
+  pull request in REMEDIATION 5.
+- It does not change repository settings; REMEDIATION 3 and 4 record
+  acts already taken.
+- It does not rewrite history on main.
+BINDING
+This disposition names two commits:
+69ca61bb0fa516a0e3a4920294bf28fccf35d783 (PR #83's merge) and
+60a024cfbee4489f1152688e6a87209b3e6340cd (PR #83's head at merge).
+CUSTODY
+Preserve this disposition verbatim as a new file in founder-os-build-room
+at exactly this path:
+  docs/planning/command-journal/custody/FOUNDER-RULING-pr83-merge-disposition-20260928.txt
+Land it in its own commit with a custody receipt. Record its SHA-256,
+bytes, lines, and trailing-newline status in that commit and in the
+receipt. Do not alter the text.
+Signed: Michael Daley
+Date: 2026-09-28
