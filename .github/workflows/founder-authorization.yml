@@ -154,6 +154,9 @@ jobs:
           trap - ERR
           publish "$state" "$description"
           trap - INT TERM
-          # The job's own check run mirrors the status, so either can be the
-          # required check and neither stays green on an unauthorized head.
+          # The job fails on a failure verdict too. Even so, require the
+          # `founder-authorization` status, not this job's check run: a run
+          # started by a comment reports its check run against the default
+          # branch's commit, not the PR head, so the head's check run can go
+          # stale in either direction.
           [[ "$state" == success ]]
