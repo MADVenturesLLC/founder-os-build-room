@@ -8,6 +8,16 @@
 # kept byte-comparable so the two can be diffed, with exactly ONE intentional
 # behavioural divergence, marked below at HISTORICAL_BRANCH_ALLOWLIST.
 #
+# LAG, NOT DIVERGENCE (2026-09-28): FounderOS has changed its copy since the
+# port, and those changes are not all carried here, so a diff today shows
+# more than the one divergence above. Carried so far: the `prbody` PR-title,
+# git-divider and git-readability rules and their selftest cases, from
+# FounderOS blob bd71d9c0ca2f4d954f7a28b3a525c2cbc2b9f502 (FounderOS main
+# 6d2eb3fe24bc14c2834be000c63efb65614e83ad), under the Founder's PR #83
+# merge disposition, REMEDIATION 5. NOT carried: the same rules for commit
+# messages in `validate_block` (so `pr` and `main` mode still accept a commit
+# whose trailers git cannot read), and FounderOS's other later changes.
+#
 # Original header follows.
 #
 # Layer 2 shape-only attribution check for the MAD Ventures OS
@@ -222,6 +232,90 @@ case "$MODE" in
     # trailers, the body must actually END with the block, not merely
     # contain trailer-shaped lines somewhere above other content.
     body="$(printf '%s' "${PR_BODY-}" | tr -d '\r')"
+    # PR TITLE (2026-09-21, Copilot on FounderOS PR #356): the merge commit
+    # is "<PR title> (#N)\n\n<body>", so the title is the first line git
+    # reads, and a title beginning with `---` followed by whitespace or
+    # end-of-line is a divider ABOVE everything — the merge commit parses
+    # to zero trailers while the body alone looks fine. The workflow passes
+    # the title through PR_TITLE (env mapping only, never interpolated).
+    # Unset — an older workflow, or the selftest — falls back to a
+    # synthetic one-word subject, which is never a divider. GitHub's
+    # " (#N)" suffix cannot turn a non-divider title into one or vice
+    # versa: `---` + suffix is `--- (`, still a divider; `---x` + suffix is
+    # still not. Every line of the title is checked, so a title that
+    # somehow carried a newline could not smuggle a divider past this.
+    title="$(printf '%s' "${PR_TITLE-}" | tr -d '\r')"
+    [[ -n "$title" ]] || title="subject"
+    tdivider="$(printf '%s\n' "$title" | grep -nE '^---([[:space:]]|$)' | head -n 1 || true)"
+    if [[ -n "$tdivider" ]]; then
+      echo "FAIL (prbody) PR title: '${tdivider#*:}' is a git message divider — as the merge commit's first line it strips every trailer below it"
+      fail=1
+    fi
+    # GIT MESSAGE DIVIDER (2026-09-21): `git interpret-trailers` treats any
+    # line that begins with `---` followed by whitespace or end-of-line as
+    # the end of the message and reads trailers only from what precedes it.
+    # The end-anchor below cannot see this: a divider ABOVE the final block
+    # leaves the block intact as text while git ignores it entirely.
+    # Measured on FounderOS PR #355: Cursor Bugbot's summary block, moved
+    # above the trailers per the then-current CLAUDE.md remedy, carried a
+    # bare `---`; this gate returned PASS and `git interpret-trailers
+    # --parse` returned zero trailers. That is the madventures-tui
+    # c3c7d9fe21036b8d90c9d2bf0feabf5e7d9df624 outcome, reached with a
+    # green check. The rule below is git's documented divider exactly,
+    # verified against git 2.43.0: `---`, `--- `, `--- x` are dividers;
+    # `----`, `---x`, `***`, and an indented ` ---` are not. Markdown fences
+    # do not protect a divider; git does not know about them.
+    #
+    # Measured in THIS repository too (2026-09-28): the merge commits of
+    # PR #83 (69ca61bb0fa516a0e3a4920294bf28fccf35d783, line 55) and PR #82
+    # (0629c73f111a44436955a1ad6b491a8312ce21e1, line 258) each carry a bare
+    # `---` opening Cursor Bugbot's summary block above the attribution
+    # lines, and each parses to zero trailers; this gate, before this rule
+    # was ported, passed both PR bodies. Ported under the Founder's PR #83
+    # merge disposition, REMEDIATION 5.
+    divider="$(printf '%s\n' "$body" | grep -nE '^---([[:space:]]|$)' | head -n 1 || true)"
+    if [[ -n "$divider" ]]; then
+      echo "FAIL (prbody) PR body: line ${divider%%:*} is a git message divider ('${divider#*:}') — git interpret-trailers stops reading there, so the merge commit would carry NO trailers regardless of the block below it"
+      fail=1
+    fi
+    # GIT-READABILITY (2026-09-21): the hand rules above and below
+    # (divider, end-anchor, key restriction) each encode one of git's
+    # conditions for reading a trailer block. This asks git directly, so a
+    # future divergence between the hand rules and git fails here instead
+    # of on `main`. The merge commit is "<PR title>\n\n<body>", so the
+    # title (or the synthetic fallback above) is prepended: parsed alone, a
+    # body that IS only the block would be read as the subject and yield
+    # nothing. No known body passes the hand rules and fails this; it is
+    # the brace to their belt — and with the real title in front, it is
+    # also what catches a divider-shaped title.
+    parsed="$(printf '%s\n\n%s\n' "$title" "$body" | git interpret-trailers --parse)"
+    # Line-level, value included (Copilot on FounderOS PR #356, round 4):
+    # every raw line shaped like an attribution trailer must be one git
+    # reads from the merge commit. The values validated further down
+    # already come from the final block; this rejects an attribution-shaped
+    # line anywhere else in the body, which git would not read and a reader
+    # might.
+    raw_attr="$(printf '%s\n' "$body" | grep -E '^(Role-Id|Role-Id-Secondary|Actor-Id|Execution-Surface):' || true)"
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      norm="$(printf '%s' "$line" | sed -E 's/^([A-Za-z-]+):[[:space:]]*/\1: /; s/[[:space:]]+$//')"
+      if ! printf '%s\n' "$parsed" | grep -qxF -- "$norm"; then
+        echo "FAIL (prbody) PR body: attribution line '$line' is present but git interpret-trailers does not read it as a trailer of the merge commit"
+        fail=1
+      fi
+    done <<< "$raw_attr"
+    # One for one, not merely membership (Copilot on FounderOS PR #356,
+    # round 6): a stray line that DUPLICATES a real trailer ("Actor-Id:
+    # founder" in prose above a block that also says it) passes the
+    # per-line check above, because the parsed set contains that line once.
+    # The normalised raw attribution lines and the attribution lines git
+    # parsed must be the same multiset.
+    raw_norm="$(printf '%s\n' "$raw_attr" | sed -E 's/^([A-Za-z-]+):[[:space:]]*/\1: /; s/[[:space:]]+$//' | sort)"
+    parsed_attr="$(printf '%s\n' "$parsed" | grep -E '^(Role-Id|Role-Id-Secondary|Actor-Id|Execution-Surface):' | sort || true)"
+    if [[ "$raw_norm" != "$parsed_attr" ]]; then
+      echo "FAIL (prbody) PR body: attribution-shaped lines do not match, one for one, the trailers git would read from the merge commit — an attribution-shaped line sits outside the final block, or duplicates one inside it"
+      fail=1
+    fi
     tail_block="$(printf '%s\n' "$body" | awk '
       /^[[:space:]]*$/ { inblock = 0; next }
       { if (!inblock) block = ""; inblock = 1; block = block $0 "\n" }
@@ -311,6 +405,47 @@ case "$MODE" in
     st "prose inside the final block" 1 $'Role-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code\nthanks!'
     st "prose before block is fine"   0 $'## Summary\n\nDid the thing.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     st "trailing blank line is fine"  0 $'Role-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code\n'
+    # Git-divider cases (2026-09-21): a line git reads as end-of-message
+    # anywhere above the block strips every trailer from the merge commit
+    # while leaving the block intact as text. The end-anchor cannot see it.
+    # Positive and negative cases mirror git's documented rule, measured.
+    st "divider --- above block"       1 $'Summary.\n\n---\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "divider --- with trailing sp"  1 $'Summary.\n\n--- \n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "divider --- with text"         1 $'Summary.\n\n--- notes\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "divider inside a code fence"   1 $'Summary.\n\n```\n---\n```\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "---- is not a divider"         0 $'Summary.\n\n----\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "---x is not a divider"         0 $'Summary.\n\n---x\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "*** rule is not a divider"     0 $'Summary.\n\n***\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "indented --- is not a divider" 0 $'Summary.\n\n ---\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    # The shape that reached `main` in this repository (PR #83 at 69ca61b,
+    # PR #82 at 0629c73): Cursor Bugbot's summary block, opening with a bare
+    # `---`, above the trailers. The same block with `***` in place of the
+    # `---` is the documented remedy and must pass.
+    st "Bugbot summary with --- above block" 1 $'## Summary\n\nDid the thing.\n\n<!-- CURSOR_SUMMARY -->\n---\n\n> [!NOTE]\n> **Low Risk**\n> Tests only.\n\n<!-- /CURSOR_SUMMARY -->\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "Bugbot summary with *** accepted"    0 $'## Summary\n\nDid the thing.\n\n<!-- CURSOR_SUMMARY -->\n***\n\n> [!NOTE]\n> **Low Risk**\n> Tests only.\n\n<!-- /CURSOR_SUMMARY -->\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    # Stray attribution-shaped lines outside the block (Copilot on
+    # FounderOS PR #356, rounds 4 and 6).
+    st "stray Actor-Id line above the block rejected" 1 $'Actor-Id: founder\nquoted in prose.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "padded trailer values accepted"    0 $'Role-Id:   builder  \nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "duplicated attribution line above the block rejected" 1 $'Role-Id: builder\nquoted in prose.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    # PR-title cases (Copilot on FounderOS PR #356): the title is the merge
+    # commit's first line. st_titled <name> <expected-exit> <title> <body>.
+    st_titled() {
+      local name="$1" expected="$2" title="$3" body="$4" rc=0
+      PR_TITLE="$title" PR_BODY="$body" bash "$0" prbody >/dev/null 2>&1 || rc=$?
+      if [[ "$rc" -ne "$expected" ]]; then
+        echo "SELFTEST FAIL: $name (exit $rc, expected $expected)"
+        fail=1
+      else
+        echo "selftest ok: $name"
+      fi
+    }
+    st_titled "title: ordinary title accepted"      0 'fix(x): do the thing' $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st_titled "title: bare --- rejected"            1 '---'                  $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st_titled "title: --- with text rejected"       1 '--- release notes'    $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st_titled "title: ---x is not a divider"        0 '---x'                 $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st_titled "title: divider on a second line rejected" 1 $'ok\n---'        $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st_titled "title: CR stripped, still a divider" 1 $'---\r'               $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     # Secondary-role cases (DEC-20260718-05 clause 10): validated, and a
     # primary Role-Id is required whenever a secondary is present.
     st "valid primary + secondary"    0 $'Role-Id: builder\nRole-Id-Secondary: architect\nActor-Id: session:x\nExecution-Surface: claude-code'
