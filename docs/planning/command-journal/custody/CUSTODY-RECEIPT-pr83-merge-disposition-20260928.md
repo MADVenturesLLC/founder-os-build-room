@@ -25,21 +25,25 @@ verified each against the merge commit `69ca61b` before drafting.
 
 ## How it was signed
 
-This differs from the PR #76 and D-1/C3 instruments, where the Founder
-filled the signature lines and pasted the signed text back into the
-session.
-
 - The builder showed the draft with empty `Signed:` and `Date:` lines on
   2026-09-28. The draft flagged three points for the Founder to keep or
   strike: REMEDIATION 3 and 4 record the Founder's own acts on his word,
   and REMEDIATION 5 is a new direction.
 - The Founder replied, verbatim: "keep all, signed and dated, land it".
-- On that instruction, the builder filled the two lines as the Founder
-  signed the earlier instruments: `Signed: Michael Daley` and
-  `Date: 2026-09-28`. No other line differs from the draft shown, which
-  was verified with `diff`.
-- The Founder did not type the signature lines themselves. The adoption
-  is the quoted reply above.
+  On that instruction, the builder filled the two lines as the Founder
+  signed the earlier instruments (`Signed: Michael Daley`,
+  `Date: 2026-09-28`) and landed the file in `24ff3dc`. No other line
+  differs from the draft shown, verified with `diff`.
+- The Founder then posted the full signed text on this pull request as
+  comment 5868025725, created 2026-09-28T10:21:22Z and edited once at
+  10:21:44Z. The builder compared it line by line with the landed file,
+  as the GitHub API returned the comment after that edit: identical,
+  apart from the comment's CRLF line endings and its missing final
+  newline. The comment's content before the 10:21:44Z edit was not seen
+  by the builder.
+- This differs from the PR #76 and D-1/C3 instruments, whose signed text
+  the Founder pasted into the session. Here the signed text is on the
+  pull request itself.
 
 ## What the builder verified and what it did not
 
@@ -64,8 +68,8 @@ session.
 |---|---|
 | Disposition chosen | proposed by the `builder` seat after PR #84 merged, on the form of the PR #76 disposition; requested by the Founder ("draft the #83 disposition") |
 | Drafted for signature | by the `builder` seat in session, 2026-09-28 |
-| Founder adoption | "keep all, signed and dated, land it", 2026-09-28 |
-| Transport | written by the builder from the draft shown, with the two signature lines filled, ending with a single LF |
+| Founder adoption | "keep all, signed and dated, land it", 2026-09-28; then the signed text posted by the Founder on this pull request, comment 5868025725 |
+| Transport | written by the builder from the draft shown, with the two signature lines filled, ending with a single LF; matches the Founder's posted comment line for line |
 | Founder-side hash | none supplied; the values above are computed by the builder over the landed file |
 
 ## Attribution
