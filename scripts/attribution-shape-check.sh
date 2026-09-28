@@ -17,6 +17,9 @@
 # merge disposition, REMEDIATION 5. NOT carried: the same rules for commit
 # messages in `validate_block` (so `pr` and `main` mode still accept a commit
 # whose trailers git cannot read), and FounderOS's other later changes.
+# CORRECTED HERE, NOT YET IN FounderOS: the divider character set (see
+# DIVIDER CHARACTER SET in `prbody`); FounderOS's `[[:space:]]` class is
+# broader than git's.
 #
 # Original header follows.
 #
@@ -244,16 +247,29 @@ case "$MODE" in
     # versa: `---` + suffix is `--- (`, still a divider; `---x` + suffix is
     # still not. Every line of the title is checked, so a title that
     # somehow carried a newline could not smuggle a divider past this.
+    #
+    # DIVIDER CHARACTER SET (Copilot on PR #86, 2026-09-28; measured on git
+    # 2.43.0 here and reported for the runner's git): git's divider is `---`
+    # followed by a space, a tab, a carriage return, or end-of-line, and
+    # nothing else. `[[:space:]]`, which FounderOS still uses, also matches a
+    # vertical tab or form feed, and under a UTF-8 locale U+3000; git reads
+    # the trailers past all three, so that class rejected readable messages.
+    # `[[:blank:]]` under LC_ALL=C is exactly space and tab. The CR is
+    # matched on the text BEFORE CRs are stripped: stripping first turned
+    # `---` + CR + `x` into `---x`, which passed here while git stopped
+    # reading at it.
+    divider_ere=$'^---([[:blank:]]|\r|$)'
     title="$(printf '%s' "${PR_TITLE-}" | tr -d '\r')"
     [[ -n "$title" ]] || title="subject"
-    tdivider="$(printf '%s\n' "$title" | grep -nE '^---([[:space:]]|$)' | head -n 1 || true)"
+    tdivider="$(printf '%s\n' "${PR_TITLE-}" | LC_ALL=C grep -nE "$divider_ere" | head -n 1 | tr -d '\r' || true)"
     if [[ -n "$tdivider" ]]; then
       echo "FAIL (prbody) PR title: '${tdivider#*:}' is a git message divider — as the merge commit's first line it strips every trailer below it"
       fail=1
     fi
     # GIT MESSAGE DIVIDER (2026-09-21): `git interpret-trailers` treats any
     # line that begins with `---` followed by whitespace or end-of-line as
-    # the end of the message and reads trailers only from what precedes it.
+    # the end of the message and reads trailers only from what precedes it
+    # ("whitespace" as git defines it: see DIVIDER CHARACTER SET above).
     # The end-anchor below cannot see this: a divider ABOVE the final block
     # leaves the block intact as text while git ignores it entirely.
     # Measured on FounderOS PR #355: Cursor Bugbot's summary block, moved
@@ -273,7 +289,7 @@ case "$MODE" in
     # lines, and each parses to zero trailers; this gate, before this rule
     # was ported, passed both PR bodies. Ported under the Founder's PR #83
     # merge disposition, REMEDIATION 5.
-    divider="$(printf '%s\n' "$body" | grep -nE '^---([[:space:]]|$)' | head -n 1 || true)"
+    divider="$(printf '%s\n' "${PR_BODY-}" | LC_ALL=C grep -nE "$divider_ere" | head -n 1 | tr -d '\r' || true)"
     if [[ -n "$divider" ]]; then
       echo "FAIL (prbody) PR body: line ${divider%%:*} is a git message divider ('${divider#*:}') — git interpret-trailers stops reading there, so the merge commit would carry NO trailers regardless of the block below it"
       fail=1
@@ -417,6 +433,17 @@ case "$MODE" in
     st "---x is not a divider"         0 $'Summary.\n\n---x\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     st "*** rule is not a divider"     0 $'Summary.\n\n***\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     st "indented --- is not a divider" 0 $'Summary.\n\n ---\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    # Git's divider character set exactly (Copilot on PR #86): git reads the
+    # trailers past `---` + vertical tab, form feed, or U+3000, so those
+    # pass; `---` + CR stops git even mid-line, so it fails, and so does a
+    # CRLF body's bare `---`. The U+3000 case runs under C.UTF-8, where an
+    # unpinned `[[:blank:]]` or `[[:space:]]` would match it.
+    st "--- then vertical tab is not a divider" 0 $'Summary.\n\n---\v\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "--- then form feed is not a divider"   0 $'Summary.\n\n---\f\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    LC_ALL=C.UTF-8 st "--- then U+3000 is not a divider (C.UTF-8)" \
+                                               0 $'Summary.\n\n---\xe3\x80\x80\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "--- then CR mid-line is a divider"     1 $'Summary.\n\n---\rx\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "CRLF body with bare --- is a divider"  1 $'Summary.\r\n\r\n---\r\n\r\nRole-Id: builder\r\nActor-Id: session:x\r\nExecution-Surface: claude-code\r'
     # The shape that reached `main` in this repository (PR #83 at 69ca61b,
     # PR #82 at 0629c73): Cursor Bugbot's summary block, opening with a bare
     # `---`, above the trailers. The same block with `***` in place of the
@@ -445,7 +472,9 @@ case "$MODE" in
     st_titled "title: --- with text rejected"       1 '--- release notes'    $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     st_titled "title: ---x is not a divider"        0 '---x'                 $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     st_titled "title: divider on a second line rejected" 1 $'ok\n---'        $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
-    st_titled "title: CR stripped, still a divider" 1 $'---\r'               $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st_titled "title: --- then CR is a divider"     1 $'---\r'               $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st_titled "title: --- then CR mid-line is a divider" 1 $'---\rx'         $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st_titled "title: --- then vertical tab is not a divider" 0 $'---\v'     $'Summary.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     # Secondary-role cases (DEC-20260718-05 clause 10): validated, and a
     # primary Role-Id is required whenever a secondary is present.
     st "valid primary + secondary"    0 $'Role-Id: builder\nRole-Id-Secondary: architect\nActor-Id: session:x\nExecution-Surface: claude-code'

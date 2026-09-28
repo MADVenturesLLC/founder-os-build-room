@@ -9,6 +9,13 @@
 # PR-body chrome sanitizer, the selftest steps, the triggers — is unmodified,
 # so the two files stay diffable.
 #
+# LAG, NOT DIVERGENCE (2026-09-28, Copilot on PR #86): the sentence above was
+# true at the port and is not now. FounderOS has since changed its copy (it
+# passes the PR body raw with no Cursor sanitizer, and adds a step that runs
+# the proposed checker), and those changes are not carried here. Carried so
+# far: the PR_TITLE mapping on the PR-body step, under the Founder's PR #83
+# merge disposition, REMEDIATION 5.
+#
 # The checker SCRIPT carries one intentional behavioural divergence, documented
 # at HISTORICAL_BRANCH_ALLOWLIST in `scripts/attribution-shape-check.sh`: this
 # repository grants no historical branch exemption, making the gate strictly
