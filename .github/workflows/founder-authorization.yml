@@ -107,10 +107,15 @@ jobs:
           head_sha="$(api "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" | jq -er '.head.sha')"
           # From here on, any step that fails publishes failure before the job
           # ends, so an earlier success on this head can never outlive an
-          # evaluation that could not complete.
-          trap 'trap - ERR INT TERM; publish failure "Evaluation did not complete; re-run to judge this head" || true' ERR
+          # evaluation that could not complete. Only ERR is disarmed inside it:
+          # a signal that kills its failure post still reaches the handler
+          # below, which posts again.
+          trap 'trap - ERR; publish failure "Evaluation did not complete; re-run to judge this head" || true' ERR
           # A run cancelled by hand, or stopped with its runner, gets SIGINT
-          # or SIGTERM rather than an error; it publishes failure too.
+          # or SIGTERM rather than an error; it publishes failure too. It
+          # stays armed through every other publish, so a signal that kills a
+          # post is followed by a failure post. Not covered: SIGKILL, and a
+          # second signal during this handler's own post.
           trap 'trap - ERR INT TERM; publish failure "Evaluation was interrupted; re-run to judge this head" || true; exit 1' INT TERM
 
           # A commit status belongs to a SHA, not a PR. If another open PR
@@ -127,7 +132,7 @@ jobs:
           sharing="$(jq -r --arg h "$head_sha" --argjson n "$PR_NUMBER" \
             '[.[] | select(.head.sha == $h and .number != $n) | "#\(.number)"] | join(" ")' <<<"$open_prs")"
           if [[ -n "$sharing" ]]; then
-            trap - ERR INT TERM
+            trap - ERR
             publish failure "Head ${head_sha:0:7} is shared with open PR $sharing; refused"
             exit 1
           fi
@@ -146,8 +151,9 @@ jobs:
             state=failure
           fi
           description="$(jq -r '.description' <<<"$verdict")"
-          trap - ERR INT TERM
+          trap - ERR
           publish "$state" "$description"
+          trap - INT TERM
           # The job's own check run mirrors the status, so either can be the
           # required check and neither stays green on an unauthorized head.
           [[ "$state" == success ]]
