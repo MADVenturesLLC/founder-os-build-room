@@ -237,6 +237,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 if [[ -n "\${FAKE_FAIL:-}" && "$url" == *"$FAKE_FAIL"* ]]; then exit 22; fi
+# Fails the FIRST matching call only, so the fallback post that follows a
+# failed post goes through and is recorded.
+if [[ -n "\${FAKE_FAIL_ONCE:-}" && "$url" == *"$FAKE_FAIL_ONCE"* && ! -e "$FAKE_FAILED" ]]; then : > "$FAKE_FAILED"; exit 22; fi
 if [[ -n "\${FAKE_SLEEP_ON:-}" && "$url" == *"$FAKE_SLEEP_ON"* ]]; then : > "$FAKE_SLEEPING"; sleep 30; fi
 if [[ $post -eq 1 ]]; then printf '%s\\n' "$data" >> "$FAKE_LOG"; echo '{}'; exit 0; fi
 case "$url" in
@@ -260,7 +263,7 @@ esac
     return body.join('\n');
   }
 
-  function simulate(opts: { comments: Comment[]; openPrs?: Array<{ number: number; head: { sha: string } }>; failOn?: string }) {
+  function simulate(opts: { comments: Comment[]; openPrs?: Array<{ number: number; head: { sha: string } }>; failOn?: string; failOnceOn?: string }) {
     const dir = mkdtempSync(join(tmpdir(), 'founder-auth-'));
     try {
       const bin = join(dir, 'bin');
@@ -272,6 +275,7 @@ esac
         FAKE_OPEN: join(dir, 'open.json'),
         FAKE_COMMENTS: join(dir, 'comments.json'),
         FAKE_LOG: join(dir, 'posts.log'),
+        FAKE_FAILED: join(dir, 'failed-once'),
       };
       writeFileSync(files.FAKE_PR, JSON.stringify({ number: PR, head: { sha: HEAD } }));
       writeFileSync(files.FAKE_OPEN, JSON.stringify(opts.openPrs ?? [{ number: PR, head: { sha: HEAD } }]));
@@ -284,6 +288,7 @@ esac
           ...process.env,
           ...files,
           ...(opts.failOn === undefined ? {} : { FAKE_FAIL: opts.failOn }),
+          ...(opts.failOnceOn === undefined ? {} : { FAKE_FAIL_ONCE: opts.failOnceOn }),
           PATH: `${bin}:${process.env.PATH ?? ''}`,
           GH_TOKEN: 'fake-token-for-tests',
           REPO,
@@ -334,6 +339,36 @@ esac
     assert.notEqual(r.status, 0);
     assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
   });
+
+  // Tier-2 review of PR #84 (gemini-3.1-pro, FAIL at 100f653): a status post
+  // that itself fails must not end the run with nothing posted. The failure
+  // happens inside a function, where no ERR trap fires; only the EXIT trap
+  // catches it. Each case fails the run's one verdict post and expects the
+  // fallback failure in its place.
+  it('posts failure in place of an authorized verdict whose post fails', () => {
+    const r = simulate({ comments: [comment(35, block())], failOnceOn: '/statuses/' });
+    assert.notEqual(r.status, 0, 'a run whose verdict never landed does not exit 0');
+    assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+    assert.match(r.posts[0]?.description ?? '', /did not complete/);
+  });
+
+  it('posts failure in place of a failure verdict whose post fails, so a revocation still lands', () => {
+    const r = simulate({ comments: [comment(36, block(PR, OLDER_HEAD))], failOnceOn: '/statuses/' });
+    assert.notEqual(r.status, 0);
+    assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+    assert.match(r.posts[0]?.description ?? '', /did not complete/);
+  });
+
+  it('posts failure when the shared-head refusal post fails', () => {
+    const r = simulate({
+      comments: [comment(37, block())],
+      openPrs: [{ number: PR, head: { sha: HEAD } }, { number: 99, head: { sha: HEAD } }],
+      failOnceOn: '/statuses/',
+    });
+    assert.notEqual(r.status, 0);
+    assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+    assert.match(r.posts[0]?.description ?? '', /did not complete/);
+  });
 });
 
 /**
@@ -359,7 +394,7 @@ done
 if [[ -n "\${FAKE_FAIL:-}" && "$url" == *"$FAKE_FAIL"* ]]; then exit 22; fi
 # Sleeps on the FIRST matching call only, so a post the signal handler makes
 # after the interrupted one goes straight through and is recorded.
-if [[ -n "\${FAKE_SLEEP_ON:-}" && "$url" == *"$FAKE_SLEEP_ON"* && ! -e "$FAKE_SLEEPING" ]]; then : > "$FAKE_SLEEPING"; sleep 30; fi
+if [[ -n "\${FAKE_SLEEP_ON:-}" && "$url" == *"$FAKE_SLEEP_ON"* && ! -e "$FAKE_SLEEPING" ]]; then : > "$FAKE_SLEEPING"; sleep "\${FAKE_SLEEP_SECS:-30}"; fi
 if [[ $post -eq 1 ]]; then printf '%s\\n' "$data" >> "$FAKE_LOG"; echo '{}'; exit 0; fi
 case "$url" in
   */pulls\\?state=open*) cat "$FAKE_OPEN" ;;
@@ -449,13 +484,17 @@ esac
   // Copilot review on PR #84 (4117742217): a signal that kills a status post
   // must not leave the run with nothing posted. Each case kills the one post
   // the run was making and expects the handler's failure to follow it.
-  it('still publishes failure when the fallback failure post itself is interrupted', async () => {
+  it('cannot be stopped by a signal during the fallback failure post', async () => {
+    // The comments fetch fails, the run exits, and the EXIT trap's fallback
+    // post is the one that sleeps when the signal arrives. Signals are
+    // ignored for that post, so it completes: the fake sleeps briefly and
+    // records it rather than being killed.
     const s = stage([comment(41, block())]);
     try {
-      const code = await interruptAt(s, '/statuses/', { FAKE_FAIL: '/comments' });
+      const code = await interruptAt(s, '/statuses/', { FAKE_FAIL: '/comments', FAKE_SLEEP_SECS: '1' });
       assert.notEqual(code, 0);
       assert.deepEqual(s.posts().map((p) => p.state), ['failure']);
-      assert.match(s.posts()[0]?.description ?? '', /interrupted/);
+      assert.match(s.posts()[0]?.description ?? '', /did not complete/);
     } finally {
       rmSync(s.dir, { recursive: true, force: true });
     }
