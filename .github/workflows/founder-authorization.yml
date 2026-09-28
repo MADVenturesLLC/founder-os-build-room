@@ -29,9 +29,14 @@
 # dedicated GitHub App whose key only a main-restricted environment can
 # read, a Founder provisioning act this file does not perform.
 #
-# FAILS CLOSED. Once the head is known, any step that cannot complete
-# publishes `failure`, so an earlier `success` on the head never outlives an
-# evaluation that errored. A commit status belongs to a SHA, not a PR, so a
+# FAILS CLOSED. Once the head is known, every way the run can end (an
+# error anywhere, including a failed status post; an explicit exit;
+# SIGINT or SIGTERM) passes through one EXIT trap that publishes `failure`
+# unless the run's own verdict was posted, so an earlier `success` on the
+# head never outlives an evaluation that did not finish. Not covered:
+# SIGKILL, and a signal landing in the instant between that trap starting
+# and its first line, which ignores signals. Runs for one PR queue rather
+# than cancel each other. A commit status belongs to a SHA, not a PR, so a
 # head shared with another open PR is refused rather than judged.
 #
 # UNTRUSTED INPUT. pull_request_target and issue_comment run with a token
@@ -58,9 +63,12 @@ permissions:
   pull-requests: read
   issues: read
 
+# Runs for one PR queue instead of cancelling each other, so an evaluation
+# is never killed mid-flight by the next one; the last queued run always
+# completes and publishes the final verdict. (Tier-2 review, 2026-09-27.)
 concurrency:
   group: founder-authorization-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   evaluate:
@@ -92,18 +100,42 @@ jobs:
               "$@"
           }
           publish() {
-            # $1 state, $2 description
+            # $1 state, $2 description. Returns non-zero if the post fails,
+            # in every calling context (set -e does not apply under `||`).
             local payload
             payload="$(jq -nc --arg s "$1" --arg d "$2" \
-              '{state: $s, context: "founder-authorization", description: ($d | .[0:140])}')"
-            api -X POST "https://api.github.com/repos/$REPO/statuses/$head_sha" -d "$payload" >/dev/null
+              '{state: $s, context: "founder-authorization", description: ($d | .[0:140])}')" || return 1
+            api -X POST "https://api.github.com/repos/$REPO/statuses/$head_sha" -d "$payload" >/dev/null || return 1
             echo "founder-authorization: $1 on $head_sha ($2)"
           }
           head_sha="$(api "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" | jq -er '.head.sha')"
-          # From here on, any step that fails publishes failure before the job
-          # ends, so an earlier success on this head can never outlive an
-          # evaluation that could not complete.
-          trap 'trap - ERR; publish failure "Evaluation did not complete; re-run to judge this head" || true' ERR
+          # From here on the run fails closed through ONE exit path. Every
+          # exit (an error, including one inside a function where no ERR
+          # trap fires; an explicit exit; a signal routed to exit) runs
+          # on_exit, which posts failure unless this run's verdict was
+          # already posted. So an earlier success on this head cannot
+          # outlive an evaluation that did not finish.
+          verdict_posted=""
+          interrupted=""
+          on_exit() {
+            local rc=$?
+            # Ignored signals are inherited by the curl below, so no second
+            # SIGINT or SIGTERM can kill the fallback post; only SIGKILL can.
+            trap '' INT TERM
+            if [[ -z "$verdict_posted" ]]; then
+              if [[ -n "$interrupted" ]]; then
+                publish failure "Evaluation was interrupted; re-run to judge this head" || true
+              else
+                publish failure "Evaluation did not complete; re-run to judge this head" || true
+              fi
+              [[ "$rc" -ne 0 ]] || rc=1
+            fi
+            exit "$rc"
+          }
+          trap on_exit EXIT
+          # A run cancelled by hand, or stopped with its runner, gets SIGINT
+          # or SIGTERM rather than an error; it exits through on_exit too.
+          trap 'interrupted=1; exit 1' INT TERM
 
           # A commit status belongs to a SHA, not a PR. If another open PR
           # shares this head, a success here would show on that PR too, so a
@@ -119,8 +151,8 @@ jobs:
           sharing="$(jq -r --arg h "$head_sha" --argjson n "$PR_NUMBER" \
             '[.[] | select(.head.sha == $h and .number != $n) | "#\(.number)"] | join(" ")' <<<"$open_prs")"
           if [[ -n "$sharing" ]]; then
-            trap - ERR
             publish failure "Head ${head_sha:0:7} is shared with open PR $sharing; refused"
+            verdict_posted=1
             exit 1
           fi
 
@@ -138,8 +170,13 @@ jobs:
             state=failure
           fi
           description="$(jq -r '.description' <<<"$verdict")"
-          trap - ERR
+          # If this post fails, the run exits here with verdict_posted unset,
+          # and on_exit posts failure in its place.
           publish "$state" "$description"
-          # The job's own check run mirrors the status, so either can be the
-          # required check and neither stays green on an unauthorized head.
+          verdict_posted=1
+          # The job fails on a failure verdict too. Even so, require the
+          # `founder-authorization` status, not this job's check run: a run
+          # started by a comment reports its check run against the default
+          # branch's commit, not the PR head, so the head's check run can go
+          # stale in either direction.
           [[ "$state" == success ]]
