@@ -28,6 +28,8 @@ import type { Config } from './config.js';
 import { probe } from './db.js';
 import { phase3RunRouter } from './phase3-run-routes.js';
 import { gateRunRouter } from './gate-run-routes.js';
+import { journalRouter } from './journal-routes.js';
+import { JournalStore } from './journal-store.js';
 import { PostgresLedgerStore, RoomNotFoundError } from './store.js';
 import {
   ROOM_BODY_LIMIT,
@@ -51,6 +53,12 @@ export interface ServerDeps {
    * shape this surface must not be able to take.
    */
   readonly gateway: GatewaySurface;
+  /**
+   * The command journal's single writer (contract §3). Built from `pool`
+   * when absent — one login, no second connection string — so the boot
+   * sequence in `main.ts` needs no change. Tests inject a stand-in here.
+   */
+  readonly journalStore?: Pick<JournalStore, 'appendJournaled'>;
 }
 
 /** Errors that carry an HTTP status the client should see. */
@@ -288,6 +296,14 @@ export function createServer(deps: ServerDeps): Express {
    * behind the same shared-token guard as the room routes.
    */
   app.use(gateRunRouter({ store, requireToken }));
+  /*
+   * The command-journal append route (contract §3 sole writer, §5.1 fail
+   * closed), behind the same shared-token guard. The store is this
+   * process's single journal module; `journal-store.ts` is the only caller
+   * of the append routine and `test/journal-sole-writer.test.ts` holds
+   * that at the source.
+   */
+  app.use(journalRouter({ store: deps.journalStore ?? new JournalStore(pool), requireToken }));
   app.use(
     phase3RunRouter({
       store: deps.gateway.phase3Runs,
