@@ -18,8 +18,8 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -205,6 +205,11 @@ describe('founder-authorization workflow shape', () => {
     }
   });
 
+  it('queues runs for one PR instead of cancelling one mid-evaluation', () => {
+    assert.ok(lines.some((l) => l.trim() === 'cancel-in-progress: false'), 'cancel-in-progress: false');
+    assert.ok(!lines.some((l) => /cancel-in-progress:\s*true/.test(l)), 'never cancel-in-progress: true');
+  });
+
   it('publishes the founder-authorization context and names the Founder login', () => {
     assert.ok(text.includes('context: "founder-authorization"'), 'status context is founder-authorization');
     assert.ok(lines.some((l) => l.trim() === `FOUNDER_LOGINS: ${FOUNDER}`), `FOUNDER_LOGINS is ${FOUNDER}`);
@@ -232,6 +237,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 if [[ -n "\${FAKE_FAIL:-}" && "$url" == *"$FAKE_FAIL"* ]]; then exit 22; fi
+# Fails the FIRST matching call only, so the fallback post that follows a
+# failed post goes through and is recorded.
+if [[ -n "\${FAKE_FAIL_ONCE:-}" && "$url" == *"$FAKE_FAIL_ONCE"* && ! -e "$FAKE_FAILED" ]]; then : > "$FAKE_FAILED"; exit 22; fi
+if [[ -n "\${FAKE_SLEEP_ON:-}" && "$url" == *"$FAKE_SLEEP_ON"* ]]; then : > "$FAKE_SLEEPING"; sleep 30; fi
 if [[ $post -eq 1 ]]; then printf '%s\\n' "$data" >> "$FAKE_LOG"; echo '{}'; exit 0; fi
 case "$url" in
   */pulls\\?state=open*) cat "$FAKE_OPEN" ;;
@@ -254,7 +263,7 @@ esac
     return body.join('\n');
   }
 
-  function simulate(opts: { comments: Comment[]; openPrs?: Array<{ number: number; head: { sha: string } }>; failOn?: string }) {
+  function simulate(opts: { comments: Comment[]; openPrs?: Array<{ number: number; head: { sha: string } }>; failOn?: string; failOnceOn?: string }) {
     const dir = mkdtempSync(join(tmpdir(), 'founder-auth-'));
     try {
       const bin = join(dir, 'bin');
@@ -266,6 +275,7 @@ esac
         FAKE_OPEN: join(dir, 'open.json'),
         FAKE_COMMENTS: join(dir, 'comments.json'),
         FAKE_LOG: join(dir, 'posts.log'),
+        FAKE_FAILED: join(dir, 'failed-once'),
       };
       writeFileSync(files.FAKE_PR, JSON.stringify({ number: PR, head: { sha: HEAD } }));
       writeFileSync(files.FAKE_OPEN, JSON.stringify(opts.openPrs ?? [{ number: PR, head: { sha: HEAD } }]));
@@ -278,6 +288,7 @@ esac
           ...process.env,
           ...files,
           ...(opts.failOn === undefined ? {} : { FAKE_FAIL: opts.failOn }),
+          ...(opts.failOnceOn === undefined ? {} : { FAKE_FAIL_ONCE: opts.failOnceOn }),
           PATH: `${bin}:${process.env.PATH ?? ''}`,
           GH_TOKEN: 'fake-token-for-tests',
           REPO,
@@ -327,5 +338,218 @@ esac
     const r = simulate({ comments: [comment(34, block())], failOn: 'state=open' });
     assert.notEqual(r.status, 0);
     assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+  });
+
+  // Tier-2 review of PR #84 (gemini-3.1-pro, FAIL at 100f653): a status post
+  // that itself fails must not end the run with nothing posted. The failure
+  // happens inside a function, where no ERR trap fires; only the EXIT trap
+  // catches it. Each case fails the run's one verdict post and expects the
+  // fallback failure in its place.
+  it('posts failure in place of an authorized verdict whose post fails', () => {
+    const r = simulate({ comments: [comment(35, block())], failOnceOn: '/statuses/' });
+    assert.notEqual(r.status, 0, 'a run whose verdict never landed does not exit 0');
+    assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+    assert.match(r.posts[0]?.description ?? '', /did not complete/);
+  });
+
+  it('posts failure in place of a failure verdict whose post fails, so a revocation still lands', () => {
+    const r = simulate({ comments: [comment(36, block(PR, OLDER_HEAD))], failOnceOn: '/statuses/' });
+    assert.notEqual(r.status, 0);
+    assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+    assert.match(r.posts[0]?.description ?? '', /did not complete/);
+  });
+
+  it('posts failure when the shared-head refusal post fails', () => {
+    const r = simulate({
+      comments: [comment(37, block())],
+      openPrs: [{ number: PR, head: { sha: HEAD } }, { number: 99, head: { sha: HEAD } }],
+      failOnceOn: '/statuses/',
+    });
+    assert.notEqual(r.status, 0);
+    assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+    assert.match(r.posts[0]?.description ?? '', /did not complete/);
+  });
+});
+
+/**
+ * Tier-2 review of 2026-09-27 (gemini-3.1-pro, FAIL at 60a024c): a run that
+ * is interrupted rather than errored must still publish failure, and no
+ * comment text may ever reach the shell. Both are driven for real here.
+ */
+describe('founder-authorization — interruption and hostile comment text', () => {
+  const FAKE_CURL_PATH = (): string => {
+    // Reuse the fake API from the block above by re-reading this file would be
+    // circular; the script under test only needs the same four behaviours.
+    return `#!/usr/bin/env bash
+url=""; post=0; data=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -X) [[ "$2" == POST ]] && post=1; shift 2 ;;
+    -d) data="$2"; shift 2 ;;
+    -H) shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if [[ -n "\${FAKE_FAIL:-}" && "$url" == *"$FAKE_FAIL"* ]]; then exit 22; fi
+# Sleeps on the FIRST matching call only, so a post the signal handler makes
+# after the interrupted one goes straight through and is recorded.
+if [[ -n "\${FAKE_SLEEP_ON:-}" && "$url" == *"$FAKE_SLEEP_ON"* && ! -e "$FAKE_SLEEPING" ]]; then : > "$FAKE_SLEEPING"; sleep "\${FAKE_SLEEP_SECS:-30}"; fi
+if [[ $post -eq 1 ]]; then printf '%s\\n' "$data" >> "$FAKE_LOG"; echo '{}'; exit 0; fi
+case "$url" in
+  */pulls\\?state=open*) cat "$FAKE_OPEN" ;;
+  */pulls/*) cat "$FAKE_PR" ;;
+  */issues/*/comments*) cat "$FAKE_COMMENTS" ;;
+  *) exit 22 ;;
+esac
+`;
+  };
+
+  function workflowRunScript(): string {
+    const text = readFileSync(WORKFLOW, 'utf8').split('\n');
+    const start = text.findIndex((l) => /^\s+run: \|$/.test(l));
+    const runIndent = (text[start] ?? '').length - (text[start] ?? '').trimStart().length;
+    const body: string[] = [];
+    for (const l of text.slice(start + 1)) {
+      if (l.trim() !== '' && l.length - l.trimStart().length <= runIndent) break;
+      body.push(l.slice(runIndent + 2));
+    }
+    return body.join('\n');
+  }
+
+  function stage(comments: Comment[], openPrs: Array<{ number: number; head: { sha: string } }> = [{ number: PR, head: { sha: HEAD } }]) {
+    const dir = mkdtempSync(join(tmpdir(), 'founder-auth-sig-'));
+    const bin = join(dir, 'bin');
+    spawnSync('mkdir', ['-p', bin]);
+    writeFileSync(join(bin, 'curl'), FAKE_CURL_PATH());
+    chmodSync(join(bin, 'curl'), 0o755);
+    const files = {
+      FAKE_PR: join(dir, 'pr.json'),
+      FAKE_OPEN: join(dir, 'open.json'),
+      FAKE_COMMENTS: join(dir, 'comments.json'),
+      FAKE_LOG: join(dir, 'posts.log'),
+      FAKE_SLEEPING: join(dir, 'sleeping'),
+    };
+    writeFileSync(files.FAKE_PR, JSON.stringify({ number: PR, head: { sha: HEAD } }));
+    writeFileSync(files.FAKE_OPEN, JSON.stringify(openPrs));
+    writeFileSync(files.FAKE_COMMENTS, JSON.stringify(comments));
+    writeFileSync(files.FAKE_LOG, '');
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...files,
+      PATH: `${bin}:${process.env.PATH ?? ''}`,
+      GH_TOKEN: 'fake-token-for-tests',
+      REPO,
+      PR_NUMBER: String(PR),
+      FOUNDER_LOGINS: FOUNDER,
+    };
+    const posts = () => readFileSync(files.FAKE_LOG, 'utf8').split('\n').filter((l) => l !== '')
+      .map((l) => JSON.parse(l) as { state: string; description: string });
+    return { dir, files, env, posts };
+  }
+
+  /**
+   * Runs the workflow script until the fake API is sleeping on the first call
+   * whose URL contains `sleepOn`, then sends SIGTERM to the whole process
+   * group, as Actions does on cancel, killing that call mid-flight.
+   */
+  async function interruptAt(s: ReturnType<typeof stage>, sleepOn: string, extra: NodeJS.ProcessEnv = {}) {
+    const child = spawn('bash', ['-c', workflowRunScript()], {
+      cwd: REPO_ROOT,
+      env: { ...s.env, ...extra, FAKE_SLEEP_ON: sleepOn },
+      detached: true,
+      stdio: 'ignore',
+    });
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(s.files.FAKE_SLEEPING)) {
+      assert.ok(Date.now() < deadline, `the run never reached a call to ${sleepOn}`);
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    process.kill(-(child.pid ?? 0), 'SIGTERM');
+    return new Promise<number | null>((r) => child.on('close', (c) => r(c)));
+  }
+
+  it('publishes failure when the run is interrupted with SIGTERM mid-evaluation', async () => {
+    const s = stage([comment(40, block())]);
+    try {
+      const code = await interruptAt(s, '/comments');
+      assert.notEqual(code, 0, 'an interrupted run does not exit 0');
+      assert.deepEqual(s.posts().map((p) => p.state), ['failure']);
+      assert.match(s.posts()[0]?.description ?? '', /interrupted/);
+    } finally {
+      rmSync(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  // Copilot review on PR #84 (4117742217): a signal that kills a status post
+  // must not leave the run with nothing posted. Each case kills the one post
+  // the run was making and expects the handler's failure to follow it.
+  it('cannot be stopped by a signal during the fallback failure post', async () => {
+    // The comments fetch fails, the run exits, and the EXIT trap's fallback
+    // post is the one that sleeps when the signal arrives. Signals are
+    // ignored for that post, so it completes: the fake sleeps briefly and
+    // records it rather than being killed.
+    const s = stage([comment(41, block())]);
+    try {
+      const code = await interruptAt(s, '/statuses/', { FAKE_FAIL: '/comments', FAKE_SLEEP_SECS: '1' });
+      assert.notEqual(code, 0);
+      assert.deepEqual(s.posts().map((p) => p.state), ['failure']);
+      assert.match(s.posts()[0]?.description ?? '', /did not complete/);
+    } finally {
+      rmSync(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes failure when the verdict post is interrupted, even for an authorized head', async () => {
+    const s = stage([comment(42, block())]);
+    try {
+      const code = await interruptAt(s, '/statuses/');
+      assert.notEqual(code, 0, 'an interrupted run does not exit 0, even when the head was authorized');
+      assert.deepEqual(s.posts().map((p) => p.state), ['failure']);
+      assert.match(s.posts()[0]?.description ?? '', /interrupted/);
+    } finally {
+      rmSync(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes failure when the shared-head refusal post is interrupted', async () => {
+    const s = stage([comment(43, block())], [{ number: PR, head: { sha: HEAD } }, { number: 99, head: { sha: HEAD } }]);
+    try {
+      const code = await interruptAt(s, '/statuses/');
+      assert.notEqual(code, 0);
+      assert.deepEqual(s.posts().map((p) => p.state), ['failure']);
+      assert.match(s.posts()[0]?.description ?? '', /interrupted/);
+    } finally {
+      rmSync(s.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('never lets comment text reach the shell, in the script or the workflow', () => {
+    const s = stage([]);
+    try {
+      const marker = join(s.dir, 'PWNED');
+      const hostile = [
+        `$(touch ${marker})`,
+        `\`touch ${marker}\``,
+        `"; touch ${marker}; echo "`,
+        `Authorized: merge ${REPO}#${PR} at head $(touch ${marker})`,
+        `Authorized: merge ${REPO}#${PR} at head ${HEAD} $(touch ${marker}) \`touch ${marker}\``,
+      ].map((body, i) => comment(50 + i, body));
+      writeFileSync(s.files.FAKE_COMMENTS, JSON.stringify(hostile));
+
+      const direct = spawnSync('bash', [CHECK, REPO, String(PR), HEAD], {
+        input: JSON.stringify(hostile), encoding: 'utf8', env: s.env,
+      });
+      assert.equal(direct.status, 0, direct.stderr);
+      assert.equal((JSON.parse(direct.stdout) as Verdict).comment_id, 54, 'the one well-formed block still counts');
+
+      const wf = spawnSync('bash', ['-c', workflowRunScript()], { cwd: REPO_ROOT, encoding: 'utf8', env: s.env });
+      assert.equal(wf.status, 0, wf.stderr);
+      assert.deepEqual(s.posts().map((p) => p.state), ['success']);
+
+      assert.equal(existsSync(marker), false, 'no comment text was executed');
+    } finally {
+      rmSync(s.dir, { recursive: true, force: true });
+    }
   });
 });
