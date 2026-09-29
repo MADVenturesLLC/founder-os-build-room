@@ -19,7 +19,8 @@
 # whose trailers git cannot read), and FounderOS's other later changes.
 # CORRECTED HERE, NOT YET IN FounderOS: the divider character set (see
 # DIVIDER CHARACTER SET in `prbody`); FounderOS's `[[:space:]]` class is
-# broader than git's.
+# broader than git's. ADDED HERE, NOT YET IN FounderOS: the MERGE WRAP and
+# TRAILER LINE LENGTH rules in `prbody`, for lines GitHub re-wraps at merge.
 #
 # Original header follows.
 #
@@ -294,6 +295,33 @@ case "$MODE" in
       echo "FAIL (prbody) PR body: line ${divider%%:*} is a git message divider ('${divider#*:}') — git interpret-trailers stops reading there, so the merge commit would carry NO trailers regardless of the block below it"
       fail=1
     fi
+    # MERGE WRAP (2026-09-28, measured on this repository): the merge commit
+    # does not always carry the body as written. On the three merges made
+    # through the REST API (PR #84 at cf24db6, PR #85 at cba62c5, PR #87 at
+    # 9f088f0), GitHub re-wrapped every body line longer than 72 characters:
+    # it stripped the line's indent and broke it greedily at whitespace,
+    # never inside a word, and left shorter lines and the title alone. That
+    # model reproduces all three merge messages exactly. Merges made in the
+    # web UI kept the body as written (PR #78 at c8558e9 has six long lines
+    # intact). Either path can merge a PR, so this rule assumes the wrap.
+    # Under it, a standalone `---` inside a long line can START a line of the
+    # merge commit, as can an indented ` ---` line: both pass the divider
+    # check above, and the merge commit then carries no trailers. This rule
+    # does not predict where the wrap will break the line; it rejects a
+    # standalone `---` preceded by a space or tab anywhere in a long line,
+    # because any such space is a place the wrap may break. Length is
+    # counted in bytes (LC_ALL=C), which is stricter than GitHub's count for
+    # non-ASCII lines.
+    # The line-length rule for the trailers themselves is TRAILER LINE
+    # LENGTH, below.
+    wdivider="$(printf '%s\n' "${PR_BODY-}" | LC_ALL=C awk '
+      { line = $0; gsub(/\r/, "", line) }
+      hit == "" && length(line) > 72 && $0 ~ /[ \t]---([ \t\r]|$)/ { hit = NR ":" line }
+      END { if (hit != "") print hit }')"
+    if [[ -n "$wdivider" ]]; then
+      echo "FAIL (prbody) PR body: line ${wdivider%%:*} is longer than 72 characters and holds a standalone '---' after a space; GitHub re-wraps such lines when it writes the merge commit, which can start a line with that '---' and strip every trailer (write it as an em dash, or shorten the line)"
+      fail=1
+    fi
     # GIT-READABILITY (2026-09-21): the hand rules above and below
     # (divider, end-anchor, key restriction) each encode one of git's
     # conditions for reading a trailer block. This asks git directly, so a
@@ -330,6 +358,21 @@ case "$MODE" in
     parsed_attr="$(printf '%s\n' "$parsed" | grep -E '^(Role-Id|Role-Id-Secondary|Actor-Id|Execution-Surface):' | sort || true)"
     if [[ "$raw_norm" != "$parsed_attr" ]]; then
       echo "FAIL (prbody) PR body: attribution-shaped lines do not match, one for one, the trailers git would read from the merge commit — an attribution-shaped line sits outside the final block, or duplicates one inside it"
+      fail=1
+    fi
+    # TRAILER LINE LENGTH (see MERGE WRAP above): on a merge that re-wraps,
+    # an attribution line longer than 72 characters is split from its value.
+    # The FounderOS CLAUDE.md records the measured case, merge commit 24cd66a
+    # on 2026-08-30: a 74-character Actor-Id line landed as "Actor-Id:" with
+    # its value on the next line. It sets 72 as the bound; this enforces that
+    # bound before merge instead of after. (This repository's PR #24 merge,
+    # 2d40a95, carries a 74-character Actor-Id intact because it was not
+    # re-wrapped; its body fails this rule, as the bound says it should.)
+    long_attr="$(printf '%s\n' "$raw_attr" | LC_ALL=C awk '
+      hit == "" && length($0) > 72 { hit = length($0) ":" $0 }
+      END { if (hit != "") print hit }')"
+    if [[ -n "$long_attr" ]]; then
+      echo "FAIL (prbody) PR body: attribution line '${long_attr#*:}' is ${long_attr%%:*} characters; GitHub re-wraps lines over 72 when it writes the merge commit, which splits the trailer from its value"
       fail=1
     fi
     tail_block="$(printf '%s\n' "$body" | awk '
@@ -450,6 +493,25 @@ case "$MODE" in
     # `---` is the documented remedy and must pass.
     st "Bugbot summary with --- above block" 1 $'## Summary\n\nDid the thing.\n\n<!-- CURSOR_SUMMARY -->\n---\n\n> [!NOTE]\n> **Low Risk**\n> Tests only.\n\n<!-- /CURSOR_SUMMARY -->\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     st "Bugbot summary with *** accepted"    0 $'## Summary\n\nDid the thing.\n\n<!-- CURSOR_SUMMARY -->\n***\n\n> [!NOTE]\n> **Low Risk**\n> Tests only.\n\n<!-- /CURSOR_SUMMARY -->\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    # Merge-wrap cases (MERGE WRAP and TRAILER LINE LENGTH). Measured by
+    # re-wrapping each body the way GitHub does: "at the wrap point" and
+    # "long indented" then parse to zero trailers, and the 74-character
+    # trailer to an empty Actor-Id. "early in it", "ending in ---" and the
+    # table row keep their trailers under that wrap; they are rejected on
+    # purpose, because the rule does not predict where the wrap falls and
+    # a different title or line would move it. The accepted cases pin what
+    # the rule leaves alone: short lines, `---` inside a word, em dashes, and
+    # a trailer of exactly 72 characters.
+    st "wrap: long line, --- at the wrap point"  1 $'This sentence is long enough that the wrap lands right on the dashes xx --- and the rest of it continues past the column limit.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "wrap: long line, --- early in it"        1 $'Intro --- then a sentence that keeps going well past the seventy-two character limit.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "wrap: long line ending in ---"           1 $'A line that keeps going well past the seventy-two character limit and ends ---\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "wrap: long indented --- line"            1 $'Summary.\n\n   --- an indented line that is long enough to be wrapped by GitHub at merge time\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "wrap: long table row with | --- |"       1 $'| a very long cell that pushes the row well past the limit | --- | another cell |\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "wrap: short line with --- accepted"      0 $'A short line --- fine.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "wrap: long line, ---x and a---b accepted" 0 $'A long line that mentions ---x and a---b and keeps going past seventy-two characters.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "wrap: long line, em dashes accepted"     0 $'A long line that uses an em dash \xe2\x80\x94 like this \xe2\x80\x94 and keeps going past the limit.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "trailer of 72 characters accepted"       0 $'Summary.\n\nRole-Id: builder\nActor-Id: session:claude-code/an-identifier-long-enough-to-pass-72-chars\nExecution-Surface: claude-code'
+    st "trailer of 74 characters rejected"       1 $'Summary.\n\nRole-Id: builder\nActor-Id: session:claude-code/an-identifier-long-enough-to-pass-72-chars-x\nExecution-Surface: claude-code'
     # Stray attribution-shaped lines outside the block (Copilot on
     # FounderOS PR #356, rounds 4 and 6).
     st "stray Actor-Id line above the block rejected" 1 $'Actor-Id: founder\nquoted in prose.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
