@@ -72,8 +72,9 @@ async function start(store: PostgresLedgerStore): Promise<string> {
   openGateways.push(gateway);
   const pool = { query: async () => ({ rows: [] }) } as unknown as Pool;
   const app = createServer({ config: CONFIG, pool, store, startedAt: Date.now(), gateway });
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   openServers.push(server);
+  await new Promise<void>((resolve) => server.once('listening', () => resolve()));
   await gateway.leadership.attemptAcquisition();
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }

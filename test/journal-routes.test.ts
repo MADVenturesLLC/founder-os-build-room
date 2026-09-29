@@ -139,8 +139,9 @@ async function start(journalStore: JournalStoreStub): Promise<string> {
     gateway,
     journalStore,
   });
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   openServers.push(server);
+  await new Promise<void>((resolve) => server.once('listening', () => resolve()));
   await gateway.leadership.attemptAcquisition();
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
