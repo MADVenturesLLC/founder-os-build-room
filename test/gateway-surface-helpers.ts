@@ -125,7 +125,7 @@ export async function startSurface(
   const store = new PostgresLedgerStore(pool, gateway.roomAppendFence);
   const app = createServer({ config, pool, store, startedAt: FIXED_WALL_MS, gateway });
 
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   openServers.push(server);
   await new Promise<void>((resolve) => server.once('listening', () => resolve()));
   const { port } = server.address() as AddressInfo;

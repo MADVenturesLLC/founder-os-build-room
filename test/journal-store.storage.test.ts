@@ -507,7 +507,8 @@ async function startControlPlane(journalStore: JournalStore): Promise<{ url: str
     gateway,
     journalStore,
   });
-  const server: Server = app.listen(0);
+  const server: Server = app.listen(0, '127.0.0.1');
+  await new Promise<void>((resolve) => server.once('listening', () => resolve()));
   await gateway.leadership.attemptAcquisition();
   return {
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
