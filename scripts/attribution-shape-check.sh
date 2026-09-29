@@ -307,19 +307,38 @@ case "$MODE" in
     # Under it, a standalone `---` inside a long line can START a line of the
     # merge commit, as can an indented ` ---` line: both pass the divider
     # check above, and the merge commit then carries no trailers. This rule
-    # does not predict where the wrap will break the line; it rejects a
-    # standalone `---` preceded by a space or tab anywhere in a long line,
-    # because any such space is a place the wrap may break. Length is
-    # counted in bytes (LC_ALL=C), which is stricter than GitHub's count for
-    # non-ASCII lines.
+    # does not predict where the wrap will break the line; it rejects, in a
+    # long line, a `---` bounded on each side by the line's edge or by any
+    # byte that is not a visible ASCII character, because the wrap may break
+    # at any such byte.
+    #
+    # WIDTH, NOT BYTES, AND EVERY KIND OF SPACE (Tier-2 review of 813a190,
+    # gemini-3.1-pro, FAIL): the model is Python's textwrap, which expands a
+    # tab to the next multiple of 8 columns before measuring. A 69-byte line
+    # of 65 letters, a tab and `---` is 75 columns wide, so it wraps and the
+    # `---` starts the next line; the previous byte count passed it. The same
+    # model breaks at a vertical tab, form feed or CR as well as a space or
+    # tab, and turns each into a space, and its indent strip also removes
+    # Unicode spaces such as U+3000. GitHub's own handling of tabs and of
+    # those characters is unmeasured, so this takes the wider reading of
+    # each: width with tabs expanded, and any non-visible byte as a possible
+    # break. Other bytes still count one column each (LC_ALL=C), which is
+    # stricter than a character count for non-ASCII text.
     # The line-length rule for the trailers themselves is TRAILER LINE
-    # LENGTH, below.
+    # LENGTH, below; it measures width the same way.
     wdivider="$(printf '%s\n' "${PR_BODY-}" | LC_ALL=C awk '
+      function cols(s,   i, n) {
+        n = 0
+        for (i = 1; i <= length(s); i++) {
+          if (substr(s, i, 1) == "\t") n = n - n % 8 + 8; else n++
+        }
+        return n
+      }
       { line = $0; gsub(/\r/, "", line) }
-      hit == "" && length(line) > 72 && $0 ~ /[ \t]---([ \t\r]|$)/ { hit = NR ":" line }
+      hit == "" && cols(line) > 72 && $0 ~ /(^|[^!-~])---([^!-~]|$)/ { hit = NR ":" line }
       END { if (hit != "") print hit }')"
     if [[ -n "$wdivider" ]]; then
-      echo "FAIL (prbody) PR body: line ${wdivider%%:*} is longer than 72 characters and holds a standalone '---' after a space; GitHub re-wraps such lines when it writes the merge commit, which can start a line with that '---' and strip every trailer (write it as an em dash, or shorten the line)"
+      echo "FAIL (prbody) PR body: line ${wdivider%%:*} is wider than 72 columns and holds a standalone '---'; GitHub re-wraps such lines when it writes the merge commit, which can start a line with that '---' and strip every trailer (write it as an em dash, or shorten the line)"
       fail=1
     fi
     # GIT-READABILITY (2026-09-21): the hand rules above and below
@@ -369,10 +388,17 @@ case "$MODE" in
     # 2d40a95, carries a 74-character Actor-Id intact because it was not
     # re-wrapped; its body fails this rule, as the bound says it should.)
     long_attr="$(printf '%s\n' "$raw_attr" | LC_ALL=C awk '
-      hit == "" && length($0) > 72 { hit = length($0) ":" $0 }
+      function cols(s,   i, n) {
+        n = 0
+        for (i = 1; i <= length(s); i++) {
+          if (substr(s, i, 1) == "\t") n = n - n % 8 + 8; else n++
+        }
+        return n
+      }
+      hit == "" && cols($0) > 72 { hit = cols($0) ":" $0 }
       END { if (hit != "") print hit }')"
     if [[ -n "$long_attr" ]]; then
-      echo "FAIL (prbody) PR body: attribution line '${long_attr#*:}' is ${long_attr%%:*} characters; GitHub re-wraps lines over 72 when it writes the merge commit, which splits the trailer from its value"
+      echo "FAIL (prbody) PR body: attribution line '${long_attr#*:}' is ${long_attr%%:*} columns wide; GitHub re-wraps lines over 72 when it writes the merge commit, which splits the trailer from its value"
       fail=1
     fi
     tail_block="$(printf '%s\n' "$body" | awk '
@@ -512,6 +538,19 @@ case "$MODE" in
     st "wrap: long line, em dashes accepted"     0 $'A long line that uses an em dash \xe2\x80\x94 like this \xe2\x80\x94 and keeps going past the limit.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     st "trailer of 72 characters accepted"       0 $'Summary.\n\nRole-Id: builder\nActor-Id: session:claude-code/an-identifier-long-enough-to-pass-72-chars\nExecution-Surface: claude-code'
     st "trailer of 74 characters rejected"       1 $'Summary.\n\nRole-Id: builder\nActor-Id: session:claude-code/an-identifier-long-enough-to-pass-72-chars-x\nExecution-Surface: claude-code'
+    # Width and break characters (Tier-2 review of 813a190, FAIL). Each
+    # rejected body passes the 72-byte count but loses every trailer, or its
+    # Actor-Id value, under the textwrap model once tabs are expanded and a
+    # vertical tab or Unicode indent is treated as the model treats it. The
+    # first case is the reviewer's own.
+    st "width: 65 letters, tab, --- (69 bytes, 75 columns)" \
+                                                1 $'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\t---\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "width: long line, vertical tab then ---"  1 $'A line that keeps going well past the seventy-two character limit here\v--- and on.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "width: long line, --- then vertical tab"  1 $'---\vthen a line that keeps going well past the seventy-two character limit, on.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "width: long line indented by U+3000, ---" 1 $'\xe3\x80\x80--- then a line that keeps going well past the seventy-two character limit.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st "width: trailer widened past 72 by a tab" 1 $'Summary.\n\nRole-Id: builder\nActor-Id:\tsession:claude-code/an-identifier-that-is-sixty-bytes-long-xyz\nExecution-Surface: claude-code'
+    st "width: short line with a tab and --- accepted" \
+                                                0 $'A\t--- x\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     # Stray attribution-shaped lines outside the block (Copilot on
     # FounderOS PR #356, rounds 4 and 6).
     st "stray Actor-Id line above the block rejected" 1 $'Actor-Id: founder\nquoted in prose.\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
