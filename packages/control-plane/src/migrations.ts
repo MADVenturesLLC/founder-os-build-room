@@ -1326,7 +1326,8 @@ export const MIGRATIONS: readonly Migration[] = [
     /*
      * PR 2b Tranche B — journal database authority split (C-3 §6.1 steps
      * 1–13 exactly, per FD-B4; step 14 defers to Tranche D; steps 15 and 16
-     * are test carriers B-R11 / B-R8 and carry NO SQL here).
+     * are test carriers B-R11 / B-R8 and carry NO SQL here). Steps 3a and 13a
+     * are outside §6.1 and cancel before COMMIT (see "Applier privileges").
      *
      * Authority split (C-2 §3, §4):
      *   br_journal_owner        NOLOGIN, no credential — owns tables, trigger
@@ -1351,6 +1352,21 @@ export const MIGRATIONS: readonly Migration[] = [
      * (42710 duplicate role) — by design, not by defect: a cluster hosts one
      * journal authority. Test fixtures that need this tranche provision an
      * exclusively owned instance (Founder fixture-topology ruling, Option B).
+     *
+     * Applier privileges: steps 4 and 9 hand ownership to roles this entry
+     * has just created. A superuser applier needs nothing more. The
+     * administrative login of a managed Postgres (Neon's owner: NOSUPERUSER,
+     * CREATEROLE, owner of its database) is refused with 42501 at step 4 for
+     * two independent reasons: the creator of a role holds ADMIN OPTION on it
+     * but, on PostgreSQL 16 defaults, neither SET nor INHERIT ("must be able
+     * to SET ROLE"), and PostgreSQL 15 and later withhold CREATE on schema
+     * public from PUBLIC, which a new owner needs ("permission denied for
+     * schema public"). Step 3a supplies both for the length of this
+     * transaction (the applier joins the two roles that receive ownership;
+     * both are granted CREATE on public) and step 13a revokes both before
+     * COMMIT. 13a is last because the applier acts through those memberships
+     * until the genesis insert. Net effect: C-3 §6.1's end state, whoever
+     * applies it.
      *
      * The append routine (FD-B5, Builder's choice, recorded in the handoff):
      *   public.command_journal_append(
@@ -1377,6 +1393,12 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE ROLE br_journal_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION`,
       `CREATE ROLE command_journal_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION`,
       `CREATE ROLE br_app_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION INHERIT`,
+
+      // 3a: applier support for a non-superuser applier (see "Applier
+      //     privileges"). Not a C-3 §6.1 step; undone by 13a in this same
+      //     transaction. br_app_runtime is not touched: it owns nothing.
+      `GRANT br_journal_owner, command_journal_writer TO CURRENT_USER`,
+      `GRANT CREATE ON SCHEMA public TO br_journal_owner, command_journal_writer`,
 
       // 4: tables, ownership transferred immediately (same transaction).
       //    seq carries NO default — the routine assigns it (PC-8, no sequence).
@@ -1557,6 +1579,12 @@ export const MIGRATIONS: readonly Migration[] = [
       //     B-T1 asserts that equality against the constant.
       `INSERT INTO public.command_journal_chain_head (head_id, seq, chain_hash)
          VALUES (1, 0, '0000000000000000000000000000000000000000000000000000000000000000')`,
+
+      // 13a: undo 3a before COMMIT. Last on purpose: until the genesis insert
+      //      the applier acts on the journal tables through its membership in
+      //      br_journal_owner. Not a C-3 §6.1 step.
+      `REVOKE CREATE ON SCHEMA public FROM br_journal_owner, command_journal_writer`,
+      `REVOKE br_journal_owner, command_journal_writer FROM CURRENT_USER`,
     ],
   },
 
