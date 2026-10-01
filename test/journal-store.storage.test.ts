@@ -29,8 +29,9 @@
  * `42501`, mapped the same way and answered `503` through the real
  * `createServer` with the routine never called; THE IDENTITY LATCH: on a
  * second cluster whose migrations were applied BY a CREATEROLE
- * non-superuser admin login (Neon's owner shape, as far as PostgreSQL 16
- * lets such a login apply `0006` at all), that login is refused before any
+ * non-superuser admin login (Neon's owner shape; `0006` applies for it
+ * unaided, see journal-migration-nonsuperuser.storage.test.ts), that login
+ * is refused before any
  * journal statement — 503, zero rows — while WITHOUT the latch its append
  * through the routine succeeds, which is the measured answer to whether
  * the bypass is real (Founder disposition of review finding 4115032242);
@@ -780,15 +781,13 @@ describe('journal store — authorization and reachability map to distinct, fail
   it('the identity latch: the owner-class login that applied the migrations is refused — 503, no statement past the latch, zero rows — while WITHOUT the latch its append succeeds (the bypass is real)', async (t) => {
     // Its own cluster: 0006's roles are cluster-wide, and here they must be
     // CREATED BY the admin login, because that is where the bypass comes
-    // from. Neon's owner shape, as far as PostgreSQL 16 lets a non-superuser
-    // apply 0006 at all (measured 2026-09-27 on 16.15): a CREATEROLE +
-    // CREATEDB login that owns the database, holds SET and INHERIT on the
-    // roles it creates (`createrole_self_grant`), and can hand table
-    // ownership to a role with CREATE on schema public. Without INHERIT the
-    // ownership transfer in 0006 step 4 fails ("must be able to SET ROLE"),
-    // and without CREATE on the schema it fails ("permission denied for
-    // schema public"); with both, the login inherits br_app_runtime's own
-    // EXECUTE grant, which the routine's grant cannot tell apart.
+    // from. Neon's owner shape: a CREATEROLE + CREATEDB login that owns the
+    // database. 0006 applies for such a login unaided (steps 3a and 13a; see
+    // journal-migration-nonsuperuser.storage.test.ts), so nothing is granted
+    // in advance except what this measurement itself needs: the login holds
+    // SET and INHERIT on the roles it creates (`createrole_self_grant`), so
+    // it inherits br_app_runtime's own EXECUTE grant, which the routine's
+    // grant cannot tell apart.
     let owned: OwnedInstance | undefined;
     let su: PgClient | undefined;
     let adminPool: PgPool | undefined;
@@ -806,7 +805,6 @@ describe('journal store — authorization and reachability map to distinct, fail
       await su.end();
       su = superClient(owned, database);
       await su.connect();
-      await su.query('GRANT CREATE ON SCHEMA public TO PUBLIC');
 
       adminPool = new Pool({ host: '127.0.0.1', port: owned.port, user: adminRole, password, database, max: 2 });
       const { migrate } = await import('../packages/control-plane/src/migrations.js');
