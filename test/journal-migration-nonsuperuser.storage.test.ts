@@ -5,8 +5,9 @@
  * 36836638497, 2026-10-01) was refused with SQLSTATE 42501 at the ownership
  * transfer and rolled back. Every other fixture applies 0006 as a superuser,
  * or as a login whose environment was arranged for it to succeed
- * (journal-store.storage.test.ts sets createrole_self_grant and grants CREATE
- * on public to PUBLIC), so none of them could see it. This suite applies the
+ * (journal-store.storage.test.ts used to set createrole_self_grant and grant
+ * CREATE on public to PUBLIC; it now sets only the former, which its own
+ * measurement needs), so none of them could see it. This suite applies the
  * canonical sequence as the shape Neon gives an owner: NOSUPERUSER CREATEROLE
  * CREATEDB, owner of its database, PostgreSQL defaults, nothing granted in
  * advance.
