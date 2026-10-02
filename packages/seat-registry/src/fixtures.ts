@@ -42,7 +42,7 @@ export const FIXTURES: readonly FixtureEntry[] = [
   {
     source_path: '00-system/scripts/tier2-shape-check.sh',
     filename: 'tier2-shape-check.sh',
-    sha256: '95d498299f61ad4695b899543dfd7f2a35b658b5d6b5b3c78d167597a05415ad',
+    sha256: 'bf46e5a20ab0af14615146ea978ed28b0559be73fc41014b2fd6ff777a98eb94',
   },
   {
     source_path: '07-decisions/DEC-20260716-02-model-portfolio-and-routing-strategy.md',
