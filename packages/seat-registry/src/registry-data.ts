@@ -75,8 +75,12 @@ const ABSENT_REASON_SUPPLEMENTAL =
   'the binding Tier-2 verdict';
 
 const ABSENT_REASON_CLAUDE_CODE_TIER2 =
-  'No Anthropic model is on the Tier-2 roster: opus-4.8 was removed 2026-08-15, founder-directed (DEC-20260719-02 v1.1). ' +
-  'The surface permits the role; the roster supplies no eligible model for it';
+  'Superseded by DEC-20261001-01 (2026-10-01): the roster is re-based to ' +
+  'execution-surface attestation tokens and claude-code is re-admitted at ' +
+  'surface level, so this absent lane no longer reflects the governing ' +
+  'roster. Retained until the claude-code reviewer lane is added by a ' +
+  'separate derivation act (model_id pin + conditions), which this V1 ' +
+  'frozen tranche does not perform.';
 
 /* ------------------------------------------------------------------ */
 /* researcher — ABSENT routing set (§2.5.1) — a valid V1 outcome        */
@@ -354,11 +358,11 @@ const TIER2_GEMINI: SeatRoutingLane = {
   binding_status: 'approved-binding',
   binding_class: 'tier-2', // DEC-20260719-02
   mode: 'invoked',
-  tier2_attestation_id: 'gemini-3.1-pro', // matches model_id; no variance
+  tier2_attestation_id: 'gemini', // DEC-20261001-01: surface token (model_id kept for dispatch pinning)
   provider_class: 'P1', // deployment_channel: P1
   data_eligibility: ['public', 'internal'],
   conditions: [ANTIGRAVITY_MODEL_SELECTION, ANTIGRAVITY_APPROVAL, ANTIGRAVITY_PROHIBITED, REVIEWER_CLAUSE_3],
-  derivation: ['DEC-20260815-05', 'DEC-20260719-02 v1.1', 'DEC-20260807-01 §3.3', 'model-registry.md gemini-3.1-pro'],
+  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260815-05', 'DEC-20260719-02 v1.1', 'DEC-20260807-01 §3.3', 'model-registry.md gemini-3.1-pro'],
 };
 
 const TIER2_SOL: SeatRoutingLane = {
@@ -369,11 +373,11 @@ const TIER2_SOL: SeatRoutingLane = {
   binding_status: 'approved-binding',
   binding_class: 'tier-2-full-roster', // DEC-20260719-02 v1.1
   mode: 'xhigh',
-  tier2_attestation_id: 'chatgpt-5.6-sol', // attestation-id variance (§2.5.4 hazard 1) — persisted, never derived
+  tier2_attestation_id: 'codex', // DEC-20261001-01 surface token (was the attestation-id variance chatgpt-5.6-sol)
   provider_class: 'NOT_RECORDED', // deployment_channel: codex-founder-operated
   data_eligibility: ['public'],
   conditions: [],
-  derivation: ['DEC-20260719-02 v1.1', 'model-registry.md gpt-5.6-sol'],
+  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-5.6-sol'],
 };
 
 const TIER2_TERRA: SeatRoutingLane = {
@@ -384,11 +388,11 @@ const TIER2_TERRA: SeatRoutingLane = {
   binding_status: 'approved-binding',
   binding_class: 'tier-2-full-roster', // DEC-20260719-02 v1.1 (supersedes the DEC-20260807-01 not-Tier-2 line, §2.5.4 hazard 2)
   mode: 'high',
-  tier2_attestation_id: 'chatgpt-5.6-terra',
+  tier2_attestation_id: 'codex', // DEC-20261001-01 surface token (was chatgpt-5.6-terra)
   provider_class: 'NOT_RECORDED',
   data_eligibility: ['public'],
   conditions: [],
-  derivation: ['DEC-20260719-02 v1.1', 'model-registry.md gpt-5.6-terra'],
+  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-5.6-terra'],
 };
 
 const TIER2_LUNA: SeatRoutingLane = {
@@ -399,11 +403,11 @@ const TIER2_LUNA: SeatRoutingLane = {
   binding_status: 'approved-binding',
   binding_class: 'tier-2-full-roster', // DEC-20260719-02 v1.1
   mode: 'invoked',
-  tier2_attestation_id: 'chatgpt-5.6-luna',
+  tier2_attestation_id: 'codex', // DEC-20261001-01 surface token (was chatgpt-5.6-luna)
   provider_class: 'NOT_RECORDED', // deployment_channel: verification-pending — a governance sentinel, not a P1–P5 class (§2.2)
   data_eligibility: ['public'], // public-class only; internal-class review material requires explicit per-invocation Founder authorization
   conditions: [],
-  derivation: ['DEC-20260719-02 v1.1', 'model-registry.md gpt-5.6-luna'],
+  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-5.6-luna'],
 };
 
 const TIER2_GROK: SeatRoutingLane = {
@@ -414,11 +418,11 @@ const TIER2_GROK: SeatRoutingLane = {
   binding_status: 'approved-binding',
   binding_class: 'tier-2', // DEC-20260719-02 v1.1
   mode: 'invoked',
-  tier2_attestation_id: 'grok-4.5', // matches model_id; no variance
+  tier2_attestation_id: 'grok', // DEC-20261001-01: surface token (model_id kept for dispatch pinning)
   provider_class: 'NOT_RECORDED', // deployment_channel: unverified
   data_eligibility: ['public'], // public-class only by default (§2.4.2)
   conditions: [GROK_BULLET_1, GROK_BULLET_2],
-  derivation: ['DEC-20260815-05', 'DEC-20260719-02 v1.1', 'DEC-20260815-04', 'model-registry.md grok-4.5'],
+  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260815-05', 'DEC-20260719-02 v1.1', 'DEC-20260815-04', 'model-registry.md grok-4.5'],
 };
 
 const INDEPENDENT_REVIEWER: SeatRegistrationV1 = {
