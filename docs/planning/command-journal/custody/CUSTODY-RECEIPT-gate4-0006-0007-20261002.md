@@ -44,7 +44,7 @@ draft with its two signature lines filled, see below.
 | Bytes | 3419 |
 | Lines | 71 (`wc -l`) |
 | Trailing newline | present (single LF) |
-| What it is | the second act (main `fc1ffb6e`), posted 2026-10-02T08:35:59Z without a `DISPATCH IF CLEAN` or `CHECK ONLY` line and treated as check only; never dispatched; withdrawn by the third act and void under the disposition |
+| What it is | the second act (main `fc1ffb6e`): a dispatch authorization, posted 2026-10-02T08:35:59Z, that was never dispatched. The builder had asked for a `DISPATCH IF CLEAN` line before dispatching and the post carried none, and the builder's reads of 09:09Z to 09:25Z then found 0006 already applied, which made the act's premise false. Withdrawn by the third act and void under the disposition |
 
 | Field | Value |
 |---|---|
