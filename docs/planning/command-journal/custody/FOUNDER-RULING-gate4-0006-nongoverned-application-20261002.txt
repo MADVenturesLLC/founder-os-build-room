@@ -1,0 +1,111 @@
+FOUNDER RULING — GATE IV / TRANCHE C: 0006 APPLIED OUTSIDE THE GATE
+DISPOSITION: NONGOVERNED_APPLICATION_RECORDED
+I, Michael Alberto Daley, issue the following disposition.
+This disposition records that migration 0006_command_journal_authority_split
+reached the production database by a route other than the DB Admin
+Migration workflow, and rules on what follows. It authorizes no dispatch,
+merge, deployment, or change to the workflow, runner, environment or any
+secret. It creates no spend, provisioning, credential, or execution
+authority.
+SUBJECTS BOUND
+  The database
+    Neon project founder-os-build-room (orange-art-29526355), branch
+    production (br-summer-sun-avroco6a; the project's only branch, none
+    deleted), endpoint ep-little-meadow-avqfkjcp, database neondb,
+    PostgreSQL 18.6. It is the database Railway service rare-enjoyment
+    (project compassionate-happiness) reads: the service resolved that
+    endpoint on 2026-10-01 at 10:55Z, and its boot logs on 2026-10-02
+    report this database's schema_migrations.
+  The migration content
+    0006_command_journal_authority_split as merged to main by PR #89 at
+    fc1ffb6e7c733a6904469d3903c824ca3ffc0338 (2026-10-01T10:54:49Z),
+    under my merge authorization, comment 5929808451: C-3 §6.1 steps
+    1-13 with the applier steps 3a and 13a.
+  The application
+    2026-10-02 from 07:43:10.349Z to 07:43:14.504Z, by the repository's
+    administrative runner (migrate-cli) at fc1ffb6e, run from my own
+    machine as role neondb_owner. Runner run_id
+    6dac6f12-1d0c-4102-9b19-6da4ae19f446; expected_sha null, observed_sha
+    null; schema_migrations before 0001 to 0005, after 0001 to 0006. The
+    database records the row (0006_command_journal_authority_split,
+    2026-10-02 07:43:12.872774+00).
+  The Gate IV acts for 0006
+    First act, posted 2026-09-30T12:36:41Z and completed by my
+    confirmation of 2026-10-01T08:29:04Z, at main 1e53ca78: spent by run
+    36836638497 (approved by daley40-lab; two attempts, apply steps at
+    08:52:37Z and 09:39:52Z on 2026-10-01, both SQLSTATE 42501, both
+    rolled back; nothing applied).
+    Second act, posted 2026-10-02T08:35:59Z, at main fc1ffb6e: never
+    dispatched; withdrawn by my third act of 2026-10-02T15:32:17Z.
+FINDING
+1. The application of 2026-10-02 07:43Z was meant as a rehearsal on a
+   copy of the production branch. No copy existed: Neon lists one branch
+   in the project, created 2026-08-17, and no deleted branch. The
+   connection string I pasted was production's. The builder's
+   instruction read "Paste the NEW branch's direct connection string"
+   and did not require the branch id or endpoint id of the copy before
+   a connection string was used; I did not state them.
+2. No Gate IV act authorized that application. The first act was spent
+   on 2026-10-01; the second act was posted fifty-two minutes after the
+   application and authorized a dispatch, not a local run. No workflow
+   run, no required-reviewer approval and no run record exist for it.
+   The runner recorded expected_sha null and observed_sha null, which is
+   what it records when it is run outside the workflow.
+3. The migration applied is the content main carried at fc1ffb6e, and
+   its end state is the governed end state. The builder read production
+   on 2026-10-02 between 09:09Z and 09:25Z: command_journal_events and
+   command_journal_chain_head owned by br_journal_owner; neither
+   br_journal_owner nor command_journal_writer holds CREATE on schema
+   public; neondb_owner holds both roles with ADMIN OPTION only, no SET,
+   no INHERIT; command_journal_events holds no rows. That is the end
+   state test B-T1b asserts against a superuser application.
+4. Two configuration operations were applied to the production endpoint
+   on 2026-10-02 at 09:04:05Z and 09:06:00Z. Their origin and content
+   are not stated in this record.
+DISPOSITION
+NONGOVERNED_APPLICATION_RECORDED. 0006 stands as applied to production
+on 2026-10-02 at 07:43:12Z. That application is recorded as an
+application outside Gate IV, not as a governed execution and not as an
+exception. The second act is void and was never dispatched.
+REMEDIATION
+1. No revert. The end state equals the governed end state (FINDING 3),
+   and a revert would itself be a privileged migration for which no
+   tranche is defined.
+2. 0007_gate_runs was applied through Gate IV under my third act: run
+   37028874575 at main e2a7828c0501613baa23a9b0ae2be84eaa9d9a96,
+   dispatched 2026-10-02T15:42:33Z, approved by daley40-lab, apply step
+   16:27:31Z to 16:27:33Z, schema_migrations row at 16:27:32.833553+00.
+   Its evidence is preserved with this disposition.
+3. A rehearsal of the administrative runner runs only against a Neon
+   branch I create for it. Before any connection string is used, the
+   session names the branch id and the endpoint id of that branch, and
+   the builder verifies both against Neon's branch list. A rehearsal
+   instruction that omits this check is not to be issued.
+4. The runner is to refuse to apply when FOUNDER_AUTHORIZED_SHA or
+   GITHUB_SHA is absent, so an invocation outside the workflow cannot
+   reach a database by omission; a rehearsal sets both explicitly. This
+   is a separate pull request under its own authorization.
+WHAT THIS DISPOSITION DOES NOT DO
+- It does not make the application of 2026-10-02 07:43Z a governed run.
+- It authorizes no dispatch, no merge of any pull request (including
+  the one in REMEDIATION 4), no deployment, and no change to the
+  workflow, runner, environment or any secret.
+- It does not decide Tranche D or any credential for br_app_runtime.
+BINDING
+This disposition names one commit,
+fc1ffb6e7c733a6904469d3903c824ca3ffc0338 (the migration content
+applied), one runner run_id, 6dac6f12-1d0c-4102-9b19-6da4ae19f446, and
+one database row, (0006_command_journal_authority_split,
+2026-10-02 07:43:12.872774+00) in schema_migrations of the database
+bound above.
+CUSTODY
+Preserve this disposition verbatim as a new file in founder-os-build-room
+at exactly this path:
+  docs/planning/command-journal/custody/FOUNDER-RULING-gate4-0006-nongoverned-application-20261002.txt
+Land it with my three Gate IV acts, my confirmation of the first act,
+and the stage-5 evidence of run 37028874575 and of the application of
+07:43Z, in one pull request with one custody receipt. Record its
+SHA-256, bytes, lines, and trailing-newline status in the receipt. Do
+not alter the text.
+Signed: Michael Daley
+Date: 2026-10-03
