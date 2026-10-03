@@ -1,0 +1,29 @@
+{
+  "expected_sha": "e2a7828c0501613baa23a9b0ae2be84eaa9d9a96",
+  "observed_sha": "e2a7828c0501613baa23a9b0ae2be84eaa9d9a96",
+  "tranche_id": "0007_gate_runs",
+  "applied_migration_ids": [
+    "0007_gate_runs"
+  ],
+  "schema_migrations_before": [
+    "0001_ledger_core",
+    "0002_pending_rows_carry_no_transition_fields",
+    "0003_gateway_registry",
+    "0004_validate_pending_is_bare",
+    "0005_phase3_run_evidence",
+    "0006_command_journal_authority_split"
+  ],
+  "schema_migrations_after": [
+    "0001_ledger_core",
+    "0002_pending_rows_carry_no_transition_fields",
+    "0003_gateway_registry",
+    "0004_validate_pending_is_bare",
+    "0005_phase3_run_evidence",
+    "0006_command_journal_authority_split",
+    "0007_gate_runs"
+  ],
+  "approver_identity": null,
+  "run_id": "a80cef66-b969-4c4f-bbf2-98a3fc605b4f",
+  "started_at": "2026-10-02T16:27:31.637Z",
+  "finished_at": "2026-10-02T16:27:33.948Z"
+}

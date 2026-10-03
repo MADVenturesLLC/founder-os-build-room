@@ -1,0 +1,15 @@
+GATE IV CONFIRMATION — completes the act posted above in this session
+
+I re-read environment db-admin-migration myself with gh api,
+2026-10-01 08:23:04 to 08:23:06 UTC. It matches the ENVIRONMENT block
+of that act: reviewers decivantiq and daley40-lab; prevent_self_review
+on; administrator bypass off; deployment branches limited to main; no
+wait timer; MIGRATE_ADMIN_DATABASE_URL at environment scope only, none
+at repository or organization level. This read supersedes the [12:36
+UTC] time named there. Both bracketed clauses in that act stand as
+written. In the Target line, the Neon project is founder-os-build-room
+and the branch is br-summer-sun-avroco6a; the stray brackets are a typo.
+The act takes effect when I post this.
+
+Signed: Michael Daley
+Date: 2026-10-01 (UTC)
