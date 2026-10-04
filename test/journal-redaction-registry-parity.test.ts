@@ -78,6 +78,20 @@ describe('journal redaction guard — parity with packages/redaction BUILTIN_SHA
     });
   }
 
+  it('the two added shapes are exactly as narrow as the registry: near-misses are detected by neither', () => {
+    const nearMisses: readonly string[] = [
+      `akia${'a'.repeat(16)}`, // lowercase: the key-id shape is uppercase only
+      `AKIA${'A'.repeat(15)}`, // 19 characters: one short of a key id
+      `xoxz-${'a'.repeat(14)}`, // a prefix letter outside xox[baprs]
+    ];
+    for (const miss of nearMisses) {
+      assert.equal(containsCredentialMaterial([miss]), false, `near-miss detected as credential material: ${miss}`);
+      for (const shape of BUILTIN_SHAPES) {
+        assert.equal(nonGlobal(shape.pattern).test(miss), false, `registry shape ${shape.name} matches near-miss ${miss}`);
+      }
+    }
+  });
+
   it('the guard still detects a vector embedded in a larger argv string', () => {
     for (const shape of BUILTIN_SHAPES) {
       const vector = VECTORS[shape.name];

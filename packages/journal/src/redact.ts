@@ -28,23 +28,17 @@
  * reason: a boundary with no provisioned HMAC key refuses every write,
  * which is a live behaviour change its authorizing act did not grant.
  *
- * Do NOT read that package's README as the authority on this point. Its
- * "Still not wired" entry gives the reason as "no journal store exists
- * yet", and THIS PACKAGE'S `store.ts` makes that premise false — the
- * citation was stale the moment this module landed. What remains true is
- * narrower and is the actual argument: the store here is in-memory and is
- * NOT the ruled Neon locus of contract §3, and the key-provisioning
- * behaviour change is unauthorized. Updating that README to say so is the
- * redaction package owner's act, not this module's.
- *
- * This module therefore does NOT replace, wrap, or reimplement that
- * boundary. It is the §6.1 pre-write guard the stop-gate proofs need,
- * which must journal unconditionally and so cannot sit behind a
- * fail-closed-on-absent-key boundary. The consequence is real and worth
- * naming: two independently evolving credential-shape lists now govern
- * the same write path, and whoever is authorized to wire
- * `JournalAppendSink` into the journal store must reconcile them rather
- * than stack them. That reconciliation is a Founder act, not a refactor.
+ * This module does NOT replace, wrap, or reimplement that boundary. It is
+ * the §6.1 pre-write guard the stop-gate proofs need, which must journal
+ * unconditionally and so cannot sit behind a fail-closed-on-absent-key
+ * boundary. The consequence was real and worth naming when this module
+ * landed: two independently evolving credential-shape lists governed the
+ * same write path, and whoever wired `JournalAppendSink` into the journal
+ * store would have had to reconcile them rather than stack them, a Founder
+ * act and not a refactor. (That package's README once gave "no journal
+ * store exists yet" as its reason for not wiring the sink, a premise this
+ * package's `store.ts` had already made false; its "Not wired, by ruling"
+ * paragraph now carries the ruling below, and the two texts agree.)
  *
  * RECONCILED by the Founder's ruling of 2026-10-04 (C3 — RULING), landed at
  * docs/planning/command-journal/custody/
