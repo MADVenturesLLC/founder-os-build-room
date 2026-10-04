@@ -31,6 +31,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pgDefault from 'pg';
+import { REVOKE_RUNTIME_GRANTS_SQL } from './support/runtime-role-cleanup.js';
 import type { Pool, PoolClient } from 'pg';
 
 const { Pool: PgPool } = pgDefault;
@@ -187,7 +188,7 @@ before(async () => {
     PG_POOL_MAX: '12',
   });
   const pool = createPool(config);
-  harness = { pool, config, databaseName: 'boot_no_ddl_main' };
+  harness = { pool, appPool: pool, config, databaseName: 'boot_no_ddl_main' };
   // Full canonical sequence on the owned instance — the boot under test
   // must find every required id, 0006 included.
   const result = await migrate(pool);
@@ -243,6 +244,8 @@ async function cleanupJournalObjectsAndAssertRoleAbsence(pool: Pool, database: s
   await pool.query('DROP TABLE IF EXISTS public.command_journal_events, public.command_journal_chain_head CASCADE');
   await pool.query('DROP FUNCTION IF EXISTS public.command_journal_append(text, text, text, bigint, bytea)');
   await pool.query('DROP FUNCTION IF EXISTS public.command_journal_immutable()');
+  // 0008's grants on the ordinary tables would block the role drop; see the helper.
+  await pool.query(REVOKE_RUNTIME_GRANTS_SQL);
   for (const role of JOURNAL_ROLES) {
     await pool.query(`DROP ROLE IF EXISTS ${role}`);
   }

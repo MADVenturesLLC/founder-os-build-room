@@ -29,7 +29,7 @@ let store: Phase3RunStore | undefined;
 beforeEach(async () => {
   if (STORAGE_SKIP !== false) return;
   harness = await createGatewayHarness('phase3-run-events');
-  store = new Phase3RunStore(harness.pool, { ...harness.config, commitSha: '2'.repeat(40) });
+  store = new Phase3RunStore(harness.appPool, { ...harness.config, commitSha: '2'.repeat(40) });
 });
 
 afterEach(async () => {
@@ -41,7 +41,7 @@ afterEach(async () => {
 describe('0005_phase3_run_evidence — additive migration contract', () => {
   it('is registered exactly once after every existing migration', () => {
     const ids = MIGRATIONS.map((migration) => migration.id);
-    assert.equal(ids.at(-1), '0007_gate_runs');
+    assert.equal(ids.at(-1), '0008_runtime_operational_grants');
     assert.equal(ids.filter((id) => id === '0005_phase3_run_evidence').length, 1);
   });
 
@@ -730,7 +730,7 @@ describe('Phase 3 run store — ordered, bounded evidence', { skip: STORAGE_SKIP
 
   it('judges entry freshness after waiting for the registry fence', async () => {
     const input = await enrolledAttemptInput();
-    const shortWindowStore = new Phase3RunStore(harness!.pool, {
+    const shortWindowStore = new Phase3RunStore(harness!.appPool, {
       ...harness!.config,
       commitSha: '2'.repeat(40),
       gatewayTimestampWindowMs: 25,
@@ -758,7 +758,7 @@ describe('Phase 3 run store — ordered, bounded evidence', { skip: STORAGE_SKIP
   it('refuses every later mutation from a different deployment identity', async () => {
     const input = await enrolledAttemptInput();
     await store!.createAttempt(input);
-    const wrongStore = new Phase3RunStore(harness!.pool, {
+    const wrongStore = new Phase3RunStore(harness!.appPool, {
       ...harness!.config,
       commitSha: '9'.repeat(40),
     });

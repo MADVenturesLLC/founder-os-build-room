@@ -174,7 +174,7 @@ describe('gateway-leadership · contention, expiry, and generation', { skip: STO
      */
     const { createPool } = await import('../packages/control-plane/src/db.js');
     const ownPool = createPool(harness!.config);
-    const node = makeNode({ ...harness!, pool: ownPool });
+    const node = makeNode({ ...harness!, appPool: ownPool });
 
     await promote(node);
     assert.equal(node.leadership.isLeader, true, 'the node must genuinely lead for this to mean anything');

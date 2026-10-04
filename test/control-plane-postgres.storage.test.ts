@@ -44,6 +44,8 @@ import { migrate } from '../packages/control-plane/src/migrations.js';
 import { PostgresLedgerStore, RoomNotFoundError } from '../packages/control-plane/src/store.js';
 import { snapshot } from '../packages/ledger/src/index.js';
 import { makeEvent } from './helpers.js';
+import { RUNTIME_ROLE_MODE, applicationUrl } from './support/runtime-role-mode.js';
+import { REVOKE_RUNTIME_GRANTS_SQL } from './support/runtime-role-cleanup.js';
 
 const { Pool: PgPool } = pgDefault;
 
@@ -199,6 +201,8 @@ let instance: OwnedInstance | undefined;
 /** The owned fixture database this run migrates and exercises. */
 let DATABASE_URL = '';
 let pool: Pool | undefined;
+/** The pool the store under test uses: the runtime login in runtime-role mode, otherwise `pool` itself. */
+let appPool: Pool | undefined;
 let store: PostgresLedgerStore | undefined;
 
 /**
@@ -240,10 +244,14 @@ before(async () => {
       '0005_phase3_run_evidence',
       '0006_command_journal_authority_split',
       '0007_gate_runs',
+      '0008_runtime_operational_grants',
     ],
     'the full canonical sequence through 0006 applied in order on the owned instance',
   );
-  store = new PostgresLedgerStore(pool);
+  appPool = RUNTIME_ROLE_MODE
+    ? createPool(loadConfig({ DATABASE_URL: applicationUrl(DATABASE_URL), CONTROL_PLANE_TOKEN: TEST_TOKEN }))
+    : pool;
+  store = new PostgresLedgerStore(appPool);
 });
 
 after(async () => {
@@ -251,11 +259,15 @@ after(async () => {
   // pg_roles absence assertion — BEFORE the owned instance is destroyed. A
   // failure here fails the suite; destruction afterwards only contains it.
   // Never DROP OWNED BY.
+  if (appPool !== undefined && appPool !== pool) await appPool.end().catch(() => undefined);
+  appPool = undefined;
   if (pool !== undefined) {
     try {
       await pool.query('DROP TABLE IF EXISTS public.command_journal_events, public.command_journal_chain_head CASCADE');
       await pool.query('DROP FUNCTION IF EXISTS public.command_journal_append(text, text, text, bigint, bytea)');
       await pool.query('DROP FUNCTION IF EXISTS public.command_journal_immutable()');
+      // 0008's grants on the ordinary tables would block the role drop; see the helper.
+      await pool.query(REVOKE_RUNTIME_GRANTS_SQL);
       for (const role of JOURNAL_ROLES) {
         await pool.query(`DROP ROLE IF EXISTS ${role}`);
       }
@@ -414,7 +426,7 @@ describe('control plane — survives a restart without data loss', { skip: skip 
      * proved at the storage layer — the deployed run proves it end to end,
      * against a process the platform actually restarted.
      */
-    const freshPool = createPool(loadConfig({ DATABASE_URL, CONTROL_PLANE_TOKEN: TEST_TOKEN }));
+    const freshPool = createPool(loadConfig({ DATABASE_URL: applicationUrl(DATABASE_URL), CONTROL_PLANE_TOKEN: TEST_TOKEN }));
     try {
       const freshStore = new PostgresLedgerStore(freshPool);
       const after = await freshStore.loadRoom(roomId);

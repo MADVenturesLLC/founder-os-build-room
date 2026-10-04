@@ -28,6 +28,7 @@
     "phase2:runs": "node dist/packages/run-harness/src/cli.js",
     "phase3:counted-run": "bash scripts/phase3-counted-run.sh",
     "test:storage": "npm run build && node dist/test/support/require-test-database-url.js && node --test dist/test/*.storage.test.js",
+    "test:storage:runtime-role": "npm run build && node dist/test/support/require-test-database-url.js && node dist/test/support/run-runtime-role-tier.js",
     "test:prereq-c": "npm run build && node dist/test/support/require-prereq-c-runtime.js && node --test dist/test/*.prereq-c.storage.test.js",
     "test:custody:macos": "npm run build && BUILDROOM_CUSTODY_MACOS=1 node --test dist/test/custody-macos.test.js",
     "gate:integrity": "bash scripts/contract-integrity-scan.sh",
