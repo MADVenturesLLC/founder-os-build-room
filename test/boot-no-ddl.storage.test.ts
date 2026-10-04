@@ -441,7 +441,8 @@ describe('DDL observation survives rollback (F2, Class 1)', { skip: STORAGE_SKIP
  * and each window is delimited by unique `RAISE LOG` marker statements (no
  * clock arithmetic). The log is read only once the closing marker has reached
  * it — the logging collector flushes asynchronously, so a read issued as the
- * marker statement returns can precede the lines it delimits
+ * marker statement returns can precede the lines it delimits — and a window
+ * whose marker has not arrived by the deadline fails rather than being scored
  * (`readInstanceLogOnceClosed`). Within a window, an `ddl_observation:` LOG
  * line counts as child-attributed only when its `[pid]` is NOT the suite's own
  * marker client pid (the only suite backend active in the window). The
@@ -578,9 +579,14 @@ function readInstanceLog(logDir: string): string {
  * the marker is in the file the window is complete: the positive counts are
  * final, and the boot child's zero assertion cannot pass vacuously on a window
  * the collector had not yet written. The poll re-reads every `intervalMs`
- * until the marker appears or `deadlineMs` passes; either way the caller
- * asserts on the final read with its existing predicate and message, so a
- * channel that genuinely drops a line still fails loudly.
+ * until the marker appears; the caller then asserts on that complete read
+ * with its existing predicate and message, so a channel that genuinely
+ * drops a line still fails loudly. A window that has not closed by
+ * `deadlineMs` fails the test here instead of being scored: scoring the
+ * partial read would let the zero assertion pass vacuously again, and a
+ * marker that takes longer than the deadline to reach the file is the
+ * channel itself failing, not a reason to trust it (Copilot review on
+ * PR #95, r4175628448).
  */
 async function readInstanceLogOnceClosed(
   t: TestContext,
@@ -599,10 +605,14 @@ async function readInstanceLogOnceClosed(
       return logText;
     }
     if (elapsedMs >= deadlineMs) {
-      t.diagnostic(
-        `server-log window did NOT close within ${deadlineMs} ms (${reads} read(s)); asserting on the final read`,
+      const observed = logText
+        .split('\n')
+        .filter((line) => line.includes('LOG:') && line.includes('ddl_observation:')).length;
+      assert.fail(
+        `server-log window did NOT close: closing marker ${closingMarker} is not in the instance log ` +
+          `after ${deadlineMs} ms (${reads} read(s)); the window cannot be scored on an incomplete read ` +
+          `(${observed} ddl_observation LOG line(s) in the whole log at the deadline)`,
       );
-      return logText;
     }
     await delay(intervalMs);
   }
