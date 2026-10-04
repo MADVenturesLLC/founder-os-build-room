@@ -112,13 +112,15 @@ that it is merged and in force for Phase 4 implementation is recorded here,
 not by editing the contract's own wording. Phase 5 remains unauthorized, and
 the three counted Phase 4 runs require separate Founder entry authorization.
 
-**Journal persistence (PR 2b) and live rooms — what is merged, as of `main@57fbcea` (2026-09-25).**
+**Journal persistence (PR 2b) and live rooms — what is merged, as of `main@ca56c47c` (2026-10-04).**
 
 - **Gate II Tranche A — merged (PR #27, 2026-09-13).** Boot-time migration replaced by a read-only staged schema preflight (`packages/control-plane/src/schema-preflight.ts`); its privilege audit is always `pending_cutover` and does not block boot.
 - **Tranche B — merged (PR #54, 2026-09-15).** Migration `0006_command_journal_authority_split` (journal tables, `command_journal_append`, role split) and the one-shot admin runner `packages/control-plane/src/migrate-cli.ts`. Merging defines the migration; it does not apply it to any database, and this README makes no claim about production Neon.
 - **Journal §7.1–7.3 proofs — merged (PR #67, 2026-09-17).** Run against the in-memory store `packages/journal/src/store.ts`, which is not the ruled Neon locus (contract §3).
 - **`CreateRoom` — merged (PR #70, 2026-09-21).** The Gateway mints a room that is born `PREPARED` with zero executions; this runtime room is not yet bound to the lifecycle room.
-- **Not done.** No production TypeScript caller of `command_journal_append` exists (only the storage tests invoke it). Tranche C (the administrative migration workflow, whose workflow file db-admin-migration.yml is absent) and Tranche D (the `br_app_runtime` runtime cutover) are not done.
+- **Journal HTTP write path — merged (PR #78).** `packages/control-plane/src/journal-store.ts` is the production caller of `command_journal_append`, reached by `POST /journal/commands` behind the shared token; its identity latch refuses every append until the runtime connects as `br_app_runtime`. The Founder's ruling of 2026-10-04 (`docs/planning/command-journal/custody/FOUNDER-RULING-journal-redaction-C3-FD3-20261003.txt`) designates the pre-write guard in `packages/journal/src/redact.ts` as that path's redaction boundary and holds it to `packages/redaction`'s registry through `test/journal-redaction-registry-parity.test.ts`.
+- **Tranche C — merged.** The administrative migration workflow `.github/workflows/db-admin-migration.yml`; its Gate IV record is `docs/planning/command-journal/custody/CUSTODY-RECEIPT-gate4-0006-0007-20261002.md`.
+- **Not done.** Tranche D (the `br_app_runtime` runtime cutover). Its grants migration is subject to Gate IV and the `DATABASE_URL` swap to Gate V under its own SHA-named act; neither exists yet.
 
 ## Verifying
 
