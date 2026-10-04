@@ -6,9 +6,12 @@
  *   - every storage suite is classified — in the tier, or excluded WITH a
  *     reason — so a new suite cannot be added without a decision;
  *   - every suite in the tier is able to switch identity at all (it goes
- *     through the role-aware harness or the role helpers), actually builds
- *     something on the application pool or the runtime login, and none hands
- *     the superuser fixture pool to an application constructor;
+ *     through the role-aware harness or the role helpers), mentions the
+ *     application pool or the runtime login, and none hands the superuser
+ *     fixture pool to an application constructor. These are text checks, the
+ *     cheap first line; the exact one is the harness's own, which fails a
+ *     runtime-role suite that builds harnesses and never checks out a client
+ *     from an application pool;
  *   - the runner cannot report a pass for a run that skipped what it named;
  *   - the command and the CI step that run the tier exist and are ordered
  *     correctly.
@@ -48,9 +51,14 @@ function source(suite: string): string {
 const RUNTIME_ROLE_USE = /\b(?:appPool|applicationUrl|asRuntimeLogin|RUNTIME_LOGIN)\b/;
 
 /**
- * Whether the suite, or a helper module it imports from this directory, uses
- * the application pool or the runtime login. The harness module itself is
- * skipped: it mentions `appPool` for every consumer, which would prove nothing.
+ * Whether the suite, or a helper module it imports from this directory,
+ * MENTIONS the application pool or the runtime login. This is a text match and
+ * proves a mention, not use: the harness module itself is skipped because it
+ * names `appPool` for every consumer, but a helper's comments or an unused
+ * import would still satisfy it. The exact check is the harness's own, at
+ * end of the suite: a file-level hook in the harness fails a runtime-role suite
+ * that built harnesses and never checked out a client from an application pool.
+ * This is the cheap first line.
  */
 function usesRuntimeRole(suite: string): boolean {
   const text = source(suite);
@@ -113,7 +121,7 @@ describe('runtime-role tier · every suite in it can actually run as the runtime
       );
     });
 
-    it(`${suite} builds something on the application pool or the runtime login`, () => {
+    it(`${suite} mentions the application pool or the runtime login`, () => {
       assert.ok(
         usesRuntimeRole(suite),
         'a suite in the tier that never touches the application pool or the runtime login passes as a superuser and proves nothing about the runtime role: build an application object on harness.appPool, or exclude the suite with a reason',

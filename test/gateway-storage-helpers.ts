@@ -48,10 +48,21 @@
  * No credential exists anywhere in this mode: the owned instance trusts
  * loopback and `br_app_runtime` has no password, exactly as the sibling
  * owned-instance suites run their own runtime logins.
+ *
+ * A suite that is listed in the runtime-role tier but never checks out a
+ * client from `appPool` ran no application code as the runtime role, however
+ * it reads. The harness counts the checkouts across the whole process (one
+ * suite file is one process, and a suite may build a harness per test, most of
+ * them fixture-only) and a file-level `after` hook fails the suite when
+ * harnesses were built and the count is zero. That is exact where the static
+ * checks in `runtime-role-tier.test.ts` are only text matches. It cannot see a
+ * suite that uses `appPool` for some objects and `pool` for others; the
+ * naming, the header above and those static checks are what guard that.
  */
 
 import { copyFileSync, mkdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { after } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import pgDefault from 'pg';
 import type { Pool } from 'pg';
@@ -216,6 +227,25 @@ interface RoleCluster {
 
 let roleCluster: Promise<RoleCluster> | undefined;
 
+/**
+ * Process-wide tallies for the runtime-role mode: harnesses built, and client
+ * checkouts from their application pools (counted from after each pool's
+ * identity check). See the header and the `after` hook below.
+ */
+let harnessesBuilt = 0;
+let appPoolCheckouts = 0;
+
+if (RUNTIME_ROLE_MODE) {
+  after(() => {
+    if (harnessesBuilt > 0 && appPoolCheckouts === 0) {
+      throw new Error(
+        `this suite built ${harnessesBuilt} runtime-role harness(es) and never checked out a client from an application pool: ` +
+          `it ran no application code as ${RUNTIME_LOGIN}, so it must not be in the runtime-role tier`,
+      );
+    }
+  });
+}
+
 function clusterUrl(cluster: RoleCluster, database: string, user: string = 'postgres'): string {
   return `postgresql://${user}@127.0.0.1:${cluster.instance.port}/${database}`;
 }
@@ -326,6 +356,10 @@ async function createRoleSplitHarness(label: string): Promise<GatewayHarness> {
       `the runtime-role harness's application pool is ${String(rows[0]?.session_user)}/${String(rows[0]?.current_user)}, not ${RUNTIME_LOGIN}`,
     );
   }
+  harnessesBuilt += 1;
+  appPool.on('acquire', () => {
+    appPoolCheckouts += 1;
+  });
   return { pool, appPool, config: appConfig, databaseName };
 }
 
