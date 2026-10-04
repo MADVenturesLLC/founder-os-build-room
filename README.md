@@ -112,15 +112,19 @@ that it is merged and in force for Phase 4 implementation is recorded here,
 not by editing the contract's own wording. Phase 5 remains unauthorized, and
 the three counted Phase 4 runs require separate Founder entry authorization.
 
-**Journal persistence (PR 2b) and live rooms — what is merged, as of `main@ca56c47c` (2026-10-04).**
+**Journal persistence (PR 2b) and live rooms — what is merged, as of `main@929bb082` (2026-10-04).**
 
-- **Gate II Tranche A — merged (PR #27, 2026-09-13).** Boot-time migration replaced by a read-only staged schema preflight (`packages/control-plane/src/schema-preflight.ts`); its privilege audit is always `pending_cutover` and does not block boot.
+- **Gate II Tranche A — merged (PR #27, 2026-09-13).** Boot-time migration replaced by a read-only staged schema preflight (`packages/control-plane/src/schema-preflight.ts`); its privilege audit labels the connection `pending_cutover` (any role but `br_app_runtime`) or `enforced` (`br_app_runtime`); what `enforced` refuses is described under Tranche D.
 - **Tranche B — merged (PR #54, 2026-09-15).** Migration `0006_command_journal_authority_split` (journal tables, `command_journal_append`, role split) and the one-shot admin runner `packages/control-plane/src/migrate-cli.ts`. Merging defines the migration; it does not apply it to any database, and this README makes no claim about production Neon.
 - **Journal §7.1–7.3 proofs — merged (PR #67, 2026-09-17).** Run against the in-memory store `packages/journal/src/store.ts`, which is not the ruled Neon locus (contract §3).
 - **`CreateRoom` — merged (PR #70, 2026-09-21).** The Gateway mints a room that is born `PREPARED` with zero executions; this runtime room is not yet bound to the lifecycle room.
 - **Journal HTTP write path — merged (PR #78).** `packages/control-plane/src/journal-store.ts` is the production caller of `command_journal_append`, reached by `POST /journal/commands` behind the shared token; its identity latch refuses every append until the runtime connects as `br_app_runtime`. The Founder's ruling of 2026-10-04 (`docs/planning/command-journal/custody/FOUNDER-RULING-journal-redaction-C3-FD3-20261003.txt`) designates the pre-write guard in `packages/journal/src/redact.ts` as that path's redaction boundary and holds it to `packages/redaction`'s registry through `test/journal-redaction-registry-parity.test.ts`.
 - **Tranche C — merged.** The administrative migration workflow `.github/workflows/db-admin-migration.yml`; its Gate IV record is `docs/planning/command-journal/custody/CUSTODY-RECEIPT-gate4-0006-0007-20261002.md`.
-- **Not done.** Tranche D (the `br_app_runtime` runtime cutover). Its grants migration is subject to Gate IV and the `DATABASE_URL` swap to Gate V under its own SHA-named act; neither exists yet.
+- **Tranche D engineering — the runtime role, observed (the cutover itself is not done).**
+  - *Grants.* Migration `0008_runtime_operational_grants` gives `br_app_runtime` exactly the privileges the application's own statements need and nothing else: table privileges, column-level `UPDATE` where a statement sets only some columns, and sequence `USAGE`. No `ALL`, nothing on `PUBLIC`, nothing on the journal beyond the two `SELECT`s `0006` already grants, and no grant option. The runtime never owns an object.
+  - *Enforcement, keyed on the connected role.* The boot preflight refuses to serve when it is connected as `br_app_runtime` and that role holds any forbidden attribute (`rolsuper`, `rolcreaterole`, `rolcreatedb`, `rolbypassrls`, `rolreplication`) or any membership in `neondb_owner`, `neon_superuser`, `br_journal_owner`, `command_journal_writer`, `pg_read_all_data` or `pg_write_all_data`, at any depth and whatever its `INHERIT`/`SET` options. Any other role, `neondb_owner` until cutover step 10, still boots, labelled `pending_cutover`, so rolling `DATABASE_URL` back restores service. There is no new Railway variable. A later change removes the tolerance after step 10.
+  - *Proof.* `npm run test:storage:runtime-role` runs 16 storage suites with the application's real stores, gateway surface, leadership coordinator and HTTP server connected as `br_app_runtime`, on exclusively owned PostgreSQL instances migrated through the full canonical sequence; CI's `storage-integration` job runs it, and it fails on any skipped test. `test/runtime-role-boot.storage.test.ts` boots the real process as that login (plan r1 §5.4 D-R1, D-R2, D-R3 and D-R5; D-R4, no administrative credential in any Railway variable, can only be checked by variable name at Gate V), pins the exact grants against the catalog, and shows the refusals above. `test/runtime-role-tier.test.ts` keeps the tier's partition honest: a new storage suite must be classified, with a reason if it is excluded.
+- **Not done.** The Tranche D cutover. `0008` is applied only by Gate IV (the administrative workflow, under its own SHA-named act), and the `DATABASE_URL` swap is Gate V under its own act; neither exists yet. Until Gate IV applies `0008`, a deploy of this code fails its read-only preflight and the prior revision keeps serving, the same shape as `0007`. Credential rotation (Tranche E) and removal of the `pending_cutover` tolerance follow the cutover.
 
 ## Verifying
 
@@ -138,6 +142,14 @@ TEST_DATABASE_URL=postgresql://…/buildroom_test npm test
 # database — a command whose job is to exercise Postgres must not be able to
 # report success by skipping everything.
 TEST_DATABASE_URL=postgresql://…/buildroom_test npm run test:storage
+
+# The runtime-role tier: the application's own data access, connected as
+# `br_app_runtime`, on exclusively owned PostgreSQL instances (it needs the
+# server binaries — initdb, pg_ctl — on PATH or in BUILDROOM_TEST_PG_BINDIR).
+# TEST_DATABASE_URL is only the suites' run gate; the tier never connects to
+# it. It fails on any skipped test. A missing grant shows up as PostgreSQL's own
+# `permission denied for table …`, which names the privilege to add.
+TEST_DATABASE_URL=postgresql://…/buildroom_test npm run test:storage:runtime-role
 
 # The real-Keychain suite. Darwin only, opt-in only, synthetic item, never in
 # CI: touching a developer's login Keychain because they typed `npm test` would
