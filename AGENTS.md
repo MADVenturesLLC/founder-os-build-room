@@ -109,3 +109,12 @@ OFF-ROADMAP Build Room side bet (Open-Inspect S3 evolved). Claim language:
   corrected 2026-09-24.) Tests passing here are fixture-level evidence only
   and are NOT evidence of Phase 0, occupancy proof, gateway honesty, Room
   Runtime, an AE-01 fix, or any production activation.
+
+## GitHub credentials and identity (agent sessions)
+
+Agent sessions run GitHub operations on two separate credential legs. Both are intentional — do not "align" them or substitute one for the other.
+
+- **`gh` (API, PRs, comments) acts as the agent PAT `daley40-lab`,** exported as `GH_TOKEN` by the session launcher from `~/.secrets/mad-agent-env.sh`. That PAT is the intended `gh` identity for agent work. Never unset `GH_TOKEN`, never bypass it with the human keyring login (`decivantiq`), and never print, echo, or commit the token value.
+- **Git transport is separate.** SSH remotes (`git@github.com:…`) push with the SSH key as `decivantiq`; HTTPS remotes resolve through the `gh` credential helper. A session pushing over SSH as `decivantiq` while `gh pr create` acts as `daley40-lab` is normal, not a misconfiguration.
+- **On any `gh` 401: run `gh auth status`, stop, and report** — no keyring fallback, no `env -u GH_TOKEN`, no improvised retry. The token file is prefixed (`GITHUB_TOKEN=…`); extract it exactly as the loader does, and test any copy by API probe, never by printing it.
+- **A session relaunched after a stop must have a valid `GH_TOKEN` before it runs** — check `gh auth status` first; if the token is invalid, stop and report rather than pushing with the wrong identity.
