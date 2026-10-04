@@ -6,8 +6,9 @@
  *   - every storage suite is classified — in the tier, or excluded WITH a
  *     reason — so a new suite cannot be added without a decision;
  *   - every suite in the tier is able to switch identity at all (it goes
- *     through the role-aware harness or the role helpers), and none hands the
- *     superuser fixture pool to an application constructor;
+ *     through the role-aware harness or the role helpers), actually builds
+ *     something on the application pool or the runtime login, and none hands
+ *     the superuser fixture pool to an application constructor;
  *   - the runner cannot report a pass for a run that skipped what it named;
  *   - the command and the CI step that run the tier exist and are ordered
  *     correctly.
@@ -18,7 +19,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -41,6 +42,26 @@ const STORAGE_SUITES = readdirSync(SOURCE_DIR)
 
 function source(suite: string): string {
   return readFileSync(join(SOURCE_DIR, `${suite}${SUFFIX}`), 'utf8');
+}
+
+/** What a suite must touch for the runtime role to be the identity under test. */
+const RUNTIME_ROLE_USE = /\b(?:appPool|applicationUrl|asRuntimeLogin|RUNTIME_LOGIN)\b/;
+
+/**
+ * Whether the suite, or a helper module it imports from this directory, uses
+ * the application pool or the runtime login. The harness module itself is
+ * skipped: it mentions `appPool` for every consumer, which would prove nothing.
+ */
+function usesRuntimeRole(suite: string): boolean {
+  const text = source(suite);
+  if (RUNTIME_ROLE_USE.test(text)) return true;
+  for (const match of text.matchAll(/from '\.\/([\w.-]+)\.js'/g)) {
+    const helper = match[1];
+    if (helper === undefined || helper === 'gateway-storage-helpers') continue;
+    const path = join(SOURCE_DIR, `${helper}.ts`);
+    if (existsSync(path) && RUNTIME_ROLE_USE.test(readFileSync(path, 'utf8'))) return true;
+  }
+  return false;
 }
 
 describe('runtime-role tier · every storage suite is classified', () => {
@@ -89,6 +110,13 @@ describe('runtime-role tier · every suite in it can actually run as the runtime
       assert.ok(
         /from '\.\/gateway-storage-helpers\.js'/.test(text) || /from '\.\/support\/runtime-role-mode\.js'/.test(text),
         'a suite in the tier must import gateway-storage-helpers or support/runtime-role-mode; otherwise BUILDROOM_RUNTIME_ROLE=1 cannot change what it connects as',
+      );
+    });
+
+    it(`${suite} builds something on the application pool or the runtime login`, () => {
+      assert.ok(
+        usesRuntimeRole(suite),
+        'a suite in the tier that never touches the application pool or the runtime login passes as a superuser and proves nothing about the runtime role: build an application object on harness.appPool, or exclude the suite with a reason',
       );
     });
 

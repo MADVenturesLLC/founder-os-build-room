@@ -33,7 +33,6 @@ export const RUNTIME_ROLE_SUITES: readonly string[] = [
   'gateway-leadership',
   'gateway-online',
   'gateway-projection',
-  'gateway-registry-immutability',
   'gateway-retention',
   'gateway-session',
   'phase3-heartbeat-evidence',
@@ -50,6 +49,8 @@ export const RUNTIME_ROLE_SUITES: readonly string[] = [
 export const RUNTIME_ROLE_EXCLUDED: Readonly<Record<string, string>> = {
   'boot-no-ddl':
     'proves the boot issues no DDL by installing a superuser event trigger and booting as its own fixture login; the runtime login\'s boot is runtime-role-boot\'s subject',
+  'gateway-registry-immutability':
+    'proves the schema\'s append-only and shape guarantees against a superuser connection on purpose, because the claim is that the table refuses the mutation whatever issues it; it builds no application object, so there is nothing for br_app_runtime to run, and the runtime login\'s own refusals are pinned by runtime-role-boot',
   'journal-append-atomicity':
     'its subject is the journal routine\'s atomicity; it already runs the append over a genuine br_app_runtime login on its own owned instance and drops the cluster-wide roles at teardown',
   'journal-authority':
