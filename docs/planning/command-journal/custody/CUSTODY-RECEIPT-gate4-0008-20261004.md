@@ -154,7 +154,9 @@ builder's act. The application still connects as `neondb_owner`: no
 ## What this landing does not do
 
 - It edits no code, no workflow and no other custody file. It touches
-  `README.md` only to point at this receipt.
+  `README.md` only to update the status heading's SHA, to point at this
+  receipt, and to remove the sentence that said Gate IV for `0008` did
+  not exist yet.
 - It authorizes nothing: no dispatch, no merge, no deployment, no Tranche
   D cutover (Gate V), no `DATABASE_URL` change, no password or credential
   for `br_app_runtime`. The act is spent; no second run is authorized.
