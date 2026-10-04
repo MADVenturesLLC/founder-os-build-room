@@ -51,6 +51,7 @@ const TRANCHE_ORDER = [
   '0005_phase3_run_evidence',
   '0006_command_journal_authority_split',
   '0007_gate_runs',
+  '0008_runtime_operational_grants',
 ] as const;
 
 const ADMIN_ROLE = 'br_ns_admin';

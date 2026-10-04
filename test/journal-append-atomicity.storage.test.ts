@@ -37,6 +37,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createServer } from 'node:net';
 import pgDefault from 'pg';
+import { REVOKE_RUNTIME_GRANTS_SQL } from './support/runtime-role-cleanup.js';
 import type { Client as PgClient } from 'pg';
 import {
   GENESIS_CHAIN_HASH,
@@ -56,6 +57,7 @@ const TRANCHE_ORDER = [
   '0005_phase3_run_evidence',
   '0006_command_journal_authority_split',
   '0007_gate_runs',
+  '0008_runtime_operational_grants',
 ] as const;
 
 /* ---------------- dedicated disposable instance ---------------- */
@@ -281,6 +283,8 @@ after(async () => {
       await admin.query('DROP FUNCTION IF EXISTS public.command_journal_append(text,text,text,bigint,bytea)');
       await admin.query('DROP FUNCTION IF EXISTS public.command_journal_immutable()');
       if ((roles.rows[0]?.n ?? 0) > 0) {
+        // 0008's grants on the ordinary tables would block the role drop; see the helper.
+        await admin.query(REVOKE_RUNTIME_GRANTS_SQL);
         await admin.query('DROP ROLE IF EXISTS br_app_runtime');
         await admin.query('DROP ROLE IF EXISTS command_journal_writer');
         await admin.query('DROP ROLE IF EXISTS br_journal_owner');

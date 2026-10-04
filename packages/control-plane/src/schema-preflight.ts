@@ -22,15 +22,22 @@
  *     readiness, so `main()` exits non-zero and the process never answers
  *     `/health` (PC-22). It reports and exits; it never creates, alters, or
  *     repairs (r6 §12).
- *   - **Privilege audit is detection-only in Tranche A** (staged enforcement,
- *     r3 §3 / r5 §3). While the documented owner-class runtime remains in
- *     use, forbidden attributes/memberships are READ and REPORTED as
- *     `pending_cutover`; they MUST NOT block boot and MUST NOT be reported
- *     as compliance. Hard enforcement of the privilege audit takes effect
- *     only in Tranche D, after `DATABASE_URL` is cut over to
- *     `br_app_runtime` — this module structures for that switch by exposing
- *     the audit separately (`auditRuntimePrivileges`) and keeping its
- *     blocking decision out of Tranche A's boot path.
+ *   - **Privilege audit: staged enforcement, keyed on the connected role**
+ *     (r3 §3 / r5 §3; Founder decision of 2026-10-04, PR 2b Tranche D). The
+ *     audit is read-only and labels what it finds:
+ *       - connected as `br_app_runtime` — the runtime identity — the audit is
+ *         `enforced`: ANY forbidden attribute or membership refuses boot
+ *         (`SchemaPreflightError`, before readiness). There is no variable to
+ *         set and nothing to forget; the identity in `DATABASE_URL` selects
+ *         the mode.
+ *       - connected as any other role — the documented owner-class runtime
+ *         until the cutover, a CI superuser — findings are READ and REPORTED
+ *         as `pending_cutover`; they do not block boot and are never reported
+ *         as compliance. Rolling `DATABASE_URL` back to the owner identity
+ *         therefore restores service (cutover rollback: plan r1 §5.4 D-R5, r6 §13).
+ *     The tolerance for other roles is temporary. It ends at cutover step 10,
+ *     when `neondb_owner` leaves the runtime's environment, in its own
+ *     change that removes the `pending_cutover` path.
  *   - **Emission ban** (r3 §3.4 / r5 §3.4). No secret or credential value is
  *     emitted. Errors name ids, roles, and catalog attributes only — never
  *     connection strings, passwords, or tokens.
@@ -44,8 +51,9 @@ export const REQUIRED_MIGRATION_IDS: readonly string[] = MIGRATIONS.map((m) => m
 
 /**
  * Forbidden role attributes (r6 §3.2). The runtime login must hold NONE of
- * them once Tranche D cuts over; in Tranche A their presence is an audit
- * FINDING, not a boot failure.
+ * them. Connected as `br_app_runtime`, any one refuses boot; for any other
+ * role (the owner-class runtime until cutover step 10) it is an audit
+ * FINDING, reported and tolerated.
  */
 export const FORBIDDEN_ROLE_ATTRIBUTES = [
   'rolsuper',
@@ -86,16 +94,25 @@ export const FORBIDDEN_PREDEFINED_ROLE_PREFIXES = ['pg_write_all_data', 'pg_read
 export const MEMBERSHIP_WALK_GUARD_DEPTH = 100;
 
 /** The staged-enforcement status of the privilege audit. */
-export type PrivilegeAuditStatus = 'pending_cutover';
+export type PrivilegeAuditStatus = 'pending_cutover' | 'enforced';
+
+/**
+ * The one identity whose audit is enforced. It is the role migration `0006`
+ * creates and the role the journal's identity latch requires
+ * (`JOURNAL_RUNTIME_ROLE` in `journal-store.ts`); a test holds the three
+ * spellings together.
+ */
+export const ENFORCED_RUNTIME_ROLE = 'br_app_runtime';
 
 export interface PrivilegeAudit {
   /** The role the audited connection is actually running as. */
   readonly role: string;
   /**
-   * Tranche A: always `pending_cutover` — the audit detects and reports, and
-   * defers the hard-fail decision to Tranche D. It never declares compliance:
-   * an empty findings list means "nothing forbidden OBSERVED on this
-   * connection", not "this deployment is authorized to serve".
+   * `enforced` when the connected role is the runtime identity
+   * (`ENFORCED_RUNTIME_ROLE`): any finding refuses boot. `pending_cutover` for
+   * every other role: the audit reports and does not block. Neither value is a
+   * claim of compliance: an empty findings list means "nothing forbidden
+   * OBSERVED on this connection", not "this deployment is authorized to serve".
    */
   readonly status: PrivilegeAuditStatus;
   /** Forbidden attributes observed on the connected role (may be empty). */
@@ -140,7 +157,9 @@ type Queryable = Pool | PoolClient;
  * `pg_roles` / `pg_auth_members`, which any role may read, so it works even
  * on a zero-grant connection (the A-R3 fixture proves this through SET ROLE).
  *
- * Detection only. Never blocks, never repairs, never emits a credential.
+ * Detection only. It labels the connection `enforced` or `pending_cutover`
+ * but never blocks, never repairs, never emits a credential: the blocking
+ * decision is `privilegeAuditRefusal`, applied by `schemaPreflight`.
  */
 export async function auditRuntimePrivileges(target: Queryable): Promise<PrivilegeAudit> {
   let role: string;
@@ -261,10 +280,27 @@ export async function auditRuntimePrivileges(target: Queryable): Promise<Privile
 
   return {
     role,
-    status: 'pending_cutover',
+    status: role === ENFORCED_RUNTIME_ROLE ? 'enforced' : 'pending_cutover',
     forbiddenAttributes,
     forbiddenMemberships,
   };
+}
+
+/**
+ * The refusal an `enforced` audit with findings produces, or `null` when the
+ * boot may proceed. Names attributes and memberships only (emission ban).
+ */
+export function privilegeAuditRefusal(audit: PrivilegeAudit): string | null {
+  if (audit.status !== 'enforced') return null;
+  if (audit.forbiddenAttributes.length === 0 && audit.forbiddenMemberships.length === 0) return null;
+  const parts: string[] = [];
+  if (audit.forbiddenAttributes.length > 0) parts.push(`attributes [${audit.forbiddenAttributes.join(', ')}]`);
+  if (audit.forbiddenMemberships.length > 0) parts.push(`memberships [${audit.forbiddenMemberships.join(', ')}]`);
+  return (
+    `privilege audit refused: the connected role ${audit.role} is the runtime identity and holds forbidden ` +
+    `authority — ${parts.join('; ')}. The runtime does not serve with it (r6 §3.2, R-1); the administrative ` +
+    `plane must remove it`
+  );
 }
 
 /**
@@ -274,10 +310,11 @@ export async function auditRuntimePrivileges(target: Queryable): Promise<Privile
  * rejection leaves the catalog byte-identical (A-R4/A-R5 prove this with an
  * event trigger and a before/after catalog snapshot).
  *
- * The privilege audit rides along in the report as detection-only
- * (`pending_cutover`); it never contributes to the rejection in Tranche A.
- * Tranche D wires `auditRuntimePrivileges` findings into a hard-fail — the
- * seam is the separate export above.
+ * The privilege audit rides along in the report. For a connection that is NOT
+ * the runtime identity it is detection-only (`pending_cutover`); for
+ * `br_app_runtime` it is `enforced` and any finding rejects here, before the
+ * schema check, so a runtime role that has been handed authority never serves
+ * (Tranche D, Founder decision of 2026-10-04).
  */
 export async function schemaPreflight(target: Queryable): Promise<SchemaPreflightReport> {
   /*
@@ -317,9 +354,11 @@ export async function schemaPreflight(target: Queryable): Promise<SchemaPrefligh
   const presentIds = new Set(present.rows.map((row) => row.id));
   const missing = REQUIRED_MIGRATION_IDS.filter((id) => !presentIds.has(id));
 
-  // The audit is detection-only here, but it still must not fail open: an
-  // unreadable role catalog rejects (see auditRuntimePrivileges).
+  // An unreadable role catalog rejects (see auditRuntimePrivileges): the audit
+  // never fails open. Whether its FINDINGS block depends on the connected role.
   const privilegeAudit = await auditRuntimePrivileges(target);
+  const refusal = privilegeAuditRefusal(privilegeAudit);
+  if (refusal !== null) throw new SchemaPreflightError(refusal);
 
   if (missing.length > 0) {
     /*

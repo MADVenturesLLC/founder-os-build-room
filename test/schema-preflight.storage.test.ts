@@ -33,6 +33,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pgDefault from 'pg';
+import { REVOKE_RUNTIME_GRANTS_SQL } from './support/runtime-role-cleanup.js';
 import type { PoolClient } from 'pg';
 import {
   STORAGE_SKIP,
@@ -368,7 +369,7 @@ async function canonicalFixture(label: string): Promise<GatewayHarness> {
     PG_POOL_MAX: '12',
   });
   const pool = createPool(config);
-  const harness: GatewayHarness = { pool, config, databaseName };
+  const harness: GatewayHarness = { pool, appPool: pool, config, databaseName };
   record.harness = harness;
 
   // Full canonical sequence — selection omitted — on the owned instance.
@@ -395,6 +396,8 @@ async function teardownOwnedFixture(fixture: OwnedFixture): Promise<void> {
       await pool.query('DROP TABLE IF EXISTS public.command_journal_events, public.command_journal_chain_head CASCADE');
       await pool.query('DROP FUNCTION IF EXISTS public.command_journal_append(text, text, text, bigint, bytea)');
       await pool.query('DROP FUNCTION IF EXISTS public.command_journal_immutable()');
+      // 0008's grants on the ordinary tables would block the role drop; see the helper.
+      await pool.query(REVOKE_RUNTIME_GRANTS_SQL);
       for (const role of JOURNAL_ROLES) {
         await pool.query(`DROP ROLE IF EXISTS ${role}`);
       }

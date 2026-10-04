@@ -1651,6 +1651,105 @@ export const MIGRATIONS: readonly Migration[] = [
          FOR EACH STATEMENT EXECUTE FUNCTION build_room_events_immutable()`,
     ],
   },
+
+  {
+    /*
+     * 0008 — the runtime role's non-journal operational privileges (PR 2b
+     * Tranche D).
+     *
+     * AUTHORITY. r6 §3.3: "Non-journal operational privileges ... are
+     * whatever the application already requires, enumerated at implementation
+     * time from the existing schema, granted explicitly, never by blanket
+     * `ALL`." FD-B4 deferred that enumeration out of 0006 to Tranche D, where
+     * r6 §13 step 2 places it, so that it is produced by observation rather
+     * than guessed (plan r1 §5.4, PO-3).
+     *
+     * METHOD. The list below is what the application's own SQL needs, found
+     * two ways that must agree: a static read of every statement under
+     * `packages/control-plane/src`, and the runtime-role tier
+     * (`npm run test:storage:runtime-role`), which runs the gateway and
+     * phase-3 suites with every application object connected as the real
+     * `br_app_runtime` login, so a missing grant surfaces as PostgreSQL's own
+     * `permission denied` naming the object. That tier is also the standing
+     * guard: an application statement that later needs a privilege this
+     * migration does not grant fails CI until a migration grants it.
+     *
+     * RULES THIS MIGRATION KEEPS.
+     *   - No `ALL`, no `PUBLIC`, no schema-wide or default privileges
+     *     (`ALTER DEFAULT PRIVILEGES` is not used; PC-16 / B-R11 stay true).
+     *   - Nothing on the journal: `command_journal_*` and the append routine
+     *     are 0006's and are not touched here.
+     *   - No membership, no attribute, no ownership: the role gains no
+     *     authority over the schema, only the right to run the statements the
+     *     application issues.
+     *   - The append-only tables (`build_room_events`, `build_room_gate_runs`,
+     *     `gateway_registry_events`, `phase3_run_events`,
+     *     `build_room_rejections`, `gateway_enrollment_refusals`) get INSERT
+     *     and, where the application reads them, SELECT: nothing more. Their
+     *     immutability triggers remain the second wall; the missing UPDATE
+     *     and DELETE is the first.
+     *   - UPDATE is granted per COLUMN, listing exactly the columns the
+     *     application's UPDATE and `ON CONFLICT DO UPDATE` statements set.
+     *     Identity columns (`room_id`, `gateway_id` and the rest) are
+     *     unwritable by the runtime.
+     *   - `SELECT ... FOR UPDATE` and `FOR SHARE` require UPDATE on at least
+     *     one column of the locked table; that is the only reason
+     *     `build_room_rooms` carries `UPDATE (created_at)`, a column the
+     *     application never writes.
+     *   - Sequence USAGE is named per sequence, for the six `bigserial`
+     *     columns the application inserts into.
+     *
+     * Grantor: the administrative role that owns these tables. 0006's
+     * objects are not touched, so their owners (`br_journal_owner`,
+     * `command_journal_writer`) are not needed.
+     */
+    id: '0008_runtime_operational_grants',
+    statements: [
+      // The boot preflight reads the ledger (schema-preflight.ts).
+      `GRANT SELECT ON public.schema_migrations TO br_app_runtime`,
+
+      // Room lifecycle (store.ts): create the room, serialize writers on its
+      // row (FOR UPDATE), append events and rejections.
+      `GRANT SELECT, INSERT ON public.build_room_rooms TO br_app_runtime`,
+      `GRANT UPDATE (created_at) ON public.build_room_rooms TO br_app_runtime`,
+      `GRANT SELECT, INSERT ON public.build_room_events TO br_app_runtime`,
+      `GRANT SELECT, INSERT ON public.build_room_rejections TO br_app_runtime`,
+      `GRANT USAGE ON SEQUENCE public.build_room_rejections_rejection_id_seq TO br_app_runtime`,
+      `GRANT SELECT, INSERT ON public.build_room_gate_runs TO br_app_runtime`,
+
+      // Leadership lease (gateway/leadership.ts, gateway/fence.ts): read and
+      // fence the one row, acquire, renew, release, publish a challenge.
+      `GRANT SELECT ON public.control_plane_lease TO br_app_runtime`,
+      `GRANT UPDATE (owner_id, generation, heartbeat_at, challenge, challenge_published_at)
+         ON public.control_plane_lease TO br_app_runtime`,
+
+      // Gateway registry (gateway/store.ts, gateway/availability.ts,
+      // gateway/sweeps.ts).
+      `GRANT SELECT, INSERT ON public.gateway_registry_events TO br_app_runtime`,
+      `GRANT USAGE ON SEQUENCE public.gateway_registry_events_seq_seq TO br_app_runtime`,
+      `GRANT SELECT, INSERT ON public.gateway_current_state TO br_app_runtime`,
+      `GRANT UPDATE (state, key_id, pubkey, host_descriptor, state_since, last_event_seq,
+                     awaiting_approval_expires_at, is_currently_enrolled)
+         ON public.gateway_current_state TO br_app_runtime`,
+      `GRANT SELECT, INSERT ON public.gateway_pairing_codes TO br_app_runtime`,
+      `GRANT UPDATE (consumed_at, consumed_by_gateway_id) ON public.gateway_pairing_codes TO br_app_runtime`,
+      `GRANT SELECT, INSERT, DELETE ON public.gateway_redeem_idempotency TO br_app_runtime`,
+      `GRANT INSERT ON public.gateway_enrollment_refusals TO br_app_runtime`,
+      `GRANT USAGE ON SEQUENCE public.gateway_enrollment_refusals_refusal_id_seq TO br_app_runtime`,
+      `GRANT SELECT, INSERT, DELETE ON public.gateway_message_rejections TO br_app_runtime`,
+      `GRANT UPDATE (count, last_seen_at) ON public.gateway_message_rejections TO br_app_runtime`,
+      `GRANT SELECT, INSERT, DELETE ON public.gateway_availability_events TO br_app_runtime`,
+      `GRANT USAGE ON SEQUENCE public.gateway_availability_events_seq_seq TO br_app_runtime`,
+
+      // Phase 3 run evidence (phase3-run.ts).
+      `GRANT SELECT, INSERT ON public.phase3_run_attempts TO br_app_runtime`,
+      `GRANT UPDATE (state, heartbeat_captured, lifecycle_position, last_event_index, finished_at)
+         ON public.phase3_run_attempts TO br_app_runtime`,
+      `GRANT USAGE ON SEQUENCE public.phase3_run_attempts_attempt_seq_seq TO br_app_runtime`,
+      `GRANT SELECT, INSERT ON public.phase3_run_events TO br_app_runtime`,
+      `GRANT USAGE ON SEQUENCE public.phase3_run_events_seq_seq TO br_app_runtime`,
+    ],
+  },
 ];
 
 /** Advisory-lock key. Arbitrary but fixed — any value works if it never changes. */
