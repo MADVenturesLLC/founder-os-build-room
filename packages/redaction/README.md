@@ -76,14 +76,19 @@ A refused boundary makes either harness exit **3** with one line,
 `redaction refused: <code>`, before any request, reservation, or write.
 There is no switch that turns the boundary off.
 
-Still not wired: `JournalAppendSink`. A journal store does exist — the
-in-memory `packages/journal/src/store.ts`, landed in PR #67 — but it is not
-the ruled Neon locus of contract §3, and wiring this sink without a
-provisioned key would make the journal write path refuse every write, a
-behaviour change no act has authorized (see `src/sinks.ts`). The §6.1
-pre-write guard in `packages/journal/src/redact.ts` is a separate check, not
-this boundary; `packages/journal/src/envelope.ts` defers redaction to write
-path 2b.
+Not wired, by ruling: `JournalAppendSink`. The Founder's ruling of
+2026-10-04 (C3 — RULING, landed at
+`docs/planning/command-journal/custody/FOUNDER-RULING-journal-redaction-C3-FD3-20261003.txt`)
+designates the §6.1 pre-write guard in `packages/journal/src/redact.ts`,
+applied in the control plane's `JournalStore` before any database contact,
+as the redaction boundary of the production journal write path. This sink is
+not wired into the journal store and is never stacked on that guard; a keyed
+boundary may replace the guard only under a later act that names it. The
+same ruling resolves FD-3: no HMAC key is provisioned for the journal write
+path, so the fail-closed rule in `src/sinks.ts` (no key, no write) never
+meets a journal writer. The guard's detection list is held to this package's
+`BUILTIN_SHAPES` by `test/journal-redaction-registry-parity.test.ts`: a shape
+added here that the guard does not detect fails that test.
 The Keychain item `mad.redaction.hmac` / `hmac-v1` is a Founder custody act;
 until it exists on the gateway host, the wired harnesses refuse there.
 

@@ -45,6 +45,19 @@
  * the same write path, and whoever is authorized to wire
  * `JournalAppendSink` into the journal store must reconcile them rather
  * than stack them. That reconciliation is a Founder act, not a refactor.
+ *
+ * RECONCILED by the Founder's ruling of 2026-10-04 (C3 — RULING), landed at
+ * docs/planning/command-journal/custody/
+ * FOUNDER-RULING-journal-redaction-C3-FD3-20261003.txt. This guard, applied
+ * in the control plane's `JournalStore` before any database contact, IS the
+ * redaction boundary of the production journal write path. `JournalAppendSink`
+ * stays unwired and is never stacked on it; a keyed boundary may replace it
+ * only under a later act that names it. One condition binds the designation:
+ * CREDENTIAL_SHAPES must contain every shape in `packages/redaction`'s
+ * registry (`BUILTIN_SHAPES`). The `aws_access_key_id` and `slack_token`
+ * shapes below exist for that reason, and
+ * `test/journal-redaction-registry-parity.test.ts` holds this list to the
+ * registry: a registry shape this guard does not detect fails that test.
  */
 
 export const REDACTED = '[REDACTED]';
@@ -75,6 +88,13 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   { name: 'github_token', pattern: /(?<![A-Za-z0-9])(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/ },
   { name: 'github_fine_grained_pat', pattern: /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9])/ },
   { name: 'xai_key', pattern: /(?<![A-Za-z0-9])xai-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9])/ },
+  // Registry parity (Founder ruling of 2026-10-04, C3 condition): the two
+  // `packages/redaction` registry shapes this list lacked, with the
+  // registry's own patterns (`aws-access-key-id`, `slack-token`). An AWS key
+  // id is 20 characters and a Slack token carries hyphens, so neither was
+  // even reached by the 40-character entropy shape below.
+  { name: 'aws_access_key_id', pattern: /(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}(?![A-Za-z0-9])/ },
+  { name: 'slack_token', pattern: /(?<![A-Za-z0-9])xox[baprs]-[A-Za-z0-9-]{10,}(?![A-Za-z0-9])/ },
   {
     name: 'labelled_secret',
     pattern: /(?<![A-Za-z0-9])(?:token|api[_-]?key|secret|password|passwd|credential)\s*[:=]\s*\S+/i,
