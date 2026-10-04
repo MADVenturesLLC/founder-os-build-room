@@ -21,12 +21,13 @@
  * is a no-op — so the zero-DDL assertion fails with the observed tag.
  */
 
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { realpathSync, appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pgDefault from 'pg';
@@ -438,12 +439,16 @@ describe('DDL observation survives rollback (F2, Class 1)', { skip: STORAGE_SKIP
  * created fresh by this run, so no unrelated activity can exist on it; fixture
  * setup (migration, trigger installation) completes BEFORE the before-marker,
  * and each window is delimited by unique `RAISE LOG` marker statements (no
- * clock arithmetic). Within a window, an `ddl_observation:` LOG line counts as
- * child-attributed only when its `[pid]` is NOT the suite's own marker client
- * pid (the only suite backend active in the window). The synthetic-violation
- * child control proves this attribution rule DETECTS a child's aborted DDL;
- * the real boot child is then asserted to produce none through the same rule —
- * non-vacuously, because the control ran green on the identical reader.
+ * clock arithmetic). The log is read only once the closing marker has reached
+ * it — the logging collector flushes asynchronously, so a read issued as the
+ * marker statement returns can precede the lines it delimits
+ * (`readInstanceLogOnceClosed`). Within a window, an `ddl_observation:` LOG
+ * line counts as child-attributed only when its `[pid]` is NOT the suite's own
+ * marker client pid (the only suite backend active in the window). The
+ * synthetic-violation child control proves this attribution rule DETECTS a
+ * child's aborted DDL; the real boot child is then asserted to produce none
+ * through the same rule — non-vacuously, because the control ran green on the
+ * identical reader.
  *
  * Coverage classification (receipt "observation-channel retrieval" clause):
  *   local — full coverage: two-case channel-capability proof, a
@@ -557,6 +562,50 @@ function readInstanceLog(logDir: string): string {
     parts.push(readFileSync(join(logDir, name), 'utf8'));
   }
   return parts.join('\n');
+}
+
+/**
+ * Read the instance log once a window's closing marker has reached it, bounded.
+ *
+ * The logging collector flushes asynchronously: when a `RAISE LOG` statement
+ * returns, its line has reached the collector's pipe, not necessarily the
+ * file. A read issued at that moment can precede the lines it is meant to
+ * count — observed on PR #93 (run 37164693134, job 111325106160, second
+ * pass), where the two-case capability assertion below saw 1 of its lines.
+ * The closing marker is emitted after every line the window delimits (by the
+ * suite's own backend, or by a child that has already exited), and the
+ * collector writes each backend's lines in the order it emitted them, so once
+ * the marker is in the file the window is complete: the positive counts are
+ * final, and the boot child's zero assertion cannot pass vacuously on a window
+ * the collector had not yet written. The poll re-reads every `intervalMs`
+ * until the marker appears or `deadlineMs` passes; either way the caller
+ * asserts on the final read with its existing predicate and message, so a
+ * channel that genuinely drops a line still fails loudly.
+ */
+async function readInstanceLogOnceClosed(
+  t: TestContext,
+  logDir: string,
+  closingMarker: string,
+  { deadlineMs = 5_000, intervalMs = 50 }: { deadlineMs?: number; intervalMs?: number } = {},
+): Promise<string> {
+  const startedAt = Date.now();
+  let reads = 0;
+  for (;;) {
+    const logText = readInstanceLog(logDir);
+    reads += 1;
+    const elapsedMs = Date.now() - startedAt;
+    if (logText.includes(closingMarker)) {
+      t.diagnostic(`server-log window closed after ${elapsedMs} ms (${reads} read(s))`);
+      return logText;
+    }
+    if (elapsedMs >= deadlineMs) {
+      t.diagnostic(
+        `server-log window did NOT close within ${deadlineMs} ms (${reads} read(s)); asserting on the final read`,
+      );
+      return logText;
+    }
+    await delay(intervalMs);
+  }
 }
 
 /**
@@ -739,7 +788,7 @@ describe('boot-child DDL observation via the disposable instance log (F2, local-
       await client.query('ROLLBACK');
       const after = await windowMarker(client, 'capability-after');
 
-      const logText = readInstanceLog(loggedInstance?.logDir ?? '');
+      const logText = await readInstanceLogOnceClosed(t, loggedInstance?.logDir ?? '', after);
       const tags = childDdlTagsInWindow(logText, { before, after, suitePid });
       t.diagnostic(`server-log channel, child-attributed tags (suite pid ${suitePid} excluded): ${JSON.stringify(tags)}`);
       // NOTE: this capability case is issued by the suite's own client, so its
@@ -783,7 +832,7 @@ describe('boot-child DDL observation via the disposable instance log (F2, local-
       });
       const after = await windowMarker(client, 'synthetic-after');
 
-      const logText = readInstanceLog(loggedInstance.logDir);
+      const logText = await readInstanceLogOnceClosed(t, loggedInstance.logDir, after);
       const tags = childDdlTagsInWindow(logText, { before, after, suitePid });
       t.diagnostic(`synthetic child attributed tags: ${JSON.stringify(tags)}`);
       assert.ok(
@@ -815,7 +864,7 @@ describe('boot-child DDL observation via the disposable instance log (F2, local-
       assert.equal(run.exitCode, 0, `clean SIGTERM shutdown must exit 0.\n--- stdout ---\n${run.stdout}\n--- stderr ---\n${run.stderr}`);
 
       const after = await windowMarker(client, 'boot-after');
-      const logText = readInstanceLog(loggedInstance.logDir);
+      const logText = await readInstanceLogOnceClosed(t, loggedInstance.logDir, after);
       const tags = childDdlTagsInWindow(logText, { before, after, suitePid });
       t.diagnostic(`boot-child attributed ddl_observation LOG tags: ${JSON.stringify(tags)}`);
       assert.deepEqual(
