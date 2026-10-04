@@ -25,16 +25,21 @@ text says so and governs.
 
 The ruling pins three documents under `docs/planning/command-journal/` by
 path, blob id and SHA-256: the 2026-09-27 ruling, the correction note of
-2026-09-26, and addendum 02 to the PR 2b implementation plan.
-`gate:custody-pin-check` verifies those three against the files as they
-stand on `main`. The ruling also pins five code files as they stood at
-`main` `c292c805` (`packages/journal/src/redact.ts`,
+2026-09-26, and addendum 02 to the PR 2b implementation plan. What the
+gate checks of those pins, exactly: `gate:custody-pin-check` reads the
+working tree, finds the three lowercase `sha256` values near those paths,
+and recomputes each from the checked-out file. It does not read the
+`blob:` lines and it does not resolve `main`. The three blob ids were
+verified by the builder with `git rev-parse origin/main:<path>` at
+`c292c805` on 2026-10-03, not by the gate. The ruling also pins five code
+files as they stood at `main` `c292c805` (`packages/journal/src/redact.ts`,
 `packages/redaction/src/registry.ts`, `packages/redaction/src/sinks.ts`,
 `packages/control-plane/src/journal-store.ts`,
 `packages/control-plane/src/journal-routes.ts`). The gate prints those pins
 and does not count them, by its own design: it reads pins only on paths
 under `docs/planning/command-journal/`. That is the right behaviour here,
-because the ruling itself commissions edits to two of those files.
+because the ruling itself commissions edits to two of those files. No gate
+verifies the five; the builder computed them on 2026-10-03.
 
 ## How the ruling was signed
 
