@@ -143,6 +143,23 @@ jobs:
           TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/buildroom_test
         run: npm run test:storage
 
+      # PR 2b Tranche D (Founder decision of 2026-10-04, D3): the runtime-role
+      # tier. Every suite above connects the application as a superuser or as
+      # the database owner, so none of them can show that the application holds
+      # each privilege it needs once it connects as `br_app_runtime`. This step
+      # runs the application's real data-access code AS that role, on
+      # exclusively owned instances migrated through the full canonical sequence
+      # (the PostgreSQL 16 server binaries resolved above), so a missing grant
+      # fails here, naming the privilege, rather than in production. It holds no
+      # credential: the owned instances trust loopback and the role has no
+      # password. TEST_DATABASE_URL is only the suites' run gate; the service
+      # container is not touched. The runner fails on any skipped test, so it
+      # cannot pass by running less than it names.
+      - name: Test (runtime-role tier, the application as br_app_runtime)
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/buildroom_test
+        run: npm run test:storage:runtime-role
+
   # WF-17 hygiene: lint, secret scanning (AUTHORIZED), and advisory npm audit
   # (AUTHORIZED AS ADVISORY ONLY). This job is deliberately separate from
   # build-and-test and storage-integration so neither of those required
