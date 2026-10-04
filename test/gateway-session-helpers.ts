@@ -67,7 +67,7 @@ export async function makeSessionNode(
    * assembly that could drift from it.
    */
   const surface = createGatewaySurface({
-    pool: harness.pool,
+    pool: harness.appPool,
     config,
     clock,
     hooks: options.hooks ?? {},
@@ -84,7 +84,7 @@ export async function makeSessionNode(
     store: surface.store,
     session: surface.session,
     sweeps: surface.sweeps,
-    rooms: new PostgresLedgerStore(harness.pool, surface.roomAppendFence),
+    rooms: new PostgresLedgerStore(harness.appPool, surface.roomAppendFence),
     clock,
     gate: surface.clock,
     config,
@@ -245,8 +245,8 @@ export async function startNodeServer(
 
   const app = createServer({
     config: node.config,
-    pool: harness.pool,
-    store: new PostgresLedgerStore(harness.pool, node.surface.roomAppendFence),
+    pool: harness.appPool,
+    store: new PostgresLedgerStore(harness.appPool, node.surface.roomAppendFence),
     startedAt: node.clock.wallNow(),
     gateway: node.surface,
   });

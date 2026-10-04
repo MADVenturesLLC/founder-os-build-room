@@ -47,6 +47,8 @@ import {
   type GateRunInput,
 } from '../packages/control-plane/src/store.js';
 
+import { applicationUrl } from './support/runtime-role-mode.js';
+
 const { Pool: PgPool } = pgDefault;
 
 const TEST_DATABASE_URL = process.env['TEST_DATABASE_URL'];
@@ -167,9 +169,15 @@ let instance: OwnedInstance | undefined;
 let DATABASE_URL = '';
 let pool: Pool | undefined;
 let store: PostgresLedgerStore | undefined;
+/**
+ * The superuser connection: migration and the schema-level append-only proofs.
+ * `pool` is what the store under test uses, which in runtime-role mode is the
+ * `br_app_runtime` login (see test/support/runtime-role-mode.ts).
+ */
+let superPool: Pool | undefined;
 
-function openStore(): { pool: Pool; store: PostgresLedgerStore } {
-  const opened = createPool(loadConfig({ DATABASE_URL, CONTROL_PLANE_TOKEN: TEST_TOKEN }));
+function openStore(url: string = applicationUrl(DATABASE_URL)): { pool: Pool; store: PostgresLedgerStore } {
+  const opened = createPool(loadConfig({ DATABASE_URL: url, CONTROL_PLANE_TOKEN: TEST_TOKEN }));
   return { pool: opened, store: new PostgresLedgerStore(opened) };
 }
 
@@ -212,13 +220,15 @@ before(async () => {
     await admin.end();
   }
   DATABASE_URL = `postgresql://postgres@127.0.0.1:${port}/buildroom_gate_runs`;
+  superPool = openStore(DATABASE_URL).pool;
   ({ pool, store } = openStore());
-  const result = await migrate(pool);
+  const result = await migrate(superPool);
   assert.ok(result.applied.includes(GATE_RUNS_ID), `the canonical sequence must apply ${GATE_RUNS_ID}`);
 });
 
 after(async () => {
   if (pool !== undefined) await pool.end();
+  if (superPool !== undefined) await superPool.end();
   destroyOwnedInstance(instance);
 });
 
@@ -226,14 +236,14 @@ describe('0007_gate_runs — registration', () => {
   it('is registered exactly once, after every earlier migration', () => {
     const ids = MIGRATIONS.map((migration) => migration.id);
     assert.equal(ids.filter((id) => id === GATE_RUNS_ID).length, 1);
-    assert.equal(ids.at(-1), GATE_RUNS_ID);
-    assert.equal(ids.at(-2), '0006_command_journal_authority_split');
+    assert.equal(ids.at(-2), GATE_RUNS_ID);
+    assert.equal(ids.at(-3), '0006_command_journal_authority_split');
   });
 });
 
 describe('0007_gate_runs — the persisted gate-run sequence', { skip: skip ? skipReason : false }, () => {
   it('is idempotent: a second migrator run applies nothing and the table is intact', async () => {
-    const second = await migrate(pool!);
+    const second = await migrate(superPool!);
     assert.deepEqual(second.applied, []);
     assert.ok(second.alreadyApplied.includes(GATE_RUNS_ID));
     const table = await pool!.query(`SELECT to_regclass('public.build_room_gate_runs') AS t`);
@@ -292,9 +302,9 @@ describe('0007_gate_runs — the persisted gate-run sequence', { skip: skip ? sk
   });
 
   it('refuses UPDATE, DELETE and TRUNCATE at the database', async () => {
-    await assert.rejects(pool!.query(`UPDATE build_room_gate_runs SET verdict = 'passed' WHERE seq = 1`), /append-only/);
-    await assert.rejects(pool!.query('DELETE FROM build_room_gate_runs WHERE seq = 1'), /append-only/);
-    await assert.rejects(pool!.query('TRUNCATE build_room_gate_runs'), /append-only/);
+    await assert.rejects(superPool!.query(`UPDATE build_room_gate_runs SET verdict = 'passed' WHERE seq = 1`), /append-only/);
+    await assert.rejects(superPool!.query('DELETE FROM build_room_gate_runs WHERE seq = 1'), /append-only/);
+    await assert.rejects(superPool!.query('TRUNCATE build_room_gate_runs'), /append-only/);
     const listed = await store!.listGateRuns();
     assert.equal(listed[0]?.seq, 1);
     assert.equal(listed[0]?.verdict, 'failed');

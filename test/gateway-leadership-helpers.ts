@@ -103,7 +103,7 @@ export function makeNode(harness: GatewayHarness, options: NodeOptions = {}): No
   };
 
   const leadership = new GatewayLeadership({
-    pool: harness.pool,
+    pool: harness.appPool,
     config,
     clock: gate,
     session,

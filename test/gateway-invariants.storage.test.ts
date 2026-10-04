@@ -26,7 +26,7 @@ let store: GatewayRegistryStore | undefined;
 before(async () => {
   if (STORAGE_SKIP !== false) return;
   harness = await createGatewayHarness('invariants');
-  store = new GatewayRegistryStore(harness.pool, harness.config);
+  store = new GatewayRegistryStore(harness.appPool, harness.config);
 });
 
 after(async () => {
