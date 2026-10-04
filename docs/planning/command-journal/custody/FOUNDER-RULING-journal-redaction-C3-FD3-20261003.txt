@@ -1,0 +1,142 @@
+FOUNDER RULING — JOURNAL WRITE-PATH REDACTION: C3 AND FD-3
+RULING: C3 RECONCILED; FD-3 RESOLVED; TRANCHE D CONDITION DISCHARGEABLE
+
+I, Michael Alberto Daley, issue the following ruling.
+
+This ruling decides the two matters my ruling of 2026-09-27 left open
+and made conditions of any Tranche D cutover: the JournalAppendSink
+reconciliation named in the journal HTTP plan correction note's C3, and
+FD-3, the key source for journal redaction where the control plane
+runs. It is not a merge authorization. It authorizes no merge,
+migration, Gate IV act, dispatch, deployment, Tranche D cutover,
+DATABASE_URL change, credential, key provisioning, or Railway or Neon
+change. It creates no spend, provisioning, credential, or execution
+authority.
+
+INSTRUMENTS BOUND, all as they stand on founder-os-build-room main at
+c292c805e2c33b6caec9419bb8f215b47243d0a8
+  Ruling of 2026-09-27 (D-1 and C3)
+    path:  docs/planning/command-journal/custody/FOUNDER-RULING-journal-http-D1-C3-20260927.txt
+    blob:  9305820f8abca53b065907344f6da032b6788a11
+    sha256: ec2730bce600c0881b0ccd479c1c11e2784815f9ac443fb64afd1a39090cde2e
+  Journal HTTP plan r1 correction note, C3
+    path:  docs/planning/command-journal/journal-http-integration-plan-r1-CORRECTION-NOTE-20260926.md
+    blob:  ef1beb2cec43058446253e0f5fa8c6b7b8558ebd
+    sha256: aa28b901c7384206e14ba742645ec4548cf3100cfd88003692ba1734adbfa640
+  PR 2b implementation plan r1, addendum 02, section 5 (FD-3)
+    path:  docs/planning/command-journal/pr2b-implementation-plan-r1-addendum-02.md
+    blob:  c9c793f0d7cac293ea5a5b9294a089719c0d9afe
+    sha256: 689ed7aad0f441470a2acd0f96ea71cb7fc519cc3d92be39a566ecaf1c8cb355
+  The pre-write guard: packages/journal/src/redact.ts
+    blob:  6e3d39748cdd51c2dd87322a9e74ff3b963e0eea
+    sha256: ea19ed5b352a105ff9aa9f8fce3cebdc15ab171e6637f2ec0c953c2694a3585c
+  The shape registry: packages/redaction/src/registry.ts
+    blob:  ccf4c177c1d5d1aa841d7eb04b8fe8c6ed0eb564
+    sha256: e151d67f9d6a86df570ca50918f11ea7c7a9b64670d24ad2043fe9e792bbeacd
+  The unwired sink: packages/redaction/src/sinks.ts
+    blob:  5c4415ac9c3d27e5bb7ea4586a7d21e2e52aac4f
+    sha256: ccc06b573140db5b7d2d3a1f2bfb4cc139527196890fb927166571e7107ef1d6
+  The production write path: packages/control-plane/src/journal-store.ts
+    blob:  0fe643db8a0699ade624168ef66aa34999ab05d1
+    sha256: 81349861d6267ba12c74d220e786472dbcbc4d878a6f387bd6c86c396650c222
+  and its route: packages/control-plane/src/journal-routes.ts
+    blob:  dfd45dad4bdee504b72680b212b7ec275f69fa83
+    sha256: 896fb6933d91199d95affb9ed3bb50d472d1ea4c5953962142cfc0c840890a86
+
+WHAT I RELY ON
+The production write path is the control plane's JournalStore, reached
+by POST /journal/commands behind the shared control-plane token. Before
+any database contact it normalizes and redacts the envelope
+(normalizeForJournal) and refuses the whole row when
+containsCredentialMaterial finds a named credential shape in any
+caller-supplied field; the route answers 400 credential_material and
+echoes nothing. Its identity latch refuses every append unless the
+session is br_app_runtime, so today, with the runtime connected as
+neondb_owner, no production append is possible. The Tranche D cutover
+is the moment that changes. The builder read these from the bound
+files on 2026-10-03; the production boot log of Railway deployment
+86f8a579 (commit c292c805) reports, at 2026-10-03T11:41:47Z, role
+neondb_owner and privilegeAudit pending_cutover.
+
+On 2026-10-03 at 21:41Z the builder ran both shape lists against
+synthetic vectors. Of the six shapes in the registry, four are detected
+and redacted by the guard; two, aws-access-key-id and slack-token, pass
+it neither detected nor redacted. The guard carries shapes the registry
+lacks: labelled secrets, Bearer tokens, URL userinfo credentials,
+fine-grained GitHub tokens, xAI keys. Neither list contains the other.
+That is the drift C3 named.
+
+C3 — RULING
+The two lists are reconciled by designation, not by stacking. The
+pre-write guard in packages/journal/src/redact.ts, applied in
+JournalStore before any database contact, is the redaction boundary of
+the production journal write path. JournalAppendSink is not wired into
+the journal store and shall not be stacked on the guard. A keyed
+boundary may replace the guard only under a later act that names it.
+
+One condition binds this designation. The guard's detection list shall
+contain every shape in packages/redaction's registry. The builder adds
+aws-access-key-id and slack-token as detection shapes, which only
+tightens the guard, and lands a parity test holding the guard to the
+registry: for every registry shape, a vector matching it is detected
+by containsCredentialMaterial and redacted by normalization. A registry
+shape added later that the guard does not detect fails that test.
+
+The header of packages/journal/src/redact.ts and the "Still not wired"
+paragraph of packages/redaction/README.md are to cite this ruling as
+the reconciliation they say is a Founder act. That edit changes no
+behaviour.
+
+FD-3 — RULING
+No HMAC key is provisioned for the journal write path, on Railway or
+anywhere else. Addendum 02 section 5 option (a), REDACTION_HMAC_KEY as
+a sealed Railway variable with an EnvHmacKeyCustody class and the B-N3
+boundary, is not commissioned; my 2026-09-27 ruling already withdrew
+B-N3 for this write path. Option (c), refusing on Railway, is rejected
+because the journal must write in production. The posture is option
+(b) as the landed code now makes it: the pre-write guard, not a keyed
+boundary, stands at the writer. The Keychain item mad.redaction.hmac /
+hmac-v1 for the run-harness sinks is untouched and stays governed by
+the Lane B wiring act. FD-3 reopens only with an act that wires a
+keyed boundary at the journal writer.
+
+EFFECT ON TRANCHE D
+The condition in my 2026-09-27 ruling, "No Tranche D cutover (moving
+DATABASE_URL to br_app_runtime) occurs until the JournalAppendSink
+reconciliation named in the correction note's C3 has been ruled and
+FD-3 key custody has been resolved," is discharged when both hold:
+this ruling is landed in custody per CUSTODY below, and the shapes and
+parity test of C3's condition are on main. Until both hold, the
+condition stands. The 2026-09-27 ruling is otherwise unaltered and its
+file is not edited. Discharging the condition authorizes nothing: the
+grants migration before the cutover remains subject to Gate IV under
+its own act, and the cutover to Gate V under PR 2b implementation plan
+r1 section 9 and its own SHA-named act.
+
+I accept, with this ruling, that once the cutover occurs any holder of
+the control-plane token can append to the production journal with this
+guard as the only redaction boundary, and that journal rows are
+permanent.
+
+WHAT THIS RULING DOES NOT DO
+- It authorizes no Tranche D cutover, DATABASE_URL change, credential,
+  password, deploy, redeploy, migration, Gate IV act, dispatch, or
+  Railway or Neon change.
+- It does not authorize the merge of any pull request; each is a
+  separate SHA-named act.
+- It does not wire JournalAppendSink anywhere, and it does not alter the
+  run-harness redaction boundary or its Keychain custody.
+- It does not alter the 2026-09-27 ruling, the D-1 ruling, the
+  correction note, or addendum 02; all stay as landed.
+- It changes no ratified decision in FounderOS.
+
+CUSTODY
+Preserve this ruling verbatim as a new file in founder-os-build-room at
+exactly this path:
+  docs/planning/command-journal/custody/FOUNDER-RULING-journal-redaction-C3-FD3-20261003.txt
+Land it in its own commit with a custody receipt. Record its SHA-256,
+bytes, lines, and trailing-newline status in that commit and in the
+receipt. Do not alter the text.
+
+Signed: Michael Daley
+Date: 2026-10-04
