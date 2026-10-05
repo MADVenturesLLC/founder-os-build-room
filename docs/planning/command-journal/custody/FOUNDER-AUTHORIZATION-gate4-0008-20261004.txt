@@ -1,0 +1,129 @@
+FOUNDER AUTHORIZATION: PR 2b GATE IV / TRANCHE D
+GOVERNED EXECUTION OF 0008_runtime_operational_grants (FIRST ACT)
+
+I, Michael Alberto Daley, issue the following authorization. It takes
+effect when I post it in the session that dispatches the run.
+
+AUTHORIZED ACT
+One dispatch of "DB Admin Migration"
+(.github/workflows/db-admin-migration.yml) in
+MADVenturesLLC/founder-os-build-room, on main, with exactly:
+  founder_authorized_sha  42ae00c0967267154473cefc9e78b705d3afeb8a
+  tranche_id              0008_runtime_operational_grants
+
+WHY
+PR #96 merged to main as 42ae00c0 on 2026-10-04 at 07:29:42Z, under my
+merge authorization (comment 5977679582). It adds migration
+0008_runtime_operational_grants: plain GRANT statements that give the
+runtime role br_app_runtime the table, column-level UPDATE and sequence
+USAGE privileges the application's own statements need, on 15 tables
+and 6 sequences, and nothing else. Railway service rare-enjoyment,
+deployment ac2361b5 (commit 42ae00c0), ended FAILED; its deploy log
+shows at 2026-10-04 07:30:14Z: required migration id(s) absent from
+schema_migrations: 0008_runtime_operational_grants. Deployment
+f7835245 (commit 929bb082, PR #95) is the latest with status SUCCESS.
+The builder read all of this on 2026-10-04, read-only; the database
+facts below carry the database clock:
+  - production's schema_migrations holds 0001 to 0007; 0008 is not
+    applied (15:57:12Z; PostgreSQL 18.6; connected as neondb_owner)
+  - the 15 tables and 6 sequences that 0008 names exist in schema
+    public and are all owned by neondb_owner (15:58:59Z)
+  - br_app_runtime can log in; it is not superuser and holds none of
+    CREATEROLE, CREATEDB, BYPASSRLS or REPLICATION; it is a member of
+    no role, owns no relation and cannot create in schema public
+    (15:59:03Z)
+  - br_app_runtime holds 2 relation privileges, SELECT on
+    command_journal_events and command_journal_chain_head, and no
+    column privilege (15:57:12Z)
+  - the workflow file (git blob
+    5061f1d50e0deb3c65bd9ca913dcfd75fc532e13) and the runner
+    migrate-cli.ts (git blob 7b2705105bc3f1eaf867c0fb009888ed8da6bc1e)
+    are byte-identical at 42ae00c0 to what they were at e2a7828c, the
+    commit that applied 0007. The runner imports only migrations.ts and
+    the pg driver. Since e2a7828c, migrations.ts gained one block of 99
+    lines, the definition of 0008, with no line removed, and
+    package-lock.json is unchanged.
+
+TARGET
+The database reached by the environment secret
+MIGRATE_ADMIN_DATABASE_URL. I intend it to be the production database
+that Railway service rare-enjoyment reads: Neon project
+founder-os-build-room (orange-art-29526355), branch production
+(br-summer-sun-avroco6a), endpoint ep-little-meadow-avqfkjcp, database
+neondb, role neondb_owner. Railway's DNS log shows deployment ac2361b5
+resolving that endpoint between 07:30:13Z and 07:30:16Z on 2026-10-04.
+The secret's value cannot be read back. Run 37028874575 applied
+0007_gate_runs through it on 2026-10-02: its stage-5 evidence records
+the run between 16:27:31.637Z and 16:27:33.948Z, production's
+schema_migrations records 0007_gate_runs at 16:27:32.833Z, inside that
+window, and build_room_gate_runs, the table that run created, is owned
+by neondb_owner. I accept that if the secret has changed since and
+points elsewhere, the runner refuses or applies 0008 to that other
+database, and this act is spent.
+
+ENVIRONMENT I ATTEST, read by me with gh api on 2026-10-04 at
+20:43:49 to 20:43:52 UTC
+  - environment db-admin-migration exists
+  - required reviewers decivantiq and daley40-lab
+  - prevent_self_review on; administrator bypass off
+  - deployment branches limited to main; no wait timer
+  - MIGRATE_ADMIN_DATABASE_URL exists at environment scope only
+    (last updated 2026-09-30T08:40:13Z); no repository- or
+    organization-level secret of that name exists
+
+CONDITIONS AT DISPATCH
+The builder dispatches only if each of these holds when it checks,
+immediately before. If any fails, it does not dispatch, and it reports
+what it found.
+  - main's tip is 42ae00c0967267154473cefc9e78b705d3afeb8a
+  - no DB Admin Migration run is queued, waiting or in progress
+  - the session's GitHub identity is decivantiq, not daley40-lab
+  - production's schema_migrations holds exactly 0001 to 0007
+  - the 15 tables and 6 sequences that 0008 names are all owned by
+    neondb_owner
+
+APPROVAL
+Only a required reviewer other than the dispatching identity may
+approve. The builder session may dispatch, via the GitHub API under
+the decivantiq account; I will approve as daley40-lab.
+
+WHAT THIS DOES NOT DO
+- It does not authorize the Tranche D cutover (Gate V, the
+  DATABASE_URL swap), any password or credential for br_app_runtime,
+  any deploy or redeploy (including a redeploy of deployment
+  ac2361b5), any change to the workflow, runner or environment, or any
+  other database.
+- It authorizes no run of the runner from any machine and no rehearsal
+  against any database. The one authorized execution is the workflow
+  run above.
+- It authorizes no SQL against production other than that workflow run
+  and the read-only reads named in this act.
+- It authorizes no second dispatch. If a run ends before the migrate
+  job is approved (input refused, startup failure, preflight failure),
+  nothing privileged has happened and one further dispatch at this SHA
+  is authorized while main's tip is unchanged. Once the migrate job
+  has been approved, this authorization is spent, whatever the outcome.
+- Any commit to main before dispatch voids it.
+
+EVIDENCE: After the run the builder reports the run URL, the stage-5
+evidence verbatim (or the job log marker if the runner emits none), the
+platform-recorded approver, and read-only reads of production:
+  - schema_migrations, which must hold 0001 to 0008, with
+    applied_migration_ids in the evidence exactly
+    0008_runtime_operational_grants
+  - the privileges br_app_runtime holds, which must equal the matrix
+    pinned in test/runtime-role-boot.storage.test.ts at 42ae00c0 (table
+    privileges, column-level UPDATE, sequence USAGE), with the Neon
+    sample table playing_with_neon and its sequence carrying nothing
+    for br_app_runtime
+  - br_app_runtime's attributes and memberships, and the ownership of
+    every object, unchanged from the reads in WHY
+The builder reports any difference as a finding. It does not correct it.
+BINDING: One commit: 42ae00c0967267154473cefc9e78b705d3afeb8a (main).
+One migration: 0008_runtime_operational_grants.
+CUSTODY: After this run completes, the builder preserves this act,
+verbatim, with a custody receipt covering the run, in one PR. No
+custody commit lands on main before this dispatch.
+
+Signed: Michael Daley
+Date: 2026-10-04 (UTC)
