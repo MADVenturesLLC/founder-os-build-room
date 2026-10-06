@@ -1,0 +1,9 @@
+Gate V acceptance: I read the builder's report of 2026-10-06
+(12:05Z to 12:10Z). Deployment aae63936 at 9f39f4bb runs as
+br_app_runtime, its privilege audit is enforced and clean, and it
+serves. I accept the cutover. I waive any difference in the ending of
+the new DATABASE_URL (sslmode=require&channel_binding=require) from
+the old value, and that there were three deploys (11:53Z, 12:00Z,
+12:05Z) instead of one. ChatGPT did no clicking or copying during
+this work; I did it all myself. This line does not authorize step 10.
+Signed: Michael Daley

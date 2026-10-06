@@ -1,0 +1,6 @@
+Gate V note: the 11:53Z deploy (a8e1809e) was my mistake. It added a
+variable named br_app_runtime and did not change DATABASE_URL. I
+continue under my Gate V act with one more deploy that removes
+br_app_runtime and changes DATABASE_URL, and I will seal DATABASE_URL
+after the builder confirms the cutover works.
+Signed: Michael Daley

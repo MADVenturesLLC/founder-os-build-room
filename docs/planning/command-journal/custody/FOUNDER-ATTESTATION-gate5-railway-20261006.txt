@@ -1,0 +1,8 @@
+ATTESTATION to my Gate V authorization (dated 2026-10-05 UTC)
+For Railway I rely on the builder's names-only read of 2026-10-06
+at 09:19Z: service rare-enjoyment has DATABASE_URL,
+CONTROL_PLANE_TOKEN and PHASE3_ADJUDICATION_TOKEN; no shared
+variables; nothing staged. I can restore the present value of
+DATABASE_URL myself, without the builder and without Railway
+showing it to me again.
+Signed: Michael Daley
