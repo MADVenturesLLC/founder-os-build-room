@@ -1,9 +1,9 @@
 # CUSTODY RECEIPT — Gate V, Tranche D: the Founder's act, notes and acceptance, and the runtime cutover (2026-10-06)
 
 **This receipt records the landing of four instruments: the Founder's Gate
-V act for the runtime cutover, the attestation that stands in for the
-act's unfilled Railway attestation, the Founder's note on the first of
-three deploys, and the Founder's acceptance. It also records what the
+V act for the runtime cutover, his later attestation for Railway, which
+covers part of the act's unfilled Railway attestation, his note on the
+first of three deploys, and his acceptance. It also records what the
 builder read before and after the cutover. It authorizes nothing: no
 cutover step 10, no variable audit (PC-19), no rotation of
 `neondb_owner` (Gate VI), no removal of the `pending_cutover` tolerance,
@@ -35,7 +35,7 @@ newline.
 | Bytes | 410 |
 | Lines | 8 (`wc -l`) |
 | Trailing newline | present (single LF); no CR bytes |
-| What it is | the Founder's attestation, posted at 2026-10-06T10:17:39Z, standing in for the act's unfilled Railway attestation. For Railway it relies on the builder's names-only read of 2026-10-06 at about 09:19Z; it attests on the Founder's own word that he can restore the prior value of `DATABASE_URL` himself. Drafted by the builder after the Founder asked whether the builder could look at the Railway dashboard (09:19:14Z) |
+| What it is | the Founder's attestation, posted at 2026-10-06T10:17:39Z, after the act's Railway attestation was posted unfilled. It covers part of that attestation, not all of it (departure 1): for the variable names it relies on the builder's names-only read of 2026-10-06 at about 09:19Z, and it attests on the Founder's own word that he can restore the prior value of `DATABASE_URL` himself. Drafted by the builder after the Founder asked whether the builder could look at the Railway dashboard (09:19:14Z) |
 
 | Field | Value |
 |---|---|
@@ -45,7 +45,7 @@ newline.
 | Bytes | 335 |
 | Lines | 6 (`wc -l`) |
 | Trailing newline | present (single LF); no CR bytes |
-| What it is | the Founder's note, posted at 2026-10-06T12:00:37Z, recording the 11:53Z deploy (`a8e1809e`) as his mistake and continuing under the act with one more deploy. Drafted by the builder; the Founder posted it unchanged |
+| What it is | the Founder's note, posted at 2026-10-06T12:00:37Z, recording the 11:53Z deploy (`a8e1809e`) as his mistake and saying he would continue under the act with one more deploy that removes the extra variable and changes `DATABASE_URL`. Two deploys followed instead: `b40118f2` (12:00:45Z) removed the variable and `aae63936` (12:05:06Z) changed `DATABASE_URL`; see the sequence below. Drafted by the builder; the Founder posted it unchanged |
 
 | Field | Value |
 |---|---|
@@ -66,7 +66,7 @@ database clock.
 | Time | Event | Source |
 |---|---|---|
 | 08:34:42Z | act posted, prefixed `read` | session |
-| 08:36:25Z to 08:43:53Z | step a: every condition holds. `main` at `9f39f4bb`, no commit since 2026-10-05T00:20:13Z, no open pull request, no workflow run queued or in progress; latest deployment `d79ee5ac` SUCCESS at that commit; ledger 0001 to 0008; `br_app_runtime` attributes, memberships, reach, ownership and settings as in the act's WHY; grants equal the pinned matrix (38 relation rows, 23 column `UPDATE` rows); journal empty | GitHub API, Railway API, Neon `run_sql` as `neondb_owner` |
+| 08:36:25Z to 08:43:53Z | step a: every condition holds. `main` at `9f39f4bb`, no commit since 2026-10-05T00:20:13Z, no open pull request, no workflow run queued or in progress; latest deployment `d79ee5ac` SUCCESS at that commit; ledger 0001 to 0008; `br_app_runtime` attributes, memberships, reach, ownership and settings as in the act's WHY; grants equal the pinned matrix (38 relation rows, 23 column `UPDATE` rows); journal empty. The act's Railway attestation is unfilled (departure 1) | GitHub API, Railway API, Neon `run_sql` as `neondb_owner` |
 | 09:06:48Z, 09:19:14Z | the Founder asks for the steps to be made easier, then whether the builder can look at the Railway dashboard | session |
 | about 09:19Z | builder's names-only Railway read: service `rare-enjoyment` has `CONTROL_PLANE_TOKEN`, `DATABASE_URL`, `PHASE3_ADJUDICATION_TOKEN`; the environment has no shared variables and one service; nothing staged | Railway `describe-service`, `describe-environment`, `get-staged-changes`, which return names, never values |
 | 10:17:39Z | attestation posted | session |
@@ -159,28 +159,39 @@ cutover step 10 are not done.
 
 ## Departures and findings
 
-1. **The act's Railway attestation was posted unfilled.** The builder
-   reported it at 08:43Z; the attestation instrument above replaces it,
-   relying on the builder's names-only read. No variable value was read.
+1. **The act's Railway attestation was posted unfilled**, its date and
+   time placeholders included. The builder reported it at 08:43Z. The
+   Founder's attestation of 10:17:39Z covers part of it: by the
+   builder's names-only read, `DATABASE_URL` exists on the service and
+   no shared variable exists; on his own word, he can restore the prior
+   value. It does not attest that `DATABASE_URL` was not a reference
+   variable, which the act's attestation asks for, and a names-only
+   read cannot show that. No Founder instrument covers that point, and
+   the acceptance does not waive it. No variable value was read.
 2. **Act 1 was done by SQL, not by the console.** Neon's console refuses
    to reset a password for a role that has none; the builder had flagged
    this as unmeasured when it drafted the act. Two earlier messages
    (`Go`, 10:35:40Z; `act 1 done`, 10:50:44Z) preceded any password; the
    builder answered STOP both times from live reads.
-3. **Three deploys instead of one.** 11:53Z added a variable named
-   `br_app_runtime`; 12:00Z removed it; 12:05Z changed `DATABASE_URL`.
-   The Founder waived the three deploys in the acceptance, and his note
-   records the first. The acceptance does not address what follows. The
+3. **Three deploys instead of one, and a variable the act does not
+   authorize.** 11:53Z added a variable named `br_app_runtime`; 12:00Z
+   removed it; 12:05Z changed `DATABASE_URL`. Adding that variable
+   changed a variable other than `DATABASE_URL`, which act 2 ("and no
+   other variable") and WHAT THIS DOES NOT DO ("no change to any other
+   variable") exclude. The Founder's note records the 11:53Z deploy as
+   his mistake, and the acceptance waives the three deploys. Neither
+   waives the change to another variable or addresses what follows. The
    extra variable was unsealed, by its icon in the Founder's 11:51:43Z
    screenshot (`{}`, where the sealed `DATABASE_URL` in his 12:03:55Z
    screenshot shows a struck-through eye), and his message at 11:55:04Z
    indicates it held the `br_app_runtime` connection string with the
    new password. The builder never read its value. If it held the
    password, that password was readable in Railway, as unsealed values
-   are, from about 11:51Z until 12:00:45Z.
-   Deployment `a8e1809e` is now `REMOVED`; whether Railway keeps that
-   variable in the removed deployment's snapshot is not known to the
-   builder.
+   are, from about 11:51Z until 12:00:45Z. Deployment `a8e1809e` is now
+   `REMOVED`; whether Railway keeps that variable in the removed
+   deployment's snapshot is not known to the builder. The Founder's
+   disposition of this departure, and whether `br_app_runtime` gets a
+   new password, are open; a new password needs its own act.
 4. **Sealing.** The note says `DATABASE_URL` would be sealed after the
    builder confirmed the cutover. It was sealed before the 12:05Z
    deploy, which is what the act itself says.
