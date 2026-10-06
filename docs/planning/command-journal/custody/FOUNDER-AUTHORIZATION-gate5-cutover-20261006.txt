@@ -1,0 +1,244 @@
+FOUNDER AUTHORIZATION: PR 2b GATE V / TRANCHE D
+RUNTIME CUTOVER OF DATABASE_URL TO br_app_runtime (STEP 8, AND STEP 9
+AS NARROWED BELOW)
+
+I, Michael Alberto Daley, issue the following authorization. It takes
+effect when I post it in the session that observes the cutover.
+
+AUTHORIZED ACT
+One cutover of the Railway service rare-enjoyment (project
+compassionate-happiness, eda9fa46-1745-4aca-9671-b766d256a844;
+environment production, 18c585fb-5e80-4a96-a39d-2ee2af56764a; service
+5a3fd421-f1a7-4562-aad6-dc309641d306) at deployed commit
+9f39f4bb9afd49b1ad4f8f8650642eab7af2f946, made of exactly three acts,
+each done by me, with my own hands, in this order:
+  1. In Neon project founder-os-build-room (orange-art-29526355),
+     branch production (br-summer-sun-avroco6a), I give the role
+     br_app_runtime a password.
+  2. In Railway I change the service variable DATABASE_URL, and no
+     other variable, so that it names the role br_app_runtime with
+     that password and is in every other respect the value it
+     replaces: same host, port, database and parameters. I store it
+     as a sealed variable.
+  3. I deploy that staged change, once.
+The builder reads. It does not set, receive or hold any password or
+connection string, does not call any tool that returns the value of a
+Railway variable, and changes nothing in production.
+
+SEQUENCE
+  a. I tell the builder, in this session, to read. It reads the
+     CONDITIONS below and reports.
+  b. If every condition holds, I do act 1 and tell the builder.
+  c. The builder reads the CONDITIONS again, with the extra line for
+     after act 1, and reports.
+  d. If every condition still holds, I do acts 2 and 3 and tell the
+     builder.
+  e. The builder reads the EVIDENCE below and reports. I decide.
+
+WHY
+Plan r1 section 8 and architecture r6 section 13 put the move of
+DATABASE_URL to br_app_runtime at step 8, and the proof that the
+service boots and works under it at step 9. Plan r1 section 9 makes
+this Gate V and requires it to name the deployed Git SHA. The builder
+read the facts below on 2026-10-05, read-only; database facts carry
+the database clock (PostgreSQL 18.6, connected as neondb_owner):
+  - Railway: the latest deployment of rare-enjoyment is d79ee5ac,
+    SUCCESS, commit 9f39f4bb (09:11Z). The project holds that one
+    service and one environment, production.
+  - its boot log, 00:21:32Z, reports role neondb_owner,
+    migrationsPresent 8 and privilegeAudit pending_cutover, listing as
+    forbidden attributes rolcreaterole, rolcreatedb, rolbypassrls and
+    rolreplication, and as forbidden memberships br_journal_owner,
+    command_journal_writer and neon_superuser (depth 1) and
+    pg_read_all_data and pg_write_all_data (depth 2). That is what the
+    swap removes.
+  - its DNS log shows it resolving
+    ep-little-meadow-avqfkjcp.c-11.us-east-1.aws.neon.tech, the direct
+    endpoint, not a -pooler host; it holds two sessions, both
+    neondb_owner, started 00:21:32Z and 00:21:42Z (09:10:53Z)
+  - main's tip is 9f39f4bb, no PR is open, and path-audit,
+    attribution-shape, build-and-test and storage-integration are
+    green on it (09:11Z). storage-integration runs the runtime-role
+    tier: the application's own stores, gateway, leadership and HTTP
+    server connected as br_app_runtime, on owned PostgreSQL 16
+    instances, not on Neon and not on 18.6
+  - schema_migrations holds 0001 to 0008 (09:39:54Z)
+  - br_app_runtime: can log in; not superuser; none of CREATEROLE,
+    CREATEDB, BYPASSRLS, REPLICATION; a member of no role at any
+    depth; pg_has_role USAGE, MEMBER and SET all false for
+    neon_superuser; owns no relation; the database is owned by
+    neondb_owner; no role-level or database-level setting exists
+    (09:39:54Z). It reaches no other role by USAGE, MEMBER or SET,
+    cannot create in the database or in schema public, and cannot set
+    session_replication_role (01:26:34Z)
+  - its privileges equal the matrix pinned in
+    test/runtime-role-boot.storage.test.ts at 9f39f4bb: 38 relation
+    rows and 23 column UPDATE rows, none missing, none unexpected, no
+    grant option, nothing to PUBLIC, nothing on the Neon sample table
+    (01:18:18Z)
+  - journal: both tables are owned by br_journal_owner; the append
+    routine command_journal_append is owned by command_journal_writer,
+    is SECURITY DEFINER, and its ACL has no PUBLIC entry and EXECUTE
+    for br_app_runtime; br_journal_owner and command_journal_writer
+    cannot log in; br_app_runtime holds SELECT on both tables and no
+    INSERT, UPDATE, DELETE, TRUNCATE, TRIGGER, REFERENCES or column
+    write privilege (09:39:54Z, 01:26:34Z). The journal is empty: 0
+    event rows, head row seq 0, the 64-zero genesis hash (09:41:14Z)
+  - Neon's role list reports br_app_runtime with authentication method
+    no_login, last updated 2026-10-02T07:43:14Z, its creation time.
+    The builder reads that as: no password is set
+Steps 1 to 7 are done. 0006 (roles, journal objects, genesis row) and
+0007 are on production since 2026-10-02. 0008, the operational grants,
+was applied by run 37234634362 under my Gate IV act (ledger row
+2026-10-04 21:08:29Z), and the act and its receipt landed as PR #97
+(9f39f4bb). PR #96 (42ae00c0) put the role-keyed boot enforcement, the
+runtime-role CI tier and the rollback test (D-R5) on main; the boot
+path at 9f39f4bb calls the read-only preflight and no migration. My
+ruling of 2026-09-27 made the cutover wait for C3 and FD-3. My ruling
+signed 2026-10-04 resolved both, and the two things it names are on
+main: the ruling itself in custody (PR #93, ca56c47) and the detection
+shapes and parity test (PR #94, b85715d).
+
+HOW I READ PLAN R1 SECTION 9
+Section 9 asks for steps 1 to 7 proven and PC-0 to PC-18 passing. The
+evidence is not the same for every check, and I rule on each group:
+  - PC-1 to PC-9, PC-16 and PC-18: read in production, as above
+  - PC-10 to PC-15 and PC-17: PostgreSQL's own refusals and the
+    positive path were observed as br_app_runtime only in CI, on
+    PostgreSQL 16. No login exists in production to observe them
+    there. In production the builder reads the privilege catalog. I
+    accept catalog proof for production at this gate.
+  - PC-0 and PC-20 ask what the application sees as br_app_runtime,
+    which no read before act 3 can show. They are the acceptance test
+    of this act, not a precondition of it.
+S9 stays triggered until PC-0 to PC-4 are observed after act 3. If any
+of them fails, it is FOUNDER_DECISION_REQUIRED and I roll back.
+
+CONDITIONS
+Each must hold when the builder reads, at step a and again at step c.
+If any fails, I do not go on, and the builder reports what it found.
+  - main's tip is 9f39f4bb9afd49b1ad4f8f8650642eab7af2f946 and no
+    commit has landed on main since I posted this act
+  - the latest rare-enjoyment deployment is SUCCESS at that commit,
+    and none is queued, building or deploying
+  - production's schema_migrations holds exactly 0001 to 0008
+  - br_app_runtime can log in; is not superuser; holds none of
+    CREATEROLE, CREATEDB, BYPASSRLS, REPLICATION; is a member of no
+    role at any depth; reaches no other role by USAGE, MEMBER or SET;
+    owns no relation; has no role-level or database-level setting
+  - its privileges equal the pinned matrix (38 relation rows, 23
+    column UPDATE rows, nothing else, nothing to PUBLIC)
+  - on the journal it holds SELECT on the two tables, EXECUTE on
+    command_journal_append and nothing else, ownership is as in WHY,
+    and the journal is empty: 0 event rows, head row seq 0
+  - at step c only: Neon's role list shows br_app_runtime with
+    authentication method password, and nothing above has changed
+
+RAILWAY, AS I ATTEST, read by me in the Railway dashboard on <<DATE>>
+at <<HH:MM>> UTC, names only; I copied no value to the builder
+  - DATABASE_URL exists on service rare-enjoyment in production as a
+    service variable: not a shared variable, not a reference variable
+  - I can restore its present value myself, without the builder and
+    without Railway showing it to me again: I hold it, or I can
+    rebuild it from Neon for neondb_owner on the same host
+
+TARGET
+The new value names the host in WHY, ep-little-meadow-avqfkjcp, the
+direct endpoint, and the database neondb, and differs from the value
+it replaces in the user name and the password only. If the revision
+resolves another host (for example a -pooler host), the builder reports
+it as a finding and I roll back unless I rule otherwise in writing.
+
+ABORT AND ROLLBACK
+Before act 3 a failed condition stops me. After act 3 I restore the
+prior DATABASE_URL value and deploy, which is my act and not the
+builder's, if the builder reports any of:
+  - the deploy fails, or the revision does not log boot.listening and
+    answer /health with 200 within the healthcheck window
+  - boot.preflight does not report role br_app_runtime with
+    privilegeAudit enforced, or lists any forbidden attribute or
+    membership, or boot.failed appears
+  - the revision's log or Neon shows a permission denied, a missing
+    role or an authentication error for br_app_runtime
+  - the revision resolves a host other than the one in WHY
+  - any difference in the reads under EVIDENCE that the builder
+    reports as a finding and I do not waive in writing
+If the revision never becomes healthy, Railway keeps the previous
+revision serving (architecture r6 section 11.3), so no restore is
+urgent, and I decide then whether to restore or stop. Restoring the
+value is available until step 10 and not after it. Rows appended to the
+journal while the new revision serves are permanent; after a first
+append the safe reversal is REVOKE EXECUTE on the append routine,
+never a drop (plan r1 section 8.2).
+
+WHAT I ACCEPT, KNOWING IT
+  - Step 9 is narrowed. Plan r1 and architecture r6 ask for room
+    lifecycle writes and a journal append as proof. I authorize
+    neither in production: an append writes a permanent row, and a
+    real control-plane act is stop condition S7. The evidence is boot,
+    /health, the leadership lease writes the revision makes on its
+    own, the sessions it holds and the unchanged journal. Every other
+    write path is proven only by the CI tier, so a gap in one of them
+    can first show in real use.
+  - From the moment the new revision serves, POST /journal/commands
+    behind the control-plane token stops refusing on identity. I
+    accepted the consequence in my ruling signed 2026-10-04: any
+    holder of the token can append, the pre-write guard is the only
+    redaction boundary, and journal rows are permanent.
+
+WHAT THIS DOES NOT DO
+- It does not authorize step 10 (removing every trace of the
+  administrative credential from Railway, the variable audit, PC-19)
+  or anything after it: rotation of neondb_owner (Gate VI, step 14),
+  the removal of the pending_cutover tolerance, Gate VII, or any
+  activation of the journal under contract section 1.4.
+- It does not authorize the builder to set, ask for, hold, derive or
+  relay any password or connection string, to call a tool that returns
+  the value of a Railway variable, to deploy, redeploy or roll back,
+  or to change anything in Railway, Neon, GitHub settings, the
+  workflow, the runner, the environment or any secret.
+- It authorizes no SQL against production by the builder other than
+  read-only reads, and no write path exercised on purpose: no room
+  created, no call to POST /journal/commands, no append.
+- It authorizes no change to any other variable, service, setting,
+  database or role, including the health check and restart policy in
+  railway.toml, and no deploy other than the one in act 3.
+- It authorizes no merge. A later merge to main redeploys the service
+  on its own, under the new identity, and needs its own act.
+- Any commit to main before act 3 voids it.
+
+EVIDENCE: After act 3 the builder reports, read-only:
+  - the new deployment: id, commit (which must equal the SHA above),
+    status, trigger reason and times
+  - from its deploy log, verbatim: boot.start; boot.preflight, which
+    must show role br_app_runtime, migrationsPresent 8, privilegeAudit
+    enforced and no forbidden attribute or membership; boot.listening;
+    gateway.leadership.serving; any line at error level; and whether
+    boot.failed appears
+  - the answer of /health and the time it was read
+  - the DNS log: the host the new revision resolves, against WHY
+  - Neon sessions: the br_app_runtime sessions and their start times,
+    and any neondb_owner session that started after the new
+    deployment did
+  - br_app_runtime's attributes, memberships at any depth, privileges
+    against the pinned matrix, role-level and database-level settings,
+    and the ownership of every object, against the reads before act 1;
+    the ledger, still 0001 to 0008; the journal, still empty, head
+    seq 0
+  - Neon's role list entry for br_app_runtime after act 1
+The builder reports any difference as a finding. It does not correct
+it, and it does not roll back.
+ACCEPTANCE: I decide whether the cutover stands, after I read the
+builder's report. This act is spent when I accept the cutover or
+restore the prior value, whichever comes first. Acceptance authorizes
+nothing further: step 10 needs its own act, and until it is done the
+rollback above stays available.
+BINDING: One commit: 9f39f4bb9afd49b1ad4f8f8650642eab7af2f946 (main).
+One variable: DATABASE_URL on rare-enjoyment, production.
+CUSTODY: After the cutover is accepted or rolled back, the builder
+preserves this act, verbatim, with a custody receipt covering what it
+read and found, in one PR. No custody commit lands on main before
+act 3.
+
+Signed: Michael Daley
+Date: 2026-10-05 (UTC)
