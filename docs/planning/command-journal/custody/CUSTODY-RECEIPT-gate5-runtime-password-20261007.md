@@ -70,6 +70,8 @@ Neon's API.
 | 15:52:28Z | the Founder: "I pressed run" | session |
 | 15:53:08Z | the acceptance drafted and delivered | session |
 | 16:56:44Z | acceptance posted | session |
+| 17:10:06Z | the builder recommends leaving the new password's own exposure (finding 8) open until Gate VI, and replacing that password there, with `neondb_owner`'s, from a browser profile with no extensions | session |
+| 18:26:19Z | the Founder: "leave open until Gate VI" | session |
 
 The statement for act 1 is the one the Gate V receipt records, unchanged.
 It generates the password inside the database, sets it, and returns it
@@ -190,10 +192,13 @@ holds the `DATABASE_URL` from before the Gate V cutover, with
    5 and 6 are what the builder can say about it: it was on screen in the
    Neon tab until about 12:35Z, and the debugging check cannot show that
    nothing read the page. The acceptance retires the old password and
-   says nothing about this one. Whether it needs anything is open, for
-   the Founder; nothing here authorizes another replacement. A
-   replacement done through the same browser would carry the same
-   limits.
+   says nothing about this one. A replacement done through the same
+   browser would carry the same limits. The builder recommended leaving
+   it open until Gate VI and replacing the password there, with
+   `neondb_owner`'s, from a browser profile with no extensions
+   (17:10:06Z); the Founder ruled "leave open until Gate VI" (18:26:19Z).
+   It stays open until then. Nothing here authorizes that replacement or
+   any other.
 
 ## What the builder verified and what it did not
 
