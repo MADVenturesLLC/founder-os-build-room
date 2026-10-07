@@ -132,7 +132,13 @@ The log holds no line between 11:47:16Z and 11:51:34Z, when it was read.
 
 Every item of the act's EVIDENCE list is above. The new deployment boots
 as `br_app_runtime` with `privilegeAudit` `enforced` and answers `/health`
-with 200, so the act's ABORT AND ROLLBACK did not apply.
+with 200, so the act's ABORT AND ROLLBACK did not apply. Had it applied,
+its `OLD - undo` value did not depend on the retired password: that note
+holds the `DATABASE_URL` from before the Gate V cutover, with
+`neondb_owner`'s credentials (the builder's instruction of
+2026-10-06T11:48:54Z), and `neondb_owner`'s password is unchanged since
+2026-10-02, so restoring it boots the service as `neondb_owner` under the
+`pending_cutover` tolerance until step 10.
 
 ## Departures and findings
 
@@ -180,6 +186,14 @@ with 200, so the act's ABORT AND ROLLBACK did not apply.
    `neondb_owner`'s exposure (Gate V departure 6; Gate VI), the change
    to a variable other than `DATABASE_URL` (Gate V departure 3), or the
    unattested reference-variable point (Gate V departure 1).
+8. **No instrument settles the new password's own exposure.** Departures
+   5 and 6 are what the builder can say about it: it was on screen in the
+   Neon tab until about 12:35Z, and the debugging check cannot show that
+   nothing read the page. The acceptance retires the old password and
+   says nothing about this one. Whether it needs anything is open, for
+   the Founder; nothing here authorizes another replacement. A
+   replacement done through the same browser would carry the same
+   limits.
 
 ## What the builder verified and what it did not
 
