@@ -1,0 +1,30 @@
+FOUNDER ACCEPTANCE: CUTOVER STEP 13, PROVING RUNS P1 AND P2
+
+I accept the proving runs under my act of 2026-10-08, with this
+departure: I approved both runs as daley40-lab instead of rejecting
+them, P1 at about 16:23Z and P2 at about 19:59Z, each time meaning to
+reject. Each approved run re-selected 0008, already applied, and the
+builder read production unchanged after each: schema_migrations still
+0001 to 0008, with 0008's applied_at unchanged, and the journal empty.
+
+On the builder's report I record:
+  - PC-27 observed: P2 was held by the concurrency group with no job
+    started while P1 waited; neither run was cancelled by the other.
+  - PC-28 observed: both pending-deployment records denied approval
+    to decivantiq, the dispatcher, and each approval is recorded under
+    daley40-lab.
+  - PC-23 observed in the held state only: P2's migrate job ran no
+    step from 16:23:47Z until its approval at 19:59:32Z, so the secret
+    reached no step while the run was unapproved. The rejected state
+    was not exercised. I accept the held-state evidence as sufficient
+    for condition 4 of r6 section 15, and note that the environment's
+    approval gate, not the runner, is what held it.
+
+With PC-19 observed on 2026-10-08, PC-25 from control run 36712705903,
+PC-26 and PC-29 from my read of 16:16Z, and PC-30 from the builder's
+read, I rule condition 4 of r6 section 15 observed. This spends the
+act. It does not declare custody remediated and does not authorize
+Gate VI, which needs its own act.
+
+Signed: Michael Daley
+Date: 2026-10-08 (UTC)

@@ -1,0 +1,80 @@
+FOUNDER AUTHORIZATION: PR 2b TRANCHE C, CUTOVER STEP 13
+PROVING THE ADMINISTRATIVE PLANE BEFORE GATE VI (PC-23, PC-27, PC-28)
+
+I, Michael Alberto Daley, issue the following authorization. It takes
+effect when I post it in the session that dispatches the runs.
+
+AUTHORIZED ACT
+Two dispatches of "DB Admin Migration"
+(.github/workflows/db-admin-migration.yml) in
+MADVenturesLLC/founder-os-build-room, on main, each with exactly:
+  founder_authorized_sha  d4a75ef80efed0abe57d6556b02afb2c9ac2040c
+  tranche_id              0008_runtime_operational_grants
+made by the builder as decivantiq, run P1 then run P2, P2 only after
+P1's migrate job is waiting for review. I then reject both
+deployments as daley40-lab, P1 first. Neither run is to be approved.
+0008 is already applied to production, so even an approved run would
+be a recorded no-op; that is the fallback, not the plan.
+
+WHY
+r6 section 15 condition 4 requires the protected administrative plane
+to be shown operational before Gate VI rotates neondb_owner. My read
+of 2026-10-08 from 16:16:57Z to 16:16:59Z shows the environment as
+specified (PC-29) and MIGRATE_ADMIN_DATABASE_URL at environment scope
+only, updated 2026-09-30T08:40:13Z, absent from the repository and
+organization secret lists by name (PC-26). The builder reads that only
+db-admin-migration.yml names the environment (PC-30). Control run
+36712705903 of 2026-09-30 failed closed on a wrong SHA before any
+secret access, on the same workflow file (PC-25). Three checks have
+never been exercised: an unapproved run cannot read the secret
+(PC-23), overlapping runs queue without cancelling (PC-27), and the
+dispatching identity cannot approve its own run (PC-28).
+
+SEQUENCE
+  a. I tell the builder to read. It checks the CONDITIONS and reports.
+  b. The builder dispatches P1, waits until its migrate job is waiting
+     for review, then dispatches P2, and reads the EVIDENCE below.
+  c. I reject P1's deployment as daley40-lab and tell the builder.
+  d. When P2's migrate job is waiting, I reject it as daley40-lab and
+     tell the builder.
+  e. The builder reads the EVIDENCE again and reports. I decide.
+
+CONDITIONS, at step a
+  - main's tip is d4a75ef80efed0abe57d6556b02afb2c9ac2040c, and the
+    workflow file there is git blob
+    5061f1d50e0deb3c65bd9ca913dcfd75fc532e13
+  - no run of the workflow is queued, waiting or in progress
+  - production's schema_migrations holds 0001 to 0008
+
+EVIDENCE
+  - P1 and P2: ids, inputs, the preflight verdict, the jobs' states
+    and steps, and that the newer dispatch cancelled neither run
+  - while P1 waits: P2 is held by the concurrency group, and the
+    pending-deployment record says decivantiq cannot approve P1
+  - after each rejection: the migrate job ended without running its
+    steps, so the secret was never put into a step's environment
+  - the review records naming daley40-lab as reviewer, and the state
+  - production: schema_migrations still 0001 to 0008, and no
+    neondb_owner session from a GitHub runner
+
+ABORT
+If P1's preflight fails, or either run's migrate job starts any step,
+or a run is approved, I stop and decide. If a run is still waiting
+when I stop, the builder cancels it.
+
+WHAT THIS DOES NOT DO
+- It does not authorize Gate VI, any migration other than the
+  re-selection of 0008 named above, any change to the environment, its
+  reviewers, its secret or any workflow, any deploy, or any merge.
+- It does not authorize the builder to approve or reject a deployment,
+  or to hold any credential capable of either.
+- Any commit to main before step e voids it.
+
+ACCEPTANCE: I decide whether PC-23, PC-27 and PC-28 are observed after
+I read the builder's report. This act is spent when I accept it or
+stop. Accepting it does not declare custody remediated.
+CUSTODY: After acceptance or stop, the builder preserves this act
+verbatim with a custody receipt in one PR.
+
+Signed: Michael Daley
+Date: 2026-10-08 (UTC)
