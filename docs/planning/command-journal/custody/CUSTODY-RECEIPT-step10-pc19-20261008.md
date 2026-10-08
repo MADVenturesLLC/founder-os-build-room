@@ -69,6 +69,7 @@ names the act it belongs to. The act's own sequence steps are a to c.
 | database sessions | `br_app_runtime`: 2, started 00:55:57.625726Z and 00:56:07.669884Z; no `neondb_owner` session from the application (the only one is the builder's own read session) | 10:07:40Z |
 | `main` | `6b3d3ce12990d022d2089a97a3656a1f5f40f044`, as at step a | 10:07:40Z |
 | rollback copies | `d79ee5ac` (2026-10-05T00:20:16Z), `a8e1809e` (2026-10-06T11:53:01Z) and `b40118f2` (2026-10-06T12:00:45Z), created before the cutover deployment `aae63936` (2026-10-06T12:05:06Z), still report `canRollback` | 10:07Z |
+| later deployments | `aae63936` (2026-10-06T12:05:06Z), `834d764d` (2026-10-06T22:01:09Z) and `a1fa2933` (2026-10-07T11:45:48Z), all `REMOVED`, also report `canRollback`; `a1fa2933` is the deployment that first booted on the current `br_app_runtime` password | 10:07Z |
 
 Against plan r1 and r6: PC-19 (the Railway application service holds no
 administrative credential as a service, shared or reference variable) is
@@ -98,9 +99,11 @@ addressed here, and conditions 5 to 7 belong to Gate VI.
    and still offer rollback. No act removes them; the acceptance commits
    the Founder not to roll back to any deployment created before
    `aae63936`, and Gate VI's rotation is what makes those copies
-   useless. Rollback to `aae63936`, `834d764d` or `a1fa2933` would
-   restore a retired `br_app_runtime` password and fail to connect,
-   though it restores no administrative credential.
+   useless. The deployments made after the cutover also still offer
+   rollback (table above): `aae63936` and `834d764d` carry the
+   `br_app_runtime` password retired on 2026-10-07, so a rollback to
+   either would fail to connect; `a1fa2933` carries the password in
+   force. None of the three carries an administrative credential.
 4. **The two tokens are stored unsealed.** r6 section 5.1 rule 2 says
    values that live in Railway are stored as sealed variables. Sealing
    them changes the variables and redeploys; the act excludes it, and it
