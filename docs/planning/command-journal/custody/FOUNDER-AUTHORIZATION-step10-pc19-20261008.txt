@@ -1,0 +1,108 @@
+FOUNDER AUTHORIZATION: PR 2b TRANCHE D, CUTOVER STEP 10
+ADMINISTRATIVE CREDENTIAL ABSENT FROM RAILWAY (PC-19)
+
+I, Michael Alberto Daley, issue the following authorization. It takes
+effect when I post it in the session that observes the audit.
+
+AUTHORIZED ACT
+Cutover step 10 of plan r1 section 8 and r6 section 13: proving that
+neondb_owner's credential is absent from the environment of the
+Railway service rare-enjoyment (project compassionate-happiness,
+environment production), deployed at commit
+6b3d3ce12990d022d2089a97a3656a1f5f40f044. It is an audit, made of
+three acts, each done by me, with my own hands, in this order:
+  1. I open a Chrome Guest window, which runs no extensions, and sign
+     in to Railway there. I do the rest in that window only.
+  2. On the service's Variables page I open the value of
+     CONTROL_PLANE_TOKEN, then of PHASE3_ADJUDICATION_TOKEN, one at a
+     time, and close each. For each I note whether it is a postgres
+     connection string or contains "${{". I take no screenshot while
+     a value is on screen.
+  3. I open the project's Shared Variables page and note whether it
+     lists any variable.
+It changes nothing in Railway. If either value is a connection string
+or contains "${{", or any shared variable exists, I stop: removing it
+needs its own act, because it changes a variable and redeploys.
+DATABASE_URL is sealed and cannot be viewed. I rely instead on its
+history: on 2026-10-07 at about 11:44Z I replaced its whole value with
+a literal br_app_runtime connection string, and every deployment since
+boots as br_app_runtime.
+The builder reads. It does not set, receive or hold any password,
+token or connection string, does not call any tool that returns the
+value of a Railway variable, and changes nothing in production.
+
+WHY
+Step 10 is the plan's point where the administrative credential leaves
+the runtime environment, and r6 section 15 condition 3 (PC-19) must
+hold before Gate VI may rotate neondb_owner. No act has yet audited it.
+
+SEQUENCE
+  a. I tell the builder to read. It checks the CONDITIONS and reports.
+  b. I do acts 1 to 3 and tell the builder what I found.
+  c. The builder reads the EVIDENCE and reports. I decide.
+
+CONDITIONS, at step a
+  - main's tip is 6b3d3ce12990d022d2089a97a3656a1f5f40f044
+  - the latest rare-enjoyment deployment is SUCCESS at that commit and
+    runs as br_app_runtime with privilegeAudit enforced; none is
+    queued, building or deploying; nothing is staged in Railway
+  - by name: the project has one environment and one service; the
+    service's variables are exactly CONTROL_PLANE_TOKEN, DATABASE_URL
+    and PHASE3_ADJUDICATION_TOKEN; there is no shared variable
+  - the database holds no neondb_owner session from the application
+
+EVIDENCE, at step c
+  - my findings from acts 2 and 3
+  - the names read again, unchanged; nothing staged; no deployment
+    since step a; the latest deployment still running as
+    br_app_runtime with privilegeAudit enforced
+  - the database sessions, and no neondb_owner session from the
+    application
+  - the deployments Railway can still roll back to whose variables
+    hold neondb_owner's credential
+
+RESIDUE THIS DOES NOT REMOVE
+Railway's rollback restores a deployment's variables as well as its
+image. Deployments d79ee5ac, a8e1809e and b40118f2, made before the
+cutover, still offer rollback and carry the pre-cutover DATABASE_URL
+with neondb_owner's credential. From acceptance I do not roll back to
+any deployment created before aae63936 (2026-10-06T12:05:06Z). Gate
+VI's rotation is what makes those copies useless.
+
+ROLLBACK AFTER THIS ACT
+From acceptance, my "OLD - undo" value is no longer a rollback path:
+rollback means re-provisioning administrative custody, a Founder act
+(r6 section 13). I delete that value from my private note once I
+accept.
+
+DISPOSITIONS
+  - Gate V departure 1, the unattested reference-variable point: I
+    waive it. Whatever DATABASE_URL was before, its whole value was
+    replaced with a literal on 2026-10-07.
+  - Gate V departure 3, the change to a variable other than
+    DATABASE_URL: I waive it. The extra variable named br_app_runtime
+    was removed at 12:00:45Z on 2026-10-06, and its password was
+    retired on 2026-10-07.
+
+WHAT THIS DOES NOT DO
+- It does not authorize Gate VI (rotation of neondb_owner, the
+  db-admin-migration secret, or another br_app_runtime password),
+  removal of the pending_cutover tolerance, sealing the two tokens
+  (r6 section 5.1 rule 2), or any change to any variable, service,
+  setting, database or role.
+- It does not authorize the builder to set, ask for, hold or relay any
+  password, token or connection string, or to deploy, redeploy or roll
+  back.
+- It authorizes no SQL against production by the builder other than
+  read-only reads, and no merge.
+- Any commit to main or any deployment before step c voids it.
+
+ACCEPTANCE: I decide whether step 10 is complete after I read the
+builder's report. This act is spent when I accept it or stop.
+Accepting it records PC-19 as observed. It does not declare custody
+remediated, which needs all seven conditions of r6 section 15.
+CUSTODY: After acceptance or stop, the builder preserves this act
+verbatim with a custody receipt in one PR.
+
+Signed: Michael Daley
+Date: 2026-10-08 (UTC)
