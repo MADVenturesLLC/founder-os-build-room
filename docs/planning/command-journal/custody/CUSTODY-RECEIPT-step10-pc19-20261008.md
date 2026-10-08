@@ -39,18 +39,20 @@ final newline.
 ## What happened, in order
 
 All times are UTC on 2026-10-08. Session times are the transcript's;
-Railway times are its API's; database times are the database clock.
+Railway times are its API's; database times are the database clock. The
+builder guided the act's three acts as four numbered steps; each row
+names the act it belongs to. The act's own sequence steps are a to c.
 
 | Time | Event | Source |
 |---|---|---|
 | 09:59:29Z | act posted, prefixed `read` | session |
 | 09:59:48Z to 10:00:58Z | step a: every condition holds. `main` at `6b3d3ce`; the latest deployment `a5596777` SUCCESS at that commit, the only process since 00:55:56Z by `/health` uptime, booted as `br_app_runtime` with `privilegeAudit` `enforced` (its deploy log, read at 00:56Z); nothing staged; one environment and one service; the service's variables by name exactly `CONTROL_PLANE_TOKEN`, `DATABASE_URL`, `PHASE3_ADJUDICATION_TOKEN`; no shared variable; no `neondb_owner` session from the application | GitHub, public `/health`, Railway `describe-environment`, `describe-service`, `list-services` (names, never values), Neon `run_sql` |
-| 10:01:30Z | the builder's report; step 1: open a Chrome Guest window and sign in to Railway there | session |
+| 10:01:30Z | the builder's report; guided step 1 of 4 (act 1): open a Chrome Guest window and sign in to Railway there | session |
 | 10:02:43Z | the Founder: `on guest window` | session |
-| 10:02:53Z, 10:04:14Z | step 2: open the service's Variables page in that window; the Founder: `variables open` | session |
-| 10:04:20Z | step 3: reveal each token, one at a time, and say whether it starts with `postgres` or contains `${{`, with no value in the reply and no screenshot | session |
+| 10:02:53Z, 10:04:14Z | guided step 2 (the start of act 2): open the service's Variables page in that window; the Founder: `variables open` | session |
+| 10:04:20Z | guided step 3 (act 2): reveal each token, one at a time, and say whether it starts with `postgres` or contains `${{`, with no value in the reply and no screenshot | session |
 | 10:05:48Z | the Founder: "no they are just both tokens" | session |
-| 10:05:55Z | step 4: open the project's Shared Variables page | session |
+| 10:05:55Z | guided step 4 (act 3): open the project's Shared Variables page | session |
 | 10:06:50Z | the Founder: "no variables shared" | session |
 | 10:07:40Z | step c: the builder's reads below | Railway, Neon, GitHub, public `/health` |
 | 10:08:13Z | the builder's report, with the acceptance drafted in formal terms | session |
