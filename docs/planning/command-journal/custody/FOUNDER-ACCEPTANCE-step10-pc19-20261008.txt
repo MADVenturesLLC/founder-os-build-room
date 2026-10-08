@@ -1,0 +1,19 @@
+FOUNDER ACCEPTANCE: CUTOVER STEP 10 (PC-19)
+
+I accept step 10 under my act of 2026-10-08. In a Chrome Guest window
+I found that CONTROL_PLANE_TOKEN and PHASE3_ADJUDICATION_TOKEN each
+hold a token, neither a postgres connection string nor a value
+containing "${{", and that the project lists no shared variable. The
+builder's report shows the variable names unchanged, nothing staged,
+no deployment since step a, deployment a5596777 still running as
+br_app_runtime with privilegeAudit enforced, and no neondb_owner
+session from the application. I record PC-19 as observed.
+
+This spends the act. Its dispositions of Gate V departures 1 and 3
+stand. From now I do not roll back to any deployment created before
+aae63936, and I delete my "OLD - undo" value from my private note. This
+does not declare custody remediated, and it does not authorize Gate VI
+or any change to any variable, service, setting, database or role.
+
+Signed: Michael Daley
+Date: 2026-10-08 (UTC)

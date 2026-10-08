@@ -112,7 +112,7 @@ that it is merged and in force for Phase 4 implementation is recorded here,
 not by editing the contract's own wording. Phase 5 remains unauthorized, and
 the three counted Phase 4 runs require separate Founder entry authorization.
 
-**Journal persistence (PR 2b) and live rooms — what is merged, as of `main@d3d3d1dc` (2026-10-06).**
+**Journal persistence (PR 2b) and live rooms — what is merged, as of `main@6b3d3ce` (2026-10-08).**
 
 - **Gate II Tranche A — merged (PR #27, 2026-09-13).** Boot-time migration replaced by a read-only staged schema preflight (`packages/control-plane/src/schema-preflight.ts`); its privilege audit labels the connection `pending_cutover` (any role but `br_app_runtime`) or `enforced` (`br_app_runtime`); what `enforced` refuses is described under Tranche D.
 - **Tranche B — merged (PR #54, 2026-09-15).** Migration `0006_command_journal_authority_split` (journal tables, `command_journal_append`, role split) and the one-shot admin runner `packages/control-plane/src/migrate-cli.ts`. Merging defines the migration; it does not apply it to any database, and this README makes no claim about production Neon.
@@ -127,7 +127,8 @@ the three counted Phase 4 runs require separate Founder entry authorization.
 - **Gate IV for `0008` — run (2026-10-04).** Its Gate IV record, the Founder's act and the runner's evidence, is `docs/planning/command-journal/custody/CUSTODY-RECEIPT-gate4-0008-20261004.md`.
 - **Gate V, the runtime cutover — accepted (2026-10-06).** Its Gate V record, the Founder's act, attestation, note and acceptance and the builder's reads, is `docs/planning/command-journal/custody/CUSTODY-RECEIPT-gate5-cutover-20261006.md`.
 - **Gate V follow-up, a new password for `br_app_runtime` — accepted (2026-10-07).** The password the Gate V receipt records as possibly exposed is retired; the service runs on its replacement. The record, the Founder's act and acceptance and the builder's reads, is `docs/planning/command-journal/custody/CUSTODY-RECEIPT-gate5-runtime-password-20261007.md`.
-- **Not done.** Cutover step 10, which the Gate V act leaves out: removing every trace of the administrative credential from Railway, and the variable audit by name for D-R4 (PC-19). It needs its own act; until it is done, rolling `DATABASE_URL` back stays available. Rotation of `neondb_owner` (Tranche E, Gate VI) and removal of the `pending_cutover` tolerance come after it. Also open, each for the Founder: what the Gate V receipt records as not waived, the change to a variable other than `DATABASE_URL` and the unattested reference-variable point; `neondb_owner`'s exposure, which the new password does not settle; and the new password's own exposure, which the Founder left open until Gate VI.
+- **Cutover step 10 — accepted (2026-10-08).** The Founder's audit and the builder's names-only reads show no administrative credential in Railway as a service, shared or reference variable (PC-19); `DATABASE_URL` rollback is no longer available, and deployments made before the cutover must not be rolled back to, because Railway's rollback would restore their `neondb_owner` credential. The record, which also waives Gate V departures 1 and 3, is `docs/planning/command-journal/custody/CUSTODY-RECEIPT-step10-pc19-20261008.md`.
+- **Not done.** Rotation of `neondb_owner` (Tranche E, Gate VI), which also needs condition 4 of r6 section 15 (PC-23, PC-26 to PC-30) evidenced, and then removal of the `pending_cutover` tolerance; each needs its own act. Also open, each for the Founder: `neondb_owner`'s exposure, which Gate VI settles; the new `br_app_runtime` password's own exposure, which the Founder left open until Gate VI; and sealing the two Railway tokens (r6 section 5.1 rule 2).
 
 ## Verifying
 
