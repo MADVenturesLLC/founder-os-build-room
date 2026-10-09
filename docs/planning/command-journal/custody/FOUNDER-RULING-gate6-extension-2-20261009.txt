@@ -1,0 +1,4 @@
+I extend my Gate VI act of 2026-10-09 by one further run: the string
+I saved at 11:11:40Z logged in as br_app_runtime, not neondb_owner. I
+have saved production's neondb_owner string instead, and the builder
+may dispatch P4 once more. If it fails, I stop.
