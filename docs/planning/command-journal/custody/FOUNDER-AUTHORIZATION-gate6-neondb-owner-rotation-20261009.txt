@@ -1,0 +1,155 @@
+FOUNDER AUTHORIZATION: PR 2b TRANCHE E, GATE VI
+ROTATION OF neondb_owner (STEP 14; r6 SECTION 15 CONDITIONS 5 TO 7)
+
+I, Michael Alberto Daley, issue the following authorization. It takes
+effect when I post it in the session that observes the rotation.
+
+AUTHORIZED ACT
+One rotation of the password of the role neondb_owner in Neon project
+founder-os-build-room (orange-art-29526355), branch production
+(br-summer-sun-avroco6a), and the replacement of the one copy that the
+protected administrative plane holds, made of exactly three acts, each
+done by me, with my own hands, in a Chrome Guest window with no
+extension, in this order, with the builder reading between them:
+  1. In the Neon console I reset the password of neondb_owner. Neon
+     shows me the new password once. I put the new connection string
+     in my private note and nowhere else. Neon's own console keeps
+     working; the Neon API, which the builder reads through, does not
+     use this password.
+  2. The builder dispatches a proving run, P3, of DB Admin Migration
+     re-selecting 0008 under the secret as it stands, which still
+     holds the superseded password. I approve it as daley40-lab. Its
+     migrate job must fail to connect. That failure is the refused
+     authentication attempt that condition 6 requires, produced by the
+     platform with no one handling the credential.
+  3. In GitHub, repository MADVenturesLLC/founder-os-build-room,
+     Settings, Environments, db-admin-migration, I update the existing
+     secret MIGRATE_ADMIN_DATABASE_URL to the new connection string:
+     same host, port, database and parameters, new password. I create
+     no secret anywhere else, and I run the read block from step 13 to
+     show it. The builder then dispatches P4, the same inputs; I
+     approve it as daley40-lab; it must be a recorded no-op success.
+The builder reads and dispatches. It does not set, receive, hold or
+relay any password or connection string; it calls no tool that resets
+a password or returns a secret, a Railway variable or a connection
+string; it approves or rejects no deployment; it runs no SQL against
+production other than read-only reads.
+
+WHY
+r6 section 2.2 makes this rotation mandatory because neondb_owner's
+credential has historical runtime exposure: it sat in Railway's
+DATABASE_URL until 2026-10-06, three removed deployments (d79ee5ac,
+a8e1809e, b40118f2) still carry it and still offer rollback, and the
+Gate V receipt (departure 6) records a browser extension debugging my
+browser while it was on screen. Conditions 1 to 4 of r6 section 15
+hold in order: PC-0 to PC-4, PC-17 and PC-20 (Gate V, 2026-10-06),
+PC-19 (step 10, 2026-10-08), condition 4 (step 13, accepted
+2026-10-08T20:27:56Z). Plan r1 section 4.5 names E-X1 (rotate), E-X2
+(update the environment secret) and E-X3 (rotation record, a refused
+attempt with the superseded credential, a custody audit showing the
+replacement at environment scope only). Rollback is NONE (plan r1
+section 8, step 14): there is no prior state to return to, only a
+rotation left incomplete, which is custody not remediated.
+
+WHAT CAN GO WRONG, AND WHAT STOPS IT
+  - The old password kept working: P3 succeeds. Then the reset did not
+    take or the secret was not what step 13 read. I stop and decide.
+  - The new string mistyped: P4 fails to connect. The database is
+    unchanged; I correct the secret, run the read block, and the
+    builder dispatches P4 again. At most twice; then I stop.
+  - A click on Reject instead of Approve on P3 or P4: the run ends
+    with no job; the builder dispatches again. Nothing else happens.
+  - The new password seen by something else: the Guest window has no
+    extension, no screenshot is taken while it is on screen, and it
+    goes only into the secret and my note. The Neon reset is the only
+    screen that shows it; GitHub never shows a secret again.
+
+SEQUENCE
+  a. I tell the builder to read. It checks the CONDITIONS and reports.
+  b. I open the Guest window, sign in to Neon, tell the builder, and
+     do act 1. I tell the builder when Neon has shown me the password
+     and I have closed that screen.
+  c. The builder confirms from Neon's role list that neondb_owner's
+     password changed, without reading it, and reports.
+  d. The builder dispatches P3 and tells me when its migrate job is
+     waiting. I approve it as daley40-lab. The builder reads P3 and
+     reports whether its job failed to connect.
+  e. I do act 3's secret update, run the read block, paste its output,
+     and tell the builder.
+  f. The builder dispatches P4 and tells me when its migrate job is
+     waiting. I approve it as daley40-lab. The builder reads the
+     EVIDENCE and reports. I decide.
+
+CONDITIONS, at step a
+  - main's tip is a9aefb34cf45145bedec6bd202394fdb91f6b547, and the
+    workflow file there is git blob
+    5061f1d50e0deb3c65bd9ca913dcfd75fc532e13
+  - the latest rare-enjoyment deployment is SUCCESS at that commit and
+    the database holds its br_app_runtime sessions and no neondb_owner
+    session from the application; nothing is staged in Railway
+  - no run of DB Admin Migration is queued, waiting or in progress
+  - production's schema_migrations holds 0001 to 0008, the journal is
+    empty, and neondb_owner's Neon role entry reads updated_at
+    2026-10-02T07:43:14Z, authentication_method password
+  - the environment secret's updated_at is still 2026-09-30T08:40:13Z
+    (my read of 16:16Z on 2026-10-08; I re-run the read block at step
+    a if more than a day has passed)
+
+EVIDENCE, at step f
+  - Neon's role entry for neondb_owner: updated_at after act 1
+  - P3: id, inputs, preflight verdict, approval record naming
+    daley40-lab, and its migrate job's failure before any migration
+    step, with the runner's connect-failure line and SQLSTATE
+  - P4: id, inputs, preflight verdict, approval record, every step
+    succeeding, the apply step a recorded no-op
+  - production after P4: schema_migrations still 0001 to 0008 with
+    0008's applied_at unchanged, journal empty
+  - my read block's output after act 3: MIGRATE_ADMIN_DATABASE_URL at
+    environment scope with a new updated_at; the repository and
+    organization secret lists unchanged by name; the environment's
+    reviewers, prevent_self_review, admin bypass and branch policy as
+    at step 13
+  - the service: /health 200 and its br_app_runtime sessions, to show
+    the rotation touched nothing it uses
+
+ABORT
+If P3 succeeds, if P4 fails twice, if any migrate job runs a step
+other than the recorded no-op, if the reset screen shows the password
+to anything but me, or if anything else departs from this act, I stop
+and decide. A stop after act 1 leaves the secret holding a password
+that no longer authenticates; the plane cannot run a migration until I
+finish act 3 under a new act. That is a safe state for production,
+which never used neondb_owner, and an unsafe one only for the plane.
+
+WHAT THIS DOES NOT DO
+- It does not declare custody remediated. Conditions 5 to 7 are
+  decided in my acceptance, on the evidence, one by one; S13 holds
+  until all seven are recorded.
+- It does not authorize a new br_app_runtime password, which I left
+  open until Gate VI on 2026-10-07 and which takes its own act, in
+  this sitting if I choose; removal of the pending_cutover tolerance;
+  sealing the two Railway tokens; any change to any Railway variable,
+  deployment or setting; any migration other than the two re-selections
+  of 0008 named above; any change to the environment's reviewers or
+  rules, to any workflow, or to any repository or organization secret;
+  or any merge.
+- It does not authorize the builder to reset, set, ask for, hold or
+  relay any password or connection string, to approve or reject any
+  deployment, or to call any Neon or Railway tool that returns one.
+- Any commit to main before step f voids it.
+
+ACCEPTANCE: I decide, after the builder's report, whether condition 5
+(rotation recorded), condition 6 (the superseded credential refused)
+and condition 7 (the replacement at environment scope only) are
+observed. If all three are, custody of neondb_owner is remediated
+under r6 section 15 and I say so in the acceptance; if any is not, I
+say which, and custody is not remediated. This act is spent when I
+accept it or stop.
+CUSTODY: After acceptance or stop, the builder preserves this act
+verbatim with a custody receipt in one PR. The receipt also records
+that my first authorization comment on PR #101, posted from
+daley40-lab at 21:32:03Z, was deleted at 22:11:32Z before the
+decivantiq comment that the gate accepted.
+
+Signed: Michael Daley
+Date: 2026-10-09 (UTC)

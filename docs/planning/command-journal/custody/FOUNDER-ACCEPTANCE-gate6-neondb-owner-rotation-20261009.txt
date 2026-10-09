@@ -1,0 +1,36 @@
+FOUNDER ACCEPTANCE: PR 2b TRANCHE E, GATE VI, ROTATION OF neondb_owner
+
+I accept the rotation under my act of 2026-10-09, as extended by my
+rulings of 11:12:10Z and 11:26:55Z, with these departures:
+  - P4 ran four times. Twice the secret held a string for another Neon
+    endpoint, ep-withered-bonus-au1982ty, database Evidence (saved
+    03:10:36Z; the 11:00Z run went out before my correction). Once it
+    held br_app_runtime's string for production (saved 11:11:40Z),
+    which failed with SQLSTATE 42501. The fourth, run 37923976750,
+    used neondb_owner's string saved at 11:26:45Z and succeeded.
+  - My first approval of P3 did not register; the second did.
+  - Each failed run wrote nothing; production never changed.
+
+On the builder's report I record, in order:
+  - condition 5 observed: neondb_owner's password was reset in Neon
+    at 2026-10-09T02:41:28Z.
+  - condition 6 observed: P3, run 37875825882, approved by
+    daley40-lab, was refused at connect with SQLSTATE 28P01 under the
+    superseded password.
+  - condition 7 observed: MIGRATE_ADMIN_DATABASE_URL, updated
+    11:26:45Z, sits at environment scope only (my read of 11:27:36Z),
+    and P4 succeeded with it as a recorded no-op; only neondb_owner
+    can pass that run's first step.
+
+With conditions 1 to 4 already observed, all seven conditions of r6
+section 15 hold, and I declare custody of neondb_owner remediated.
+This spends the act.
+
+Still open, each for its own act: the br_app_runtime password, whose
+exposure I left open until Gate VI and whose string also reached one
+runner job today; the credential for ep-withered-bonus, which reached
+two runner jobs; removal of the pending_cutover tolerance; sealing the
+two Railway tokens.
+
+Signed: Michael Daley
+Date: 2026-10-09 (UTC)
