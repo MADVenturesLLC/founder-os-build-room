@@ -22,22 +22,26 @@
  *     readiness, so `main()` exits non-zero and the process never answers
  *     `/health` (PC-22). It reports and exits; it never creates, alters, or
  *     repairs (r6 §12).
- *   - **Privilege audit: staged enforcement, keyed on the connected role**
- *     (r3 §3 / r5 §3; Founder decision of 2026-10-04, PR 2b Tranche D). The
- *     audit is read-only and labels what it finds:
- *       - connected as `br_app_runtime` — the runtime identity — the audit is
- *         `enforced`: ANY forbidden attribute or membership refuses boot
- *         (`SchemaPreflightError`, before readiness). There is no variable to
- *         set and nothing to forget; the identity in `DATABASE_URL` selects
- *         the mode.
- *       - connected as any other role — the documented owner-class runtime
- *         until the cutover, a CI superuser — findings are READ and REPORTED
- *         as `pending_cutover`; they do not block boot and are never reported
- *         as compliance. Rolling `DATABASE_URL` back to the owner identity
- *         therefore restores service (cutover rollback: plan r1 §5.4 D-R5, r6 §13).
- *     The tolerance for other roles is temporary. It ends at cutover step 10,
- *     when `neondb_owner` leaves the runtime's environment, in its own
- *     change that removes the `pending_cutover` path.
+ *   - **Privilege audit: enforced, and the runtime serves only as
+ *     `br_app_runtime`** (r3 §3 / r5 §3; Founder decision of 2026-10-04,
+ *     PR 2b Tranche D; Founder act of 2026-10-10 ending the tolerance). The
+ *     audit is read-only, and both of its refusals land before readiness
+ *     (`SchemaPreflightError`):
+ *       - connected as any role other than `br_app_runtime` — `neondb_owner`,
+ *         a superuser, any other login, or one of those acting as
+ *         `br_app_runtime` through `SET ROLE` (both `session_user` and
+ *         `current_user` must be the runtime) — boot is refused whatever
+ *         that role holds. The refusal names the connected role and the
+ *         required one.
+ *       - connected as `br_app_runtime`, ANY forbidden attribute or
+ *         membership refuses boot.
+ *     There is no variable to set and nothing to forget: the identity in
+ *     `DATABASE_URL` is the whole decision. Until 2026-10-10 any other role
+ *     booted, its findings reported but tolerated, so that rolling
+ *     `DATABASE_URL` back to the owner identity restored service during the
+ *     cutover (plan r1 §5.4 D-R5, r6 §13). Cutover step 10 was accepted on
+ *     2026-10-08 and that rollback is no longer an authorized path, so the
+ *     tolerance ended.
  *   - **Emission ban** (r3 §3.4 / r5 §3.4). No secret or credential value is
  *     emitted. Errors name ids, roles, and catalog attributes only — never
  *     connection strings, passwords, or tokens.
@@ -51,9 +55,9 @@ export const REQUIRED_MIGRATION_IDS: readonly string[] = MIGRATIONS.map((m) => m
 
 /**
  * Forbidden role attributes (r6 §3.2). The runtime login must hold NONE of
- * them. Connected as `br_app_runtime`, any one refuses boot; for any other
- * role (the owner-class runtime until cutover step 10) it is an audit
- * FINDING, reported and tolerated.
+ * them. Connected as `br_app_runtime`, any one refuses boot. Any other role
+ * is refused for its identity alone; its attributes are still read and
+ * reported by `auditRuntimePrivileges`.
  */
 export const FORBIDDEN_ROLE_ATTRIBUTES = [
   'rolsuper',
@@ -93,8 +97,12 @@ export const FORBIDDEN_PREDEFINED_ROLE_PREFIXES = ['pg_write_all_data', 'pg_read
  */
 export const MEMBERSHIP_WALK_GUARD_DEPTH = 100;
 
-/** The staged-enforcement status of the privilege audit. */
-export type PrivilegeAuditStatus = 'pending_cutover' | 'enforced';
+/**
+ * The status of the privilege audit. It has one value: the audit is always
+ * enforced: the tolerance for other roles ended on 2026-10-10. It stays a
+ * field so the boot log keeps its shape.
+ */
+export type PrivilegeAuditStatus = 'enforced';
 
 /**
  * The one identity whose audit is enforced. It is the role migration `0006`
@@ -108,11 +116,11 @@ export interface PrivilegeAudit {
   /** The role the audited connection is actually running as. */
   readonly role: string;
   /**
-   * `enforced` when the connected role is the runtime identity
-   * (`ENFORCED_RUNTIME_ROLE`): any finding refuses boot. `pending_cutover` for
-   * every other role: the audit reports and does not block. Neither value is a
-   * claim of compliance: an empty findings list means "nothing forbidden
-   * OBSERVED on this connection", not "this deployment is authorized to serve".
+   * Always `enforced`: a role other than the runtime identity
+   * (`ENFORCED_RUNTIME_ROLE`) is refused, and so is any finding on the
+   * runtime identity. It is not a claim of compliance: an empty findings list
+   * means "nothing forbidden OBSERVED on this connection", not "this
+   * deployment is authorized to serve".
    */
   readonly status: PrivilegeAuditStatus;
   /** Forbidden attributes observed on the connected role (may be empty). */
@@ -131,7 +139,7 @@ export interface SchemaPreflightReport {
   readonly role: string;
   /** Every required migration id present in `schema_migrations`. */
   readonly migrationsPresent: readonly string[];
-  /** The detection-only privilege audit (staged enforcement, r5 §3.2). */
+  /** The privilege audit (enforced; r5 §3.2, Tranche D). */
   readonly privilegeAudit: PrivilegeAudit;
 }
 
@@ -157,9 +165,9 @@ type Queryable = Pool | PoolClient;
  * `pg_roles` / `pg_auth_members`, which any role may read, so it works even
  * on a zero-grant connection (the A-R3 fixture proves this through SET ROLE).
  *
- * Detection only. It labels the connection `enforced` or `pending_cutover`
- * but never blocks, never repairs, never emits a credential: the blocking
- * decision is `privilegeAuditRefusal`, applied by `schemaPreflight`.
+ * Detection only. It reads and reports, but never blocks, never repairs and
+ * never emits a credential: the blocking decision is `privilegeAuditRefusal`,
+ * applied by `schemaPreflight`.
  */
 export async function auditRuntimePrivileges(target: Queryable): Promise<PrivilegeAudit> {
   let role: string;
@@ -280,18 +288,27 @@ export async function auditRuntimePrivileges(target: Queryable): Promise<Privile
 
   return {
     role,
-    status: role === ENFORCED_RUNTIME_ROLE ? 'enforced' : 'pending_cutover',
+    status: 'enforced',
     forbiddenAttributes,
     forbiddenMemberships,
   };
 }
 
 /**
- * The refusal an `enforced` audit with findings produces, or `null` when the
- * boot may proceed. Names attributes and memberships only (emission ban).
+ * The refusal the audit produces, or `null` when the boot may proceed.
+ *
+ * A connected role other than `br_app_runtime` is refused for its identity,
+ * whatever it holds, and the refusal names that role and the required one
+ * and nothing else. The runtime identity is refused for any finding, named
+ * by attribute and membership only (emission ban).
  */
 export function privilegeAuditRefusal(audit: PrivilegeAudit): string | null {
-  if (audit.status !== 'enforced') return null;
+  if (audit.role !== ENFORCED_RUNTIME_ROLE) {
+    return (
+      `privilege audit refused: the connected role is ${audit.role}, not the runtime identity ` +
+      `${ENFORCED_RUNTIME_ROLE}. The runtime serves only as ${ENFORCED_RUNTIME_ROLE}`
+    );
+  }
   if (audit.forbiddenAttributes.length === 0 && audit.forbiddenMemberships.length === 0) return null;
   const parts: string[] = [];
   if (audit.forbiddenAttributes.length > 0) parts.push(`attributes [${audit.forbiddenAttributes.join(', ')}]`);
@@ -304,19 +321,65 @@ export function privilegeAuditRefusal(audit: PrivilegeAudit): string | null {
 }
 
 /**
+ * The login the connection authenticated as (`session_user`) and the role it
+ * is acting as (`current_user`). Both must be `br_app_runtime`, as the
+ * journal's identity latch already requires: `current_user` alone is what
+ * `SET ROLE` changes, so an owner-class login connected with
+ * `options=-c role=br_app_runtime` would read as the runtime there while
+ * holding its own authority. Returns the refusal, or `null` when both match.
+ * An unreadable identity rejects: it is never treated as a match.
+ */
+export async function runtimeIdentityRefusal(target: Queryable): Promise<string | null> {
+  const { rows } = await target
+    .query<{ session_role: string; acting_role: string }>(
+      'SELECT session_user::text AS session_role, current_user::text AS acting_role',
+    )
+    .catch((error: unknown) => {
+      throw new SchemaPreflightError(
+        `privilege audit could not read the connected identity: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  const session = rows[0]?.session_role ?? '(unknown)';
+  const acting = rows[0]?.acting_role ?? '(unknown)';
+  if (session === ENFORCED_RUNTIME_ROLE && acting === ENFORCED_RUNTIME_ROLE) return null;
+  const connected = acting === session ? session : `${session} (acting as ${acting})`;
+  return (
+    `privilege audit refused: the connected role is ${connected}, not the runtime identity ` +
+    `${ENFORCED_RUNTIME_ROLE}. The runtime serves only as ${ENFORCED_RUNTIME_ROLE}`
+  );
+}
+
+/**
  * The boot assertion itself. Resolves ONLY when every required migration id
  * is recorded in `schema_migrations`; rejects with `SchemaPreflightError`
  * otherwise — before the caller may become ready. Read-only throughout: a
  * rejection leaves the catalog byte-identical (A-R4/A-R5 prove this with an
  * event trigger and a before/after catalog snapshot).
  *
- * The privilege audit rides along in the report. For a connection that is NOT
- * the runtime identity it is detection-only (`pending_cutover`); for
- * `br_app_runtime` it is `enforced` and any finding rejects here, before the
- * schema check, so a runtime role that has been handed authority never serves
- * (Tranche D, Founder decision of 2026-10-04).
+ * The privilege audit runs first and rides along in the report. A connection
+ * that is NOT the runtime identity rejects here, before the schema is read,
+ * whatever it holds; for `br_app_runtime` any finding rejects here too, so a runtime role
+ * that has been handed authority never serves (Tranche D, Founder decision
+ * of 2026-10-04; the tolerance for other roles ended 2026-10-10).
  */
 export async function schemaPreflight(target: Queryable): Promise<SchemaPreflightReport> {
+  /*
+   * Identity first, then authority. The identity read needs no privilege, so
+   * a login other than br_app_runtime — or one acting as it through SET ROLE
+   * — is refused for its identity, with the message that names it, before
+   * this function reads anything else. The audit then reads only `pg_roles`
+   * / `pg_auth_members`, which any login may read; an unreadable role
+   * catalog rejects (see auditRuntimePrivileges), and any finding on
+   * br_app_runtime is refused.
+   */
+  const identityRefusal = await runtimeIdentityRefusal(target);
+  if (identityRefusal !== null) throw new SchemaPreflightError(identityRefusal);
+  const privilegeAudit = await auditRuntimePrivileges(target);
+  const refusal = privilegeAuditRefusal(privilegeAudit);
+  if (refusal !== null) throw new SchemaPreflightError(refusal);
+
   /*
    * `schema_migrations` must exist and be readable. Its absence is the
    * degenerate incompatible-schema case: the database was never migrated.
@@ -353,12 +416,6 @@ export async function schemaPreflight(target: Queryable): Promise<SchemaPrefligh
 
   const presentIds = new Set(present.rows.map((row) => row.id));
   const missing = REQUIRED_MIGRATION_IDS.filter((id) => !presentIds.has(id));
-
-  // An unreadable role catalog rejects (see auditRuntimePrivileges): the audit
-  // never fails open. Whether its FINDINGS block depends on the connected role.
-  const privilegeAudit = await auditRuntimePrivileges(target);
-  const refusal = privilegeAuditRefusal(privilegeAudit);
-  if (refusal !== null) throw new SchemaPreflightError(refusal);
 
   if (missing.length > 0) {
     /*

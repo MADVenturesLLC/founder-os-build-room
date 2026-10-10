@@ -1,0 +1,95 @@
+FOUNDER AUTHORIZATION: PR 2b, REMOVAL OF THE pending_cutover TOLERANCE
+(TRANCHE D CLOSE-OUT)
+
+I, Michael Alberto Daley, issue the following authorization. It takes
+effect when I post it in the builder session.
+
+AUTHORIZED WORK
+The builder writes one code change, in one pull request against main
+at faaad0bc401cc4b46b8868e69dea30766fb9e5b7, that ends the temporary
+tolerance my decision of 2026-10-04 (PR 2b Tranche D) left for any
+role other than br_app_runtime:
+  1. The boot preflight refuses to serve, before readiness, whenever
+     the connected role is not br_app_runtime, whatever that role
+     holds. Its error names the connected role and the required one,
+     and nothing else: no connection string, password or token.
+  2. Connected as br_app_runtime, the privilege audit stays exactly
+     as it is: any forbidden attribute or membership, at any depth,
+     refuses boot.
+  3. The status pending_cutover is removed from the code, so the boot
+     log can only read privilegeAudit enforced.
+  4. The tests change to prove the new rule: a superuser, neondb_owner
+     and any other non-runtime login are each refused before
+     readiness; br_app_runtime still boots; the rollback test (plan r1
+     section 5.4 D-R5) becomes a test that rolling DATABASE_URL back
+     to an owner-class login is refused; every suite that starts the
+     real server starts it as br_app_runtime. No test is skipped,
+     disabled or deleted to make the suite pass.
+  5. README.md and the preflight's own comments say the tolerance has
+     ended and that the runtime serves only as br_app_runtime.
+The builder runs the default suite, the runtime-role tier and the
+storage suites locally and in CI, and opens the PR only when all of
+them pass.
+
+WHY
+The tolerance existed so that rolling DATABASE_URL back to neondb_owner
+would restore service during the cutover. Step 10 was accepted on
+2026-10-08: rollback to the owner identity is no longer an authorized
+path, and Gate VI retired neondb_owner's runtime-era password. Since
+then the tolerance only means that a service handed the wrong
+credential, by mistake or by an attacker, would boot and serve instead
+of stopping. Ending it makes br_app_runtime the only identity the
+service will run as.
+
+SEQUENCE
+  a. I tell the builder to read. It checks the CONDITIONS and reports.
+  b. The builder writes the change, runs the suites, opens the PR and
+     drives it to green with the review bots dispositioned.
+  c. The builder drafts an exact-SHA merge authorization. Merging is
+     my separate act under DEC-20260718-04, and that authorization
+     also covers the one deployment the merge starts.
+  d. After the merge, the builder reads the new deployment's
+     boot.preflight, /health and Neon sessions, and reports. I decide.
+
+CONDITIONS, at step a
+  - main's tip is faaad0bc401cc4b46b8868e69dea30766fb9e5b7
+  - the latest rare-enjoyment deployment is SUCCESS at that commit and
+    booted as br_app_runtime with privilegeAudit enforced and no
+    forbidden attribute or membership; nothing is queued, building or
+    staged
+  - only the server's boot calls the schema preflight; the
+    administrative runner (migrate-cli) does not, so the change does
+    not touch the DB Admin Migration path
+  - no open pull request touches schema-preflight.ts or main.ts
+
+WHAT THE MERGE WILL DO TO PRODUCTION
+The service already connects as br_app_runtime, so the deployment the
+merge starts should boot exactly as today. If it does not boot, or
+does not answer /health with 200, the builder reports and does nothing
+else: no redeploy, no rollback, no variable change. Every deployment
+older than e297c2fa carries a password that no longer works, so the
+only working rollback targets are e297c2fa and 0bb5c618, and using
+either is my act, not the builder's.
+
+WHAT THIS DOES NOT DO
+- It does not authorize the builder to merge, deploy, redeploy or roll
+  back, or to change any Railway variable, Neon role, grant, password
+  or database.
+- It authorizes no migration and no SQL against production by the
+  builder other than read-only reads.
+- It does not authorize any change to the DB Admin Migration workflow,
+  the runner, the db-admin-migration environment or any secret.
+- It does not authorize sealing the two Railway tokens, any change to
+  the credential for ep-withered-bonus-au1982ty, or any change to the
+  review-bot credentials.
+- Any commit to main before the PR opens that touches the files above
+  voids it.
+
+ACCEPTANCE: I decide whether the change stands after I read the
+builder's report on the deployment the merge starts. This act is
+spent when I accept it or stop.
+CUSTODY: The builder preserves this act verbatim, with a custody
+receipt, in the same PR as the change.
+
+Signed: Michael Daley
+Date: 2026-10-10 (UTC)

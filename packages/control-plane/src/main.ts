@@ -16,13 +16,11 @@
  * preflight failure means "this revision is ahead of / behind its schema"
  * and the deploy must fail visibly (PC-22).
  *
- * The preflight also audits the connected role's privileges, and the
- * connected role selects the mode (r3/r5 staged enforcement; Tranche D). As
- * `br_app_runtime` the audit is `enforced`: any forbidden attribute or
- * membership refuses boot. As any other role — the documented owner-class
- * runtime until the cutover — it stays `pending_cutover`: reported, never
- * blocking, so rolling `DATABASE_URL` back restores service. It emits no
- * credential value.
+ * The preflight also audits the connected role (r3/r5; Tranche D). The
+ * runtime serves only as `br_app_runtime`: any other role is refused, and
+ * so is any forbidden attribute or membership on `br_app_runtime`. The
+ * tolerance that let an owner-class role boot ended on 2026-10-10, after
+ * cutover step 10. It emits no credential value.
  *
  * Shutdown drains the HTTP server, then the pool. Railway sends SIGTERM on
  * redeploy and on restart, so this path runs on every restart the Phase 2 run
@@ -53,9 +51,9 @@ export async function main(): Promise<void> {
   /*
    * Read-only schema preflight (PR 2b Tranche A). Asserts the required
    * `schema_migrations` ids are present and exits non-zero if not — it never
-   * migrates or repairs. The privilege audit it carries is `enforced` when
-   * the connection is `br_app_runtime` (any forbidden attribute or membership
-   * rejects here) and `pending_cutover`, detection-only, for any other role.
+   * migrates or repairs. Its privilege audit is enforced: a connection as
+   * any role other than `br_app_runtime` rejects here, and so does any
+   * forbidden attribute or membership on `br_app_runtime`.
    * `await` lets the rejection propagate to the `main().catch(...)` guard
    * below, which logs `boot.failed` and exits 1.
    */
@@ -65,10 +63,9 @@ export async function main(): Promise<void> {
     migrationsPresent: preflight.migrationsPresent.length,
     privilegeAudit: preflight.privilegeAudit.status,
     /*
-     * Findings, surfaced in the boot log so a pre-cutover owner-class runtime
-     * is VISIBLE as such — never as compliance, never as a credential. For
-     * `enforced` they are always empty (a finding refuses boot before this
-     * line). Attribute/membership NAMES only (emission ban).
+     * Always empty here: a finding refuses boot before this line. They stay
+     * in the boot log so its shape is unchanged and an empty list is visible
+     * evidence. Attribute/membership NAMES only (emission ban).
      */
     forbiddenAttributes: preflight.privilegeAudit.forbiddenAttributes,
     forbiddenMemberships: preflight.privilegeAudit.forbiddenMemberships,
