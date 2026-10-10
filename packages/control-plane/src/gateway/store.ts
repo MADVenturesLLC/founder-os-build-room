@@ -25,7 +25,10 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import {
+  MAX_ENROLLED_GATEWAYS,
+  lowestFreeSlot,
   projectGatewayRegistry,
+  type EnrollmentSlot,
   type GatewayProjectionRow,
   type GatewayRegistryEvent,
   type GatewayState,
@@ -73,6 +76,8 @@ export interface EnrollmentView {
   readonly stateSince: Date;
   readonly awaitingApprovalExpiresAt: Date | null;
   readonly isCurrentlyEnrolled: boolean;
+  /** The enrollment slot an enrolled gateway holds (1 or 2), and null otherwise. */
+  readonly enrollmentSlot: number | null;
 }
 
 /** The 202 body, stored verbatim so a retry replays exactly what was sent. */
@@ -190,7 +195,8 @@ export class GatewayRegistryStore {
   async listEnrollments(): Promise<readonly EnrollmentView[]> {
     const { rows } = await this.pool.query<ProjectionRowRaw>(
       `SELECT gateway_id, state, key_id, pubkey, host_descriptor, state_since,
-              last_event_seq, awaiting_approval_expires_at, is_currently_enrolled
+              last_event_seq, awaiting_approval_expires_at, is_currently_enrolled,
+              enrollment_slot
          FROM gateway_current_state ORDER BY state_since DESC, gateway_id ASC`,
     );
     return rows.map((row) => ({
@@ -209,6 +215,7 @@ export class GatewayRegistryStore {
       stateSince: row.state_since,
       awaitingApprovalExpiresAt: row.awaiting_approval_expires_at,
       isCurrentlyEnrolled: row.is_currently_enrolled,
+      enrollmentSlot: row.enrollment_slot === null ? null : Number(row.enrollment_slot),
     }));
   }
 
@@ -220,10 +227,15 @@ export class GatewayRegistryStore {
    * the fingerprint is recomputed from the stored bytes and compared against
    * what the Founder was handed out of band.
    *
-   * The at-most-one-enrolled invariant is enforced by the partial unique index,
-   * not by this code. That is deliberate — sequencing can be raced, an index
-   * cannot — and it is also what enforces the required ordering: the incumbent
-   * must be revoked before a successor can be confirmed.
+   * The cap of two enrolled gateways (DEC-20260818-01 clause 5 as amended by
+   * FOUNDER-ACT-20261010-TWO-GATEWAYS) is enforced by the database: each
+   * enrolled gateway holds one of two enrollment slots and a partial unique
+   * index lets a slot be held once. This code takes the lowest free slot
+   * under the registry lock and refuses with `enrollment_cap_reached` when
+   * both are held; the index is what makes a third enrollment impossible
+   * whatever the code does. With one slot held, a successor may be confirmed
+   * before its incumbent is revoked (the act's B5); with both held, the
+   * incumbent must be revoked first.
    */
   async confirmEnrollment(gatewayId: string, fingerprint: string, sourceIp: string | null): Promise<FounderActResult> {
     return this.inRegistryTransaction(async (client, now) => {
@@ -270,6 +282,27 @@ export class GatewayRegistryStore {
         return refuse('not_awaiting_approval');
       }
 
+      /*
+       * The slots already held, read under the registry lock, which every
+       * confirm and revoke takes; so no other act can take or free a slot
+       * between this read and the write below.
+       */
+      const held = await client.query<{ enrollment_slot: number }>(
+        `SELECT enrollment_slot FROM gateway_current_state
+          WHERE is_currently_enrolled ORDER BY enrollment_slot`,
+      );
+      const slot = lowestFreeSlot(held.rows.map((r) => Number(r.enrollment_slot)));
+      if (slot === null) {
+        await recordEnrollmentRefusal(client, {
+          kind: 'enrollment_cap_reached',
+          gatewayId,
+          detail: { enrolled: held.rows.length, cap: MAX_ENROLLED_GATEWAYS },
+          sourceIp,
+          recordedAt: now,
+        });
+        return refuse('enrollment_cap_reached');
+      }
+
       try {
         const seq = await insertRegistryEvent(client, {
           eventType: 'enrolled',
@@ -289,32 +322,34 @@ export class GatewayRegistryStore {
           stateSince: now,
           lastEventSeq: seq,
           awaitingApprovalExpiresAt: null,
+          enrollmentSlot: slot,
         });
       } catch (error) {
         /*
-         * The partial unique index refused a second enrolled row. That is
-         * clause 5 speaking, and it is reported as the refusal it is rather
-         * than as a server fault.
+         * The slot index refused the write: a slot this transaction read as
+         * free is held. Under the registry lock that cannot happen, so this
+         * is the backstop the database provides, and it is still reported as
+         * the cap refusal it is rather than as a server fault.
          */
-        if (isUniqueViolation(error, 'gateway_current_state_only_one_enrolled')) {
-          throw new AnotherGatewayEnrolled(gatewayId);
+        if (isUniqueViolation(error, 'gateway_current_state_one_gateway_per_slot')) {
+          throw new EnrollmentCapReached(gatewayId);
         }
         throw error;
       }
 
       return { ok: true as const, gatewayId, state: 'enrolled' as const };
     }).catch(async (error: unknown) => {
-      if (error instanceof AnotherGatewayEnrolled) {
+      if (error instanceof EnrollmentCapReached) {
         /*
          * (correction 5, M11) The ruled refusal answers regardless of whether
          * its out-of-band evidence write succeeded — the client must hear
-         * `another_gateway_enrolled`, not a 500, because a recorder hiccup
+         * `enrollment_cap_reached`, not a 500, because a recorder hiccup
          * outranked the ruling.
          */
-        await this.recordRefusalOutOfBand('another_gateway_enrolled', gatewayId, sourceIp).catch(
+        await this.recordRefusalOutOfBand('enrollment_cap_reached', gatewayId, sourceIp).catch(
           () => undefined,
         );
-        return refuse('another_gateway_enrolled');
+        return refuse('enrollment_cap_reached');
       }
       throw error;
     });
@@ -669,7 +704,8 @@ export class GatewayRegistryStore {
   async readProjection(): Promise<ReadonlyMap<string, GatewayProjectionRow>> {
     const { rows } = await this.pool.query<ProjectionRowRaw>(
       `SELECT gateway_id, state, key_id, pubkey, host_descriptor, state_since,
-              last_event_seq, awaiting_approval_expires_at, is_currently_enrolled
+              last_event_seq, awaiting_approval_expires_at, is_currently_enrolled,
+              enrollment_slot
          FROM gateway_current_state`,
     );
     const map = new Map<string, GatewayProjectionRow>();
@@ -684,6 +720,7 @@ export class GatewayRegistryStore {
         lastEventSeq: Number(row.last_event_seq),
         awaitingApprovalExpiresAt: row.awaiting_approval_expires_at?.toISOString() ?? null,
         isCurrentlyEnrolled: row.is_currently_enrolled,
+        enrollmentSlot: row.enrollment_slot === null ? null : (Number(row.enrollment_slot) as EnrollmentSlot),
       });
     }
     return map;
@@ -767,10 +804,10 @@ export class GatewayRegistryStore {
 
 /* --------------------------------------------------------------- helpers */
 
-class AnotherGatewayEnrolled extends Error {
-  override readonly name = 'AnotherGatewayEnrolled';
+class EnrollmentCapReached extends Error {
+  override readonly name = 'EnrollmentCapReached';
   constructor(readonly gatewayId: string) {
-    super(`another gateway is already enrolled; ${gatewayId} cannot be confirmed`);
+    super(`every enrollment slot is held; ${gatewayId} cannot be confirmed`);
   }
 }
 
@@ -784,6 +821,7 @@ interface ProjectionRowRaw {
   readonly last_event_seq: string;
   readonly awaiting_approval_expires_at: Date | null;
   readonly is_currently_enrolled: boolean;
+  readonly enrollment_slot: number | null;
 }
 
 export interface LockedProjection {
@@ -885,6 +923,8 @@ export interface ProjectionUpsert {
   readonly stateSince: Date;
   readonly lastEventSeq: number;
   readonly awaitingApprovalExpiresAt: Date | null;
+  /** The slot an `enrolled` row takes; required for `enrolled`, absent for every other state. */
+  readonly enrollmentSlot?: EnrollmentSlot;
 }
 
 /**
@@ -897,11 +937,20 @@ export interface ProjectionUpsert {
  * left `awaiting_approval`.
  */
 export async function upsertProjection(client: PoolClient, input: ProjectionUpsert): Promise<void> {
+  /*
+   * An enrolled row holds a slot and no other row does; the table's CHECK
+   * says the same, and saying it here first names the caller's mistake.
+   */
+  const enrolled = input.state === 'enrolled';
+  if (enrolled !== (input.enrollmentSlot !== undefined)) {
+    throw new Error(`a ${input.state} projection row ${enrolled ? 'needs' : 'cannot take'} an enrollment slot`);
+  }
   await client.query(
     `INSERT INTO gateway_current_state
        (gateway_id, state, key_id, pubkey, host_descriptor, state_since,
-        last_event_seq, awaiting_approval_expires_at, is_currently_enrolled)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        last_event_seq, awaiting_approval_expires_at, is_currently_enrolled,
+        enrollment_slot)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      ON CONFLICT (gateway_id) DO UPDATE SET
        state = EXCLUDED.state,
        key_id = COALESCE(EXCLUDED.key_id, gateway_current_state.key_id),
@@ -910,7 +959,8 @@ export async function upsertProjection(client: PoolClient, input: ProjectionUpse
        state_since = EXCLUDED.state_since,
        last_event_seq = EXCLUDED.last_event_seq,
        awaiting_approval_expires_at = EXCLUDED.awaiting_approval_expires_at,
-       is_currently_enrolled = EXCLUDED.is_currently_enrolled`,
+       is_currently_enrolled = EXCLUDED.is_currently_enrolled,
+       enrollment_slot = EXCLUDED.enrollment_slot`,
     [
       input.gatewayId,
       input.state,
@@ -920,7 +970,8 @@ export async function upsertProjection(client: PoolClient, input: ProjectionUpse
       input.stateSince,
       input.lastEventSeq,
       input.awaitingApprovalExpiresAt,
-      input.state === 'enrolled',
+      enrolled,
+      input.enrollmentSlot ?? null,
     ],
   );
 }

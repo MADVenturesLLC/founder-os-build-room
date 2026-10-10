@@ -1750,6 +1750,58 @@ export const MIGRATIONS: readonly Migration[] = [
       `GRANT USAGE ON SEQUENCE public.phase3_run_events_seq_seq TO br_app_runtime`,
     ],
   },
+  {
+    /*
+     * 0009 — up to two enrolled gateways (FOUNDER-ACT-20261010-TWO-GATEWAYS,
+     * which amends DEC-20260818-01 clause 5 from one enrolled gateway to at
+     * most two).
+     *
+     * The cap stays a database invariant, as B2 of that act requires: each
+     * enrolled gateway holds one of two enrollment slots, and a partial unique
+     * index lets a slot be held by at most one enrolled gateway, so a third
+     * confirmation is refused by the storage engine whatever order the code
+     * runs in. Two CHECKs keep the slot honest: it is 1 or 2, and it is
+     * present exactly when the row is enrolled. `is_currently_enrolled` stays,
+     * still bound to `state` by `gateway_current_state_enrolled_flag_agrees`.
+     *
+     * Every existing row stays valid: 0003's index allowed at most one
+     * enrolled row, and that row takes slot 1 before the CHECKs are added.
+     * Migration 0003 is not edited; its index is dropped here, after the new
+     * one exists, so the table is never without a cap.
+     *
+     * The refusal vocabulary gains `enrollment_cap_reached`, which the
+     * confirm route now returns when both slots are held.
+     * `another_gateway_enrolled` stays allowed by the CHECK because rows
+     * written under the cap of one carry it, and the >=7-year refusal table
+     * is never rewritten; the code no longer writes it.
+     *
+     * The one grant: the runtime writes the slot through the projection
+     * upsert, whose ON CONFLICT ... DO UPDATE needs column-level UPDATE on
+     * the new column, exactly as 0008 grants it on the columns beside it.
+     */
+    id: '0009_two_enrolled_gateways',
+    statements: [
+      `ALTER TABLE gateway_current_state ADD COLUMN enrollment_slot smallint`,
+      `UPDATE gateway_current_state SET enrollment_slot = 1 WHERE is_currently_enrolled`,
+      `ALTER TABLE gateway_current_state
+         ADD CONSTRAINT gateway_current_state_enrollment_slot_range
+           CHECK (enrollment_slot IN (1, 2))`,
+      `ALTER TABLE gateway_current_state
+         ADD CONSTRAINT gateway_current_state_enrollment_slot_agrees
+           CHECK ((enrollment_slot IS NOT NULL) = is_currently_enrolled)`,
+      `CREATE UNIQUE INDEX gateway_current_state_one_gateway_per_slot
+         ON gateway_current_state (enrollment_slot) WHERE enrollment_slot IS NOT NULL`,
+      `DROP INDEX gateway_current_state_only_one_enrolled`,
+      `ALTER TABLE gateway_enrollment_refusals DROP CONSTRAINT gateway_enrollment_refusals_kind_check`,
+      `ALTER TABLE gateway_enrollment_refusals
+         ADD CONSTRAINT gateway_enrollment_refusals_kind_check
+           CHECK (kind IN ('unknown_code','code_expired','code_consumed','idempotency_key_mismatch',
+                           'malformed_pubkey','invalid_request','fingerprint_mismatch',
+                           'not_awaiting_approval','another_gateway_enrolled',
+                           'enrollment_cap_reached'))`,
+      `GRANT UPDATE (enrollment_slot) ON public.gateway_current_state TO br_app_runtime`,
+    ],
+  },
 ];
 
 /** Advisory-lock key. Arbitrary but fixed — any value works if it never changes. */
