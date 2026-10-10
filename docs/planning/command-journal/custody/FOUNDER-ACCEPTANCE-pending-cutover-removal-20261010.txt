@@ -1,0 +1,25 @@
+FOUNDER ACCEPTANCE: PR 2b, REMOVAL OF THE pending_cutover TOLERANCE
+(TRANCHE D CLOSE-OUT)
+
+I accept the change under my act of 2026-10-10, with this departure:
+the builder could not read Neon sessions after the merge, because its
+Neon connector had signed out; the read named in my act and in my merge
+authorization was not done.
+
+On the builder's report I record:
+  - PR #104 merged at head 79a78bb as merge commit afe17fd, tree
+    2ad5ac22, with its attribution trailers intact.
+  - Copilot's high finding on the first head (the identity check read
+    only current_user) was fixed before merge: the preflight now
+    refuses unless both session_user and current_user are
+    br_app_runtime.
+  - Deployment 1a00c715, SUCCESS at afe17fd, booted as br_app_runtime
+    with privilegeAudit enforced and no forbidden attribute or
+    membership, logged boot.listening and gateway.leadership.serving,
+    and /health answered 200. Nothing is staged in Railway.
+
+The runtime now serves only as br_app_runtime. This spends the act. It
+authorizes nothing further.
+
+Signed: Michael Daley
+Date: 2026-10-10 (UTC)
