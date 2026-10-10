@@ -44,6 +44,7 @@ import { randomUUID } from 'node:crypto';
 import pgDefault from 'pg';
 import type { Pool as PgPool } from 'pg';
 import { MIGRATIONS, migrate } from './migrations.js';
+import { pgConnectionSettings, type PgConnectionSettings } from './pg-tls.js';
 
 const { Client, Pool } = pgDefault;
 
@@ -93,8 +94,8 @@ function errorCode(error: unknown): string {
   return 'unknown';
 }
 
-async function readSchemaMigrations(url: string): Promise<readonly string[]> {
-  const client = new Client({ connectionString: url });
+async function readSchemaMigrations(admin: PgConnectionSettings): Promise<readonly string[]> {
+  const client = new Client({ ...admin });
   try {
     await client.connect();
   } catch (error) {
@@ -135,6 +136,14 @@ async function main(argv: readonly string[]): Promise<number> {
   if (adminUrl === null) {
     usage(`${ADMIN_URL_ENV} is required in the environment`);
   }
+  // TLS is decided by pg-tls.ts, not by the URL's own parameters. The
+  // message never echoes the URL: it holds a password.
+  let admin: PgConnectionSettings;
+  try {
+    admin = pgConnectionSettings(adminUrl);
+  } catch {
+    usage(`${ADMIN_URL_ENV} is not a parseable connection string`);
+  }
 
   // 3. Exact-match selection against the canonical array; unknown fails
   //    before any connection.
@@ -155,7 +164,7 @@ async function main(argv: readonly string[]): Promise<number> {
 
   // 5. One tranche per run, decided from the recorded state, without
   //    creating the bootstrap table.
-  const before = await readSchemaMigrations(adminUrl);
+  const before = await readSchemaMigrations(admin);
   const present = new Set(before);
   const wouldApply = MIGRATIONS.slice(0, index + 1).filter((m) => !present.has(m.id));
   if (wouldApply.length > 1) {
@@ -168,7 +177,7 @@ async function main(argv: readonly string[]): Promise<number> {
   let applied: readonly string[] = [];
   let pool: PgPool | undefined;
   try {
-    pool = new Pool({ connectionString: adminUrl, max: 1 });
+    pool = new Pool({ ...admin, max: 1 });
     const result = await migrate(pool, { through: trancheId });
     applied = result.applied;
   } catch (error) {
@@ -177,7 +186,7 @@ async function main(argv: readonly string[]): Promise<number> {
     await pool?.end().catch(() => undefined);
   }
 
-  const after = await readSchemaMigrations(adminUrl);
+  const after = await readSchemaMigrations(admin);
 
   // 7. Stage-5 evidence, the only stdout output.
   const evidence: Stage5Evidence = {
