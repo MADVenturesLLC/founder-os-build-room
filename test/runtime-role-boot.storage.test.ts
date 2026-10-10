@@ -456,7 +456,7 @@ describe('D-R1 · the application\'s own connection is br_app_runtime (PC-0)', {
   });
 });
 
-describe('D-R3 · the process serves holding only br_app_runtime (PC-17, PC-20), and D-R5 · rollback restores service', { skip: SKIP }, () => {
+describe('D-R3 · the process serves holding only br_app_runtime (PC-17, PC-20), and D-R5 · a rollback to another login is refused', { skip: SKIP }, () => {
   const roomId = randomUUID();
 
   it('boots, answers health and readiness, writes a room, reads its export, and appends a journal command', async () => {
@@ -542,6 +542,13 @@ describe('D-R3 · the process serves holding only br_app_runtime (PC-17, PC-20),
       await admin!.query('REVOKE ALL ON public.schema_migrations FROM neondb_owner');
       await admin!.query('DROP ROLE neondb_owner');
     }
+  });
+
+  it('refuses an owner-class login that sets its role to br_app_runtime at connect: current_user alone is not trusted', async () => {
+    const url = new URL(superUrl);
+    url.searchParams.set('options', `-c role=${RUNTIME_LOGIN}`);
+    const output = await bootRefused(url.toString());
+    assert.match(output, /the connected role is postgres \(acting as br_app_runtime\), not the runtime identity br_app_runtime/);
   });
 });
 

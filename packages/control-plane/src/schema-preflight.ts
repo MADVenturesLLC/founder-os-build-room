@@ -28,8 +28,11 @@
  *     audit is read-only, and both of its refusals land before readiness
  *     (`SchemaPreflightError`):
  *       - connected as any role other than `br_app_runtime` — `neondb_owner`,
- *         a superuser, any other login — boot is refused whatever that role
- *         holds. The refusal names the connected role and the required one.
+ *         a superuser, any other login, or one of those acting as
+ *         `br_app_runtime` through `SET ROLE` (both `session_user` and
+ *         `current_user` must be the runtime) — boot is refused whatever
+ *         that role holds. The refusal names the connected role and the
+ *         required one.
  *       - connected as `br_app_runtime`, ANY forbidden attribute or
  *         membership refuses boot.
  *     There is no variable to set and nothing to forget: the identity in
@@ -318,6 +321,37 @@ export function privilegeAuditRefusal(audit: PrivilegeAudit): string | null {
 }
 
 /**
+ * The login the connection authenticated as (`session_user`) and the role it
+ * is acting as (`current_user`). Both must be `br_app_runtime`, as the
+ * journal's identity latch already requires: `current_user` alone is what
+ * `SET ROLE` changes, so an owner-class login connected with
+ * `options=-c role=br_app_runtime` would read as the runtime there while
+ * holding its own authority. Returns the refusal, or `null` when both match.
+ * An unreadable identity rejects: it is never treated as a match.
+ */
+export async function runtimeIdentityRefusal(target: Queryable): Promise<string | null> {
+  const { rows } = await target
+    .query<{ session_role: string; acting_role: string }>(
+      'SELECT session_user::text AS session_role, current_user::text AS acting_role',
+    )
+    .catch((error: unknown) => {
+      throw new SchemaPreflightError(
+        `privilege audit could not read the connected identity: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  const session = rows[0]?.session_role ?? '(unknown)';
+  const acting = rows[0]?.acting_role ?? '(unknown)';
+  if (session === ENFORCED_RUNTIME_ROLE && acting === ENFORCED_RUNTIME_ROLE) return null;
+  const connected = acting === session ? session : `${session} (acting as ${acting})`;
+  return (
+    `privilege audit refused: the connected role is ${connected}, not the runtime identity ` +
+    `${ENFORCED_RUNTIME_ROLE}. The runtime serves only as ${ENFORCED_RUNTIME_ROLE}`
+  );
+}
+
+/**
  * The boot assertion itself. Resolves ONLY when every required migration id
  * is recorded in `schema_migrations`; rejects with `SchemaPreflightError`
  * otherwise — before the caller may become ready. Read-only throughout: a
@@ -332,13 +366,16 @@ export function privilegeAuditRefusal(audit: PrivilegeAudit): string | null {
  */
 export async function schemaPreflight(target: Queryable): Promise<SchemaPreflightReport> {
   /*
-   * Identity and authority first. The audit reads only `pg_roles` /
-   * `pg_auth_members`, which any login may read, so a login other than
-   * br_app_runtime is refused for its identity, with the message that names
-   * it, before this function reads anything it might not be granted. An
-   * unreadable role catalog rejects (see auditRuntimePrivileges): the audit
-   * never fails open. Any finding on br_app_runtime is refused here too.
+   * Identity first, then authority. The identity read needs no privilege, so
+   * a login other than br_app_runtime — or one acting as it through SET ROLE
+   * — is refused for its identity, with the message that names it, before
+   * this function reads anything else. The audit then reads only `pg_roles`
+   * / `pg_auth_members`, which any login may read; an unreadable role
+   * catalog rejects (see auditRuntimePrivileges), and any finding on
+   * br_app_runtime is refused.
    */
+  const identityRefusal = await runtimeIdentityRefusal(target);
+  if (identityRefusal !== null) throw new SchemaPreflightError(identityRefusal);
   const privilegeAudit = await auditRuntimePrivileges(target);
   const refusal = privilegeAuditRefusal(privilegeAudit);
   if (refusal !== null) throw new SchemaPreflightError(refusal);

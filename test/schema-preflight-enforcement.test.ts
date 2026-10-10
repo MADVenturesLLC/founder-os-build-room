@@ -33,7 +33,10 @@ import {
 import { JOURNAL_RUNTIME_ROLE } from '../packages/control-plane/src/journal-store.js';
 
 interface Connection {
+  /** The role the session is acting as (`current_user`). */
   readonly role: string;
+  /** The login it authenticated as (`session_user`); defaults to `role`. */
+  readonly sessionRole?: string;
   /** Attribute flags that read `true` for the role; everything else is `false`. */
   readonly attributes?: readonly string[];
   /** `{ role, depth }` edges the recursive membership walk returns. */
@@ -43,7 +46,7 @@ interface Connection {
 }
 
 /**
- * A stand-in for the four catalog reads `schemaPreflight` and
+ * A stand-in for the identity read and the catalog reads `schemaPreflight` and
  * `auditRuntimePrivileges` make. Matched by the SQL's own distinguishing text;
  * an unexpected statement throws, so a new read cannot slip in unobserved.
  */
@@ -51,6 +54,9 @@ function connection(spec: Connection): Pool {
   const flags = new Set(spec.attributes ?? []);
   const fake = {
     async query(sql: string): Promise<{ rows: unknown[] }> {
+      if (sql.includes('session_user')) {
+        return { rows: [{ session_role: spec.sessionRole ?? spec.role, acting_role: spec.role }] };
+      }
       if (sql.includes('SELECT current_user')) return { rows: [{ rolname: spec.role }] };
       if (sql.includes('r.rolsuper')) {
         return {
@@ -187,6 +193,24 @@ describe('privilege audit enforcement — every other role is refused', () => {
       assert.doesNotMatch(error.message, /password|secret|token/i, 'no credential vocabulary');
     });
   }
+
+  it('an owner-class login acting as br_app_runtime through SET ROLE is refused (session_user, not only current_user)', async () => {
+    const error = await schemaPreflight(connection({ role: RUNTIME, sessionRole: 'postgres' })).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    assert.ok(error instanceof SchemaPreflightError);
+    assert.match(error.message, /the connected role is postgres \(acting as br_app_runtime\), not the runtime identity br_app_runtime/);
+  });
+
+  it('br_app_runtime acting as another role is refused too', async () => {
+    const error = await schemaPreflight(connection({ role: 'neondb_owner', sessionRole: RUNTIME })).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    assert.ok(error instanceof SchemaPreflightError);
+    assert.match(error.message, /the connected role is br_app_runtime \(acting as neondb_owner\)/);
+  });
 
   it('a role other than br_app_runtime is refused before the schema check, even with nothing recorded', async () => {
     const error = await schemaPreflight(connection({ role: 'neondb_owner', recorded: [] })).then(

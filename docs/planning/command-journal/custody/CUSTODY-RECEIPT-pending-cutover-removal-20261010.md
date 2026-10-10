@@ -52,17 +52,24 @@ GitHub, Railway and `/health` times are theirs.
 
 ## What the change does
 
-- `packages/control-plane/src/schema-preflight.ts`: `privilegeAuditRefusal`
+- `packages/control-plane/src/schema-preflight.ts`: a new first step,
+  `runtimeIdentityRefusal`, reads `session_user` and `current_user` and
+  refuses unless both are `br_app_runtime`, as the journal's identity
+  latch already requires; an owner-class login that sets its role to
+  `br_app_runtime` at connect is refused as
+  `the connected role is postgres (acting as br_app_runtime), ...`.
+  `privilegeAuditRefusal`, as a second layer,
   refuses any connected role other than `br_app_runtime` with
   `privilege audit refused: the connected role is <role>, not the runtime
   identity br_app_runtime. The runtime serves only as br_app_runtime`,
   naming the two roles and nothing else; for `br_app_runtime` it refuses
   any finding exactly as before. `PrivilegeAuditStatus` has the single
-  value `enforced`. `schemaPreflight` now runs the audit first, before it
-  reads `schema_migrations`: the audit reads only `pg_roles` and
-  `pg_auth_members`, which any login may read, so a wrong login is
-  refused for its identity, with that message, rather than failing on a
-  table it was never granted. For `br_app_runtime` the order changes
+  value `enforced`. `schemaPreflight` now checks the identity, then runs
+  the audit, before it reads `schema_migrations`: the identity read needs
+  no privilege and the audit reads only `pg_roles` and `pg_auth_members`,
+  which any login may read, so a wrong login is refused for its identity,
+  with that message, rather than failing on a table it was never granted
+  or on a catalog read. For `br_app_runtime` the order changes
   nothing: a finding refused boot before the schema check already, and
   the schema checks are unchanged.
 - `packages/control-plane/src/main.ts`: comments only. The
@@ -81,7 +88,10 @@ GitHub, Railway and `/health` times are theirs.
     rollback of `DATABASE_URL` to the owner-class login is refused before
     any preflight report, and that the runtime then boots again and reads
     the room it wrote; a non-superuser login named `neondb_owner`, even
-    one granted `SELECT` on the ledger, is refused.
+    one granted `SELECT` on the ledger, is refused; and a superuser that
+    sets its role to `br_app_runtime` at connect is refused. The builder
+    ran that last test against the code without the `session_user` check
+    and saw it fail, then pass with it.
   - `test/boot-no-ddl.storage.test.ts`: both real boots connect as
     `br_app_runtime`.
   - `test/support/runtime-role-tier.ts`: the reasons for excluding
@@ -91,6 +101,17 @@ GitHub, Railway and `/health` times are theirs.
     rewritten into refusal tests.
 - `README.md`: the Tranche D enforcement bullet, the Tranche A bullet,
   a new bullet for this act, and the "Not done" list.
+
+## Review finding taken
+
+Copilot's review of the first head (`5f75a22`, comment r4235891700,
+marked high) found that the identity check compared only
+`current_user`, so a superuser connecting with
+`options=-c role=br_app_runtime` would pass it while the audit read
+`br_app_runtime`'s clean attributes instead of its own. The finding is
+correct and within the act's item 1: the connected role is the login.
+The builder added the `session_user` check and the tests above in the
+next commit.
 
 ## What the builder verified and what it did not
 
