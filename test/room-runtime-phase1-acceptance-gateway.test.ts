@@ -733,7 +733,9 @@ function sha256Of(relativePath: string): string {
  * deliberately in the same change.
  */
 const REGRESSION_PINS: Record<string, string> = {
-  'package-lock.json': 'e1ddcfe951ad3569252555c322d0db0ae7bb5aee207fb9e0e479c08a0f52e3e4',
+  // Repinned deliberately in the same change as the 2026-10-10 npm audit
+  // fix (proxy-addr 2.0.8, qs 6.16.0, brace-expansion 5.0.12).
+  'package-lock.json': 'b2a4ecdf1ce84b23ee141500bd6730e0ededb5d81285aad4f17f04a4a112a5ae',
   // The three Phase 1 suite pins below were DELIBERATELY updated in the same
   // change as the 2026-09-20 Founder-ruled CreateRoom amendment (Act
   // GLM-20260920-FIRST-LIVE-ROOM-JOIN, Option A): the protocol vocabulary,
