@@ -20,7 +20,6 @@ import { MIGRATIONS, GATEWAY_REGISTRY_LOCK_KEY } from '../packages/control-plane
 import {
   createGatewayHarness,
   destroyGatewayHarness,
-  HELPER_MIGRATION_THROUGH,
   STORAGE_SKIP,
   type GatewayHarness,
 } from './gateway-storage-helpers.js';
@@ -69,10 +68,10 @@ describe('0003_gateway_registry — the migration is present and idempotent', { 
 
   it('applies nothing on a second run', async () => {
     const { migrate } = await import('../packages/control-plane/src/migrations.js');
-    // MS-3: the harness applied the explicit pre-journal selection (through
-    // 0005_phase3_run_evidence); the idempotency re-run selects the same
-    // prefix so "applies nothing" measures the same sequence.
-    const second = await migrate(harness!.pool, { through: HELPER_MIGRATION_THROUGH });
+    // The harness applied the full canonical sequence
+    // (FOUNDER-ACT-20261010-TWO-GATEWAYS-HARNESS), so the idempotency re-run
+    // selects the same sequence and "applies nothing" measures all of it.
+    const second = await migrate(harness!.pool);
     assert.deepEqual(second.applied, []);
     assert.ok(second.alreadyApplied.includes('0003_gateway_registry'));
   });
@@ -141,12 +140,12 @@ describe('0003_gateway_registry — the schema agrees with the pure vocabulary',
       const gatewayId = randomUUID();
       await harness!.pool.query(
         `INSERT INTO gateway_current_state
-           (gateway_id, state, state_since, last_event_seq, is_currently_enrolled)
-         VALUES ($1, $2, now(), $3, $4)`,
-        [gatewayId, state, seq, state === 'enrolled'],
+           (gateway_id, state, state_since, last_event_seq, is_currently_enrolled, enrollment_slot)
+         VALUES ($1, $2, now(), $3, $4, $5)`,
+        [gatewayId, state, seq, state === 'enrolled', state === 'enrolled' ? 1 : null],
       );
-      // Leave no enrolled row behind: the partial unique index is global, and
-      // the later cases in this loop would collide with it.
+      // Leave no enrolled row behind: the slot index is global, and later
+      // fixtures that take slot 1 would collide with it.
       await harness!.pool.query('DELETE FROM gateway_current_state WHERE gateway_id = $1', [gatewayId]);
     }
     await assert.rejects(

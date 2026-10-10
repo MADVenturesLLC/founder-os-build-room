@@ -1008,7 +1008,7 @@ describe('gateway-leadership · fence:stale-leader-commit-refused', { skip: STOR
 async function resetLeaseAndEnrollments(): Promise<void> {
   await resetLease();
   await harness!.pool.query(
-    `UPDATE gateway_current_state SET state = 'revoked', is_currently_enrolled = false
+    `UPDATE gateway_current_state SET state = 'revoked', is_currently_enrolled = false, enrollment_slot = NULL
       WHERE is_currently_enrolled`,
   );
 }

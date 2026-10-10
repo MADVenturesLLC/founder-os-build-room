@@ -236,8 +236,8 @@ describe('0007_gate_runs — registration', () => {
   it('is registered exactly once, after every earlier migration', () => {
     const ids = MIGRATIONS.map((migration) => migration.id);
     assert.equal(ids.filter((id) => id === GATE_RUNS_ID).length, 1);
-    assert.equal(ids.at(-2), GATE_RUNS_ID);
-    assert.equal(ids.at(-3), '0006_command_journal_authority_split');
+    assert.equal(ids.at(-3), GATE_RUNS_ID);
+    assert.equal(ids.at(-4), '0006_command_journal_authority_split');
   });
 });
 

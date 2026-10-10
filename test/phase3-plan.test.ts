@@ -77,7 +77,7 @@ describe('Phase 3 plan validation', () => {
     assert.equal(validatePhase3Plan({ ...PLAN, machine }).ok, true);
   });
 
-  it('requires exactly one enrolled row matching the authorized gateway', () => {
+  it('requires exactly one enrolled row matching the authorized gateway, so two enrolled are refused (two-Gateways act B4)', () => {
     assert.equal(validatePhase3Plan({ ...PLAN, expectedEnrollments: [] }).ok, false);
     assert.equal(
       validatePhase3Plan({

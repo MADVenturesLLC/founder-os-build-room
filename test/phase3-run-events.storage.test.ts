@@ -41,7 +41,7 @@ afterEach(async () => {
 describe('0005_phase3_run_evidence — additive migration contract', () => {
   it('is registered exactly once after every existing migration', () => {
     const ids = MIGRATIONS.map((migration) => migration.id);
-    assert.equal(ids.at(-1), '0008_runtime_operational_grants');
+    assert.equal(ids.at(-1), '0009_two_enrolled_gateways');
     assert.equal(ids.filter((id) => id === '0005_phase3_run_evidence').length, 1);
   });
 
@@ -553,6 +553,16 @@ describe('Phase 3 run store — ordered, bounded evidence', { skip: STORAGE_SKIP
   it('refuses to start against a nonexistent gateway', async () => {
     await assert.rejects(
       store!.createAttempt(attemptInput()),
+      (error: unknown) => error instanceof Error && error.message === 'enrollment_projection_failed',
+    );
+  });
+
+  it('refuses to start while two gateways are enrolled (FOUNDER-ACT-20261010-TWO-GATEWAYS B4)', async () => {
+    const input = await enrolledAttemptInput();
+    // A second enrolled gateway in the other slot: the run requires exactly one.
+    await insertEnrolledGateway(randomUUID(), 2);
+    await assert.rejects(
+      store!.createAttempt(input),
       (error: unknown) => error instanceof Error && error.message === 'enrollment_projection_failed',
     );
   });
@@ -1090,7 +1100,7 @@ async function enrolledAttemptInput(): Promise<Phase3AttemptInput> {
   return input;
 }
 
-async function insertEnrolledGateway(gatewayId: string): Promise<void> {
+async function insertEnrolledGateway(gatewayId: string, slot: 1 | 2 = 1): Promise<void> {
   const { rows } = await harness!.pool.query<{ seq: string }>(
     `INSERT INTO gateway_registry_events
        (event_id, event_type, gateway_id, actor, attribution, occurred_at, payload)
@@ -1105,10 +1115,10 @@ async function insertEnrolledGateway(gatewayId: string): Promise<void> {
   );
   await harness!.pool.query(
     `INSERT INTO gateway_current_state
-       (gateway_id, state, state_since, last_event_seq, is_currently_enrolled)
-     VALUES ($1, 'enrolled', now(), $2, true)
+       (gateway_id, state, state_since, last_event_seq, is_currently_enrolled, enrollment_slot)
+     VALUES ($1, 'enrolled', now(), $2, true, $3)
      ON CONFLICT (gateway_id) DO NOTHING`,
-    [gatewayId, rows[0]!.seq],
+    [gatewayId, rows[0]!.seq, slot],
   );
 }
 

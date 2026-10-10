@@ -200,6 +200,17 @@ describe('Phase 3 control-plane attempt input', () => {
     );
   });
 
+  it('refuses an expected projection with two enrolled gateways (FOUNDER-ACT-20261010-TWO-GATEWAYS B4)', () => {
+    const expectedEnrollments = [
+      ...STARTED.expectedEnrollments,
+      { gatewayId: '33333333-4444-4555-8666-777777777777', state: 'enrolled' as const },
+    ];
+    assert.deepEqual(validatePhase3AttemptInput({ ...STARTED, expectedEnrollments }), {
+      ok: false,
+      code: 'invalid_request',
+    });
+  });
+
   it('bounds the retained enrollment projection', () => {
     const expectedEnrollments = [
       ...STARTED.expectedEnrollments,

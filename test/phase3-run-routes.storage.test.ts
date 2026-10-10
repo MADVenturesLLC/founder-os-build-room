@@ -503,8 +503,8 @@ async function insertEnrolledGateway(gatewayId: string): Promise<void> {
   );
   await harness!.pool.query(
     `INSERT INTO gateway_current_state
-       (gateway_id, state, state_since, last_event_seq, is_currently_enrolled)
-     VALUES ($1, 'enrolled', now(), $2, true)`,
+       (gateway_id, state, state_since, last_event_seq, is_currently_enrolled, enrollment_slot)
+     VALUES ($1, 'enrolled', now(), $2, true, 1)`,
     [gatewayId, rows[0]!.seq],
   );
 }

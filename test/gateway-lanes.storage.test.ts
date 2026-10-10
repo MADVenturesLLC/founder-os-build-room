@@ -144,11 +144,16 @@ describe('gateway-lanes · lanes:concurrent-primary-and-staging-independent', { 
 
     /* ---- the ruled Founder ordering ------------------------------------ */
 
-    // Confirming the successor while the incumbent is enrolled is refused by
-    // the database, so the daemon cannot promote out of order even if it tried.
+    // A second machine's gateway holds the other enrollment slot, so both
+    // slots are held (FOUNDER-ACT-20261010-TWO-GATEWAYS B5). Confirming the
+    // successor now is refused by the cap, so the daemon cannot promote out of
+    // order even if it tried. With one slot held, B5 lets the successor be
+    // confirmed first; gateway-invariants covers that path.
+    const otherMachine = await enrollGateway(node!);
+    assert.notEqual(otherMachine.gatewayId, incumbent.gatewayId);
     const early = await node!.store.confirmEnrollment(successorId, identityFor(successorId, stagingSecret).keyId, null);
     assert.equal(early.ok, false);
-    assert.equal(!early.ok && early.code, 'another_gateway_enrolled');
+    assert.equal(!early.ok && early.code, 'enrollment_cap_reached');
     assert.equal((await staging.probe()).promote, false, 'the successor still only polls');
 
     // 3. Revoke the incumbent FIRST.
