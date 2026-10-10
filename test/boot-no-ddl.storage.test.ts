@@ -5,7 +5,8 @@
  * local `TEST_DATABASE_URL` fixture database records the command tag of every
  * DDL statement executed in that database, by any session. The compiled boot
  * entrypoint (`dist/packages/control-plane/src/main.js`) is then spawned as a
- * child process against that database, allowed to reach `boot.listening`, and
+ * child process against that database, connected as `br_app_runtime` (the
+ * only role the runtime serves as), allowed to reach `boot.listening`, and
  * shut down with SIGTERM. Zero recorded tags proves the boot connection issued
  * no DDL — PC-21 observed at the kernel of the claim (the database itself),
  * not inferred from reading the source.
@@ -32,6 +33,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pgDefault from 'pg';
 import { REVOKE_RUNTIME_GRANTS_SQL } from './support/runtime-role-cleanup.js';
+import { asRuntimeLogin } from './support/runtime-role-mode.js';
 import type { Pool, PoolClient } from 'pg';
 
 const { Pool: PgPool } = pgDefault;
@@ -275,7 +277,9 @@ describe('boot issues no DDL (A-R2 / PC-21)', { skip: MAIN_SECTION_SKIP ? MAIN_S
   it('boots to listening; the boot connection records zero COMMITTED DDL on the table channel (rollback-surviving channel: local-only section below)', async (t) => {
     assert.ok(harness !== undefined, 'fixture harness was created');
     const port = await freePort();
-    const run = await runBoot(harness.config.databaseUrl, port);
+    // As br_app_runtime: the only role the runtime serves as (Founder act of
+    // 2026-10-10). 0006 creates the login; the owned instance trusts loopback.
+    const run = await runBoot(asRuntimeLogin(harness.config.databaseUrl), port);
 
     // The success path: boot completes and serves; SIGTERM shuts it down.
     assert.equal(
@@ -868,7 +872,7 @@ describe('boot-child DDL observation via the disposable instance log (F2, local-
       const before = await windowMarker(client, 'boot-before');
 
       const port = await freePort();
-      const run = await runBoot(loggedInstance.url, port);
+      const run = await runBoot(asRuntimeLogin(loggedInstance.url), port);
       assert.equal(
         run.reachedListening,
         true,

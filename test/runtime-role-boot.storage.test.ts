@@ -11,8 +11,10 @@
  *   D-R3  PC-20  the process boots, `/health` and `/ready` answer, a room is
  *                created and appended to, its export (events and rejections)
  *                reads, and a journal command is appended through the routine
- *   D-R5         rolling `DATABASE_URL` back to the owner-class identity
- *                restores service, with the same data
+ *   D-R5         rolling `DATABASE_URL` back to the owner-class identity is
+ *                refused before the process serves, and the data is untouched
+ *                (until the Founder act of 2026-10-10 ended the tolerance for
+ *                other roles, this test proved the rollback restored service)
  *   (D-R4, PC-19 — no administrative credential in any Railway variable — is a
  *    check of the deployment, made at Gate V by variable NAME; no test can see
  *    Railway.)
@@ -510,43 +512,35 @@ describe('D-R3 · the process serves holding only br_app_runtime (PC-17, PC-20),
     }
   });
 
-  it('D-R5: rolling DATABASE_URL back to the owner-class identity restores service, with the same data', async () => {
-    const boot = await startBoot(superUrl);
+  it('D-R5: rolling DATABASE_URL back to the owner-class identity is refused, and the data is untouched', async () => {
+    const output = await bootRefused(superUrl);
+    assert.match(output, /privilege audit refused: the connected role is postgres, not the runtime identity br_app_runtime/);
+    assert.ok(!output.includes('"at":"boot.preflight"'), 'the refusal comes before any preflight report');
+
+    // The refusal changed nothing: the runtime boots again and reads the room it wrote.
+    const boot = await startBoot(runtimeUrl);
     try {
       await boot.waitForLog('"at":"boot.listening"');
-      const preflight = preflightLine(boot.output());
-      assert.equal(preflight['role'], 'postgres');
-      assert.equal(preflight['privilegeAudit'], 'pending_cutover', 'the owner-class runtime is tolerated until step 10');
-
-      assert.equal((await api(boot, '/health')).status, 200);
-      assert.equal((await api(boot, '/ready')).status, 200);
-      await boot.waitForLog('"at":"gateway.leadership.serving"');
-
+      assert.equal(preflightLine(boot.output())['role'], RUNTIME_LOGIN);
       const loaded = await api(boot, `/rooms/${roomId}`);
-      assert.equal(loaded.status, 200, 'the room written as the runtime is readable after the rollback');
+      assert.equal(loaded.status, 200, 'the room written as the runtime is still there after the refused rollback');
       assert.equal(loaded.body.logLength, 1);
-
-      // Exactly the pre-cutover behaviour: the identity latch refuses a journal append from any other login.
-      const refused = await api(boot, '/journal/commands', {
-        method: 'POST',
-        body: {
-          commandKind: 'planner.invoke',
-          argv: ['--goal', 'after-rollback'],
-          actorId: 'session:test/runtime-role-boot',
-          roleId: 'builder',
-          authorizationRef: 'HO-20261004-01',
-          repository: 'example-org/example-repo',
-          scopeRef: 'scope/tranche-d',
-          intendedProvider: 'example-provider',
-          intendedModel: 'example-model',
-          intendedSurface: 'claude-code',
-          evidenceRefs: ['ev_rr_2'],
-        },
-      });
-      assert.equal(refused.status, 503);
-      assert.equal(refused.body.error, 'journal_runtime_not_authorized');
     } finally {
       assert.equal(await boot.stop(), 0);
+    }
+  });
+
+  it('refuses a non-superuser owner-class login named neondb_owner, even one that can read the ledger', async () => {
+    await admin!.query('CREATE ROLE neondb_owner LOGIN NOSUPERUSER');
+    try {
+      await admin!.query('GRANT SELECT ON public.schema_migrations TO neondb_owner');
+      const url = new URL(superUrl);
+      url.username = 'neondb_owner';
+      const output = await bootRefused(url.toString());
+      assert.match(output, /privilege audit refused: the connected role is neondb_owner, not the runtime identity br_app_runtime/);
+    } finally {
+      await admin!.query('REVOKE ALL ON public.schema_migrations FROM neondb_owner');
+      await admin!.query('DROP ROLE neondb_owner');
     }
   });
 });

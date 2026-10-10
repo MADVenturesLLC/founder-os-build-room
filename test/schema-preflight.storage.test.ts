@@ -1,16 +1,19 @@
 /**
  * A-T1 — the read-only boot schema preflight (r5 §6 A-R1/A-R3/A-R4/A-R5).
  *
- * Covers the staged-enforcement ruling (r5 §3):
- *   1. schema mismatch hard-fails before readiness — no DDL, no repair;
- *   2. the privilege audit is read-only and recorded `pending_cutover` — it
- *      never blocks boot and never declares compliance while the documented
- *      owner-class runtime remains in use;
- *   3. privilege hard-fail is Tranche-D work — A-R3 here proves DETECTION
- *      ONLY via an ephemeral NON-LOGIN fixture role entered through SET ROLE
- *      from this suite's existing disposable local session (r5 §4 Class 2);
- *      it does not prove owner-class runtime boot refusal;
- *   4. nothing emits a secret or credential value.
+ * Covers the staged-enforcement ruling (r5 §3), as it stands after the
+ * Founder act of 2026-10-10 that ended the tolerance for other roles:
+ *   1. schema mismatch hard-fails before readiness — no DDL, no repair. The
+ *      schema cases connect as `br_app_runtime`, the only role the runtime
+ *      serves as, so the refusal they observe is the schema's;
+ *   2. the privilege audit is read-only and reports what it finds on any
+ *      role (A-R3, including an ephemeral NON-LOGIN fixture role entered
+ *      through SET ROLE from this suite's disposable local session, r5 §4
+ *      Class 2), and the preflight refuses every role other than
+ *      `br_app_runtime`, the superuser included, before readiness and with
+ *      no DDL; the refusals on `br_app_runtime` itself are
+ *      runtime-role-boot's subject;
+ *   3. nothing emits a secret or credential value.
  *
  * Every fixture lives in its own disposable `TEST_DATABASE_URL` database and
  * dies with it (Class 1: setup / observation / deliberate damage / teardown).
@@ -34,6 +37,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pgDefault from 'pg';
 import { REVOKE_RUNTIME_GRANTS_SQL } from './support/runtime-role-cleanup.js';
+import { asRuntimeLogin } from './support/runtime-role-mode.js';
 import type { PoolClient } from 'pg';
 import {
   STORAGE_SKIP,
@@ -139,6 +143,27 @@ function runBoot(databaseUrl: string, port: number): Promise<BootRun> {
       });
     });
   });
+}
+
+/**
+ * The fixture database as the runtime login. The owned instances trust
+ * loopback and `br_app_runtime` (created by 0006) has no password, so the
+ * URL carries no credential.
+ */
+function runtimeUrl(harness: GatewayHarness): string {
+  return asRuntimeLogin(harness.config.databaseUrl);
+}
+
+/** Run `body` with a pool connected as `br_app_runtime`, ended afterwards. */
+async function withRuntimePool<T>(harness: GatewayHarness, body: (pool: ReturnType<typeof createPool>) => Promise<T>): Promise<T> {
+  const pool = createPool(
+    loadConfig({ DATABASE_URL: runtimeUrl(harness), CONTROL_PLANE_TOKEN: SUITE_TOKEN, PG_POOL_MAX: '2' }),
+  );
+  try {
+    return await body(pool);
+  } finally {
+    await pool.end();
+  }
 }
 
 /** Install the DDL observation trigger on a fixture database (Class 1). */
@@ -441,9 +466,11 @@ describe('schema preflight — fail closed on missing schema (A-R1)', { skip: CA
       REQUIRED_ID_TO_REMOVE,
     ]);
 
-    const error = await schemaPreflight(harness.pool).then(
-      () => undefined,
-      (caught: unknown) => caught,
+    const error = await withRuntimePool(harness, (runtime) =>
+      schemaPreflight(runtime).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      ),
     );
     assert.ok(
       error instanceof SchemaPreflightError,
@@ -465,7 +492,7 @@ describe('schema preflight — fail closed on missing schema (A-R1)', { skip: CA
     ]);
 
     const port = await freePort();
-    const run = await runBoot(harness.config.databaseUrl, port);
+    const run = await runBoot(runtimeUrl(harness), port);
     t.diagnostic(`boot stderr: ${run.stderr.trim()}`);
     assert.equal(run.reachedListening, false, 'boot must not begin serving');
     assert.notEqual(run.exitCode, 0, 'boot must exit non-zero');
@@ -489,7 +516,7 @@ describe('schema preflight — fail closed on missing schema (A-R1)', { skip: CA
   });
 });
 
-describe('schema preflight — privilege audit is detection-only (A-R3)', { skip: CANONICAL_SKIP ? CANONICAL_SKIP : false }, () => {
+describe('schema preflight — the audit detects; every role but br_app_runtime is refused (A-R3)', { skip: CANONICAL_SKIP ? CANONICAL_SKIP : false }, () => {
   let harness: GatewayHarness | undefined;
   let client: PoolClient | undefined;
   let roleCreated = false;
@@ -541,23 +568,41 @@ describe('schema preflight — privilege audit is detection-only (A-R3)', { skip
     }
   });
 
-  it('detects forbidden attributes on the owner-class session without blocking boot', async (t) => {
+  it('detects forbidden attributes on the owner-class session, and the preflight refuses that session', async (t) => {
     assert.ok(harness !== undefined);
     // The disposable local session connects as its superuser — the local
-    // stand-in for the documented owner-class runtime shape. Detection-only:
-    // the audit reports; it never blocks and never declares compliance.
+    // stand-in for an owner-class login. The audit itself only reads and
+    // reports; the preflight refuses the session for its identity.
     const audit = await auditRuntimePrivileges(harness.pool);
     t.diagnostic(`audit: ${JSON.stringify(audit)}`);
-    assert.equal(audit.status, 'pending_cutover');
+    assert.equal(audit.status, 'enforced');
     assert.ok(
       audit.forbiddenAttributes.includes('rolsuper'),
       'the audit must DETECT rolsuper on the owner-class session',
     );
-    // And the full preflight on the same session does not block boot while
-    // the owner-class runtime is documented (staged enforcement, r5 §3.2):
-    const report = await schemaPreflight(harness.pool);
-    assert.equal(report.ok, true);
-    assert.equal(report.privilegeAudit.status, 'pending_cutover');
+    const error = await schemaPreflight(harness.pool).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    assert.ok(error instanceof SchemaPreflightError, `the preflight must refuse the superuser; got ${String(error)}`);
+    assert.equal(error.missingMigrations.length, 0, 'refused for its identity, not for the schema');
+    assert.match(error.message, /the connected role is postgres, not the runtime identity br_app_runtime/);
+    assert.doesNotMatch(error.message, /rolsuper/, 'the identity refusal names the two roles only');
+  });
+
+  it('boot as the superuser exits non-zero before listening, with zero DDL', async (t) => {
+    assert.ok(harness !== undefined);
+    await installDdlObservation(harness);
+    const port = await freePort();
+    const run = await runBoot(harness.config.databaseUrl, port);
+    t.diagnostic(`boot stderr: ${run.stderr.trim()}`);
+    assert.equal(run.reachedListening, false, 'a non-runtime login must not serve');
+    assert.notEqual(run.exitCode, 0, 'boot must exit non-zero');
+    assert.match(run.stderr, /"at":"boot\.failed"/);
+    assert.match(run.stderr, /privilege audit refused: the connected role is postgres/);
+    assert.doesNotMatch(run.stderr + run.stdout, /postgres(ql)?:\/\//i, 'no connection string in the output');
+    const tags = await observedDdlTags(harness);
+    assert.deepEqual(tags, [], 'the refused boot must issue no DDL');
   });
 
   it('reports the fixture role clean through SET ROLE from the existing session (detection only)', async (t) => {
@@ -574,7 +619,7 @@ describe('schema preflight — privilege audit is detection-only (A-R3)', { skip
     const audit = await auditRuntimePrivileges(client);
     t.diagnostic(`audit under fixture role: ${JSON.stringify(audit)}`);
     assert.equal(audit.role, FIXTURE_ROLE, 'the audit must read the connected role');
-    assert.equal(audit.status, 'pending_cutover');
+    assert.equal(audit.status, 'enforced');
     assert.deepEqual(audit.forbiddenAttributes, []);
     assert.deepEqual(audit.forbiddenMemberships, []);
 
@@ -604,7 +649,7 @@ describe('schema preflight — incompatible schema fails boot unchanged (A-R4)',
 
     const before = await catalogSnapshot(harness);
     const port = await freePort();
-    const run = await runBoot(harness.config.databaseUrl, port);
+    const run = await runBoot(runtimeUrl(harness), port);
     const after = await catalogSnapshot(harness);
 
     t.diagnostic(`boot stderr: ${run.stderr.trim()}`);
@@ -633,11 +678,14 @@ describe('schema preflight — never repairs (A-R5)', { skip: CANONICAL_SKIP ? C
     await installDdlObservation(harness);
 
     const before = await catalogSnapshot(harness);
-    const error = await schemaPreflight(harness.pool).then(
-      () => undefined,
-      (caught: unknown) => caught,
+    const error = await withRuntimePool(harness, (runtime) =>
+      schemaPreflight(runtime).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      ),
     );
     assert.ok(error instanceof SchemaPreflightError, 'damaged schema must be rejected');
+    assert.deepEqual(error.missingMigrations, [REQUIRED_ID_TO_REMOVE], 'rejected for the schema');
     const after = await catalogSnapshot(harness);
 
     const tags = await observedDdlTags(harness);
@@ -659,13 +707,16 @@ describe('schema preflight — never repairs (A-R5)', { skip: CANONICAL_SKIP ? C
 });
 
 describe('schema preflight — a compatible schema passes read-only (GREEN control)', { skip: CANONICAL_SKIP ? CANONICAL_SKIP : false }, () => {
-  it('resolves on a fully migrated schema with a pending_cutover audit', async (t) => {
+  it('resolves on a fully migrated schema for br_app_runtime, with an enforced, clean audit', async (t) => {
     const harness = await canonicalFixture('preflight-compatible');
     await installDdlObservation(harness);
-    const report = await schemaPreflight(harness.pool);
+    const report = await withRuntimePool(harness, (runtime) => schemaPreflight(runtime));
     t.diagnostic(`report: ${JSON.stringify(report)}`);
     assert.equal(report.ok, true);
-    assert.equal(report.privilegeAudit.status, 'pending_cutover');
+    assert.equal(report.role, 'br_app_runtime');
+    assert.equal(report.privilegeAudit.status, 'enforced');
+    assert.deepEqual(report.privilegeAudit.forbiddenAttributes, []);
+    assert.deepEqual(report.privilegeAudit.forbiddenMemberships, []);
     assert.ok(report.migrationsPresent.includes(REQUIRED_ID_TO_REMOVE));
     // MS-2: the newly appended 0006 is a required id and must be present on
     // a fully migrated canonical fixture (explicit literal, not derived).
@@ -918,7 +969,7 @@ describe('privilege audit walk — any depth, never silently capped (F1)', { ski
     assert.ok(harness !== undefined && client !== undefined);
     // "No membership" control on its own fixture database: only the
     // current_user row exists; the walk must return empty findings without
-    // claiming compliance (status stays pending_cutover).
+    // claiming compliance (an empty list is an observation, not a verdict).
     const bare = await fixture('preflight-f1-none');
     const bareClient = await bare.pool.connect();
     try {
@@ -930,7 +981,7 @@ describe('privilege audit walk — any depth, never silently capped (F1)', { ski
       const audit = await auditRuntimePrivileges(bareClient);
       t.diagnostic(`F1 no-membership audit: ${JSON.stringify(audit)}`);
       assert.deepEqual(audit.forbiddenMemberships, [], 'no synthetic edges means no findings');
-      assert.equal(audit.status, 'pending_cutover');
+      assert.equal(audit.status, 'enforced');
       await bareClient.query(`SELECT set_config('search_path', $1, false)`, [bareSp]);
     } finally {
       bareClient.release();

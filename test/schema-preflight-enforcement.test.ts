@@ -1,14 +1,14 @@
 /**
- * Boot-time privilege enforcement, keyed on the connected role (PR 2b
- * Tranche D; Founder decision of 2026-10-04).
+ * Boot-time privilege enforcement (PR 2b Tranche D; Founder decision of
+ * 2026-10-04; Founder act of 2026-10-10 ending the tolerance for other roles).
  *
  *   - `br_app_runtime` with ANY forbidden attribute or membership refuses to
  *     boot; with none it boots, labelled `enforced`;
- *   - any other role — `neondb_owner` until cutover step 10, a CI superuser —
- *     is tolerated and labelled `pending_cutover`, findings reported, so a
- *     rollback of `DATABASE_URL` to the owner identity restores service;
- *   - the refusal names attributes and memberships only, never anything that
- *     could be a credential.
+ *   - any other role — `neondb_owner`, a superuser, any other login — refuses
+ *     to boot whatever it holds, so rolling `DATABASE_URL` back to the owner
+ *     identity no longer restores service;
+ *   - the refusals name the roles, attributes and memberships only, never
+ *     anything that could be a credential.
  *
  * These cases need no database. The audit's SQL is exercised against a real
  * PostgreSQL in `schema-preflight.storage.test.ts` and
@@ -152,42 +152,56 @@ describe('privilege audit enforcement — the runtime identity', () => {
   });
 });
 
-describe('privilege audit enforcement — every other role is tolerated until cutover step 10', () => {
+describe('privilege audit enforcement — every other role is refused', () => {
   for (const role of ['neondb_owner', 'postgres', 'some_ci_login']) {
-    it(`${role} boots with findings reported and the audit labelled pending_cutover`, async () => {
-      const report = await schemaPreflight(
+    it(`${role} is refused before readiness even when it holds nothing forbidden`, async () => {
+      const error = await schemaPreflight(connection({ role })).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+      assert.ok(error instanceof SchemaPreflightError, 'the preflight must reject with SchemaPreflightError');
+      assert.equal(error.missingMigrations.length, 0, 'refused for its identity, not for the schema');
+      assert.match(error.message, new RegExp(`the connected role is ${role}, not the runtime identity br_app_runtime`));
+    });
+
+    it(`${role} is refused when it holds forbidden authority, and the refusal names only the two roles`, async () => {
+      const error = await schemaPreflight(
         connection({
           role,
-          attributes: ['rolcreaterole', 'rolcreatedb', 'rolbypassrls', 'rolreplication'],
+          attributes: ['rolsuper', 'rolcreaterole', 'rolcreatedb', 'rolbypassrls', 'rolreplication'],
           memberships: [
             { role: 'neon_superuser', depth: 1 },
             { role: 'pg_write_all_data', depth: 2 },
           ],
         }),
+      ).then(
+        () => undefined,
+        (caught: unknown) => caught,
       );
-      assert.equal(report.privilegeAudit.status, 'pending_cutover');
-      assert.deepEqual(report.privilegeAudit.forbiddenAttributes, [
-        'rolcreaterole',
-        'rolcreatedb',
-        'rolbypassrls',
-        'rolreplication',
-      ]);
-      assert.deepEqual(report.privilegeAudit.forbiddenMemberships, ['neon_superuser@depth1', 'pg_write_all_data@depth2']);
+      assert.ok(error instanceof SchemaPreflightError);
+      assert.match(error.message, new RegExp(role));
+      assert.match(error.message, /br_app_runtime/);
+      assert.doesNotMatch(error.message, /rol(super|createrole|createdb|bypassrls|replication)/, 'no attribute list');
+      assert.doesNotMatch(error.message, /@depth/, 'no membership list');
+      assert.doesNotMatch(error.message, /postgres(ql)?:\/\//i, 'no connection string');
+      assert.doesNotMatch(error.message, /password|secret|token/i, 'no credential vocabulary');
     });
   }
 
-  it('a missing migration still refuses the owner-class runtime: the schema contract is not staged', async () => {
+  it('a role other than br_app_runtime is refused before the schema check, even with nothing recorded', async () => {
     const error = await schemaPreflight(connection({ role: 'neondb_owner', recorded: [] })).then(
       () => undefined,
       (caught: unknown) => caught,
     );
     assert.ok(error instanceof SchemaPreflightError);
+    assert.match(error.message, /not the runtime identity/);
   });
 
-  it('auditRuntimePrivileges itself never blocks: it labels and reports for either mode', async () => {
+  it('auditRuntimePrivileges itself never blocks: it reads and reports for any role', async () => {
     const owner = await auditRuntimePrivileges(connection({ role: 'neondb_owner', attributes: ['rolsuper'] }));
     const runtime = await auditRuntimePrivileges(connection({ role: RUNTIME, attributes: ['rolsuper'] }));
-    assert.equal(owner.status, 'pending_cutover');
+    assert.equal(owner.status, 'enforced');
+    assert.deepEqual(owner.forbiddenAttributes, ['rolsuper']);
     assert.equal(runtime.status, 'enforced');
     assert.deepEqual(runtime.forbiddenAttributes, ['rolsuper']);
   });
@@ -200,11 +214,15 @@ describe('privilegeAuditRefusal', () => {
     assert.equal(privilegeAuditRefusal(base), null);
   });
 
-  it('is null for a pending_cutover audit even with findings', () => {
-    assert.equal(
-      privilegeAuditRefusal({ ...base, role: 'neondb_owner', status: 'pending_cutover', forbiddenAttributes: ['rolsuper'] }),
-      null,
-    );
+  it('refuses any role other than br_app_runtime, with or without findings', () => {
+    for (const audit of [
+      { ...base, role: 'neondb_owner' },
+      { ...base, role: 'postgres', forbiddenAttributes: ['rolsuper'] },
+    ]) {
+      const refusal = privilegeAuditRefusal(audit);
+      assert.ok(refusal !== null);
+      assert.match(refusal, new RegExp(`the connected role is ${audit.role}, not the runtime identity br_app_runtime`));
+    }
   });
 
   it('names both kinds of finding when both are present', () => {

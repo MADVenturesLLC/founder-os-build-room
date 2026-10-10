@@ -48,7 +48,7 @@ export const RUNTIME_ROLE_SUITES: readonly string[] = [
  */
 export const RUNTIME_ROLE_EXCLUDED: Readonly<Record<string, string>> = {
   'boot-no-ddl':
-    'proves the boot issues no DDL by installing a superuser event trigger and booting as its own fixture login; the runtime login\'s boot is runtime-role-boot\'s subject',
+    'proves the boot issues no DDL by installing a superuser event trigger on its own owned instances; its boot children already connect as br_app_runtime in every run, whatever the mode, and the runtime login\'s other behaviour is runtime-role-boot\'s subject',
   'gateway-registry-immutability':
     'proves the schema\'s append-only and shape guarantees against a superuser connection on purpose, because the claim is that the table refuses the mutation whatever issues it; it builds no application object, so there is nothing for br_app_runtime to run, and the runtime login\'s own refusals are pinned by runtime-role-boot',
   'journal-append-atomicity':
@@ -62,7 +62,7 @@ export const RUNTIME_ROLE_EXCLUDED: Readonly<Record<string, string>> = {
   'room-runtime-phase1-c2':
     'uses no database: its storage suffix marks the proof-runtime gate (Bun worker over a supervised transport), not a data-access identity',
   'schema-preflight':
-    'builds role fixtures (forbidden attributes, memberships) and runs the audit against them; role management is its subject, and runtime-role-boot covers the audit on the real runtime login',
+    'builds role fixtures (forbidden attributes, memberships) and runs the audit against them; role management is its subject. Its schema cases and its passing control already connect as br_app_runtime in every run, and runtime-role-boot covers the audit on the real runtime login',
   'worker-supervisor.prereq-c':
     'uses no database: it proves the gateway-side worker supervisor over a private transport, under its own gate (npm run test:prereq-c)',
 };
