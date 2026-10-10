@@ -289,7 +289,7 @@ export class GatewayRegistryStore {
        */
       const held = await client.query<{ enrollment_slot: number }>(
         `SELECT enrollment_slot FROM gateway_current_state
-          WHERE is_currently_enrolled ORDER BY enrollment_slot`,
+          WHERE enrollment_slot IS NOT NULL ORDER BY enrollment_slot`,
       );
       const slot = lowestFreeSlot(held.rows.map((r) => Number(r.enrollment_slot)));
       if (slot === null) {
@@ -346,9 +346,10 @@ export class GatewayRegistryStore {
          * `enrollment_cap_reached`, not a 500, because a recorder hiccup
          * outranked the ruling.
          */
-        await this.recordRefusalOutOfBand('enrollment_cap_reached', gatewayId, sourceIp).catch(
-          () => undefined,
-        );
+        await this.recordRefusalOutOfBand('enrollment_cap_reached', gatewayId, sourceIp, {
+          reason: 'the enrollment-slot index refused the write: every slot was held',
+          cap: MAX_ENROLLED_GATEWAYS,
+        }).catch(() => undefined);
         return refuse('enrollment_cap_reached');
       }
       throw error;
@@ -471,6 +472,7 @@ export class GatewayRegistryStore {
     kind: EnrollmentRefusalKind,
     gatewayId: string,
     sourceIp: string | null,
+    detail: Record<string, unknown>,
   ): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -478,7 +480,7 @@ export class GatewayRegistryStore {
       await recordEnrollmentRefusal(client, {
         kind,
         gatewayId,
-        detail: { reason: 'the at-most-one-enrolled index refused a second enrolled row' },
+        detail,
         sourceIp,
         recordedAt: now,
       });

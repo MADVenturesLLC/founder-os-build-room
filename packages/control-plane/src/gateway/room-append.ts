@@ -47,7 +47,9 @@ export class GatewayRoomAppendFence implements RoomAppendFence {
    */
   async deriveGatewayOnline(client: PoolClient): Promise<boolean> {
     const { rows } = await client.query<{ gateway_id: string }>(
-      'SELECT gateway_id FROM gateway_current_state WHERE is_currently_enrolled ORDER BY enrollment_slot',
+      // The slot is present exactly when the row is enrolled (a CHECK), and
+      // this predicate is the slot index's own.
+      'SELECT gateway_id FROM gateway_current_state WHERE enrollment_slot IS NOT NULL ORDER BY enrollment_slot',
     );
     if (rows.length === 0) return false;
 
