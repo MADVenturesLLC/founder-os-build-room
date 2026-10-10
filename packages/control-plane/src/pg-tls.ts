@@ -2,8 +2,9 @@
  * The TLS decision for every Postgres connection this repository opens.
  *
  * Rule: TLS is ON, with the server's certificate and host name verified,
- * unless the URL says `sslmode=disable` or its host is loopback, which is
- * where a local development cluster runs without a certificate. No other URL
+ * unless the URL says `sslmode=disable` or every host it names (the
+ * authority's and any `host` query parameter) is loopback, which is where a
+ * local development cluster runs without a certificate. No other URL
  * parameter can turn TLS off or turn verification off.
  *
  * Why the URL's TLS parameters are removed rather than overridden:
@@ -51,7 +52,16 @@ export function pgConnectionSettings(databaseUrl: string): PgConnectionSettings 
   }
 
   const sslmode = parsed.searchParams.get('sslmode');
-  const tls = !(sslmode !== null && sslmode.toLowerCase() === 'disable') && !isLoopbackHost(parsed.hostname);
+  // node-postgres connects to a `host` query parameter when one is present
+  // and to the authority's host only otherwise, so the loopback exception
+  // holds only when EVERY host the URL names is loopback. A URL such as
+  // postgresql://u:p@localhost/db?host=db.example.com is not local.
+  const hosts = [parsed.hostname];
+  for (const [name, value] of parsed.searchParams) {
+    if (name.toLowerCase() === 'host') hosts.push(value);
+  }
+  const loopback = hosts.every(isLoopbackHost);
+  const tls = !(sslmode !== null && sslmode.toLowerCase() === 'disable') && !loopback;
 
   // The query runs from the first "?" to the first "#" after it, as the URL
   // parser reads it; a "?" inside a fragment is not a query.

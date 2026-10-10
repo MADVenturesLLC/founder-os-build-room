@@ -70,8 +70,10 @@ message above.
 ## What the change does
 
 - `packages/control-plane/src/pg-tls.ts` (new): `pgConnectionSettings`
-  decides TLS from the URL's host and its `sslmode=disable`, read as a
-  query parameter rather than matched anywhere in the string, and
+  decides TLS from every host the URL names (the authority's and any
+  `host` query parameter, all of which must be loopback for TLS to be
+  off) and from its `sslmode=disable`, read as a query parameter rather
+  than matched anywhere in the string, and
   returns `ssl: { rejectUnauthorized: true }` or `ssl: false` with the
   URL's TLS parameters (every `ssl*` key and `uselibpqcompat`) removed
   from the query. The scheme, credentials, host, port, database and
@@ -94,7 +96,8 @@ message above.
   that merely contain `localhost` or `sslmode=disable`; and checks that
   the non-TLS parameters survive.
 - `test/pg-tls.test.ts` (new): the same decision, read the same way,
-  for 21 URL forms; the rewritten query; credentials with
+  for 26 URL forms, including a loopback authority with a remote `host`
+  parameter; the rewritten query; credentials with
   percent-encoded characters passed through; a fragment kept out of the
   query; the unparseable refusal; and the administrative runner, by its
   compiled source and by running it with an unparseable URL.
@@ -127,6 +130,21 @@ two medium findings, both correct and both within the act:
 2. r4238424956: a TLS-defaults assertion message interpolated the
    fixture URL, so a failure would have printed a connection string,
    against the act's item 5. The message now names the case only.
+
+The Cursor security agent's review of the second head (`95f331d`,
+review 5480037979) posted one HIGH finding, correct and within the act's
+item 1:
+
+3. r4238497501: the loopback exception was judged on the URL's authority
+   host, but node-postgres connects to a `host` query parameter when one
+   is present, and that parameter was kept. So
+   `postgresql://u:p@localhost/db?host=ep-x.neon.tech` connected to the
+   remote host with no TLS, with or without `sslmode=require`. The
+   builder reproduced it against `95f331d`. TLS is now off for loopback
+   only when every host the URL names, the authority's and each `host`
+   parameter, is loopback; a socket-path `host` keeps TLS on. Five
+   decision cases and one end-to-end test cover it; four fail against
+   `95f331d`.
 
 ## What the builder verified and what it did not
 

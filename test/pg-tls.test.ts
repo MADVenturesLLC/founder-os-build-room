@@ -62,6 +62,17 @@ describe('pg-tls — the decision', () => {
     { url: 'postgresql://u:p@localhost:5432/db', ssl: false, why: 'loopback by name' },
     { url: 'postgresql://u:p@[::1]:5432/db', ssl: false, why: 'loopback ::1' },
     { url: 'postgresql://u:p@localhost:5432/db?sslmode=require', ssl: false, why: 'loopback with sslmode=require' },
+    // node-postgres connects to a `host` query parameter over the authority's
+    // host, so the loopback exception must cover every host the URL names.
+    { url: 'postgresql://u:p@localhost/db?host=ep-x.neon.tech', ssl: VERIFY, why: 'loopback authority, remote host parameter' },
+    {
+      url: 'postgresql://u:p@localhost/db?host=ep-x.neon.tech&sslmode=require',
+      ssl: VERIFY,
+      why: 'loopback authority, remote host parameter, sslmode=require',
+    },
+    { url: 'postgresql://u:p@ep-x.neon.tech/db?host=localhost', ssl: VERIFY, why: 'remote authority, loopback host parameter' },
+    { url: 'postgresql://u:p@localhost/db?host=127.0.0.1', ssl: false, why: 'loopback authority and loopback host parameter' },
+    { url: 'postgresql://u:p@localhost/db?host=%2Fvar%2Frun%2Fpostgresql', ssl: VERIFY, why: 'socket-path host parameter' },
     { url: 'postgresql://u:localhost@ep-x.neon.tech/db', ssl: VERIFY, why: 'password merely contains localhost' },
     { url: 'postgresql://u:sslmode%3Ddisable@ep-x.neon.tech/db', ssl: VERIFY, why: 'password merely contains sslmode=disable' },
     { url: 'postgresql://u:p@ep-x.neon.tech/db_sslmode=disable', ssl: VERIFY, why: 'database name merely contains sslmode=disable' },
@@ -102,6 +113,12 @@ describe('pg-tls — the connection string node-postgres sees', () => {
       pgConnectionSettings('postgresql://u:p@ep-x.neon.tech/db?sslmode=require').connectionString,
       'postgresql://u:p@ep-x.neon.tech/db',
     );
+  });
+
+  it('connects to the host parameter it judged, so the decision is about the host actually used', () => {
+    const params = effective('postgresql://u:p@localhost/db?host=ep-x.neon.tech');
+    assert.equal(params.host, 'ep-x.neon.tech');
+    assert.deepEqual(params.ssl, VERIFY);
   });
 
   it('stops the query at a fragment and passes the fragment through', () => {
