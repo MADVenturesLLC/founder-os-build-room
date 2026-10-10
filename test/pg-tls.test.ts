@@ -104,6 +104,19 @@ describe('pg-tls — the connection string node-postgres sees', () => {
     );
   });
 
+  it('stops the query at a fragment and passes the fragment through', () => {
+    const url = 'postgresql://u:p@ep-x.neon.tech/db?application_name=br&sslmode=no-verify#frag';
+    assert.equal(pgConnectionSettings(url).connectionString, 'postgresql://u:p@ep-x.neon.tech/db?application_name=br#frag');
+    assert.equal(effective(url).application_name, 'br');
+    assert.deepEqual(effective(url).ssl, VERIFY);
+  });
+
+  it('treats a "?" inside a fragment as part of the fragment, not a query', () => {
+    const url = 'postgresql://u:p@ep-x.neon.tech/db#x?sslmode=disable';
+    assert.equal(pgConnectionSettings(url).connectionString, url);
+    assert.deepEqual(effective(url).ssl, VERIFY);
+  });
+
   it('leaves a URL without a query exactly as given', () => {
     const url = 'postgresql://u:p@ep-x.neon.tech/db';
     assert.equal(pgConnectionSettings(url).connectionString, url);

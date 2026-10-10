@@ -95,9 +95,9 @@ message above.
   the non-TLS parameters survive.
 - `test/pg-tls.test.ts` (new): the same decision, read the same way,
   for 21 URL forms; the rewritten query; credentials with
-  percent-encoded characters passed through; the unparseable refusal;
-  and the administrative runner, by its compiled source and by running
-  it with an unparseable URL.
+  percent-encoded characters passed through; a fragment kept out of the
+  query; the unparseable refusal; and the administrative runner, by its
+  compiled source and by running it with an unparseable URL.
 - `README.md`: a bullet for this change and the status heading.
 
 ## Red first
@@ -111,6 +111,22 @@ and `sslmode=require&uselibpqcompat=true` resolved to
 default is to verify and pg-connection-string 2.14 treats those modes as
 `verify-full`, not because of the code's setting. With the change every
 case resolves exactly as the table expects.
+
+## Review findings taken
+
+Copilot's review of the first head (`929c09a`, review 5479953064) posted
+two medium findings, both correct and both within the act:
+
+1. r4238424941: the query was sliced to the end of the string, so a
+   `#fragment` became part of the last parameter's value
+   (`application_name=br#x` reached node-postgres as `br%23x`), against
+   the pass-through the act requires. The query now ends at the first
+   `#`, the fragment passes through unchanged, and a `?` inside a
+   fragment is not treated as a query. Two tests cover it; both fail
+   against `929c09a`.
+2. r4238424956: a TLS-defaults assertion message interpolated the
+   fixture URL, so a failure would have printed a connection string,
+   against the act's item 5. The message now names the case only.
 
 ## What the builder verified and what it did not
 

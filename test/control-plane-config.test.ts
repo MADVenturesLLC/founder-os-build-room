@@ -217,7 +217,8 @@ describe('control plane — TLS defaults', () => {
         const options = (pool as unknown as { options: Record<string, unknown> }).options;
         const client = new PgClient(options);
         const effective = (client as unknown as { connectionParameters: { ssl: unknown } }).connectionParameters.ssl;
-        assert.deepEqual(effective, ssl, `${url} should ${ssl === false ? 'not use TLS' : 'use verified TLS'}`);
+        // The message names the case, never the URL, even a fixture one.
+        assert.deepEqual(effective, ssl, `${why}: should ${ssl === false ? 'not use TLS' : 'use verified TLS'}`);
       } finally {
         void pool.end();
       }

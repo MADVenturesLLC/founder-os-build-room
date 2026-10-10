@@ -53,17 +53,22 @@ export function pgConnectionSettings(databaseUrl: string): PgConnectionSettings 
   const sslmode = parsed.searchParams.get('sslmode');
   const tls = !(sslmode !== null && sslmode.toLowerCase() === 'disable') && !isLoopbackHost(parsed.hostname);
 
+  // The query runs from the first "?" to the first "#" after it, as the URL
+  // parser reads it; a "?" inside a fragment is not a query.
+  const fragmentStart = databaseUrl.indexOf('#');
   const queryStart = databaseUrl.indexOf('?');
   let connectionString = databaseUrl;
-  if (queryStart !== -1) {
-    // Only the query is rebuilt; the scheme, credentials, host and database
-    // are passed through exactly as given.
+  if (queryStart !== -1 && (fragmentStart === -1 || queryStart < fragmentStart)) {
+    // Only the query is rebuilt; the scheme, credentials, host, database and
+    // any fragment are passed through exactly as given.
+    const queryEnd = fragmentStart === -1 ? databaseUrl.length : fragmentStart;
     const kept = new URLSearchParams();
-    for (const [name, value] of new URLSearchParams(databaseUrl.slice(queryStart + 1))) {
+    for (const [name, value] of new URLSearchParams(databaseUrl.slice(queryStart + 1, queryEnd))) {
       if (!isTlsParameter(name)) kept.append(name, value);
     }
     const query = kept.toString();
-    connectionString = databaseUrl.slice(0, queryStart) + (query === '' ? '' : `?${query}`);
+    connectionString =
+      databaseUrl.slice(0, queryStart) + (query === '' ? '' : `?${query}`) + databaseUrl.slice(queryEnd);
   }
 
   return { connectionString, ssl: tls ? { rejectUnauthorized: true } : false };
