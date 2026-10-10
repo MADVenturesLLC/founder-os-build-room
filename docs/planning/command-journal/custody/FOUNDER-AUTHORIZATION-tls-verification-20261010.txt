@@ -1,0 +1,126 @@
+FOUNDER AUTHORIZATION: TLS VERIFICATION THE CONNECTION STRING CANNOT
+TURN OFF (control plane and administrative runner)
+
+I, Michael Daley, issue the following authorization. It takes effect
+when I post it in the builder session.
+
+AUTHORIZED WORK
+The builder writes one code change, in one pull request against main
+at 06c608e4ba24f3f2a53ad0a8056e9ceb018daeb2, so that whether a
+Postgres connection uses TLS, and whether it verifies the server's
+certificate and host name, is decided by the code and not by the
+connection string:
+  1. One function decides the connection settings for a URL. TLS is
+     on, with the certificate and host name verified, unless the URL
+     says sslmode=disable or its host is loopback (localhost,
+     127.0.0.1, ::1), which is the rule the code states today. No
+     other URL parameter, including sslmode=no-verify, sslmode=require
+     with uselibpqcompat=true, ssl=0 or ssl=false, can turn TLS off or
+     turn verification off. The connection string reaches
+     node-postgres in a form in which it cannot override that
+     decision.
+  2. The control plane's pool (packages/control-plane/src/db.ts) and
+     the administrative runner's two connections
+     (packages/control-plane/src/migrate-cli.ts) use that function.
+  3. The comments in db.ts that say an explicit ssl option overrides
+     the connection string are corrected: node-postgres applies the
+     parsed connection string over the explicit option.
+  4. The tests prove the rule by reading the settings node-postgres
+     actually connects with, not the pool's options object: hosted
+     URLs with sslmode=require, prefer, verify-full, no-verify,
+     require with uselibpqcompat=true, ssl=0 and no sslmode all
+     verify; sslmode=disable and loopback hosts do not use TLS; a
+     password that merely contains "localhost" still verifies. The
+     same cases hold for migrate-cli's connections. At least the
+     no-verify and ssl=0 cases fail against main at 06c608e and pass
+     with the change. The existing TLS-defaults test, which reads the
+     pool's options object, is rewritten to read the effective
+     settings. No test is skipped, disabled or deleted to make the
+     suite pass.
+  5. No error, log line or test output contains a connection string,
+     password or token.
+The builder runs the default suite, the runtime-role tier and the
+storage suites locally and in CI, and opens the PR only when all of
+them pass.
+
+WHY
+db.ts sets ssl = { rejectUnauthorized: true } so that a pasted
+connection string cannot silently weaken certificate checking. It
+does not do that. node-postgres lets the parsed connection string
+override an explicit ssl option, and db.ts only refuses to set TLS
+when the URL says sslmode=disable. With pg 8.13.1 and
+pg-connection-string 2.14.0, as on main today (builder probe,
+2026-10-10):
+  - sslmode=no-verify gives rejectUnauthorized false: encrypted, not
+    verified;
+  - ssl=0 gives ssl false: no TLS at all;
+  - sslmode=require with uselibpqcompat=true gives rejectUnauthorized
+    false, and from pg 9 sslmode=require alone will too.
+Production's DATABASE_URL holds prefer, require or verify-ca (the boot
+log prints a warning only for those), all verified today, so
+production is not exposed now. The control is the problem: one edited
+or pasted URL would turn verification off with no error and no log
+line. The existing test did not catch it because it reads the pool's
+options object, which is not what node-postgres connects with.
+
+SEQUENCE
+  a. I tell the builder to read. It checks the CONDITIONS and reports.
+  b. The builder writes the change, runs the suites, opens the PR and
+     drives it to green with the review bots dispositioned.
+  c. The builder drafts an exact-SHA merge authorization. Merging is
+     my separate act under DEC-20260718-04, and that authorization
+     also covers the one deployment the merge starts.
+  d. After the merge, the builder reads the new deployment's
+     boot.preflight, boot.listening, gateway.leadership.serving and
+     /health, and reports. I decide.
+
+CONDITIONS, at step a
+  - main's tip is 06c608e4ba24f3f2a53ad0a8056e9ceb018daeb2
+  - the latest rare-enjoyment deployment is SUCCESS at that commit and
+    booted as br_app_runtime with privilegeAudit enforced and no
+    forbidden attribute or membership; nothing is queued, building or
+    staged
+  - no open pull request touches db.ts or migrate-cli.ts
+  - no run of DB Admin Migration is queued or waiting
+
+WHAT THE MERGE WILL DO TO PRODUCTION
+Production's connections already verify the certificate and host
+name, so the deployment the merge starts should connect exactly as
+today. The administrative runner will verify too the next time it
+runs; Neon presents a publicly trusted certificate. If the new
+deployment does not boot as br_app_runtime with privilegeAudit
+enforced, or does not answer /health with 200, the builder reports and
+does nothing else: no redeploy, no rollback, no variable change. The
+previous deployment, ae86a775, carries the current password and is a
+valid rollback target; using it is my act, not the builder's.
+
+ORDER WITH THE sslmode ACT
+This act and my act setting DATABASE_URL to sslmode=verify-full are
+independent; either may go first. If that act's deploy lands first,
+06c608e stays the base and that act's deployment, not ae86a775, is the
+previous deployment named above.
+
+WHAT THIS DOES NOT DO
+- It does not authorize the builder to merge, deploy, redeploy or roll
+  back, or to change any Railway variable, Neon role, grant, password
+  or database.
+- It authorizes no migration and no SQL against production by the
+  builder other than read-only reads, and no run of DB Admin
+  Migration.
+- It does not authorize any change to the DB Admin Migration workflow
+  file, the db-admin-migration environment, its secret, the GitHub
+  runner or any other secret; only the code in migrate-cli.ts named
+  above.
+- It does not authorize a change of pg, pg-connection-string or any
+  other dependency version.
+- Any commit to main before the PR opens that touches db.ts or
+  migrate-cli.ts voids it.
+
+ACCEPTANCE: I decide whether the change stands after I read the
+builder's report on the deployment the merge starts. This act is
+spent when I accept it or stop.
+CUSTODY: The builder preserves this act verbatim, with a custody
+receipt, in the same PR as the change.
+
+Signed: Michael Daley
+Date: 2026-10-10 (UTC)

@@ -15,12 +15,37 @@
 import pgDefault from 'pg';
 import type { Pool, PoolConfig } from 'pg';
 import type { Config } from './config.js';
+import { pgConnectionSettings } from './pg-tls.js';
 
 const { Pool: PgPool } = pgDefault;
 
 export function createPool(config: Config): Pool {
+  /*
+   * TLS is ON by default and OFF only where it is explicitly not wanted.
+   *
+   * An earlier version turned TLS on only when the connection string carried
+   * `sslmode=require`. That inverts the safe default: a hosted URL pasted
+   * without the parameter would connect in cleartext and be refused by the
+   * provider, and the resulting error says nothing about TLS — an easy hour
+   * lost on a first deploy, and a worse outcome than a loud failure if a
+   * provider ever accepted it.
+   *
+   * So: verification stays on unless `sslmode=disable`, or the host is
+   * loopback, which is where a local development cluster runs without a
+   * certificate. Neon presents a publicly trusted certificate, so
+   * verification costs nothing.
+   *
+   * The decision is made in `pg-tls.ts`, which also removes the URL's TLS
+   * parameters before node-postgres sees them. This comment once said an
+   * explicit `ssl` option here overrides the connection string. It does
+   * not: node-postgres applies the parsed string over the options it is
+   * given, so `sslmode=no-verify` or `ssl=0` in a pasted URL turned
+   * verification, or TLS itself, off. See `pg-tls.ts`.
+   */
+  const { connectionString, ssl } = pgConnectionSettings(config.databaseUrl);
   const poolConfig: PoolConfig = {
-    connectionString: config.databaseUrl,
+    connectionString,
+    ssl,
     max: config.poolMax,
     idleTimeoutMillis: config.poolIdleTimeoutMs,
     /*
@@ -36,31 +61,6 @@ export function createPool(config: Config): Pool {
     // Applied per connection by the server, so it survives pool recycling.
     options: `-c statement_timeout=${config.statementTimeoutMs}`,
   };
-
-  /*
-   * TLS is ON by default and OFF only where it is explicitly not wanted.
-   *
-   * An earlier version turned TLS on only when the connection string carried
-   * `sslmode=require`. That inverts the safe default: a hosted URL pasted
-   * without the parameter would connect in cleartext and be refused by the
-   * provider, and the resulting error says nothing about TLS — an easy hour
-   * lost on a first deploy, and a worse outcome than a loud failure if a
-   * provider ever accepted it.
-   *
-   * So: verification stays on unless `sslmode=disable`, or the host is
-   * loopback, which is where a local development cluster runs without a
-   * certificate.
-   *
-   * `rejectUnauthorized: true` is deliberate. `sslmode=require` in a libpq
-   * string means "encrypt, do not verify", and node-postgres honours that as
-   * `rejectUnauthorized: false`; setting ssl explicitly here overrides it, so
-   * a copied connection string cannot silently downgrade certificate checking.
-   * Neon presents a publicly trusted certificate, so verification costs
-   * nothing.
-   */
-  if (!/sslmode=disable/i.test(config.databaseUrl) && !isLoopback(config.databaseUrl)) {
-    poolConfig.ssl = { rejectUnauthorized: true };
-  }
 
   const pool = new PgPool(poolConfig);
 
@@ -110,22 +110,5 @@ export async function probe(pool: Pool, timeoutMs: number): Promise<ProbeResult>
     };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-/**
- * Whether the connection string points at loopback.
- *
- * Parsed as a URL rather than pattern-matched, so a password or database name
- * that happens to contain "localhost" cannot make a hosted database look
- * local — which would turn TLS off against a real provider.
- */
-function isLoopback(databaseUrl: string): boolean {
-  try {
-    const host = new URL(databaseUrl).hostname.toLowerCase();
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
-  } catch {
-    // Unparseable is not local. Fail toward TLS.
-    return false;
   }
 }

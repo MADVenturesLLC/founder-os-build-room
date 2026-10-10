@@ -21,6 +21,9 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, ConfigError, challengeFreshnessDeadlineMs } from '../packages/control-plane/src/config.js';
 import { createPool } from '../packages/control-plane/src/db.js';
+import pgDefault from 'pg';
+
+const { Client: PgClient } = pgDefault;
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const VALID_URL = 'postgresql://user:secret@host.neon.tech/db?sslmode=require';
@@ -171,34 +174,77 @@ describe('control plane — package boundary', () => {
 });
 
 describe('control plane — TLS defaults', () => {
-  // A pool's config is not readable after construction, so these assert the
-  // decision function's inputs through `createPool` not throwing plus the
-  // documented rule. The rule itself is what matters: ON unless explicitly
-  // disabled or loopback.
-  const cases: readonly { url: string; tls: boolean; why: string }[] = [
-    { url: 'postgresql://u:p@ep-x.neon.tech/db?sslmode=require', tls: true, why: 'hosted, sslmode present' },
-    { url: 'postgresql://u:p@ep-x.neon.tech/db', tls: true, why: 'hosted, no sslmode — must NOT drop to cleartext' },
-    { url: 'postgresql://u:p@127.0.0.1:5432/db', tls: false, why: 'loopback development cluster' },
-    { url: 'postgresql://u:p@localhost:5432/db', tls: false, why: 'loopback by name' },
-    { url: 'postgresql://u:p@host/db?sslmode=disable', tls: false, why: 'explicitly disabled' },
+  // These read the settings node-postgres actually connects with, not the
+  // pool's options object. node-postgres applies the parsed connection string
+  // OVER the options it is given, so an earlier version of this test, which
+  // read `pool.options.ssl`, passed while `sslmode=no-verify` and `ssl=0`
+  // turned verification, or TLS itself, off. A `Client` built from the pool's
+  // options resolves them exactly as a pooled connection does, without
+  // connecting.
+  const VERIFY = { rejectUnauthorized: true };
+  const cases: readonly { url: string; ssl: false | typeof VERIFY; why: string }[] = [
+    { url: 'postgresql://u:p@ep-x.neon.tech/db?sslmode=require', ssl: VERIFY, why: 'hosted, sslmode=require' },
+    { url: 'postgresql://u:p@ep-x.neon.tech/db?sslmode=prefer', ssl: VERIFY, why: 'hosted, sslmode=prefer' },
+    { url: 'postgresql://u:p@ep-x.neon.tech/db?sslmode=verify-full', ssl: VERIFY, why: 'hosted, sslmode=verify-full' },
+    { url: 'postgresql://u:p@ep-x.neon.tech/db', ssl: VERIFY, why: 'hosted, no sslmode — must NOT drop to cleartext' },
+    { url: 'postgresql://u:p@ep-x.neon.tech/db?sslmode=no-verify', ssl: VERIFY, why: 'sslmode=no-verify cannot turn verification off' },
+    {
+      url: 'postgresql://u:p@ep-x.neon.tech/db?sslmode=require&uselibpqcompat=true',
+      ssl: VERIFY,
+      why: 'libpq-compatible require cannot turn verification off',
+    },
+    { url: 'postgresql://u:p@ep-x.neon.tech/db?ssl=0', ssl: VERIFY, why: 'ssl=0 cannot turn TLS off' },
+    { url: 'postgresql://u:p@ep-x.neon.tech/db?ssl=false', ssl: VERIFY, why: 'ssl=false cannot turn TLS off' },
+    { url: 'postgresql://u:p@127.0.0.1:5432/db', ssl: false, why: 'loopback development cluster' },
+    { url: 'postgresql://u:p@localhost:5432/db', ssl: false, why: 'loopback by name' },
+    { url: 'postgresql://u:p@host/db?sslmode=disable', ssl: false, why: 'explicitly disabled' },
     // The password contains "localhost"; the HOST does not. Pattern matching
     // would read this as local and turn TLS off against a real provider.
-    { url: 'postgresql://u:localhost@ep-x.neon.tech/db', tls: true, why: 'credential merely contains localhost' },
+    { url: 'postgresql://u:localhost@ep-x.neon.tech/db', ssl: VERIFY, why: 'credential merely contains localhost' },
+    // Likewise a password containing "sslmode=disable" must not disable TLS.
+    {
+      url: 'postgresql://u:sslmode%3Ddisable@ep-x.neon.tech/db',
+      ssl: VERIFY,
+      why: 'credential merely contains sslmode=disable',
+    },
   ];
 
-  for (const { url, tls, why } of cases) {
-    it(`${tls ? 'enables' : 'disables'} TLS — ${why}`, () => {
+  for (const { url, ssl, why } of cases) {
+    it(`${ssl === false ? 'disables TLS' : 'verifies TLS'} — ${why}`, () => {
       const config = loadConfig({ DATABASE_URL: url, CONTROL_PLANE_TOKEN: VALID_TOKEN });
       const pool = createPool(config);
       try {
-        // `ssl` is normalised onto the pool's options by node-postgres.
-        const actual = Boolean((pool as unknown as { options?: { ssl?: unknown } }).options?.ssl);
-        assert.equal(actual, tls, `${url} should ${tls ? 'use' : 'not use'} TLS`);
+        const options = (pool as unknown as { options: Record<string, unknown> }).options;
+        const client = new PgClient(options);
+        const effective = (client as unknown as { connectionParameters: { ssl: unknown } }).connectionParameters.ssl;
+        // The message names the case, never the URL, even a fixture one.
+        assert.deepEqual(effective, ssl, `${why}: should ${ssl === false ? 'not use TLS' : 'use verified TLS'}`);
       } finally {
         void pool.end();
       }
     });
   }
+
+  it('keeps every non-TLS parameter of the connection string', () => {
+    const config = loadConfig({
+      DATABASE_URL: 'postgresql://u:p@ep-x.neon.tech:6543/db?sslmode=require&application_name=br&channel_binding=require',
+      CONTROL_PLANE_TOKEN: VALID_TOKEN,
+    });
+    const pool = createPool(config);
+    try {
+      const options = (pool as unknown as { options: Record<string, unknown> }).options;
+      const params = (new PgClient(options) as unknown as {
+        connectionParameters: { host: string; port: number; database: string; user: string; application_name: string };
+      }).connectionParameters;
+      assert.equal(params.host, 'ep-x.neon.tech');
+      assert.equal(params.port, 6543);
+      assert.equal(params.database, 'db');
+      assert.equal(params.user, 'u');
+      assert.equal(params.application_name, 'br');
+    } finally {
+      void pool.end();
+    }
+  });
 });
 
 /**
