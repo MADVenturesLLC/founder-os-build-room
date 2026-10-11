@@ -4,7 +4,7 @@
 for the acts three of them authorized: the Founder's ratification of his
 merge of PR #109, the comment that merge rested on, his act applying
 migration `0009_two_enrolled_gateways`, and his act deploying the code
-that boots on it. It records the builder's reads and two findings. It
+that boots on it. It records the builder's reads and three findings. It
 authorizes nothing.** Each instrument's own text governs. The harness
 act of 2026-10-10 and its receipt are
 `docs/planning/command-journal/custody/FOUNDER-AUTHORIZATION-two-gateways-harness-20261010.txt`
@@ -139,7 +139,7 @@ All times are UTC on 2026-10-11.
 | 21:05:12Z | the migrate job started; the platform records the approval as `daley40-lab`, environment `db-admin-migration` | GitHub API |
 | 21:05:26.198Z to 21:05:27.274Z | the runner: expected and observed SHA `348faec1`; `applied_migration_ids` exactly `0009_two_enrolled_gateways`; `schema_migrations` 0001 to 0008 before, 0001 to 0009 after. Production records `0009` at 21:05:26.710498Z | stage-5 evidence, post-apply read |
 | 21:05:29Z | run 38167186970 success | GitHub API |
-| 21:07:16Z | the Founder's post-apply read: `2222132d` enrolled in slot 1, `4369975d` and `48476acc` with no slot; the one-Gateway-per-slot index, the two slot CHECKs and the trigger present and the one-enrolled index gone; the refusal CHECK including `enrollment_cap_reached`, the one existing refusal row unchanged; `br_app_runtime` holding its previous privileges plus `UPDATE (enrollment_slot)`; every object owned by `neondb_owner` | Neon SQL editor |
+| 21:07:16Z | the Founder's post-apply read: `2222132d` enrolled in slot 1, `4369975d` and `48476acc` with no slot; the one-Gateway-per-slot index, the two slot CHECKs and the trigger present and the one-enrolled index gone; the refusal CHECK including `enrollment_cap_reached`, and refusals still counted as one of kind `another_gateway_enrolled` (finding 3); `br_app_runtime` holding its previous privileges plus `UPDATE (enrollment_slot)`; every object owned by `neondb_owner` | Neon SQL editor |
 | 22:03:04Z | the deploy act posted | GitHub API |
 | 22:03:29Z to 22:04Z | every redeploy condition held: `main` at `348faec1`; Railway with `7def1a14` FAILED, `f1e0c145` SUCCESS, nothing staged; `/health` 200; no DB Admin Migration run active | GitHub and Railway APIs, public `/health` |
 | about 22:04Z | redeploy of `7def1a14` requested by the builder through the Railway API; the call returned deployment `fb691b45-9e0a-4575-880f-644ec0986c77`, `INITIALIZING`. Railway records it as created at 22:07:21.280Z, reason `redeploy`, commit `348faec1` | Railway API |
@@ -179,8 +179,19 @@ Container`, before Railway attached its log stream. On `f1e0c145`'s
 boot those three lines were captured 22 milliseconds before that line.
 The same logger's `gateway.leadership.serving` line was captured.
 
-Neither finding was corrected. The deploy act's rollback was not used:
-`/health` never failed.
+**3. The refusal row is evidenced by count, not by identity.** The 0009
+act's EVIDENCE requires "the one existing refusal row unchanged". Both
+reads group `gateway_enrollment_refusals` by `kind` only, and both
+return `another_gateway_enrolled=1`. That shows the same count of the
+same kind before and after; it does not show it is the same row, since
+neither read captured `refusal_id`, `recorded_at` or the row's payload.
+`0009` touches that table only by replacing its CHECK with a superset
+of the old list, so no statement in it could have changed or replaced
+the row, but the reads do not prove it. Found by Copilot's review of
+this receipt (r4243740614).
+
+None of the findings was corrected. The deploy act's rollback was not
+used: `/health` never failed.
 
 ## What the builder read and did not do
 
