@@ -1,53 +1,62 @@
 /**
  * Harness for the gateway storage suites.
  *
- * **Each suite gets its own database, created fresh at setup.** That is not a
- * convenience, and it is worth being plain about what it does and does not
- * prove.
+ * **Each suite gets its own database, created fresh at setup, on a PostgreSQL
+ * instance its process owns, migrated through the FULL canonical sequence.**
+ * That is not a convenience, and it is worth being plain about what it does
+ * and does not prove.
  *
- * It is necessary because two of this schema's guarantees are database-global
- * rather than row-scoped. `gateway_current_state_only_one_enrolled` permits one
- * enrolled gateway per database, so a leftover enrolled row from a previous run
- * would refuse every later confirmation — and `gateway_registry_events` refuses
- * DELETE by trigger, so there is no cleaning it up afterwards. Postgres advisory
- * locks are likewise scoped to a database, so the leadership and concurrency
- * suites need their own database or they would serialize against each other on
- * `GATEWAY_REGISTRY_LOCK_KEY` and stop being deterministic.
+ * A database per suite is necessary because some of this schema's guarantees
+ * are database-global rather than row-scoped. The enrollment-slot index
+ * (migration 0009) admits at most two enrolled gateways per database, so a
+ * previous run's enrolled rows would refuse later confirmations — and
+ * `gateway_registry_events` refuses DELETE by trigger, so there is no cleaning
+ * it up afterwards. Postgres advisory locks are likewise scoped to a database,
+ * so the leadership and concurrency suites need their own database or they
+ * would serialize against each other on `GATEWAY_REGISTRY_LOCK_KEY` and stop
+ * being deterministic.
+ *
+ * An owned instance is necessary because the canonical sequence includes
+ * migration 0006, which creates cluster-wide roles: applied by parallel suites
+ * against one shared server it collides, and a per-suite cleanup cannot drop a
+ * role sibling suites still reference. Until FOUNDER-ACT-20261010-TWO-GATEWAYS-
+ * HARNESS (2026-10-10) these suites therefore ran on the shared
+ * `TEST_DATABASE_URL` server migrated only through 0005 (the Founder's Gate III
+ * selection, CAPABILITY-2, supplement §3). Migration 0009 changes a table the
+ * gateway code writes, so that act moved them here: each process starts one
+ * owned instance (initdb/pg_ctl), migrates ONE template database through the
+ * full sequence as the superuser, and hands each suite a clone of it. The
+ * instance trusts loopback; no credential exists. `TEST_DATABASE_URL` remains
+ * the suites' run gate and names the base of each database's name; the shared
+ * server is not touched.
  *
  * What it costs: these suites do not prove tolerance of a previous run's rows
  * the way `control-plane-postgres.storage.test.ts` does — that suite still runs
  * against the shared `TEST_DATABASE_URL` database and accumulates rows across
  * runs, so the original re-runnability proof is untouched. What re-running
  * `npm run test:storage` proves for the gateway suites is that the command is
- * re-runnable, which is the property CI's second invocation checks.
+ * re-runnable, which is the property CI's second invocation checks. Each
+ * process needs the PostgreSQL server binaries (BUILDROOM_TEST_PG_BINDIR, or
+ * pg_ctl on PATH); without them the harness refuses rather than falling back
+ * to the shared server.
  *
  * The database name is derived from the suite label and dropped WITH (FORCE) at
  * setup as well as teardown, so a crashed run leaves nothing that breaks the
  * next one.
  *
  * RUNTIME-ROLE MODE (`BUILDROOM_RUNTIME_ROLE=1`, PR 2b Tranche D). The default
- * harness above gives the application the same superuser connection the
- * fixtures use, so it can never discover that the application needs a
- * privilege it does not hold. In this mode the harness instead:
+ * harness gives the application the same superuser connection the fixtures
+ * use, so it can never discover that the application needs a privilege it does
+ * not hold. In this mode the harness uses the same owned instance and template,
+ * but hands each suite TWO pools on its clone: `pool` stays the superuser
+ * fixture connection (setup, direct assertions, the trigger-level immutability
+ * proofs, which are about the schema and not about the application), and
+ * `appPool` logs in AS `br_app_runtime`. Every application object a suite
+ * builds is constructed on `appPool`, so a statement the application issues
+ * without a grant fails with PostgreSQL's own `permission denied`, naming the
+ * privilege to add.
  *
- *   - starts one exclusively owned PostgreSQL instance per process (the
- *     journal migration's roles are cluster-wide, so a shared server cannot
- *     host them per suite);
- *   - migrates ONE template database through the FULL canonical sequence, as
- *     the superuser, so `br_app_runtime` and every grant migration `0008`
- *     issues exist exactly as they do in production;
- *   - hands each suite a clone of that template, with TWO pools on it:
- *     `pool` stays the superuser fixture connection (setup, direct assertions,
- *     the trigger-level immutability proofs, which are about the schema and
- *     not about the application), and `appPool` logs in AS `br_app_runtime`.
- *     Every application object a suite builds is constructed on `appPool`, so a
- *     statement the application issues without a grant fails with PostgreSQL's
- *     own `permission denied`, naming the privilege to add.
- *
- * In the default mode `appPool` IS `pool`, so no suite's behaviour changes.
- * No credential exists anywhere in this mode: the owned instance trusts
- * loopback and `br_app_runtime` has no password, exactly as the sibling
- * owned-instance suites run their own runtime logins.
+ * In the default mode `appPool` IS `pool`.
  *
  * A suite that is listed in the runtime-role tier but never checks out a
  * client from `appPool` ran no application code as the runtime role, however
@@ -97,19 +106,6 @@ function baseUrl(): URL {
   return new URL(RAW_URL.trim());
 }
 
-/** `postgres` on the same server, for CREATE/DROP DATABASE. */
-function adminUrl(): string {
-  const url = baseUrl();
-  url.pathname = '/postgres';
-  return url.toString();
-}
-
-function databaseUrlFor(name: string): string {
-  const url = baseUrl();
-  url.pathname = `/${name}`;
-  return url.toString();
-}
-
 /**
  * A database name derived from the suite label.
  *
@@ -122,10 +118,9 @@ export function databaseNameFor(label: string): string {
   return `${base}_gw_${slug}`.slice(0, 60);
 }
 
+/** The owned instance's `postgres` database, as its superuser, for CREATE/DROP DATABASE. */
 async function withAdmin<T>(fn: (pool: Pool) => Promise<T>): Promise<T> {
-  const connectionString = RUNTIME_ROLE_MODE
-    ? clusterUrl(await getRoleCluster(), 'postgres')
-    : adminUrl();
+  const connectionString = clusterUrl(await getOwnedCluster(), 'postgres');
   const pool = new PgPool({ connectionString, max: 1 });
   try {
     return await fn(pool);
@@ -154,28 +149,8 @@ export interface GatewayHarness {
 }
 
 /**
- * The migration selection every consumer of this helper runs.
- *
- * Pre-journal tranche, through `0005_phase3_run_evidence` — explicitly, not
- * by default. Migration `0006_command_journal_authority_split` creates three
- * CLUSTER-WIDE roles with production names; applied by fifteen parallel
- * suites against the one shared CI container it collides on `42710` and its
- * per-suite cleanup cannot satisfy role absence while siblings hold
- * references. The suites consuming this helper (gateway-* and phase3-*)
- * exercise no journal authority; their fixtures are truthfully labeled as
- * qualified THROUGH 0005 ONLY — success here is not evidence that 0006
- * passed. Journal-authority qualification runs the full canonical sequence
- * on exclusively owned instances (test/journal-authority.storage.test.ts,
- * test/journal-append-atomicity.storage.test.ts, test/migrate-cli.test.ts).
- *
- * Authority: Founder ruling — Gate III shared storage migration selection
- * (CAPABILITY-2) and its fixture-completion supplement §3 (the explicit
- * through-id selection in the migrator).
- */
-export const HELPER_MIGRATION_THROUGH = '0005_phase3_run_evidence';
-
-/**
- * Create the suite's database, migrate it, and return a pool on it.
+ * Create the suite's database, migrated through the full canonical sequence,
+ * and return its pools.
  *
  * `statementTimeoutMs` is raised well above the service default because the
  * concurrency suites deliberately hold a transaction open at a pause hook while
@@ -185,21 +160,11 @@ export const HELPER_MIGRATION_THROUGH = '0005_phase3_run_evidence';
  */
 export async function createGatewayHarness(label: string): Promise<GatewayHarness> {
   if (RUNTIME_ROLE_MODE) return createRoleSplitHarness(label);
+  const cluster = await getOwnedCluster();
   const databaseName = databaseNameFor(label);
-
-  await withAdmin(async (admin) => {
-    await admin.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)} WITH (FORCE)`);
-    await admin.query(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
-  });
-
-  const config = loadConfig({
-    DATABASE_URL: databaseUrlFor(databaseName),
-    CONTROL_PLANE_TOKEN: TEST_TOKEN,
-    STATEMENT_TIMEOUT_MS: '60000',
-    PG_POOL_MAX: '12',
-  });
+  await cloneTemplate(databaseName);
+  const config = configFor(cluster, databaseName, 'postgres');
   const pool = createPool(config);
-  await migrate(pool, { through: HELPER_MIGRATION_THROUGH });
   return { pool, appPool: pool, config, databaseName };
 }
 
@@ -214,18 +179,18 @@ export async function destroyGatewayHarness(harness: GatewayHarness | undefined)
 
 /*
  * ---------------------------------------------------------------------------
- * Runtime-role mode (see the header). Everything below runs only when
- * `BUILDROOM_RUNTIME_ROLE=1`.
+ * The owned instance and its template, used in both modes, and the
+ * runtime-role mode's two-pool harness (see the header).
  * ---------------------------------------------------------------------------
  */
 
 const TEMPLATE_DATABASE = 'rr_template';
 
-interface RoleCluster {
+interface OwnedCluster {
   readonly instance: OwnedInstance;
 }
 
-let roleCluster: Promise<RoleCluster> | undefined;
+let ownedCluster: Promise<OwnedCluster> | undefined;
 
 /**
  * Process-wide tallies for the runtime-role mode: harnesses built, and client
@@ -246,11 +211,11 @@ if (RUNTIME_ROLE_MODE) {
   });
 }
 
-function clusterUrl(cluster: RoleCluster, database: string, user: string = 'postgres'): string {
+function clusterUrl(cluster: OwnedCluster, database: string, user: string = 'postgres'): string {
   return `postgresql://${user}@127.0.0.1:${cluster.instance.port}/${database}`;
 }
 
-function configFor(cluster: RoleCluster, database: string, user: string): Config {
+function configFor(cluster: OwnedCluster, database: string, user: string): Config {
   return loadConfig({
     DATABASE_URL: clusterUrl(cluster, database, user),
     CONTROL_PLANE_TOKEN: TEST_TOKEN,
@@ -265,21 +230,22 @@ function configFor(cluster: RoleCluster, database: string, user: string): Config
  * sequence by the superuser, once, so the cluster-wide roles are created
  * exactly once.
  *
- * It refuses, rather than degrades, when it cannot start an instance: falling
- * back to the shared server would run this tier as a superuser and report
- * success for a run that proved nothing about the runtime role.
+ * It refuses, rather than degrades, when it cannot start an instance: the
+ * shared server cannot host the full canonical sequence per suite, and in
+ * runtime-role mode falling back to it would run the tier as a superuser and
+ * report success for a run that proved nothing about the runtime role.
  */
-function getRoleCluster(): Promise<RoleCluster> {
-  roleCluster ??= buildRoleCluster();
-  return roleCluster;
+function getOwnedCluster(): Promise<OwnedCluster> {
+  ownedCluster ??= buildOwnedCluster();
+  return ownedCluster;
 }
 
-async function buildRoleCluster(): Promise<RoleCluster> {
+async function buildOwnedCluster(): Promise<OwnedCluster> {
   const bins = resolveServerBinaries();
   if (bins === undefined) {
     throw new Error(
-      'BUILDROOM_RUNTIME_ROLE=1 needs PostgreSQL server binaries (initdb/pg_ctl): set BUILDROOM_TEST_PG_BINDIR or put ' +
-        'pg_ctl on PATH. It will not fall back to the shared server, which would run this tier as a superuser.',
+      'the gateway storage harness needs PostgreSQL server binaries (initdb/pg_ctl): set BUILDROOM_TEST_PG_BINDIR or put ' +
+        'pg_ctl on PATH. It will not fall back to the shared server, which cannot host the full canonical sequence.',
     );
   }
   const logDir = process.env['BUILDROOM_RUNTIME_ROLE_LOG_DIR'];
@@ -299,7 +265,7 @@ async function buildRoleCluster(): Promise<RoleCluster> {
     destroyOwnedInstance(instance);
   });
 
-  const cluster: RoleCluster = { instance };
+  const cluster: OwnedCluster = { instance };
   const bootstrap = new PgPool({ connectionString: clusterUrl(cluster, 'postgres'), max: 1 });
   try {
     await bootstrap.query(`CREATE DATABASE ${quoteIdentifier(TEMPLATE_DATABASE)}`);
@@ -336,7 +302,7 @@ async function cloneTemplate(database: string): Promise<void> {
 }
 
 async function createRoleSplitHarness(label: string): Promise<GatewayHarness> {
-  const cluster = await getRoleCluster();
+  const cluster = await getOwnedCluster();
   const databaseName = databaseNameFor(label);
   await cloneTemplate(databaseName);
   const pool = createPool(configFor(cluster, databaseName, 'postgres'));

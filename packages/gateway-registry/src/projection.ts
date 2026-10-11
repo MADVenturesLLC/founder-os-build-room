@@ -18,6 +18,35 @@
 
 import { EVENT_RESULTING_STATE, type GatewayEventType, type GatewayState } from './vocabulary.js';
 
+/**
+ * The enrollment slots (FOUNDER-ACT-20261010-TWO-GATEWAYS B2, amending
+ * DEC-20260818-01 clause 5). Each enrolled gateway holds one; the database's
+ * partial unique index lets a slot be held by at most one enrolled gateway, so
+ * at most `ENROLLMENT_SLOTS.length` gateways are enrolled at once.
+ */
+export const ENROLLMENT_SLOTS = [1, 2] as const;
+
+export type EnrollmentSlot = (typeof ENROLLMENT_SLOTS)[number];
+
+/** How many gateways may be enrolled at once. */
+export const MAX_ENROLLED_GATEWAYS = ENROLLMENT_SLOTS.length;
+
+/**
+ * The slot a confirmation takes: the lowest one not already held, or null
+ * when every slot is held.
+ *
+ * One rule, used by the control plane when it confirms and by the reducer
+ * when it replays, so that replaying the log assigns every enrolled gateway
+ * the slot the table holds for it.
+ */
+export function lowestFreeSlot(held: Iterable<number>): EnrollmentSlot | null {
+  const taken = new Set(held);
+  for (const slot of ENROLLMENT_SLOTS) {
+    if (!taken.has(slot)) return slot;
+  }
+  return null;
+}
+
 /** The minimum-necessary host descriptor of contract §8 step 4. */
 export interface HostDescriptor {
   readonly hostname: string;
@@ -55,11 +84,17 @@ export interface GatewayProjectionRow {
   readonly lastEventSeq: number;
   readonly awaitingApprovalExpiresAt: string | null;
   /**
-   * Held as a column rather than derived on read because the database's
-   * partial unique index — the at-most-one-enrolled invariant of clause 5 — is
-   * built on it. A CHECK constraint keeps it equal to `state = 'enrolled'`.
+   * Held as a column rather than derived on read; a CHECK constraint keeps it
+   * equal to `state = 'enrolled'`. Migration 0003's partial unique index, the
+   * cap of one, was built on it; migration 0009 moved the cap to the slot.
    */
   readonly isCurrentlyEnrolled: boolean;
+  /**
+   * The enrollment slot an enrolled gateway holds, and null for every other
+   * state. The cap of two (clause 5 as amended) is the database's partial
+   * unique index on this column.
+   */
+  readonly enrollmentSlot: EnrollmentSlot | null;
 }
 
 export class ProjectionOrderError extends Error {
@@ -80,6 +115,32 @@ export function applyGatewayEvent(
   if (resulting === null || event.gatewayId === null) return rows;
 
   const previous = rows.get(event.gatewayId);
+
+  /*
+   * An identity that becomes enrolled takes the lowest slot no other enrolled
+   * identity holds, which is the rule the control plane applies when it
+   * confirms. Every slot held means the log records a third concurrent
+   * enrollment, which the database refuses; finding one is raised rather than
+   * projected, as `currentlyEnrolled` raises a broken cap.
+   */
+  let enrollmentSlot: EnrollmentSlot | null = null;
+  if (resulting === 'enrolled') {
+    if (previous?.enrollmentSlot != null) {
+      enrollmentSlot = previous.enrollmentSlot;
+    } else {
+      const held: number[] = [];
+      for (const row of rows.values()) {
+        if (row.gatewayId !== event.gatewayId && row.enrollmentSlot !== null) held.push(row.enrollmentSlot);
+      }
+      enrollmentSlot = lowestFreeSlot(held);
+      if (enrollmentSlot === null) {
+        throw new ProjectionOrderError(
+          `event ${event.seq} enrolls a gateway while every enrollment slot is held; the cap of ${MAX_ENROLLED_GATEWAYS} is broken`,
+        );
+      }
+    }
+  }
+
   const next: GatewayProjectionRow = {
     gatewayId: event.gatewayId,
     state: resulting,
@@ -102,6 +163,7 @@ export function applyGatewayEvent(
     awaitingApprovalExpiresAt:
       resulting === 'awaiting_approval' ? event.awaitingApprovalExpiresAt : null,
     isCurrentlyEnrolled: resulting === 'enrolled',
+    enrollmentSlot,
   };
 
   const updated = new Map(rows);
@@ -135,24 +197,32 @@ export function projectGatewayRegistry(
 }
 
 /**
- * The gateway currently enrolled, if any.
+ * The gateways currently enrolled, in slot order: none, one or two.
  *
- * At most one can exist — the database's partial unique index refuses a second
- * — so finding two here means the projection and the table have diverged, and
- * that is raised rather than resolved by picking one.
+ * At most two can exist, each in its own slot — the database's partial unique
+ * index on the slot refuses anything else — so finding more than two, two in
+ * one slot, or an enrolled row without a slot means the projection and the
+ * table have diverged, and that is raised rather than resolved by picking.
  */
 export function currentlyEnrolled(
   rows: ReadonlyMap<string, GatewayProjectionRow>,
-): GatewayProjectionRow | null {
-  let found: GatewayProjectionRow | null = null;
+): readonly GatewayProjectionRow[] {
+  const found: GatewayProjectionRow[] = [];
+  const slots = new Set<number>();
   for (const row of rows.values()) {
     if (!row.isCurrentlyEnrolled) continue;
-    if (found !== null) {
+    if (row.enrollmentSlot === null || slots.has(row.enrollmentSlot)) {
       throw new ProjectionOrderError(
-        'two gateways project as enrolled; the at-most-one-enrolled invariant is broken',
+        `gateway ${row.gatewayId} projects as enrolled without a slot of its own; the enrollment-slot invariant is broken`,
       );
     }
-    found = row;
+    slots.add(row.enrollmentSlot);
+    found.push(row);
   }
-  return found;
+  if (found.length > MAX_ENROLLED_GATEWAYS) {
+    throw new ProjectionOrderError(
+      `${found.length} gateways project as enrolled; at most ${MAX_ENROLLED_GATEWAYS} may be`,
+    );
+  }
+  return found.sort((a, b) => (a.enrollmentSlot ?? 0) - (b.enrollmentSlot ?? 0));
 }

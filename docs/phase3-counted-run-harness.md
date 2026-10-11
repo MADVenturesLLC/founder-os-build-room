@@ -59,7 +59,10 @@ SHA, the sole enrolled gateway, the exact control-plane origin, the complete
 expected enrollment projection (terminal history may be present), fixture
 repository/path/SHA, environment, machine label, and heartbeat freshness window.
 `Phase3-CR3` additionally requires a separate revocation and re-enrollment
-authorization identifier.
+authorization identifier. The registry admits up to two enrolled gateways
+(`FOUNDER-ACT-20261010-TWO-GATEWAYS`, migration `0009`), but a counted run still
+requires exactly one (that act's B4): a plan or a live projection with two
+enrolled gateways is refused as `enrollment_projection_failed`.
 
 FounderOS, Build Room, and the fixture are each verified as the exact repository
 root with the expected credential-free GitHub origin, clean worktree, commit,

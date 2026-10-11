@@ -245,6 +245,7 @@ before(async () => {
       '0006_command_journal_authority_split',
       '0007_gate_runs',
       '0008_runtime_operational_grants',
+      '0009_two_enrolled_gateways',
     ],
     'the full canonical sequence through 0006 applied in order on the owned instance',
   );

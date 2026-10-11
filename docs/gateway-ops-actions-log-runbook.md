@@ -115,12 +115,26 @@ A mint, a confirm and a revoke, in the ruled order. Values are illustrative.
 | registry event_id=cc12f8e3-...; fingerprint compared out of band against `buildroom enroll` output |
 ```
 
-Note the ordering in the example, which is the ruled one: **revoke the incumbent
-first, confirm the successor second.** The database refuses the reverse — the
-partial unique index on `gateway_current_state` permits one enrolled gateway —
-so a confirmation attempted first returns `409 another_gateway_enrolled`. During
-the gap between the two acts no gateway is enrolled, the derivation yields
-offline, and dispatch stays paused. That is disclosed and required.
+Note the ordering in the example: **revoke the incumbent first, confirm the
+successor second.** Since `FOUNDER-ACT-20261010-TWO-GATEWAYS` (amending
+`DEC-20260818-01` clause 5, migration `0009`), up to two gateways may be
+enrolled at once, each holding one of two enrollment slots; a partial unique
+index on the slot is what refuses a third. So the order depends on how many
+slots are held:
+
+- **Both slots held** (two gateways enrolled): the example's order is the only
+  one. A confirmation attempted first returns `409 enrollment_cap_reached`.
+  During the gap between the two acts the other enrolled gateway, if live,
+  keeps the derivation online.
+- **One slot held**: the successor may be confirmed before the incumbent is
+  revoked (the act's B5 and its clarification). The machine then briefly holds
+  two enrolled gateways; the overlap ends when the incumbent is revoked, and
+  revocation stays a Founder act. Record both acts as rows, as in the example.
+
+`another_gateway_enrolled` was the refusal under the cap of one; rows written
+before migration `0009` still carry it, and the control plane no longer writes
+it. A Phase 3 counted run still requires exactly one enrolled gateway (the
+act's B4), and is refused while two are enrolled.
 
 ---
 

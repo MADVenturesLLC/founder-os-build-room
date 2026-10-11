@@ -32,7 +32,14 @@ export class GatewayRoomAppendFence implements RoomAppendFence {
   ) {}
 
   /**
-   * Is any gateway enrolled, and is its liveness fresh?
+   * Is at least one enrolled gateway live?
+   *
+   * Up to two gateways may be enrolled (DEC-20260818-01 clause 5 as amended
+   * by FOUNDER-ACT-20261010-TWO-GATEWAYS). Its B3: the answer is yes when at
+   * least one enrolled gateway's liveness is fresh, and it must not depend on
+   * row order. Every enrolled row is examined, in slot order, and the answer
+   * is whether any of them is live, so the order cannot change it. Rooms are
+   * not bound to a particular gateway here.
    *
    * Read inside the caller's fenced transaction, under the registry advisory
    * lock, so heartbeat acceptance and revocation cannot interleave with it —
@@ -40,21 +47,24 @@ export class GatewayRoomAppendFence implements RoomAppendFence {
    */
   async deriveGatewayOnline(client: PoolClient): Promise<boolean> {
     const { rows } = await client.query<{ gateway_id: string }>(
-      'SELECT gateway_id FROM gateway_current_state WHERE is_currently_enrolled',
+      // The slot is present exactly when the row is enrolled (a CHECK), and
+      // this predicate is the slot index's own.
+      'SELECT gateway_id FROM gateway_current_state WHERE enrollment_slot IS NOT NULL ORDER BY enrollment_slot',
     );
-    const row = rows[0];
-    if (row === undefined) return false;
+    if (rows.length === 0) return false;
 
-    const liveness = this.deps.session.livenessFor(row.gateway_id);
-    // Absent liveness is offline: no session yet, no accepted beat yet, or a
-    // new leader's empty map. Preserved-but-stale liveness is offline too, even
-    // when no `went_offline` row has been written yet.
-    if (liveness === null) return false;
-
+    // An untrustworthy monotonic source makes every liveness unreadable.
     if (!this.deps.clock.monotonicTrustworthy) return false;
 
-    const elapsed = this.deps.clock.monotonicNow() - liveness.monoMs;
-    return elapsed <= this.deps.config.gatewayStalenessMs;
+    const now = this.deps.clock.monotonicNow();
+    return rows.some((row) => {
+      const liveness = this.deps.session.livenessFor(row.gateway_id);
+      // Absent liveness is offline: no session yet, no accepted beat yet, or a
+      // new leader's empty map. Preserved-but-stale liveness is offline too,
+      // even when no `went_offline` row has been written yet.
+      if (liveness === null) return false;
+      return now - liveness.monoMs <= this.deps.config.gatewayStalenessMs;
+    });
   }
 
   /**

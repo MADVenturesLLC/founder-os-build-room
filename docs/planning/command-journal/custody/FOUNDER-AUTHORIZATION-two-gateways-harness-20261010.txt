@@ -1,0 +1,46 @@
+FOUNDER-ACT-20261010-TWO-GATEWAYS-HARNESS: test harness and grant for the two-Gateways pull request
+
+> **Status:** ISSUED
+> **Repository:** `MADVenturesLLC/founder-os-build-room`
+> **Read with:** `FOUNDER-ACT-20261010-TWO-GATEWAYS` (its B2, B6 and Part D) and its clarification
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows.
+
+## Part A: Basis
+
+A1. **The requirement.** B6 of my two-Gateways act has the builder open the implementation pull request only when the default suite, the runtime-role tier and the storage suites pass, locally and in CI.
+
+A2. **The obstacle** (builder report, Build Room `main` at `3a58b3892359899549f2aea70499471fc7bd6ac4`, 2026-10-10). Fourteen storage suites, every gateway and Phase 3 suite and the schema-preflight suite, use the harness in `test/gateway-storage-helpers.ts`. In its default mode it migrates the one shared CI database only through `0005_phase3_run_evidence`, under my Gate III ruling on shared storage migration selection (CAPABILITY-2) and its fixture-completion supplement §3, because `0006` creates cluster-wide roles that collide when suites run in parallel. The two-slot change has to be a new migration after `0008`, so in that mode its column never exists, and `storage-integration`, a required check, cannot pass. In the runtime-role tier, which migrates the full sequence on instances each test process owns, the change runs; its remaining failures are fixtures that revoke by direct SQL without clearing the slot.
+
+A3. **The grant.** The runtime writes the slot through the projection upsert, which needs column-level UPDATE on the new column, as `0008` grants it on the columns beside it. Part D of my two-Gateways act bars any change to a Neon role.
+
+## Part B: Rulings
+
+B1. **The harness.** In the same pull request, the builder changes the harness's default mode so that the suites using it run against the full canonical migration sequence, on a PostgreSQL instance each test process owns, connecting as that instance's superuser, as the runtime-role tier already does as `br_app_runtime`. For those suites this replaces my Gate III selection through `0005`. The migrator's `through` selection stays for any other use. The runtime-role mode is unchanged.
+
+B2. **What stays the same.** The `storage-integration` job keeps its name, its steps and its place among the required checks, and still runs the storage suites twice. No workflow file, runner, environment, secret or ruleset changes; the job already resolves the PostgreSQL 16 server binaries the owned instances need. The fixtures that revoke by direct SQL also clear the slot. No test is skipped, disabled or deleted.
+
+B3. **The grant.** The new migration may grant `br_app_runtime` UPDATE on the new slot column, and nothing else. I rule that this grant implements B2 of my two-Gateways act and is not a change to a Neon role under its Part D. It takes effect only when the migration is applied, which remains my separate act.
+
+B4. **The branch.** The builder's designated branch carries Build Room PR #108. The builder may open the implementation pull request from the branch `claude/two-gateways-6twx8h`.
+
+## Part C: Filing
+
+C1. The builder preserves this act verbatim, with a custody receipt, in the implementation pull request.
+
+## Part D: Not authorized
+
+- Merging the pull request, applying its migration, or the deployment its merge starts.
+- Enrolling the PC, revoking any Gateway, or minting any pairing code.
+- Any other grant, or any change to a role's attributes, memberships or password.
+- Any change to the CI workflow, the branch ruleset, the required checks, or the DB Admin Migration workflow, its environment or its secret.
+
+## Part E: Signature
+
+Signed:
+
+— Michael Daley
+
+Date: 2026-10-10
+
+Actor-Id: founder

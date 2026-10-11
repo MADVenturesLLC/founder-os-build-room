@@ -53,12 +53,16 @@ export function controlPlaneAttribution(component: string): GatewayAttribution {
 }
 
 /**
- * The closed set of pairing-flow refusal kinds (§5 table 5).
+ * The closed set of pairing-flow refusal kinds the control plane writes
+ * (§5 table 5, as amended by FOUNDER-ACT-20261010-TWO-GATEWAYS).
  *
- * Stated here and compared against the migration's CHECK constraint by
- * `gateway-registry-immutability.storage.test.ts`, for the same reason the
- * lifecycle vocabulary is: the shipped DDL must not be regenerated from a
- * constant, and two hand-written copies must not be allowed to drift.
+ * Stated here and compared against the live CHECK constraint by
+ * `gateway-invariants.storage.test.ts`, for the same reason the lifecycle
+ * vocabulary is: the shipped DDL must not be regenerated from a constant, and
+ * two hand-written copies must not be allowed to drift.
+ *
+ * `enrollment_cap_reached` is the refusal of a confirmation while both
+ * enrollment slots are held.
  */
 export const ENROLLMENT_REFUSAL_KINDS = [
   'unknown_code',
@@ -69,10 +73,18 @@ export const ENROLLMENT_REFUSAL_KINDS = [
   'invalid_request',
   'fingerprint_mismatch',
   'not_awaiting_approval',
-  'another_gateway_enrolled',
+  'enrollment_cap_reached',
 ] as const;
 
 export type EnrollmentRefusalKind = (typeof ENROLLMENT_REFUSAL_KINDS)[number];
+
+/**
+ * Kinds the CHECK constraint still admits but the control plane no longer
+ * writes. `another_gateway_enrolled` was the refusal under the cap of one
+ * (migration 0003); rows carrying it stay valid because the refusal table is
+ * never rewritten (migration 0009).
+ */
+export const RETIRED_ENROLLMENT_REFUSAL_KINDS = ['another_gateway_enrolled'] as const;
 
 /** Re-exported so callers need one import for the registry's vocabularies. */
 export { GATEWAY_EVENT_TYPES };

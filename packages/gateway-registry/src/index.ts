@@ -20,10 +20,14 @@ export {
 } from './vocabulary.js';
 
 export {
+  ENROLLMENT_SLOTS,
+  MAX_ENROLLED_GATEWAYS,
   ProjectionOrderError,
   applyGatewayEvent,
   currentlyEnrolled,
+  lowestFreeSlot,
   projectGatewayRegistry,
+  type EnrollmentSlot,
   type GatewayProjectionRow,
   type GatewayRegistryEvent,
   type HostDescriptor,
