@@ -73,8 +73,9 @@ const SUITE_TOKEN = 'runtime-role-boot-suite-token-' + 'long-enough-32chars';
 const DATABASE = 'rr_boot';
 
 /**
- * What migration 0008 (and 0006's two journal SELECTs) grant `br_app_runtime`,
- * written out independently of the migration so the two must agree.
+ * What migrations 0008 and 0009 (and 0006's two journal SELECTs) grant
+ * `br_app_runtime`, written out independently of the migrations so the two
+ * must agree.
  */
 const EXPECTED_TABLE_PRIVILEGES: Readonly<Record<string, readonly string[]>> = {
   build_room_events: ['INSERT', 'SELECT'],
@@ -102,6 +103,7 @@ const EXPECTED_UPDATE_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   control_plane_lease: ['challenge', 'challenge_published_at', 'generation', 'heartbeat_at', 'owner_id'],
   gateway_current_state: [
     'awaiting_approval_expires_at',
+    'enrollment_slot',
     'host_descriptor',
     'is_currently_enrolled',
     'key_id',

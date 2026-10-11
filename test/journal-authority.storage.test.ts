@@ -61,6 +61,7 @@ const TRANCHE_ORDER = [
   '0006_command_journal_authority_split',
   '0007_gate_runs',
   '0008_runtime_operational_grants',
+  '0009_two_enrolled_gateways',
 ] as const;
 
 const APPEND_SIGNATURE = '(text,text,text,bigint,bytea)';

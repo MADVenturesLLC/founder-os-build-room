@@ -37,7 +37,7 @@ afterEach(async () => {
 beforeEach(async () => {
   if (STORAGE_SKIP !== false) return;
   await harness!.pool.query(
-    `UPDATE gateway_current_state SET state = 'revoked', is_currently_enrolled = false
+    `UPDATE gateway_current_state SET state = 'revoked', is_currently_enrolled = false, enrollment_slot = NULL
       WHERE is_currently_enrolled`,
   );
   await harness!.pool.query(

@@ -1750,6 +1750,97 @@ export const MIGRATIONS: readonly Migration[] = [
       `GRANT USAGE ON SEQUENCE public.phase3_run_events_seq_seq TO br_app_runtime`,
     ],
   },
+  {
+    /*
+     * 0009 — up to two enrolled gateways (FOUNDER-ACT-20261010-TWO-GATEWAYS,
+     * which amends DEC-20260818-01 clause 5 from one enrolled gateway to at
+     * most two).
+     *
+     * The cap stays a database invariant, as B2 of that act requires: each
+     * enrolled gateway holds one of two enrollment slots, and a partial unique
+     * index lets a slot be held by at most one enrolled gateway, so a third
+     * confirmation is refused by the storage engine whatever order the code
+     * runs in. Two CHECKs keep the slot honest: it is 1 or 2, and it is
+     * present exactly when the row is enrolled. `is_currently_enrolled` stays,
+     * still bound to `state` by `gateway_current_state_enrolled_flag_agrees`.
+     *
+     * Every existing row stays valid: 0003's index allowed at most one
+     * enrolled row, and that row takes slot 1 before the CHECKs are added.
+     * Migration 0003 is not edited; its index is dropped here, after the new
+     * one exists, so the table is never without a cap.
+     *
+     * The refusal vocabulary gains `enrollment_cap_reached`, which the
+     * confirm route now returns when both slots are held.
+     * `another_gateway_enrolled` stays allowed by the CHECK because rows
+     * written under the cap of one carry it, and the >=7-year refusal table
+     * is never rewritten; the code no longer writes it.
+     *
+     * The one grant: the runtime writes the slot through the projection
+     * upsert, whose ON CONFLICT ... DO UPDATE needs column-level UPDATE on
+     * the new column, exactly as 0008 grants it on the columns beside it.
+     *
+     * The rollout window. Under FOUNDER-ACT-20261010-TWO-GATEWAYS B7 this
+     * migration is applied while the previous revision is still serving,
+     * and that revision's projection upsert does not know the slot: its
+     * confirm writes an enrolled row with no slot, and its revoke clears
+     * `is_currently_enrolled` but leaves the slot, so both would fail the
+     * slot CHECK and the Founder's revoke would be unavailable until the
+     * new revision boots. The BEFORE trigger closes that window: when a
+     * write leaves the slot out of an enrolled row it fills it — keeping
+     * the slot the row already holds, or taking the lowest free one, the
+     * rule the control plane and the reducer apply — and when a row is
+     * not enrolled it clears the slot. A write that states the slot, as
+     * the new revision's always does, passes through unchanged. Both
+     * revisions write under the registry advisory lock, so the slot read
+     * here cannot race another enrollment; the slot index stays the cap
+     * whatever the trigger does, and a third enrollment with both slots
+     * held is still refused, by the CHECK, because no slot is free.
+     */
+    id: '0009_two_enrolled_gateways',
+    statements: [
+      `ALTER TABLE gateway_current_state ADD COLUMN enrollment_slot smallint`,
+      `UPDATE gateway_current_state SET enrollment_slot = 1 WHERE is_currently_enrolled`,
+      `ALTER TABLE gateway_current_state
+         ADD CONSTRAINT gateway_current_state_enrollment_slot_range
+           CHECK (enrollment_slot IN (1, 2))`,
+      `ALTER TABLE gateway_current_state
+         ADD CONSTRAINT gateway_current_state_enrollment_slot_agrees
+           CHECK ((enrollment_slot IS NOT NULL) = is_currently_enrolled)`,
+      `CREATE UNIQUE INDEX gateway_current_state_one_gateway_per_slot
+         ON gateway_current_state (enrollment_slot) WHERE enrollment_slot IS NOT NULL`,
+      `CREATE FUNCTION gateway_current_state_enrollment_slot_sync()
+         RETURNS trigger AS $$
+       BEGIN
+         IF NOT NEW.is_currently_enrolled THEN
+           NEW.enrollment_slot := NULL;
+         ELSIF NEW.enrollment_slot IS NULL THEN
+           IF TG_OP = 'UPDATE' AND OLD.enrollment_slot IS NOT NULL AND OLD.is_currently_enrolled THEN
+             NEW.enrollment_slot := OLD.enrollment_slot;
+           ELSE
+             SELECT min(slot) INTO NEW.enrollment_slot
+               FROM (VALUES (1::smallint), (2::smallint)) AS slots(slot)
+              WHERE slot NOT IN (SELECT enrollment_slot FROM gateway_current_state
+                                  WHERE enrollment_slot IS NOT NULL
+                                    AND gateway_id <> NEW.gateway_id);
+           END IF;
+         END IF;
+         RETURN NEW;
+       END;
+       $$ LANGUAGE plpgsql`,
+      `CREATE TRIGGER gateway_current_state_enrollment_slot_sync
+         BEFORE INSERT OR UPDATE ON gateway_current_state
+         FOR EACH ROW EXECUTE FUNCTION gateway_current_state_enrollment_slot_sync()`,
+      `DROP INDEX gateway_current_state_only_one_enrolled`,
+      `ALTER TABLE gateway_enrollment_refusals DROP CONSTRAINT gateway_enrollment_refusals_kind_check`,
+      `ALTER TABLE gateway_enrollment_refusals
+         ADD CONSTRAINT gateway_enrollment_refusals_kind_check
+           CHECK (kind IN ('unknown_code','code_expired','code_consumed','idempotency_key_mismatch',
+                           'malformed_pubkey','invalid_request','fingerprint_mismatch',
+                           'not_awaiting_approval','another_gateway_enrolled',
+                           'enrollment_cap_reached'))`,
+      `GRANT UPDATE (enrollment_slot) ON public.gateway_current_state TO br_app_runtime`,
+    ],
+  },
 ];
 
 /** Advisory-lock key. Arbitrary but fixed — any value works if it never changes. */

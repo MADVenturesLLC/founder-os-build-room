@@ -55,7 +55,7 @@ afterEach(settleAllNodes);
 beforeEach(async () => {
   if (STORAGE_SKIP !== false) return;
   await harness!.pool.query(
-    `UPDATE gateway_current_state SET state = 'revoked', is_currently_enrolled = false
+    `UPDATE gateway_current_state SET state = 'revoked', is_currently_enrolled = false, enrollment_slot = NULL
       WHERE is_currently_enrolled`,
   );
   await harness!.pool.query(
@@ -369,5 +369,45 @@ describe('gateway-online · aged availability history', { skip: STORAGE_SKIP }, 
       ['went_online'],
       'the next accepted heartbeat creates a new went_online',
     );
+  });
+});
+
+describe('gateway-online · two-enrolled-online-when-either-is-live', { skip: STORAGE_SKIP }, () => {
+  /*
+   * FOUNDER-ACT-20261010-TWO-GATEWAYS B3: with two gateways enrolled, the
+   * overlay is online when at least one of them is live and offline when
+   * neither is, whichever slot the live one holds.
+   */
+  it('is online when either gateway is live and offline when neither is', async () => {
+    const { node, gateway: first } = await servingNode();
+    const second = await enrollGateway(node);
+    assert.notEqual(first.gatewayId, second.gatewayId);
+
+    const neither = await scopedRoom(node);
+    assert.equal((await tryDispatch(node, neither)).accepted, false, 'neither has beaten: offline');
+
+    // Only the gateway in slot 2 is live; the one in slot 1 has no liveness.
+    const secondEpoch = await openSession(node, second);
+    assert.equal((await node.service.heartbeat(signedBeat(node, second, secondEpoch, 1), TEST_IP)).status, 200);
+    const secondOnly = await scopedRoom(node);
+    assert.equal((await tryDispatch(node, secondOnly)).accepted, true, 'slot 2 live: online');
+
+    // Both stale.
+    await advanceWithRenewals(node, node.config.gatewayStalenessMs + 5_000);
+    const bothStale = await scopedRoom(node);
+    const stale = await tryDispatch(node, bothStale);
+    assert.equal(stale.accepted, false, 'both stale: offline');
+    assert.match(String(stale.reason), /gateway offline/);
+
+    // Only the gateway in slot 1 is live; the one in slot 2 is stale.
+    const firstEpoch = await openSession(node, first);
+    assert.equal((await node.service.heartbeat(signedBeat(node, first, firstEpoch, 1), TEST_IP)).status, 200);
+    const firstOnly = await scopedRoom(node);
+    assert.equal((await tryDispatch(node, firstOnly)).accepted, true, 'slot 1 live: online');
+
+    // Revoking the live one leaves only the stale one: offline.
+    assert.equal((await node.store.revokeGateway(first.gatewayId, null)).ok, true);
+    const afterRevoke = await scopedRoom(node);
+    assert.equal((await tryDispatch(node, afterRevoke)).accepted, false, 'the remaining gateway is stale: offline');
   });
 });

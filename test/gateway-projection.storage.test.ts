@@ -138,18 +138,19 @@ describe('gateway-projection · projection:replay-equals-table', { skip: STORAGE
     await assertReplayEqualsTable();
   });
 
-  it('never projects two gateways as enrolled at once', async () => {
+  it('never projects more than two gateways as enrolled, each in its own slot', async () => {
     const { currentlyEnrolled } = await import('../packages/gateway-registry/src/index.js');
-    assert.doesNotThrow(() => currentlyEnrolled(new Map()));
+    assert.deepEqual(currentlyEnrolled(new Map()), []);
 
     const replayed = await store!.replayProjection();
     const enrolled = currentlyEnrolled(replayed);
-    assert.ok(enrolled === null || enrolled.isCurrentlyEnrolled);
+    assert.ok(enrolled.length <= 2);
+    assert.ok(enrolled.every((row) => row.isCurrentlyEnrolled && row.enrollmentSlot !== null));
 
     const { rows } = await harness!.pool.query<{ count: string }>(
       'SELECT count(*) FROM gateway_current_state WHERE is_currently_enrolled',
     );
-    assert.ok(Number(rows[0]?.count ?? '0') <= 1, 'the database permits at most one');
+    assert.ok(Number(rows[0]?.count ?? '0') <= 2, 'the database permits at most two');
     void randomUUID;
   });
 });
