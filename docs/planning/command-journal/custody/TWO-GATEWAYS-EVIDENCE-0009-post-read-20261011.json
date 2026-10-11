@@ -1,0 +1,37 @@
+[{
+  "fact": "clock",
+  "value": "2026-10-11 21:07:16.472312+00"
+}, {
+  "fact": "migrations",
+  "value": "0001_ledger_core,0002_pending_rows_carry_no_transition_fields,0003_gateway_registry,0004_validate_pending_is_bare,0005_phase3_run_evidence,0006_command_journal_authority_split,0007_gate_runs,0008_runtime_operational_grants,0009_two_enrolled_gateways"
+}, {
+  "fact": "0009_applied_at",
+  "value": "2026-10-11 21:05:26.710498+00"
+}, {
+  "fact": "gateways",
+  "value": "3 rows, 1 enrolled: 2222132d=1,4369975d=-,48476acc=-"
+}, {
+  "fact": "indexes",
+  "value": "gateway_current_state_one_gateway_per_slot,gateway_current_state_pkey"
+}, {
+  "fact": "checks",
+  "value": "gateway_current_state_enrolled_flag_agrees,gateway_current_state_enrollment_slot_agrees,gateway_current_state_enrollment_slot_range,gateway_current_state_state_check"
+}, {
+  "fact": "triggers",
+  "value": "gateway_current_state_enrollment_slot_sync"
+}, {
+  "fact": "refusal_check_has_cap",
+  "value": "true"
+}, {
+  "fact": "refusal_kinds",
+  "value": "another_gateway_enrolled=1"
+}, {
+  "fact": "owners",
+  "value": "gateway_current_state=neondb_owner,gateway_current_state_one_gateway_per_slot=neondb_owner,gateway_enrollment_refusals=neondb_owner"
+}, {
+  "fact": "function_owner",
+  "value": "neondb_owner"
+}, {
+  "fact": "runtime_privs",
+  "value": "INSERT,SELECT,UPDATE(awaiting_approval_expires_at),UPDATE(enrollment_slot),UPDATE(host_descriptor),UPDATE(is_currently_enrolled),UPDATE(key_id),UPDATE(last_event_seq),UPDATE(pubkey),UPDATE(state),UPDATE(state_since)"
+}]

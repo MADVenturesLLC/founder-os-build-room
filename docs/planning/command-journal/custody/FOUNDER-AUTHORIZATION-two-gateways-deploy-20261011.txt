@@ -1,0 +1,45 @@
+FOUNDER-ACT-20261011-BR-348FAEC-DEPLOY: the deployment that boots on 0009
+
+I, Michael Daley, Founder of MAD Ventures, issue the following authorization under FOUNDER-ACT-20261010-TWO-GATEWAYS B7. It takes effect when I post it as a comment on MADVenturesLLC/founder-os-build-room#109.
+
+AUTHORIZED ACT
+One redeploy, by the builder through the Railway API, of the build of deployment 7def1a14-867f-4d1d-9b8b-d6d4fcdf8c2c (commit 348faec182857f19dc80207d17c89d8483385a62, main) to service rare-enjoyment (5a3fd421) in environment production (18c585fb) of project eda9fa46. A redeploy reuses that deployment's existing build; nothing is rebuilt.
+
+WHY
+0009_two_enrolled_gateways is applied to production by my act FOUNDER-ACT-20261011-BR-0009-APPLY (comment 6112637352), run 38167186970, approved by daley40-lab: the runner's stage-5 evidence records applied_migration_ids exactly 0009_two_enrolled_gateways, from 21:05:26.198Z to 21:05:27.274Z, and my read at 21:07:16Z by the database clock shows schema_migrations 0001 to 0009, 2222132d enrolled in slot 1, and the grants and objects the act required. Deployment 7def1a14 failed at 15:55:09Z only because 0009 was absent; its build of 348faec1 exists. Deployment f1e0c145, SUCCESS at 2ae30adf, is serving the code from before PR #109.
+
+What changes when 348faec1 serves, from PR #109 as reviewed and ratified: the Gateway registry allows two enrolled Gateways, a confirmation takes the lowest free slot under the registry lock, and a third is refused enrollment_cap_reached; the room is online when any enrolled Gateway is live; a Phase 3 counted run still needs exactly one enrolled Gateway. The code changed in six files: three under packages/control-plane/src/gateway, packages/control-plane/src/migrations.ts, and two under packages/gateway-registry/src. Nothing enrolls by itself: production stays at one enrolled Gateway until a separate act of mine.
+
+What the builder read, read-only:
+  - the boot preflight is byte-identical in 2ae30adf and 348faec1; it requires every migration id and audits the runtime role's attributes and memberships, not its table grants
+  - 348faec1's tree is c636ee1c, the tree of the reviewed head 38dc3503; its storage suites and runtime-role tier passed on that tree in PR #109
+  - Railway at 21:56Z: 7def1a14 FAILED, f1e0c145 SUCCESS, nothing staged; /health 200
+  - f1e0c145's boot at 00:41:44Z logged boot.start (commit 2ae30adf), boot.preflight (role br_app_runtime, migrationsPresent 8, privilegeAudit enforced, no forbidden attribute or membership), boot.listening on 8080, and gateway.leadership.serving generation 75 at 00:42:24Z
+
+CONDITIONS AT REDEPLOY
+The builder redeploys only if each of these holds when it checks, immediately before. If any fails, it does not redeploy, and it reports what it found.
+  - main's tip is 348faec182857f19dc80207d17c89d8483385a62
+  - Railway shows 7def1a14 FAILED, f1e0c145 SUCCESS as the serving deployment, no deployment building, deploying or queued, and nothing staged
+  - /health answers 200
+  - no DB Admin Migration run is queued, waiting or in progress
+
+WHAT I EXPECT
+The new deployment's boot logs boot.start with commit 348faec182857f19dc80207d17c89d8483385a62, then boot.preflight with role br_app_runtime, migrationsPresent 9, privilegeAudit enforced and no forbidden attribute or membership, then boot.listening; Railway marks it SUCCESS and retires f1e0c145. If the enrolled Gateway is connected, gateway.leadership.serving follows with a higher generation. If the new deployment never becomes healthy, Railway keeps f1e0c145 serving, as it did at 15:55Z, and the builder reports that without acting.
+
+ROLLBACK I AUTHORIZE
+Only if the new deployment becomes SUCCESS and /health then answers other than 200 on five consecutive polls fifteen seconds apart, the builder may redeploy the build of f1e0c145-5bd0-4f79-b4b4-12a997f88e3e once, and reports why. f1e0c145's code boots with 0009 present: its preflight refuses only a missing migration id, and PR #109's commit 5e855c8 tested that code's registry writes after 0009. Nothing else is a reason to roll back under this act.
+
+WHAT THIS DOES NOT DO
+- It does not authorize the enrollment, revocation or pairing-code mint of any Gateway; any change to a variable, secret, domain, volume, replica count or service setting; my act setting DATABASE_URL to sslmode=verify-full, which is not issued; any migration or SQL against production other than read-only reads I run myself; or any deploy, redeploy or rollback other than the two named above. Each needs my separate act.
+- It authorizes one redeploy. If Railway refuses the request outright, nothing has changed and the builder may retry once while the conditions hold. Once a deployment has been created, this authorization is spent, whatever the outcome, apart from the one rollback above.
+- Any commit to main before the redeploy voids it.
+
+EVIDENCE
+After the redeploy the builder reports: the new deployment's id and status; its boot log lines named above, verbatim; /health polled every fifteen seconds from the request until two minutes after the new deployment is SUCCESS or FAILED; the Railway state of f1e0c145 and 7def1a14 afterwards; and whether gateway.leadership.serving appeared, with its generation. It reports any difference from WHAT I EXPECT as a finding and does not correct it, apart from the rollback above.
+
+BINDING: One build: deployment 7def1a14's, commit 348faec182857f19dc80207d17c89d8483385a62. One service: rare-enjoyment in production.
+CUSTODY: The builder preserves this act, verbatim, with a receipt covering the redeploy and the reads, in the Build Room custody record for PR #109. That record pull request needs my separate authorization.
+
+Signed: Michael Daley
+Date: 2026-10-11 (UTC)
+Actor-Id: founder

@@ -1,0 +1,20 @@
+FOUNDER-ACT-20261011-BR109-MERGE-RATIFICATION: my merge of Build Room PR #109
+
+I, Michael Daley, Founder of MAD Ventures, record and rule as follows.
+
+A1. The merge. At 2026-10-11T15:53:00Z I merged MADVenturesLLC/founder-os-build-room#109 at head 38dc3503b381945d015854d0aacf6c2a620e5fa1, as merge commit 348faec182857f19dc80207d17c89d8483385a62, parents 2ae30adf and 38dc3503, tree c636ee1c8b4a118cbe179c5a564280eea2279208.
+
+A2. What I relied on. I merged on my comment 6104804586 on this pull request, which I edited at 15:50:58Z from a comment I had misposted. Its body still describes FounderOS PR #371, its Tree field gives a commit SHA, and it accepts neither this pull request's base nor the deployment the merge would start. The check that passed on it reads form only. It was not a valid authorization under DEC-20260718-04 and DEC-20260801-02. The authorization the builder drafted for this head was not posted. Comment 6104804586 stays as it is, unedited, as part of the record.
+
+B1. Ratification. I ratify that merge, on the terms the builder's drafted authorization for head 38dc3503 stated:
+  1. The base. My act's B6 named main at 06c608e4 or a main adding only PR #107. The base was main at 2ae30adffe7470fc06651f96ebeee820db9c3e3e, which also adds PR #108. I accept that base.
+  2. The review bar. Copilot's findings r4239645219 and r4239662771 were fixed in 7131518 and 5e855c8 and their threads resolved; I accept Copilot's review of 5e855c8 for 38dc3503, which differs from it only by PR #108's documents; the advisory-reviewers and Claude Code Review (advisory) workflows did not run, and I rule them out of the review bar for this pull request.
+  3. The deployment. The merge started deployment 7def1a14 of rare-enjoyment at 348faec1. It is FAILED since 15:55:09Z: its boot preflight refused to start because migration 0009_two_enrolled_gateways is absent from schema_migrations. Deployment f1e0c145, SUCCESS at 2ae30adf, kept serving; /health answered 200 on 12 polls from 15:53:44Z to 15:56:34Z and again at 18:07:12Z, when the Railway API still showed 7def1a14 FAILED and f1e0c145 SUCCESS (builder reads, read-only). I accept that outcome.
+
+B2. Not authorized. This act authorizes nothing beyond ratifying that merge. It does not authorize applying 0009 or any run of DB Admin Migration; the deployment that boots after 0009 is applied; any other deploy, redeploy or rollback, including removing 7def1a14; the enrollment, revocation or pairing-code mint of any Gateway; my act setting DATABASE_URL to sslmode=verify-full, which is not issued; any change to a variable, secret or Neon role; or any change to the workflows, the runner, the environment or the repository ruleset. Each needs my separate act.
+
+C1. Filing. The builder files this act verbatim, with comment 6104804586 as it stands, in the Build Room custody record for this merge. That record pull request needs my separate authorization.
+
+Signed: Michael Daley
+Date: 2026-10-11 (UTC)
+Actor-Id: founder

@@ -1,0 +1,30 @@
+Authorized: merge MADVenturesLLC/founder-os-build-room#109 at head 38dc3503b381945d015854d0aacf6c2a620e5fa1
+
+This head is the builder's one commit on main at dc8b01c2; no merge
+commit. The diff against main is the one reviewed: 2 files under
+09-handoffs/, 29 insertions and 8 deletions, records only. It brings
+HO-20260831-01 and its Open-handoffs row to the Phase 4 base I set
+on 2026-10-10, e051bf71, quoting the superseded wording in place.
+It changes no decision, constitution, agent, workflow or script
+file, and nothing in any other repository.
+
+Review bar, DEC-20260801-02 clause 2: Copilot's review of this head
+recommends approval with no open finding and no thread; the Cursor
+security agent completed on this head with no finding. 09-handoffs/
+is not a Tier-2 trigger path, and tier2-shape is green without a
+marker.
+
+Checks on this head, read from the Checks API at 2026-10-11T02:32Z:
+path-audit and tier2-shape green. The attribution-shape run that
+started after the PR body was last set (02:32:27Z) is green; the
+earlier run, on the placeholder body, is disregarded.
+
+This authorizes this merge only. Tree:
+38dc3503b381945d015854d0aacf6c2a620e5fa1.  It does not authorize
+filing my PR #370 Tier-2 exception act or the Gemini verdict, my
+surface-attestation act, which is not issued, or any change to
+another handoff, decision or gate. Any push to this branch voids
+it.
+
+Signed: Michael Daley
+Date: 2026-10-11 (UTC)

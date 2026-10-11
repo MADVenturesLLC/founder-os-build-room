@@ -1,0 +1,76 @@
+FOUNDER-ACT-20261011-BR-0009-APPLY: governed execution of 0009_two_enrolled_gateways
+
+I, Michael Daley, Founder of MAD Ventures, issue the following authorization under FOUNDER-ACT-20261010-TWO-GATEWAYS B7. It takes effect when I post it as a comment on MADVenturesLLC/founder-os-build-room#109.
+
+AUTHORIZED ACT
+One dispatch of "DB Admin Migration" (.github/workflows/db-admin-migration.yml) in MADVenturesLLC/founder-os-build-room, on main, with exactly:
+  founder_authorized_sha  348faec182857f19dc80207d17c89d8483385a62
+  tranche_id              0009_two_enrolled_gateways
+
+WHY
+PR #109 merged to main as 348faec1 at 2026-10-11T15:53:00Z, ratified by my act FOUNDER-ACT-20261011-BR109-MERGE-RATIFICATION (comment 6112080746). It adds migration 0009_two_enrolled_gateways. Deployment 7def1a14 of rare-enjoyment at 348faec1 is FAILED: its boot preflight refused to start because 0009 is absent from schema_migrations. Deployment f1e0c145, SUCCESS at 2ae30adf, is serving.
+
+What 0009 does, in one transaction that rolls back whole on any error: adds enrollment_slot to gateway_current_state and puts the one enrolled row in slot 1; adds two CHECK constraints and a one-Gateway-per-slot unique index; adds a BEFORE INSERT OR UPDATE trigger that fills or clears the slot; drops 0003's one-enrolled index; replaces the refusal-kind CHECK with the same list plus enrollment_cap_reached; and grants br_app_runtime UPDATE on enrollment_slot and nothing else.
+
+Production, read by me in the Neon SQL editor inside a READ ONLY transaction at 18:40:16Z by the database clock, as neondb_owner on PostgreSQL 18.6:
+  - schema_migrations holds exactly 0001 to 0008
+  - gateway_current_state has 3 rows: 2222132d enrolled, 4369975d and 48476acc not enrolled
+  - gateway_current_state, gateway_enrollment_refusals and the index gateway_current_state_only_one_enrolled are owned by neondb_owner
+  - the refusal-kind CHECK lists the nine kinds through another_gateway_enrolled; gateway_enrollment_refusals holds one row, of kind another_gateway_enrolled, which the new CHECK still allows
+  - enrollment_slot, the slot function and any trigger on gateway_current_state are absent
+  - br_app_runtime holds INSERT and SELECT on gateway_current_state, and column UPDATE on eight columns, not enrollment_slot
+
+The code, read by the builder from git:
+  - the workflow file is byte-identical (blob 5061f1d5) at 348faec1 to what it was at 42ae00c0, which applied 0008, and at a9aefb34, whose run 37923976750 re-selected 0008 as a recorded no-op on 2026-10-09
+  - the runner migrate-cli.ts changed once since then, in PR #107 (929c09a): its connections now go through pg-tls.ts, which verifies TLS whatever the URL says, and an unparseable URL is refused before any connection. That path has not yet run against the administrative secret.
+  - since 42ae00c0, migrations.ts gained only the definition of 0009, with no line removed; package-lock.json changed only by three patch bumps in 844df61, none of them in the runner's imports
+  - the serving revision's boot preflight refuses only a missing migration id, so 0009's presence does not stop f1e0c145 from booting; PR #109's commit 5e855c8 tested the serving revision's own registry writes after 0009
+
+The builder's rehearsal: on a throwaway PostgreSQL 16 at 0008, carrying the same three Gateway rows and one refusal row, the runner applied 0009 with exit 0, applied_migration_ids exactly 0009_two_enrolled_gateways, slot 1 on the enrolled row only. PostgreSQL 16 is not production's 18.6.
+
+TARGET
+The database reached by the environment secret MIGRATE_ADMIN_DATABASE_URL. I intend it to be the production database that rare-enjoyment reads: Neon project founder-os-build-room, branch production, database neondb, role neondb_owner. Its value cannot be read back. Its last proven use is run 37923976750 on 2026-10-09, approved by daley40-lab, which reached production neondb as neondb_owner and recorded 0008 as already applied. I accept that if the secret has changed since and points elsewhere, the runner refuses or applies 0009 to that other database, and this act is spent.
+
+ENVIRONMENT I ATTEST, read by me with gh api on 2026-10-11 at 19:07:00 UTC
+  - environment db-admin-migration exists
+  - required reviewers decivantiq and daley40-lab
+  - prevent_self_review on; administrator bypass off
+  - deployment branches limited to main (custom branch policy); no wait timer
+  - MIGRATE_ADMIN_DATABASE_URL exists at environment scope only (last updated 2026-10-09T11:26:45Z); no repository-level secret of that name exists
+
+CONDITIONS AT DISPATCH
+The builder dispatches only if each of these holds when it checks, immediately before. If any fails, it does not dispatch, and it reports what it found.
+  - main's tip is 348faec182857f19dc80207d17c89d8483385a62
+  - no DB Admin Migration run is queued, waiting or in progress
+  - the session's GitHub identity is decivantiq, not daley40-lab
+  - it is no later than 2026-10-12T06:40Z, twelve hours after my read above; after that this act lapses and needs a fresh read
+
+APPROVAL
+Only a required reviewer other than the dispatching identity may approve. The builder session may dispatch, via the GitHub API under the decivantiq account; I will approve as daley40-lab.
+
+RISK I ACCEPT
+The migration takes an exclusive lock on gateway_current_state for the length of its transaction, with no statement timeout. A long-held lock there would make it wait, and Gateway heartbeats queue behind it while it waits. The builder's rehearsal applied it in about a tenth of a second.
+
+WHAT THIS DOES NOT DO
+- It does not authorize the deployment that boots on 0009, any redeploy of 7def1a14 or 348faec1, any other deploy, redeploy or rollback, the enrollment, revocation or pairing-code mint of any Gateway, my act setting DATABASE_URL to sslmode=verify-full, which is not issued, any change to a variable, secret, Neon role or password, or any change to the workflow, runner or environment. Each needs my separate act.
+- It authorizes no run of the runner from any machine and no rehearsal against any database other than the builder's throwaway local one. The one authorized execution against production is the workflow run above.
+- It authorizes no SQL against production other than that workflow run and read-only reads I run myself.
+- It authorizes no second dispatch. If a run ends before the migrate job is approved (input refused, startup failure, preflight failure), nothing privileged has happened and one further dispatch at this SHA is authorized while main's tip is unchanged and the time condition holds. Once the migrate job has been approved, this authorization is spent, whatever the outcome.
+- Any commit to main before dispatch voids it.
+
+EVIDENCE
+After the run the builder reports the run URL, the stage-5 evidence verbatim, and the platform-recorded approver, and gives me the read-only query to run in the Neon SQL editor. That read must show:
+  - schema_migrations holding 0001 to 0009, with applied_migration_ids in the evidence exactly 0009_two_enrolled_gateways
+  - 2222132d enrolled in slot 1, the other two rows with no slot
+  - gateway_current_state_one_gateway_per_slot present and gateway_current_state_only_one_enrolled gone; the two slot CHECKs and the trigger present
+  - the refusal-kind CHECK including enrollment_cap_reached, and the one existing refusal row unchanged
+  - br_app_runtime's privileges on gateway_current_state as above plus UPDATE on enrollment_slot, and nothing else
+  - ownership unchanged, the new index and function owned by neondb_owner
+The builder also reads rare-enjoyment's deployments and /health, read-only, and reports that f1e0c145 still serves. It reports any difference as a finding and does not correct it.
+
+BINDING: One commit: 348faec182857f19dc80207d17c89d8483385a62 (main). One migration: 0009_two_enrolled_gateways.
+CUSTODY: After this run completes, the builder preserves this act, verbatim, with a custody receipt covering the run and the reads, in the Build Room custody record for PR #109. That record pull request needs my separate authorization. No custody commit lands on main before this dispatch.
+
+Signed: Michael Daley
+Date: 2026-10-11 (UTC)
+Actor-Id: founder

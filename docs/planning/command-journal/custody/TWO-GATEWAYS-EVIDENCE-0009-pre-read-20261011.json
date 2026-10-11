@@ -1,0 +1,37 @@
+[{
+  "fact": "clock",
+  "value": "2026-10-11 18:40:16.356847+00"
+}, {
+  "fact": "role",
+  "value": "neondb_owner"
+}, {
+  "fact": "server",
+  "value": "18.6 (4e955f5)"
+}, {
+  "fact": "migrations",
+  "value": "0001_ledger_core,0002_pending_rows_carry_no_transition_fields,0003_gateway_registry,0004_validate_pending_is_bare,0005_phase3_run_evidence,0006_command_journal_authority_split,0007_gate_runs,0008_runtime_operational_grants"
+}, {
+  "fact": "gateways",
+  "value": "3 rows, 1 enrolled: 2222132d*,4369975d,48476acc"
+}, {
+  "fact": "owners",
+  "value": "gateway_current_state=neondb_owner,gateway_current_state_only_one_enrolled=neondb_owner,gateway_enrollment_refusals=neondb_owner"
+}, {
+  "fact": "refusal_check",
+  "value": "CHECK ((kind = ANY (ARRAY['unknown_code'::text, 'code_expired'::text, 'code_consumed'::text, 'idempotency_key_mismatch'::text, 'malformed_pubkey'::text, 'invalid_request'::text, 'fingerprint_mismatch'::text, 'not_awaiting_approval'::text, 'another_gateway_enrolled'::text])))"
+}, {
+  "fact": "refusal_kinds",
+  "value": "another_gateway_enrolled=1"
+}, {
+  "fact": "slot_column",
+  "value": "0"
+}, {
+  "fact": "slot_function",
+  "value": "0"
+}, {
+  "fact": "triggers",
+  "value": "none"
+}, {
+  "fact": "runtime_privs",
+  "value": "INSERT,SELECT,UPDATE(awaiting_approval_expires_at),UPDATE(host_descriptor),UPDATE(is_currently_enrolled),UPDATE(key_id),UPDATE(last_event_seq),UPDATE(pubkey),UPDATE(state),UPDATE(state_since)"
+}]
