@@ -286,11 +286,23 @@ describe('gateway-invariants · the slot constraints are the database\'s', { ski
     await assertConsistentAndClear();
   });
 
-  it('admits only slots 1 and 2, a slot only on an enrolled row, and an enrolled row only with a slot', async () => {
+  it('admits only slots 1 and 2, and refuses an enrolled row when no slot is free', async () => {
     await assert.rejects(() => insertRow('enrolled', true, 3), /gateway_current_state_enrollment_slot_range/);
+    await enroll();
+    await enroll();
+    // Both slots held: the trigger finds none free, so the slot CHECK refuses the row.
     await assert.rejects(() => insertRow('enrolled', true, null), /gateway_current_state_enrollment_slot_agrees/);
-    await assert.rejects(() => insertRow('revoked', false, 1), /gateway_current_state_enrollment_slot_agrees/);
-    assert.equal(await enrolledCount(), 0);
+    assert.equal(await enrolledCount(), 2);
+    const { rows } = await harness!.pool.query<{ conname: string }>(
+      `SELECT conname FROM pg_constraint
+        WHERE conrelid = 'gateway_current_state'::regclass AND conname LIKE 'gateway_current_state_enrollment_slot_%'
+        ORDER BY conname`,
+    );
+    assert.deepEqual(
+      rows.map((row) => row.conname),
+      ['gateway_current_state_enrollment_slot_agrees', 'gateway_current_state_enrollment_slot_range'],
+    );
+    await assertConsistentAndClear();
   });
 
   it('admits exactly the refusal vocabulary the code writes, plus the retired kind', async () => {
@@ -301,6 +313,99 @@ describe('gateway-invariants · the slot constraints are the database\'s', { ski
     assert.equal(rows.length, 1);
     const admitted = [...rows[0]!.def.matchAll(/'([a-z_]+)'::text/g)].map((match) => match[1]).sort();
     assert.deepEqual(admitted, [...ENROLLMENT_REFUSAL_KINDS, ...RETIRED_ENROLLMENT_REFUSAL_KINDS].sort());
+  });
+});
+
+/**
+ * The projection upsert of the revision serving while 0009 is applied (Build
+ * Room `main` at 3a58b38, `gateway/store.ts`), verbatim. It does not know the
+ * slot column; migration 0009's trigger must keep its confirm and revoke
+ * working rather than failing them on the slot CHECK.
+ */
+const SERVING_REVISION_UPSERT = `INSERT INTO gateway_current_state
+       (gateway_id, state, key_id, pubkey, host_descriptor, state_since,
+        last_event_seq, awaiting_approval_expires_at, is_currently_enrolled)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (gateway_id) DO UPDATE SET
+       state = EXCLUDED.state,
+       key_id = COALESCE(EXCLUDED.key_id, gateway_current_state.key_id),
+       pubkey = COALESCE(EXCLUDED.pubkey, gateway_current_state.pubkey),
+       host_descriptor = COALESCE(EXCLUDED.host_descriptor, gateway_current_state.host_descriptor),
+       state_since = EXCLUDED.state_since,
+       last_event_seq = EXCLUDED.last_event_seq,
+       awaiting_approval_expires_at = EXCLUDED.awaiting_approval_expires_at,
+       is_currently_enrolled = EXCLUDED.is_currently_enrolled`;
+
+describe('gateway-invariants · the revision serving during the rollout keeps working', { skip: STORAGE_SKIP }, () => {
+  /** Write an event and the projection exactly as the serving revision does, on the application's pool. */
+  async function servingRevisionAct(gatewayId: string, state: 'enrolled' | 'revoked'): Promise<void> {
+    const client = await harness!.appPool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query<{ seq: string; now: Date }>(
+        `INSERT INTO gateway_registry_events (event_id, event_type, gateway_id, actor, attribution, occurred_at, payload)
+         VALUES ($1, $2, $3, $4, $5, now(), $6) RETURNING seq, now() AS now`,
+        [
+          randomUUID(),
+          state,
+          gatewayId,
+          JSON.stringify({ kind: 'founder' }),
+          JSON.stringify({ roleId: 'builder' }),
+          JSON.stringify({ gatewayId }),
+        ],
+      );
+      await client.query(SERVING_REVISION_UPSERT, [
+        gatewayId,
+        state,
+        null,
+        null,
+        null,
+        rows[0]!.now,
+        rows[0]!.seq,
+        null,
+        state === 'enrolled',
+      ]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  it("fills the slot on the serving revision's confirm and clears it on its revoke", async () => {
+    const first = await mintAndRedeem(store!);
+    const second = await mintAndRedeem(store!);
+
+    await servingRevisionAct(first.gatewayId, 'enrolled');
+    await servingRevisionAct(second.gatewayId, 'enrolled');
+    assert.equal(await slotOf(first.gatewayId), 1, 'the lowest free slot, as the control plane takes it');
+    assert.equal(await slotOf(second.gatewayId), 2);
+
+    await servingRevisionAct(first.gatewayId, 'revoked');
+    assert.equal(await stateOf(first.gatewayId), 'revoked', "the serving revision's revoke works");
+    assert.equal(await slotOf(first.gatewayId), null, 'and frees the slot');
+
+    // The new code takes the freed slot alongside the row the old code wrote.
+    const third = await mintAndRedeem(store!);
+    assert.equal((await store!.confirmEnrollment(third.gatewayId, third.keyId, null)).ok, true);
+    assert.equal(await slotOf(third.gatewayId), 1);
+
+    await assertConsistentAndClear();
+  });
+
+  it("still refuses the serving revision a third enrollment, failing closed", async () => {
+    await enroll();
+    await enroll();
+    const third = await mintAndRedeem(store!);
+    await assert.rejects(
+      () => servingRevisionAct(third.gatewayId, 'enrolled'),
+      /gateway_current_state_enrollment_slot_agrees/,
+    );
+    assert.equal(await stateOf(third.gatewayId), 'awaiting_approval', 'nothing was written');
+    assert.equal(await enrolledCount(), 2);
+    await assertConsistentAndClear();
   });
 });
 

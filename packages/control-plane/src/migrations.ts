@@ -1778,6 +1778,23 @@ export const MIGRATIONS: readonly Migration[] = [
      * The one grant: the runtime writes the slot through the projection
      * upsert, whose ON CONFLICT ... DO UPDATE needs column-level UPDATE on
      * the new column, exactly as 0008 grants it on the columns beside it.
+     *
+     * The rollout window. Under FOUNDER-ACT-20261010-TWO-GATEWAYS B7 this
+     * migration is applied while the previous revision is still serving,
+     * and that revision's projection upsert does not know the slot: its
+     * confirm writes an enrolled row with no slot, and its revoke clears
+     * `is_currently_enrolled` but leaves the slot, so both would fail the
+     * slot CHECK and the Founder's revoke would be unavailable until the
+     * new revision boots. The BEFORE trigger closes that window: when a
+     * write leaves the slot out of an enrolled row it fills it — keeping
+     * the slot the row already holds, or taking the lowest free one, the
+     * rule the control plane and the reducer apply — and when a row is
+     * not enrolled it clears the slot. A write that states the slot, as
+     * the new revision's always does, passes through unchanged. Both
+     * revisions write under the registry advisory lock, so the slot read
+     * here cannot race another enrollment; the slot index stays the cap
+     * whatever the trigger does, and a third enrollment with both slots
+     * held is still refused, by the CHECK, because no slot is free.
      */
     id: '0009_two_enrolled_gateways',
     statements: [
@@ -1791,6 +1808,28 @@ export const MIGRATIONS: readonly Migration[] = [
            CHECK ((enrollment_slot IS NOT NULL) = is_currently_enrolled)`,
       `CREATE UNIQUE INDEX gateway_current_state_one_gateway_per_slot
          ON gateway_current_state (enrollment_slot) WHERE enrollment_slot IS NOT NULL`,
+      `CREATE FUNCTION gateway_current_state_enrollment_slot_sync()
+         RETURNS trigger AS $$
+       BEGIN
+         IF NOT NEW.is_currently_enrolled THEN
+           NEW.enrollment_slot := NULL;
+         ELSIF NEW.enrollment_slot IS NULL THEN
+           IF TG_OP = 'UPDATE' AND OLD.enrollment_slot IS NOT NULL AND OLD.is_currently_enrolled THEN
+             NEW.enrollment_slot := OLD.enrollment_slot;
+           ELSE
+             SELECT min(slot) INTO NEW.enrollment_slot
+               FROM (VALUES (1::smallint), (2::smallint)) AS slots(slot)
+              WHERE slot NOT IN (SELECT enrollment_slot FROM gateway_current_state
+                                  WHERE enrollment_slot IS NOT NULL
+                                    AND gateway_id <> NEW.gateway_id);
+           END IF;
+         END IF;
+         RETURN NEW;
+       END;
+       $$ LANGUAGE plpgsql`,
+      `CREATE TRIGGER gateway_current_state_enrollment_slot_sync
+         BEFORE INSERT OR UPDATE ON gateway_current_state
+         FOR EACH ROW EXECUTE FUNCTION gateway_current_state_enrollment_slot_sync()`,
       `DROP INDEX gateway_current_state_only_one_enrolled`,
       `ALTER TABLE gateway_enrollment_refusals DROP CONSTRAINT gateway_enrollment_refusals_kind_check`,
       `ALTER TABLE gateway_enrollment_refusals
