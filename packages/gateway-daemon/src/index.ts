@@ -1,7 +1,8 @@
 /**
- * `@build-room/gateway-daemon` — the macOS-local gateway host.
+ * `@build-room/gateway-daemon` — the local gateway host, on macOS and Linux.
  *
- * Impure by design (contract §2): Keychain custody through `/usr/bin/security`,
+ * Impure by design (contract §2): key custody through the Keychain
+ * (`/usr/bin/security`) on macOS or `systemd-creds` on Linux,
  * two identity lanes, timers, an IPC socket and a ring buffer. It depends on
  * `@build-room/gateway-protocol` for the signed-message protocol and on nothing
  * else — the signing bytes come from the same pure module the control plane
@@ -21,14 +22,28 @@ export {
   CustodyError,
   ITEM_NOT_FOUND_EXIT,
   KEYCHAIN_SERVICE,
+  PROBE_ACCOUNT,
   SecurityCommandRunner,
+  UnavailableCustody,
   sanitizeCustodyError,
   type CommandResult,
   type CustodyAccount,
   type CustodyErrorCode,
   type CustodyInventory,
+  type GatewayCustody,
   type KeychainRunner,
 } from './custody.js';
+
+export {
+  CREDENTIAL_SUFFIX,
+  SYSTEMD_CREDS_BINARY,
+  SYSTEMD_CREDS_KEY_MODE,
+  SystemdCredsCommandRunner,
+  SystemdCredsCustody,
+  type CredsRunner,
+} from './systemd-creds-custody.js';
+
+export { custodyDirectory, defaultGatewayCustody } from './custody-factory.js';
 
 export {
   StagingLockBusy,

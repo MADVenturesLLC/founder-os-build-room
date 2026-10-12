@@ -19,7 +19,6 @@
  */
 
 import {
-  Custody,
   GatewayStateStore,
   isPidLive,
   readStagingLock,
@@ -27,12 +26,13 @@ import {
   stagingLockExists,
   ipcRequest,
   type ControlPlaneClient,
+  type GatewayCustody,
   type GatewayPaths,
 } from '../../gateway-daemon/src/index.js';
 
 export interface DoctorDeps {
   readonly paths: GatewayPaths;
-  readonly custody: Custody;
+  readonly custody: GatewayCustody;
   readonly client: ControlPlaneClient;
   readonly state: GatewayStateStore;
 }

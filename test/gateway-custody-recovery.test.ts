@@ -249,12 +249,43 @@ describe('gateway-custody-recovery · refusal-vs-transport-classification', () =
     assert.equal(sanitizeCustodyError(new Error('boom')).code, 'unknown');
   });
 
-  it('never leaves an inventory call throwing, so doctor can always report', async () => {
+  it('reports an unavailable Keychain as keychain_unavailable, never as absent', async () => {
+    /*
+     * This case once asserted the opposite: that inventory swallowed every
+     * error and read "absent", so doctor could always render. That hid the
+     * failure doctor exists to report (Linux Gateway design note §4.5).
+     * doctor now catches the classified error and prints its code.
+     */
     const f = fixture();
     try {
       f.faulty.failOn = () => ({ code: 1, stdout: '', stderr: 'unavailable' });
-      const inventory = await f.custody.inventory();
-      assert.deepEqual(inventory, { primary: false, staging: false });
+      await assert.rejects(() => f.custody.inventory(), (error: unknown) => {
+        assert.ok(error instanceof CustodyError);
+        assert.equal(error.code, 'keychain_unavailable');
+        return true;
+      });
+      await assert.rejects(() => f.custody.probe(), (error: unknown) => {
+        assert.ok(error instanceof CustodyError);
+        assert.equal(error.code, 'keychain_unavailable');
+        return true;
+      });
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  it('probes without reading a secret: no -w, and a missing item is a working Keychain', async () => {
+    const f = fixture();
+    try {
+      const seen: string[][] = [];
+      f.faulty.failOn = (args) => {
+        seen.push([...args]);
+        return null;
+      };
+      await f.custody.probe();
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0]![0], 'find-generic-password');
+      assert.ok(!seen[0]!.includes('-w'), 'the probe never reads secret data');
     } finally {
       f.cleanup();
     }

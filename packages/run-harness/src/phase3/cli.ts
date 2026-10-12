@@ -8,10 +8,10 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import {
   ControlPlaneClient as GatewayControlPlaneClient,
-  Custody,
   GatewayStateStore,
-  SecurityCommandRunner,
+  defaultGatewayCustody,
   gatewayPaths,
+  type GatewayCustody,
 } from '../../../gateway-daemon/src/index.js';
 import { runDoctor } from '../../../gateway-cli/src/doctor.js';
 import type { HarnessStreams, HmacKeyCustody } from '../../../redaction/src/index.js';
@@ -54,7 +54,7 @@ export interface Phase3Clients {
   readonly paths: ReturnType<typeof gatewayPaths>;
   readonly gatewayClient: GatewayControlPlaneClient;
   readonly runClient: Phase3ControlPlaneClient;
-  readonly custody: Custody;
+  readonly custody: GatewayCustody;
   readonly state: GatewayStateStore;
 }
 
@@ -64,7 +64,7 @@ export function defaultPhase3Clients(config: Phase3CliConfig): Phase3Clients {
     paths,
     gatewayClient: new GatewayControlPlaneClient(config.controlPlaneUrl),
     runClient: new Phase3ControlPlaneClient(config.controlPlaneUrl, config.controlPlaneToken),
-    custody: new Custody(new SecurityCommandRunner()),
+    custody: defaultGatewayCustody(paths),
     state: new GatewayStateStore(paths),
   };
 }
