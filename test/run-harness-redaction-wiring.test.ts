@@ -53,6 +53,7 @@ import {
   RedactionRefusedError,
   UnavailableHmacKeyCustody,
 } from '../packages/redaction/src/index.js';
+import { SystemdCredsHmacKeyCustody } from '../packages/run-harness/src/redaction-key-linux.js';
 
 const TOKEN = ['fixture', 'cp', 'Xy7Qm2Lp9Rt4Vw1Z'].join('-');
 const KEY = Buffer.alloc(32, 7);
@@ -176,13 +177,14 @@ describe('boundary factory (W3)', () => {
     assert.equal(short.state.kind === 'refused' && short.state.code, 'registry_unloadable');
   });
 
-  it('chooses Keychain custody on darwin and no key source anywhere else', async () => {
+  it('chooses Keychain custody on darwin, systemd-creds on linux, and no key source anywhere else', async () => {
     assert.ok(harnessKeyCustody('darwin') instanceof KeychainHmacKeyCustody);
-    const linux = await harnessKeyCustody('linux').load();
-    assert.equal(linux.kind, 'unavailable');
+    assert.ok(harnessKeyCustody('linux') instanceof SystemdCredsHmacKeyCustody);
+    const other = await harnessKeyCustody('win32').load();
+    assert.equal(other.kind, 'unavailable');
     const boundary = await openHarnessRedactionBoundary(
       { CONTROL_PLANE_TOKEN: TOKEN },
-      { platformName: 'linux' },
+      { platformName: 'win32' },
     );
     assert.equal(boundary.state.kind === 'refused' && boundary.state.code, 'key_unavailable');
     assert.equal(REDACTION_REFUSED_EXIT, 3, 'Phase 3 already returns 2 for awaiting_adjudication');
@@ -449,6 +451,7 @@ describe('static boundaries (T4)', () => {
   it('the harness-side factory and the Phase 3 evidence wrapper import nothing from the daemon', async () => {
     for (const file of [
       'packages/run-harness/src/redaction-boundary.ts',
+      'packages/run-harness/src/redaction-key-linux.ts',
       'packages/run-harness/src/phase3/redacted-evidence.ts',
     ]) {
       const source = await read(file);
