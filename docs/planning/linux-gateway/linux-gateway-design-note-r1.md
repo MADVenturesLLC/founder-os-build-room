@@ -483,6 +483,16 @@ In `start()`, straight after the spawn and before the handshake:
   `'worker-exit'` or `'worker-lost'`; the existing exit handler
   (`:520-533`) still does that when the process exits, so each fires
   once. It does not throw.
+- the lasting `'exit'` handler (`onChildExit`, today attached only
+  after the handshake at `:333`) is attached here too, before the
+  handshake, so it is the one place that turns an exit into `lost`. The
+  pre-handshake race (`:303-312`) then waits on that handler instead of
+  on a second `'exit'` listener. **[Likely]** The gap this closes is
+  narrow: a `hello` reply is handled, and `start()` continues, before
+  Node delivers a later `'exit'` event. Attaching once, early, removes
+  the gap rather than relying on that ordering. The suite then confirms
+  how `'worker-exit'` and `'worker-lost'` behave for a worker that dies
+  during `start()`.
 - the handlers stay attached for the supervisor's lifetime, through
   `dispose()`, so a late error after disposal is absorbed, not uncaught.
 
