@@ -265,7 +265,7 @@ there is no test that `doctor` shows a custody error.
   recommendation.
 - Minting the key on the PC stays a Founder custody act, as on a Mac
   (`key-custody.ts:7-14`). The value is typed or piped into
-  `systemd-creds --user encrypt --with-key=<mode> --name=hmac-v1 - <file>`,
+  `systemd-creds --user --with-key=<mode> --name=hmac-v1 encrypt - <file>`,
   never placed in argv, where `<mode>` is the TPM mode of section 4.3
   fixed on the PC (`tpm2` or `host+tpm2`), never left to `auto`.
 - **Ruling R4:** B8's "no private key moves from a Mac to the PC" names
@@ -364,13 +364,19 @@ open. These only add restriction, which B4 allows:
 
 **[Certain]** The act's A3 found unprivileged user namespaces restricted
 by AppArmor on the PC (the Ubuntu default). bubblewrap needs a user
-namespace. So the profile is:
+namespace. The profile has two parts:
 
-- one AppArmor profile attached to `/usr/bin/bwrap` that allows `userns`
-  and nothing more, as B4 requires;
-- an explicit exec transition in that profile, so the program bubblewrap
-  starts runs under a second, named profile that does not allow `userns`.
-  Without a named transition an AppArmor profile is inherited across
+- **The launcher profile**, attached to `/usr/bin/bwrap`. A confining
+  AppArmor profile denies whatever it does not list, so a profile that
+  lists only `userns` cannot run bubblewrap at all: bubblewrap also needs
+  its own binary and libraries, and the mounts, `pivot_root` and
+  capabilities inside its user namespace that build the sandbox. The
+  launcher profile lists exactly those rules and `userns`, and nothing
+  that bubblewrap does not use.
+- **The child profile**, which every program bubblewrap starts runs
+  under, through an explicit exec transition in the launcher profile. It
+  allows no `userns`, no capabilities and no mounts. Without a named
+  transition an AppArmor profile is inherited across
   `exec`, and the task would keep bubblewrap's `userns` permission.
   `--disable-userns` (5.1) is a second, independent bar on nested user
   namespaces. Certification checks from inside the sandbox that creating
@@ -381,10 +387,12 @@ runs on the PC, not something the Gateway installs: ruling S5. If the
 profile is missing, the Gateway refuses to start a sandboxed task. It
 never runs one without the sandbox.
 
-**[Guessing]** Whether Ubuntu 26.04 already ships a usable `bwrap`
-profile is checked on the PC at implementation. The act requires a
-profile that allows only what bubblewrap needs, so one shipped by Ubuntu
-is used only if it meets that.
+This note fixes the structure, not the rule list. The launcher profile's
+rules are written, reviewed and pinned by SHA-256 in the tranche that
+builds the sandbox (5.4), on the PC's AppArmor version. **[Guessing]**
+Ubuntu may ship a `bwrap` profile of this two-part shape that can serve
+as the starting point; that is checked on the PC then. B4's words "and
+nothing else" need a reading, which is ruling S7.
 
 ### 5.3 Restrictions with no Linux equivalent (stop for ruling)
 
@@ -420,6 +428,18 @@ is used only if it meets that.
 - **S5. Root steps on the PC.** Loading the AppArmor profile, and keeping
   it loaded across upgrades, is a Founder host step. Asked: is it a
   separate Founder act, or part of the implementation act?
+- **S7. What B4's "nothing else" allows.** B4 asks for "an AppArmor
+  profile that permits the namespaces bubblewrap needs and nothing
+  else". Read literally, as a confining profile that lists only
+  `userns`, it cannot run (5.2). Two readings can run. (a) A confining
+  launcher profile that lists only what bubblewrap uses, as in 5.2, with
+  the child profile denying `userns`: the profile text grants more than
+  namespaces, and the confinement is stricter. (b) A profile marked
+  unconfined that adds only `userns`, the form Ubuntu uses for programs
+  that need user namespaces: the text adds nothing but namespaces, but
+  **[Likely]** nothing in it stops the task from inheriting `userns`,
+  which leaves `--disable-userns` as the only bar. Asked: which reading
+  B4 means.
 
 ### 5.4 When the sandbox is built (ruling S6)
 
@@ -570,6 +590,7 @@ says so.
 | S4 | The native code for Landlock and seccomp: built in the repository, or a packaged tool? | Built in the repository and reviewed, kept small. |
 | S5 | Loading the AppArmor profile on the PC: its own Founder act, or part of the implementation act? | Its own act, run by the Founder. |
 | S6 | Build the sandbox in B7, or with the first Gateway task path, on both operating systems? | With the first task path (section 5.4). |
+| S7 | Which reading of B4's "nothing else" for the AppArmor profile: a confining launcher profile listing only what bubblewrap uses, or an unconfined profile adding only `userns`? | The confining launcher profile with a child profile (reading (a)). |
 
 ## 9. Paths named here that do not exist at the base
 
