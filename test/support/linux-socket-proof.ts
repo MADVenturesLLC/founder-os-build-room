@@ -13,6 +13,12 @@
  *     (`03`: connected) and flags (no `__SO_ACCEPTCON`: never listened);
  *   - `ss -x -a -n -H -p` gives its peer's inode and the processes holding
  *     the peer, which must be the Gateway alone.
+ *
+ * `ss` lists every Unix socket on the host. On a desktop that is thousands of
+ * lines, each padded to a wide column, well past `spawnSync`'s default 1 MiB
+ * buffer: the PC's certification run hit exactly that, and `ss` was killed
+ * with no exit status. The buffer is therefore large, and a failure to run
+ * `ss` names its cause.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -85,14 +91,26 @@ export interface SsUnixEntry {
   readonly pids: readonly number[];
 }
 
+/** Room for `ss` on a busy desktop host; its output is padded and host-wide. */
+export const SS_MAX_BUFFER = 256 * 1024 * 1024;
+
 /** `ss -x -a -n -H -p`, keyed by local inode. */
-export function ssUnix(): Map<string, SsUnixEntry> {
-  const result = spawnSync('ss', ['-x', '-a', '-n', '-H', '-p'], { encoding: 'utf8' });
-  if (result.status !== 0) {
-    throw new Error(`ss exited ${String(result.status)}: ${result.stderr.trim()}`);
+export function ssUnix(maxBuffer: number = SS_MAX_BUFFER): Map<string, SsUnixEntry> {
+  const result = spawnSync('ss', ['-x', '-a', '-n', '-H', '-p'], { encoding: 'utf8', maxBuffer });
+  if (result.error !== undefined || result.status !== 0) {
+    const cause =
+      result.error !== undefined
+        ? `${(result.error as NodeJS.ErrnoException).code ?? 'error'}: ${result.error.message}`
+        : `exit ${String(result.status)}${result.signal === null ? '' : `, signal ${result.signal}`}`;
+    throw new Error(`ss could not list Unix sockets (${cause})${result.stderr ? `: ${result.stderr.trim()}` : ''}`);
   }
+  return parseSsUnix(result.stdout);
+}
+
+/** Parse `ss -x -a -n -H -p` output, keyed by local inode. */
+export function parseSsUnix(stdout: string): Map<string, SsUnixEntry> {
   const entries = new Map<string, SsUnixEntry>();
-  for (const line of result.stdout.split('\n')) {
+  for (const line of stdout.split('\n')) {
     // Netid State Recv-Q Send-Q Local-Address Local-Inode Peer-Address Peer-Inode [users:(...)]
     const tokens = line.trim().split(/\s+/);
     if (tokens.length < 8) continue;
