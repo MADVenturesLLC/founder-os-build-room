@@ -44,6 +44,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 /** Founder-confirmed proof runtime (host default Node is NOT used). */
 export const PINNED_NODE_VERSION = 'v22.23.2';
 
+/**
+ * The Bun the C2 Worker runs under, as `bun --version` prints it: fixed by
+ * FOUNDER-ACT-20261010-LINUX-HOST-SCOPE B8 and the Linux Gateway design note
+ * §7, and enforced here (FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION
+ * B3.5) so a run under any other Bun does not count.
+ */
+export const PINNED_BUN_VERSION = '1.4.2';
+
 /** The madventures-tui base commit the R4 commission bound the seams to. */
 export const BOUND_TUI_BASE = '3d5c4c97fd5eba739215688eb2f4f2fa4b7071e3';
 
@@ -176,6 +184,10 @@ export function resolvePrereqCRuntime(): PrereqCRuntime {
   }
   if (bunExecutable === null) {
     missing.push('bun executable not found on PATH (the C2 Worker is a Bun process)');
+  } else if (bunVersion !== PINNED_BUN_VERSION) {
+    missing.push(
+      `pinned Bun ${PINNED_BUN_VERSION} is not the bun on PATH (${bunExecutable} reports ${String(bunVersion)})`,
+    );
   }
 
   // --- madventures-tui checkout at or descended from the bound base ------

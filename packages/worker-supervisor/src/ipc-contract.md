@@ -62,6 +62,10 @@ the descriptors internally as part of `spawn()` stdio plumbing.
 - Gateway is the sole writer of fd 3; Worker death or Gateway death closes
   the channel and the Worker exits on EOF (parent-death discipline — an OS
   descriptor property; no heartbeat substitute).
+- Any error on a worker channel (fd 3, 4 or 5), or on the worker process
+  itself, is worker loss: pending requests are rejected `worker_lost`, the
+  supervisor is `lost`, and a worker still running is killed. No such error
+  is ever uncaught.
 
 ---
 

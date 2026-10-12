@@ -155,10 +155,18 @@ describe('H — C2RoomBinding against the REAL subordinate Bun worker', { skip: 
       await supervisor.start();
       const pid = supervisor.workerPid();
       assert.equal(typeof pid, 'number');
-      // Read the child's environment through the OS (macOS/Linux `ps`).
-      const { spawnSync } = await import('node:child_process');
-      const ps = spawnSync('ps', ['-E', '-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
-      const env = ps.stdout;
+      // Read the child's environment through the OS: BSD `ps -E` on macOS;
+      // on Linux procps has no `-E`, and the kernel's own record is
+      // /proc/<pid>/environ, NUL-separated.
+      let env: string;
+      if (process.platform === 'linux') {
+        const { readFileSync } = await import('node:fs');
+        env = readFileSync(`/proc/${String(pid)}/environ`, 'utf8').split('\0').join('\n');
+      } else {
+        const { spawnSync } = await import('node:child_process');
+        const ps = spawnSync('ps', ['-E', '-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
+        env = ps.stdout;
+      }
       assert.equal(env.includes('PHASE1_FAKE_PROVIDER_SECRET'), false, 'no Gateway secret inherited by the worker');
       assert.equal(env.includes('PREREQC_WORKER_DB_PATH'), true, 'the one authorized variable is present');
     } finally {

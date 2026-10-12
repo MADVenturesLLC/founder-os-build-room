@@ -29,7 +29,7 @@
 // (SHA 6a5dd5aeee056deb18c4ea49912565b9fd5d5063402f166dce2e2adbf8ed0f43):
 //
 //   Node child_process.spawn stdio 'pipe' channels are, on the measured
-//   Unix/macOS runtime, unnamed AF_UNIX / SOCK_STREAM socketpair
+//   Unix runtime (macOS and Linux), unnamed AF_UNIX / SOCK_STREAM socketpair
 //   descriptors created internally by Node/libuv. The two endpoints of
 //   each channel are created connected to each other. They are unnamed:
 //   no filesystem path, no bind(), no listen()/accept(), no TCP, not
@@ -264,8 +264,8 @@ export class C2WorkerSupervisor extends EventEmitter {
       [this.launch.workerEntrypoint],
       {
         // fd 0/1/2 not inherited. fd 3 control+request (Gateway sole
-        // writer), fd 4 responses, fd 5 diagnostics. Unix/macOS
-        // implementation: unnamed AF_UNIX SOCK_STREAM socketpair
+        // writer), fd 4 responses, fd 5 diagnostics. Unix (macOS and
+        // Linux) implementation: unnamed AF_UNIX SOCK_STREAM socketpair
         // descriptors created internally by Node/libuv.
         stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
         // Credential boundary: the worker environment carries exactly one
@@ -275,6 +275,46 @@ export class C2WorkerSupervisor extends EventEmitter {
       },
     );
     this.child = child;
+
+    /*
+     * Fail closed on every channel and on the child itself, from the moment
+     * of spawn (Linux Gateway design note §6.2). On Linux a worker killed with
+     * frames unread in fd 3 resets the Gateway's end of the socket pair; an
+     * 'error' with no listener would be an uncaught exception. Any such error
+     * is worker loss. The listeners stay for the child's lifetime, so a late
+     * error after disposal is absorbed, never thrown.
+     */
+    child.on('error', (error) => this.onWorkerChannelError(child, 'child', error));
+    child.stdio.forEach((stream, fd) => {
+      if (stream !== null && stream !== undefined && typeof stream !== 'number') {
+        stream.on('error', (error: Error) => this.onWorkerChannelError(child, `fd ${String(fd)}`, error));
+      }
+    });
+
+    /*
+     * The one exit handler, attached before the handshake so no exit can fall
+     * between them. Before the handshake completes it rejects the handshake;
+     * after, it is the loss path. A stale child's exit, after a restart, is
+     * ignored.
+     */
+    let rejectHandshake: (reason: C2SupervisorError) => void = () => undefined;
+    const lostBeforeHandshake = new Promise<never>((_, reject) => {
+      rejectHandshake = reject;
+    });
+    lostBeforeHandshake.catch(() => undefined);
+    child.on('exit', (code, signal) => {
+      if (this.child !== child) return;
+      if (this.state === 'starting') {
+        rejectHandshake(
+          new C2SupervisorError(
+            'worker_lost',
+            `worker exited before handshake (code=${String(code)} signal=${String(signal)})`,
+          ),
+        );
+        return;
+      }
+      this.onChildExit(code, signal);
+    });
 
     const stdio = child.stdio as ReadonlyArray<Readable | Writable | null | undefined>;
     const control = stdio[3];
@@ -300,17 +340,6 @@ export class C2WorkerSupervisor extends EventEmitter {
     response.on('data', (chunk: Buffer) => this.onResponseChunk(chunk));
     diag.on('data', (chunk: Buffer) => this.diagChunks.push(chunk));
 
-    const lostBeforeHandshake = new Promise<never>((_, reject) => {
-      child.once('exit', (code, signal) => {
-        reject(
-          new C2SupervisorError(
-            'worker_lost',
-            `worker exited before handshake (code=${String(code)} signal=${String(signal)})`,
-          ),
-        );
-      });
-    });
-
     try {
       const hello = await Promise.race([
         this.request('hello', { generation: this.generation }),
@@ -322,6 +351,10 @@ export class C2WorkerSupervisor extends EventEmitter {
           hello.error?.message ?? 'handshake rejected by worker',
         );
       }
+      // A worker that answered and then exited is not active.
+      if (child.exitCode !== null || child.signalCode !== null) {
+        throw new C2SupervisorError('worker_lost', 'worker exited during the handshake');
+      }
     } catch (err) {
       this.state = 'lost';
       control.destroy();
@@ -329,8 +362,6 @@ export class C2WorkerSupervisor extends EventEmitter {
         ? err
         : new C2SupervisorError('handshake_failed', err instanceof Error ? err.message : String(err));
     }
-
-    child.on('exit', (code, signal) => this.onChildExit(code, signal));
 
     OCCUPANCY_REGISTRY.set(this.occupancyKey, this);
     this.state = 'active';
@@ -531,6 +562,20 @@ export class C2WorkerSupervisor extends EventEmitter {
       // authority expansion. Restart is a separate Gateway decision.
       this.emit('worker-lost', { code, signal });
     }
+  }
+
+  /**
+   * Any error on a worker channel, or on the child itself, is worker loss:
+   * pending requests are rejected `worker_lost`, the supervisor is `lost`,
+   * and a worker still running is killed. It never throws. The exit handler
+   * still reports the exit when the process goes, so each event fires once.
+   * A graceful shutdown in flight, or a disposed supervisor, keeps its state.
+   */
+  private onWorkerChannelError(child: ChildProcess, source: string, error: Error): void {
+    if (this.child !== child) return;
+    this.failAllPending('worker_lost', `worker channel error (${source}): ${error.message}`);
+    if (this.state === 'starting' || this.state === 'active') this.state = 'lost';
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
 
   private failAllPending(code: string, message: string): void {
