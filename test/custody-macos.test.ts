@@ -5,11 +5,17 @@
  * the only place the claims about `/usr/bin/security` are checked against
  * `/usr/bin/security` rather than against an emulator.
  *
- * It does NOT run in CI and does not run by accident. Two conditions must both
- * hold: the platform is darwin, and `BUILDROOM_CUSTODY_MACOS=1` is set — which
+ * It does not run by accident. Two conditions must both hold: the platform is
+ * darwin, and `BUILDROOM_CUSTODY_MACOS=1` is set — which
  * `npm run test:custody:macos` does and nothing else does. Touching a
  * developer's login Keychain because they typed `npm test` would be a
  * surprising thing for a test suite to do.
+ *
+ * CI runs it on purpose in one place: the `build-and-test-macos` job, on a
+ * GitHub-hosted macOS runner, whose login Keychain is the throwaway runner's
+ * and is discarded with it (Founder act
+ * FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION B3.6). No other job
+ * sets the variable.
  *
  * The item is synthetic: a fixed service name that belongs to no real gateway,
  * a value that is not a key, and a delete in `after` whatever happens.
