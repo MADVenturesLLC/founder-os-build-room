@@ -293,3 +293,7 @@ npm run build && npm run phase2:runs
   omission in the repository's own gates.
 - `docs/planning/build-room-end-state/build-room-end-state-r1.md` — a
   2026-09-24 end-state design review. Proposal only; authorizes nothing.
+- `docs/planning/linux-gateway/linux-gateway-design-note-r1.md` — the
+  Linux Gateway design note owed under B6 of the Founder's Linux Gateway
+  act of 2026-10-10. Draft; takes effect only by a Founder act ratifying
+  its exact text.
