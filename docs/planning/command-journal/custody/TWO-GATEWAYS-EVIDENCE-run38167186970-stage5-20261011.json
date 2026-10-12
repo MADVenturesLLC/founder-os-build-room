@@ -1,0 +1,33 @@
+{
+  "expected_sha": "348faec182857f19dc80207d17c89d8483385a62",
+  "observed_sha": "348faec182857f19dc80207d17c89d8483385a62",
+  "tranche_id": "0009_two_enrolled_gateways",
+  "applied_migration_ids": [
+    "0009_two_enrolled_gateways"
+  ],
+  "schema_migrations_before": [
+    "0001_ledger_core",
+    "0002_pending_rows_carry_no_transition_fields",
+    "0003_gateway_registry",
+    "0004_validate_pending_is_bare",
+    "0005_phase3_run_evidence",
+    "0006_command_journal_authority_split",
+    "0007_gate_runs",
+    "0008_runtime_operational_grants"
+  ],
+  "schema_migrations_after": [
+    "0001_ledger_core",
+    "0002_pending_rows_carry_no_transition_fields",
+    "0003_gateway_registry",
+    "0004_validate_pending_is_bare",
+    "0005_phase3_run_evidence",
+    "0006_command_journal_authority_split",
+    "0007_gate_runs",
+    "0008_runtime_operational_grants",
+    "0009_two_enrolled_gateways"
+  ],
+  "approver_identity": null,
+  "run_id": "7f1f6442-a58a-4157-a9f5-2ebae328300d",
+  "started_at": "2026-10-11T21:05:26.198Z",
+  "finished_at": "2026-10-11T21:05:27.274Z"
+}
