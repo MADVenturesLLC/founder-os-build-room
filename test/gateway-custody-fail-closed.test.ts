@@ -68,7 +68,12 @@ for (const backend of ['keychain', 'systemd-creds'] as const) {
       try {
         const report = await runDoctor({ paths: f.paths, custody: f.custody, client, state: new GatewayStateStore(f.paths) });
         assert.equal(report.custody.error, 'keychain_unavailable');
-        assert.match(renderDoctor(report), /error: {8}keychain_unavailable/);
+        const rendered = renderDoctor(report);
+        assert.match(rendered, /error: {8}keychain_unavailable/);
+        assert.doesNotMatch(rendered, /: +absent$/m, 'no item is reported absent');
+        assert.match(rendered, /primary item: unknown \(custody unavailable\)/);
+        assert.match(rendered, /staging item: unknown \(custody unavailable\)/);
+        assert.match(rendered, /keychain: +unknown \(custody unavailable\)/);
       } finally {
         f.cleanup();
       }
@@ -80,6 +85,7 @@ for (const backend of ['keychain', 'systemd-creds'] as const) {
         const report = await runDoctor({ paths: f.paths, custody: f.custody, client, state: new GatewayStateStore(f.paths) });
         assert.equal(report.custody.error, null);
         assert.deepEqual({ primary: report.custody.primary, staging: report.custody.staging }, { primary: false, staging: false });
+        assert.match(renderDoctor(report), /primary item: absent/);
       } finally {
         f.cleanup();
       }
