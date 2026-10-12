@@ -148,6 +148,23 @@ and at certification. Proposed:
   fakes. The real backend is exercised at certification on the PC, the
   way the real Keychain is exercised on a Mac today. This is a gap
   against B2's wording, named as ruling R3.
+- **The real Linux custody suite never touches real custody.** It
+  follows the real-Keychain suite (`test/custody-macos.test.ts:7-15`,
+  `:30-45`):
+  - it runs only under its own command, `npm run test:custody:linux`,
+    which sets `BUILDROOM_CUSTODY_LINUX=1`, and skips unless the
+    platform is `linux` and that variable is set;
+  - its custody directory is a fresh temporary directory (mode 0700),
+    never the Gateway directory, and the suite refuses to start if that
+    directory resolves inside the real Gateway directory;
+  - its credential names are synthetic (`selftest-primary`,
+    `selftest-staging`, `selftest-hmac`), never `primary`, `staging` or
+    `hmac-v1`, and its values are not keys;
+  - it removes its directory in `after`, whatever happens.
+  So the Linux backend takes its directory and its name prefix as
+  constructor parameters, as the Keychain class takes its service name
+  (`custody.ts:150-288`). Only the factory of section 4.4 passes the
+  real ones.
 - **Certification (B7):** one reviewed commit passes, on the PC and on a
   Mac: the default suite, every storage suite, the runtime-role tier,
   the Prerequisite C proof in full (15 of 15), the real custody suite of
