@@ -205,7 +205,7 @@ operation. Files live in `<gateway directory>/custody/`, which is mode
 | Every write verified by read-back | After each write, the file is decrypted with `--name=<account>` and compared byte for byte with the secret. A mismatch is `write_unverified`. |
 | Nothing deleted before a read-back succeeds | Promotion keeps today's four steps (`custody.ts:189-227`): read staging twice and compare, write primary, read primary back, and only then delete staging. |
 | Staging creation fails if an item exists | The ciphertext is written to a temporary file in the same directory, then `link(2)`ed to `staging.cred`. `link` fails with `EEXIST` when the name exists, atomically, so no partial staging file can ever exist. The temporary file is then removed. |
-| Primary replaced only by promotion | Promotion writes `primary.cred` by `rename(2)` over the old file. This is the Linux counterpart of `security -U`, which the code calls "the sole permitted `-U` use in the contract" (`custody.ts:19-20`). |
+| Primary replaced only by promotion | Promotion never moves the staging file. Each credential carries its name inside the ciphertext, so the secret read back from staging is encrypted afresh with `--name=primary` into a temporary file, which then replaces `primary.cred` by `rename(2)`. That replacement is the Linux counterpart of `security -U`, which the code calls "the sole permitted `-U` use in the contract" (`custody.ts:19-20`). |
 | Deletion verified | `unlink`, then a check that the file is gone (`ENOENT`). |
 | No secret in a log, diagnostic, environment variable or argv | The secret reaches `systemd-creds` only on standard input and comes back only on standard output. `/usr/bin/systemd-creds` is spawned by absolute path with an argv array and no shell. Error details keep the tool's exit code and standard error, never standard output. |
 
@@ -325,7 +325,7 @@ strictly as `sandbox-exec` would.
 
 | Clause 2 restriction | Linux mechanism | Status |
 |---|---|---|
-| Filesystem write allowlist = worktree ∩ approved scope paths | bubblewrap mounts `/` read-only and binds each allowed path read-write, by its canonical path. Inside, a Landlock ruleset grants write access beneath those paths only. | Equivalent, two layers |
+| Filesystem write allowlist = worktree ∩ approved scope paths | bubblewrap builds the sandbox's filesystem from an empty root: the system directories it needs are bound read-only (5.1, "Reads"), and each allowed path is bound read-write, by its canonical path. Inside, a Landlock ruleset grants write access beneath those paths only. | Equivalent, two layers |
 | Network egress allowlist | bubblewrap `--unshare-net` leaves no network at all. Allowed egress goes through a proxy outside the sandbox, reached by a Unix socket bound in, which allows only listed hosts. | **No direct equivalent: ruling S1** |
 | No shell (`spawn` argv arrays only, no `sh -c`) | Enforced by the Gateway's spawner, as it would be on macOS | **Not a kernel restriction: ruling S3** |
 | Hooks disabled | Git run with `core.hooksPath=/dev/null`; `.git/hooks` mounted read-only | Spawner and mount: ruling S3 |
@@ -335,13 +335,21 @@ strictly as `sandbox-exec` would.
 Beyond clause 2, the Linux profile also restricts what clause 2 leaves
 open. These only add restriction, which B4 allows:
 
-- **Reads:** the home directory is replaced by an empty `tmpfs`, and only
-  the worktree and the toolchains are bound back, read-only. Hidden by
-  this: the Gateway directory, the custody files, `~/.ssh`, and every
-  other credential store.
-- **Sockets:** the `systemd-creds` Varlink socket, the D-Bus session bus
-  and the SSH agent socket are not bound in. A sandboxed process cannot
-  ask for a decryption.
+- **Reads:** the host's `/` is not bound. Only the system directories a
+  toolchain needs (`/usr`, the `/bin`, `/sbin` and `/lib*` links, and
+  named files under `/etc`) are bound read-only, with a new `/proc`, a
+  minimal `/dev`, and an empty `tmpfs` at each of `/tmp`, `/run`,
+  `/var/run` and the home directory. Only the worktree and the toolchains
+  are bound back. Hidden by this: the Gateway directory, the custody
+  files, `~/.ssh`, and every other credential store.
+- **Sockets:** because `/run` is an empty `tmpfs`, the sandbox has no
+  path to `/run/user/<uid>/` (the D-Bus session bus and, usually, the SSH
+  agent), to the `systemd-creds` Varlink socket under `/run/systemd/`, or
+  to any other runtime socket on the host. `--unshare-net` also separates
+  abstract Unix sockets, which belong to the network namespace. The one
+  socket bound in is the egress proxy's (S1). A sandboxed process cannot
+  ask for a decryption. Certification checks this from inside the
+  sandbox: connecting to each of those paths must fail.
 - **Processes:** new PID, IPC and UTS namespaces; `--die-with-parent`;
   `--new-session`, which blocks terminal injection; and
   `--disable-userns` (bubblewrap 0.8.0 and later, so in the PC's 0.11.1),
