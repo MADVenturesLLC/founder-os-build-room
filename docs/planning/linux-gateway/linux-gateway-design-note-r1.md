@@ -109,8 +109,10 @@ selection, not of this note.
   system. **Recommendation:** keep that path on Linux and add no branch.
   It works on Linux. The XDG base-directory layout (`~/.local/state`) is a
   convention, not a facility, and B2 allows a branch only for a facility.
-  The socket path stays within Linux's 108 bytes for any home directory
-  up to 52 bytes (`/home/michaeldaley` is 18). The alternative, an XDG
+  The socket path fits Linux's 108-byte limit, which leaves 107 bytes for
+  the path after its terminating NUL (`ipc.ts:170-178`), for any home
+  directory up to 51 bytes, since the suffix is 56 (`/home/michaeldaley`
+  is 18). The alternative, an XDG
   path on Linux, costs one more branch and one more thing to certify.
   The Founder may choose it by ruling R2.
 - **Starting the daemon.** `packages/gateway-cli/src/offer.ts` spawns the
@@ -263,8 +265,9 @@ there is no test that `doctor` shows a custody error.
   recommendation.
 - Minting the key on the PC stays a Founder custody act, as on a Mac
   (`key-custody.ts:7-14`). The value is typed or piped into
-  `systemd-creds encrypt --user --name=hmac-v1 - <file>`, never placed in
-  argv.
+  `systemd-creds --user encrypt --with-key=<mode> --name=hmac-v1 - <file>`,
+  never placed in argv, where `<mode>` is the TPM mode of section 4.3
+  fixed on the PC (`tpm2` or `host+tpm2`), never left to `auto`.
 - **Ruling R4:** B8's "no private key moves from a Mac to the PC" names
   the Gateway's key. Whether the PC's HMAC key is a new value or the
   Mac's value carried across by the Founder is a separate choice.
@@ -341,7 +344,8 @@ open. These only add restriction, which B4 allows:
   ask for a decryption.
 - **Processes:** new PID, IPC and UTS namespaces; `--die-with-parent`;
   `--new-session`, which blocks terminal injection; and
-  `--disable-userns`, so the sandbox cannot make namespaces of its own.
+  `--disable-userns` (bubblewrap 0.8.0 and later, so in the PC's 0.11.1),
+  so the sandbox cannot make namespaces of its own.
 - **Seccomp:** denies `ptrace`, `mount`, `unshare`, `setns`, `keyctl`,
   `bpf`, `perf_event_open`, kernel module calls and `AF_NETLINK`
   sockets; refuses `clone` with namespace flags.
