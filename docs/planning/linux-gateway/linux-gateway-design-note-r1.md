@@ -368,8 +368,13 @@ namespace. So the profile is:
 
 - one AppArmor profile attached to `/usr/bin/bwrap` that allows `userns`
   and nothing more, as B4 requires;
-- the sandboxed program then runs under a profile that does not allow
-  `userns` again.
+- an explicit exec transition in that profile, so the program bubblewrap
+  starts runs under a second, named profile that does not allow `userns`.
+  Without a named transition an AppArmor profile is inherited across
+  `exec`, and the task would keep bubblewrap's `userns` permission.
+  `--disable-userns` (5.1) is a second, independent bar on nested user
+  namespaces. Certification checks from inside the sandbox that creating
+  a user namespace fails.
 
 Loading an AppArmor profile needs root. That makes it a step the Founder
 runs on the PC, not something the Gateway installs: ruling S5. If the
@@ -527,10 +532,13 @@ exits with an error and prints nothing, so the assertion at
 test reads `/proc/<pid>/environ`, NUL-separated, which is the kernel's
 own record.
 
-The suite's runtime gate is unchanged: Node exactly v22.23.2, Bun on the
-path, and a `madventures-tui` checkout at `3d5c4c97` or a descendant
-(`test/support/require-prereq-c-runtime.ts`). B7 requires all 15 tests to
-pass on the PC and on a Mac.
+The suite's runtime gate (`test/support/require-prereq-c-runtime.ts`)
+requires Node exactly v22.23.2 and a `madventures-tui` checkout at
+`3d5c4c97` or a descendant. **[Certain]** For Bun it requires only that a
+`bun` executable be on the path: it records the version but refuses only
+a missing executable (`:165-179`). Section 7 fixes Bun at 1.4.2, so the
+implementation makes the gate refuse any other Bun version, as it already
+does for Node. B7 requires all 15 tests to pass on the PC and on a Mac.
 
 ## 7. Versions (B9)
 
