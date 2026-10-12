@@ -71,7 +71,9 @@ The registry, custody choice, and refusal line live in one place,
 `packages/run-harness/src/redaction-boundary.ts`: `CONTROL_PLANE_TOKEN` is
 named by a manifest and excluded from the heuristic scan (one registration,
 never two), every value is trimmed to match what the client sends, and the
-key comes from Keychain on darwin only. Every other platform refuses in v1.
+key comes from Keychain on darwin and from a read-only `systemd-creds`
+credential on linux (`packages/run-harness/src/redaction-key-linux.ts`).
+Every other platform refuses.
 A refused boundary makes either harness exit **3** with one line,
 `redaction refused: <code>`, before any request, reservation, or write.
 There is no switch that turns the boundary off.

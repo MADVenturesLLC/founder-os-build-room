@@ -2,7 +2,7 @@
   "name": "@build-room/gateway-daemon",
   "version": "0.0.0",
   "private": true,
-  "description": "Build Room gateway daemon — Keychain custody, two identity lanes, timers, IPC. Impure by design (DEC-20260818-01).",
+  "description": "Build Room gateway daemon — Keychain (macOS) or systemd-creds (Linux) custody, two identity lanes, timers, IPC. Impure by design (DEC-20260818-01).",
   "license": "UNLICENSED",
   "type": "module",
   "main": "src/index.ts",

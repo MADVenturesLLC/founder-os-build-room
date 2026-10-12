@@ -66,6 +66,39 @@ jobs:
       - name: Verify-check (unverified checks count as failing)
         run: npm run gate:verify-check
 
+  # The Gateway runs on macOS and Linux, and each operating-system branch is
+  # exercised on its own operating system in CI (FOUNDER-ACT-20261010-BUILD-
+  # ROOM-LINUX-GATEWAY B2; FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION
+  # B3.6, which accepts the cost of hosted macOS minutes). The Linux branches
+  # run in the jobs above and below; this job runs the macOS ones, including
+  # the real-Keychain suite under its synthetic service name, which never
+  # touches a real Gateway item.
+  build-and-test-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Use Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Locked install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (acceptance-criteria suite)
+        run: npm test
+
+      - name: Test (real Keychain custody, synthetic service)
+        run: npm run test:custody:macos
+
   # The storage suite skips itself when TEST_DATABASE_URL is unset, which is the
   # right default locally and the wrong one in CI: coverage that depends on
   # someone remembering to export a variable is coverage that quietly lapses.
