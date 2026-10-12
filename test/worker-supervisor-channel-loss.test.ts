@@ -12,7 +12,9 @@
  *     fails with no 'error' event; that is worker loss, not a plain
  *     transport_write_failed with the supervisor left active;
  *   - a channel error after `hello` has answered but before the worker's
- *     exit is recorded: the handshake fails closed, never 'active'.
+ *     exit is recorded: the handshake fails closed, never 'active';
+ *   - a channel error during a graceful shutdown: the supervisor is 'lost'
+ *     at once, and the exit is reported as a loss, not as graceful.
  */
 
 import { after, describe, it } from 'node:test';
@@ -139,6 +141,33 @@ describe('worker-supervisor-channel-loss · the handshake fails closed after a l
       await assert.rejects(() => starting, (error) => codeOf(error) === 'worker_lost');
       assert.equal(sup.currentState(), 'lost');
       await exited(child);
+    } finally {
+      sup.dispose();
+    }
+  });
+});
+
+describe('worker-supervisor-channel-loss · a channel error during a graceful shutdown is loss', () => {
+  it('goes lost at once, not shutting-down, and reports the exit as a loss', async () => {
+    const sup = supervisor('normal');
+    try {
+      await sup.start();
+      const child = childOf(sup);
+      const stdio = child.stdio as ReadonlyArray<Readable | Writable | null | undefined>;
+      const exitEvent = new Promise<{ graceful: boolean }>((resolve) => sup.once('worker-exit', resolve));
+      let lostEmitted = false;
+      sup.once('worker-lost', () => {
+        lostEmitted = true;
+      });
+      const stopping = sup.shutdown();
+      assert.equal(sup.currentState(), 'shutting-down');
+      stdio[3]?.emit('error', new Error('injected during shutdown'));
+      assert.equal(sup.currentState(), 'lost', 'a channel error is loss in every state but disposed');
+      await stopping.catch(() => undefined);
+      const exit = await exitEvent;
+      assert.equal(exit.graceful, false);
+      assert.equal(lostEmitted, true);
+      assert.equal(sup.currentState(), 'lost');
     } finally {
       sup.dispose();
     }

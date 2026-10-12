@@ -576,12 +576,13 @@ export class C2WorkerSupervisor extends EventEmitter {
    * pending requests are rejected `worker_lost`, the supervisor is `lost`,
    * and a worker still running is killed. It never throws. The exit handler
    * still reports the exit when the process goes, so each event fires once.
-   * A graceful shutdown in flight, or a disposed supervisor, keeps its state.
+   * Only a disposed supervisor keeps its state (design note §6.2): an error
+   * during a graceful shutdown is loss too, and the exit is reported as such.
    */
   private onWorkerChannelError(child: ChildProcess, source: string, error: Error): void {
     if (this.child !== child) return;
     this.failAllPending('worker_lost', `worker channel error (${source}): ${error.message}`);
-    if (this.state === 'starting' || this.state === 'active') this.state = 'lost';
+    if (this.state !== 'disposed') this.state = 'lost';
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
 
