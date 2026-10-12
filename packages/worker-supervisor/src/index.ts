@@ -351,9 +351,11 @@ export class C2WorkerSupervisor extends EventEmitter {
           hello.error?.message ?? 'handshake rejected by worker',
         );
       }
-      // A worker that answered and then exited is not active.
-      if (child.exitCode !== null || child.signalCode !== null) {
-        throw new C2SupervisorError('worker_lost', 'worker exited during the handshake');
+      // A worker that answered and then exited, or whose channel failed
+      // after it answered (the loss handler has already moved the state off
+      // 'starting'), is not active.
+      if (this.state !== 'starting' || child.exitCode !== null || child.signalCode !== null) {
+        throw new C2SupervisorError('worker_lost', 'worker lost during the handshake');
       }
     } catch (err) {
       this.state = 'lost';
@@ -441,6 +443,7 @@ export class C2WorkerSupervisor extends EventEmitter {
     }
     const id = this.nextId++;
     const frame = encodeFrame({ id, op, params });
+    const child = this.child;
     return new Promise<WorkerResponseFrame>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -448,10 +451,14 @@ export class C2WorkerSupervisor extends EventEmitter {
       }, this.requestTimeoutMs);
       this.pending.set(id, { op, resolve, reject, timer });
       this.control?.write(frame, (err) => {
-        if (err) {
+        if (!err) return;
+        // A failed write is a channel error, so worker loss. A worker that
+        // closed fd 3 and stayed alive fails the write with no 'error' event.
+        if (child !== null) this.onWorkerChannelError(child, 'fd 3 write', err);
+        if (this.pending.get(id) !== undefined) {
           clearTimeout(timer);
           this.pending.delete(id);
-          reject(new C2SupervisorError('transport_write_failed', err.message));
+          reject(new C2SupervisorError('worker_lost', `worker channel error (fd 3 write): ${err.message}`));
         }
       });
     });

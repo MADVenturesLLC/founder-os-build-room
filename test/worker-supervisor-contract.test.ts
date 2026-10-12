@@ -65,10 +65,12 @@ const PACKAGE_SRC = join(REPO_ROOT, 'packages', 'worker-supervisor', 'src');
  * under FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION B3.4, which
  * authorizes updating these two pins: any worker channel or child error is
  * worker loss, the lasting exit handler is attached before the handshake, and
- * ipc-contract.md gains the one sentence saying so.
+ * ipc-contract.md gains the one sentence saying so. A failed write on fd 3
+ * is such an error, and a channel error after `hello` answers fails the
+ * handshake (review of PR #112).
  */
 const PHASE1_PINS: Record<string, string> = {
-  'packages/worker-supervisor/src/index.ts': 'fb191c6251e94cb732a752bdba2be9dcaba274ca661e22f3b97f9b8d34c4c5dc',
+  'packages/worker-supervisor/src/index.ts': '1841693c778147837a1ab24744be8a38530a91797f00b50977c6bbce044b1c70',
   'packages/worker-supervisor/src/ipc-contract.md': '4f5eabdc96d7bce222f730020b19c1d9d02a2315378f23a50b985ebaa6acd480',
 };
 
