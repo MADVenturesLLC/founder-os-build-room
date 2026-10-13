@@ -1,0 +1,48 @@
+Authorized: merge MADVenturesLLC/founder-os-build-room#111 at head 60c1128122a8c3b8957a52b0abcea0e71dbe6758
+
+This head is the builder's seven commits on main at 0d2b97b1; no merge
+commit. The diff against main is the one reviewed: 2 files, 659
+insertions and no deletions, documents only: the Linux Gateway design
+note at docs/planning/linux-gateway/linux-gateway-design-note-r1.md
+and one pointer to it in README.md. I ratified the note's exact text at
+this head by my act FOUNDER-ACT-20261012-BR-LINUX-DESIGN-NOTE-RATIFICATION
+(comment 6117149364). Merging lands that text on main; it authorizes no
+code, test, CI change, key, enrollment or production change.
+
+Review bar, DEC-20260801-02 clause 2: Copilot reviewed six heads. Of
+its twelve findings the builder took eleven and declined one on the
+record (--disable-userns exists in bubblewrap 0.8.0 and later); every
+review thread is answered and resolved, and its review of this head has
+no open finding. CodeQL completed on this head with no finding. The
+Cursor security agent completed on this head with no finding at
+03:08:38Z; a second run on the same head, started at 03:21:49Z by my
+ratification comment, was still running at 03:24:51Z. If it reports a
+merge-blocking finding, this authorization is void. The advisory-reviewers and Claude Code Review
+(advisory) workflows did not run; for this PR I rule them out of the
+review bar, as I did on #91 through #110.
+
+Checks on this head, read from the Checks API at 2026-10-12T03:22Z:
+build-and-test, storage-integration, custody-pin-check, path-audit and
+hygiene green. The attribution-shape run that started after the PR body
+was set (03:19:26Z) is green; the earlier runs, on the placeholder
+body, are disregarded.
+
+This merge starts a deployment of rare-enjoyment from main, as each
+merge does. It changes documents only, so the new revision boots the
+same code as deployment 58c161c4 (0d2b97b1), which is serving; I accept
+that deployment. Nothing is staged in Railway, 58c161c4 is SUCCESS and
+no deployment is building or queued (Railway API, 03:22Z); main is
+still 0d2b97b1 (GitHub, 03:22Z); /health answered 200 at 03:22:16Z.
+
+This authorizes this merge only. Tree:
+adc8110ea51f39ceddba17b4cbb366d17b02dec8. It does not authorize the
+implementation of the Linux Gateway; the enrollment, revocation or
+pairing-code mint of any Gateway; any other deploy, redeploy or
+rollback; any migration or run of DB Admin Migration; my act setting
+DATABASE_URL to sslmode=verify-full, which is not issued; or any change
+to a variable, secret, Neon role, workflow, runner, environment or the
+repository ruleset. Each needs my separate act. Any push to this branch
+voids it.
+
+Signed: Michael Daley
+Date: 2026-10-12 (UTC)

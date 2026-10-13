@@ -1,0 +1,40 @@
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ echo "== host"; hostname; . /etc/os-release; echo "$PRETTY_NAME"; uname -r; uname -m; id -u
+echo "== systemd"; systemctl --version | head -1
+echo "== tpm2"; systemd-analyze has-tpm2 2>&1 || systemd-creds has-tpm2 2>&1; ls -l /dev/tpmrm0
+echo "== varlink socket"; ls -l /run/systemd/io.systemd.Credentials; systemctl is-active systemd-creds.socket
+for k in tpm2 host+tpm2; do
+  echo "== round trip --with-key=$k"
+  printf 'buildroom-preflight-not-a-secret' \
+    | systemd-creds --user --with-key=$k --name=preflight encrypt - - \
+    | systemd-creds --user --name=preflight decrypt - -
+  echo " [exit ${PIPESTATUS[*]}]"
+done
+== host
+michaeldaley-Z890-Pro-RS-WiFi-White
+Ubuntu 26.04.1 LTS
+7.0.0-38-generic
+x86_64
+1000
+== systemd
+systemd 259 (259.5-0ubuntu3.4)
+== tpm2
+yes
++firmware
++driver
++system
++subsystem
++libraries
+  +libtss2-esys.so.0
+  +libtss2-rc.so.0
+  +libtss2-mu.so.0
+crw-rw---- 1 tss tss 252, 65536 Oct  9 13:57 /dev/tpmrm0
+== varlink socket
+srw-rw-rw- 1 root root 0 Oct  9 13:57 /run/systemd/io.systemd.Credentials
+active
+== round trip --with-key=tpm2
+Selected key not available in --uid= scoped mode, refusing.
+Bad credential format.
+ [exit 0 1 1]
+== round trip --with-key=host+tpm2
+buildroom-preflight-not-a-secret
+ [exit 0 0 0]

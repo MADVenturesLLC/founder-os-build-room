@@ -1,0 +1,15 @@
+FOUNDER-RULING-20261012-BR112-MAC-SMOKE: the Mac half of B4 at head 92e253b29dff36a308fd90c6b58391a55cf13da8
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows under B4 of FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION. This ruling takes effect when I post it as a comment on MADVenturesLLC/founder-os-build-room#112.
+
+R1. Facts. On MikeMacBook.local (macOS 27.0.1, Node v22.23.2, Bun 1.4.2, PostgreSQL 16.15), at head 92e253b29dff36a308fd90c6b58391a55cf13da8, the certification run that started 20261012T161512Z passed the default suite (1589/1589), every storage suite (366/366), the runtime-role tier (259/259), the Prerequisite C proof (15/15) and the real Keychain suite (7/7, none skipped). scripts/gateway-smoke.sh failed one check, "tail ... says why". The run that started 20261012T154336Z failed the same check alone.
+
+R2. Cause. The smoke script places its throwaway HOME under the Mac's per-user temporary directory, which made the Gateway socket path 119 bytes, above the 104-byte limit of macOS. The Gateway's socket-path guard then reports the long path instead of "daemon not running", as it is designed to. The same smoke script at main 85c2a1451a933afca3a8c147e34bb336fd554cd9 fails the same check on the same Mac. The failure is not caused by pull request #112.
+
+R3. Ruling. The Mac half of B4 at head 92e253b29dff36a308fd90c6b58391a55cf13da8 is certified by the run of R1 together with scripts/gateway-smoke.sh run again at the same head on the same Mac with its throwaway HOME at /tmp/brsmoke.B8qEaV, which passed every check. Nothing in the repository was changed for that run.
+
+R4. Not ruled. This ruling does not certify the PC half of B4, does not authorize the merge, and does not authorize any change to scripts/gateway-smoke.sh. Moving the smoke script's throwaway HOME to a short path needs its own act.
+
+Signed: Michael Daley
+Date: 2026-10-12 (UTC)
+Actor-Id: founder

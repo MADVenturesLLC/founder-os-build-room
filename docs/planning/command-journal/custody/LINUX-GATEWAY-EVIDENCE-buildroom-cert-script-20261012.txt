@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# Build Room Linux Gateway certification run (Founder act
+# FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION, B4).
+#
+# Usage:  bash buildroom-cert.sh <40-hex head SHA of PR #112>
+#
+# Runs, at exactly that head: the default suite, every storage suite, the
+# runtime-role tier, the Prerequisite C proof (must be 15 of 15 under Node
+# v22.23.2 and Bun 1.4.2), the real custody suite of this OS, and
+# scripts/gateway-smoke.sh. Everything it creates lives under
+# ~/buildroom-cert: a throwaway PostgreSQL 16 cluster (deleted at the end)
+# and the log. It touches no real Gateway, no real key, no production
+# system, and reads no secret. Paste the final SUMMARY block back.
+
+set -uo pipefail
+
+EXPECT="${1:-}"
+if [[ ! "$EXPECT" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "usage: bash buildroom-cert.sh <40-hex head SHA>" >&2
+  exit 2
+fi
+
+WORK="${CERT_WORK:-$HOME/buildroom-cert}"
+BR="$WORK/founder-os-build-room"
+TUI="$WORK/madventures-tui"
+BRANCH="claude/handoff-evolve-pack-lanes-6twx8h"
+OS="$(uname -s)"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+LOGDIR="$WORK/logs/$STAMP"
+mkdir -p "$LOGDIR"
+LOG="$LOGDIR/cert.log"
+exec > >(tee -a "$LOG") 2>&1
+
+die() { echo "CERT STOP: $*"; exit 1; }
+
+case "$OS" in
+  Linux)  CUSTODY_SCRIPT="test:custody:linux"
+          PGBIN_DEFAULT="/usr/lib/postgresql/16/bin" ;;
+  Darwin) CUSTODY_SCRIPT="test:custody:macos"
+          PGBIN_DEFAULT="$(brew --prefix postgresql@16 2>/dev/null)/bin" ;;
+  *)      die "unsupported OS $OS" ;;
+esac
+PGBIN="${PGBIN:-$PGBIN_DEFAULT}"
+NODE_BIN="${NODE_BIN:-$HOME/.nvm/versions/node/v22.23.2/bin}"
+BUN_BIN="${BUN_BIN:-$HOME/.bun/bin}"
+export PATH="$NODE_BIN:$BUN_BIN:$PATH"
+
+echo "== host"
+echo "hostname:   $(hostname)"
+echo "uname:      $(uname -srm)"
+if [[ "$OS" == Darwin ]]; then
+  echo "macOS:      $(sw_vers -productVersion) ($(sw_vers -buildVersion))"
+else
+  echo "distro:     $(. /etc/os-release && echo "$PRETTY_NAME")"
+  echo "systemd:    $(systemctl --version | head -1)"
+fi
+echo "user:       $(id -un) (uid $(id -u))"
+echo "started:    $STAMP"
+
+echo "== preconditions"
+[[ "$(id -u)" != 0 ]] || die "run as your normal user, not root (initdb refuses root)"
+[[ -d "$BR/.git" ]] || die "no checkout at $BR"
+[[ -d "$TUI/.git" ]] || die "no madventures-tui checkout at $TUI"
+for b in initdb pg_ctl postgres; do
+  [[ -x "$PGBIN/$b" ]] || die "$PGBIN/$b missing: install PostgreSQL 16 server"
+done
+PGVER="$("$PGBIN/postgres" --version)"
+[[ "$PGVER" =~ \ 16\. ]] || die "PostgreSQL 16 required, found: $PGVER"
+[[ "$(node --version 2>/dev/null)" == v22.23.2 ]] || die "node v22.23.2 not at $NODE_BIN (found $(node --version 2>/dev/null))"
+[[ "$(bun --version 2>/dev/null)" == 1.4.2 ]] || die "bun 1.4.2 not at $BUN_BIN (found $(bun --version 2>/dev/null))"
+if [[ "$OS" == Linux ]]; then
+  command -v ss >/dev/null || die "ss not found: sudo apt-get install -y iproute2"
+  [[ -x /usr/bin/systemd-creds ]] || die "/usr/bin/systemd-creds not found"
+fi
+
+git -C "$BR" fetch --quiet origin "$BRANCH" || die "git fetch failed"
+git -C "$BR" checkout --quiet --detach "$EXPECT" || die "cannot check out $EXPECT"
+HEAD_NOW="$(git -C "$BR" rev-parse HEAD)"
+[[ "$HEAD_NOW" == "$EXPECT" ]] || die "HEAD is $HEAD_NOW, not $EXPECT"
+[[ -z "$(git -C "$BR" status --porcelain --untracked-files=no)" ]] || die "checkout has local changes"
+git -C "$TUI" fetch --quiet origin || true
+
+echo "head:       $HEAD_NOW"
+echo "node:       $(node --version) at $(command -v node)"
+echo "bun:        $(bun --version) at $(command -v bun)"
+echo "npm:        $(npm --version)"
+echo "postgres:   $PGVER"
+echo "tui head:   $(git -C "$TUI" rev-parse HEAD)"
+
+# A throwaway PostgreSQL 16 cluster, port 55432, trust auth on loopback only.
+PGTMP="$(mktemp -d "$WORK/pg.XXXXXX")"
+cleanup() {
+  "$PGBIN/pg_ctl" -D "$PGTMP/data" -m immediate stop >/dev/null 2>&1 || true
+  rm -rf "$PGTMP"
+}
+trap cleanup EXIT
+"$PGBIN/initdb" -D "$PGTMP/data" --auth=trust --username=postgres --no-sync >"$LOGDIR/initdb.log" 2>&1 \
+  || die "initdb failed (see $LOGDIR/initdb.log)"
+"$PGBIN/pg_ctl" -D "$PGTMP/data" -l "$LOGDIR/postgres.log" -w \
+  -o "-p 55432 -k $PGTMP -c listen_addresses=127.0.0.1" start >/dev/null \
+  || die "throwaway PostgreSQL did not start (see $LOGDIR/postgres.log)"
+"$PGBIN/createdb" -h 127.0.0.1 -p 55432 -U postgres buildroom_test \
+  || die "could not create the throwaway database"
+DBURL="postgresql://postgres:postgres@127.0.0.1:55432/buildroom_test"
+
+cd "$BR" || die "cd $BR"
+export BUILDROOM_TEST_PG_BINDIR="$PGBIN"
+export BUILDROOM_PREREQC_TUI_ROOT="$TUI"
+
+RESULTS=()
+# step <name> <needs-db:yes|no> <rule> <command...>
+#   rule: any  -> exit 0 and "# fail 0"
+#         full -> also "# skipped 0" (a suite that skipped proves nothing)
+#         n=K  -> also exactly K passing tests and nothing skipped
+step() {
+  local name="$1" db="$2" rule="$3"; shift 3
+  local out="$LOGDIR/$name.log" rc
+  echo "== $name: $*"
+  if [[ "$db" == yes ]]; then
+    env TEST_DATABASE_URL="$DBURL" "$@" >"$out" 2>&1; rc=$?
+  else
+    env -u TEST_DATABASE_URL "$@" >"$out" 2>&1; rc=$?
+  fi
+  local tests pass fail skipped verdict=PASS
+  tests="$(grep -E '^(#|ℹ) tests ' "$out" | tail -1 | awk '{print $3}')"
+  pass="$(grep -E '^(#|ℹ) pass ' "$out" | tail -1 | awk '{print $3}')"
+  fail="$(grep -E '^(#|ℹ) fail ' "$out" | tail -1 | awk '{print $3}')"
+  skipped="$(grep -E '^(#|ℹ) skipped ' "$out" | tail -1 | awk '{print $3}')"
+  [[ "$rc" == 0 ]] || verdict=FAIL
+  [[ -z "$fail" || "$fail" == 0 ]] || verdict=FAIL
+  case "$rule" in
+    full) [[ "$skipped" == 0 ]] || verdict=FAIL ;;
+    n=*)  [[ "$skipped" == 0 && "$pass" == "${rule#n=}" ]] || verdict=FAIL ;;
+  esac
+  grep -E '^(#|ℹ) (tests|pass|fail|skipped) |gateway-smoke: |runtime-role — |^not ok ' "$out" | tail -12
+  local line
+  line="$(printf '%-16s %s  exit=%s tests=%s pass=%s fail=%s skipped=%s' \
+    "$name" "$verdict" "$rc" "${tests:--}" "${pass:--}" "${fail:--}" "${skipped:--}")"
+  echo "$line"
+  RESULTS+=("$line")
+}
+
+step install       no  any    npm ci
+[[ "${RESULTS[0]}" == *" PASS "* ]] || die "npm ci failed (see $LOGDIR/install.log)"
+step default       no  any    npm test
+step storage       yes any    npm run test:storage
+step runtime-role  yes full   npm run test:storage:runtime-role
+step prereq-c      yes n=15   npm run test:prereq-c
+step custody       no  full   npm run "$CUSTODY_SCRIPT"
+step smoke         no  any    npm run smoke:gateway
+
+FINAL=PASS
+for r in "${RESULTS[@]}"; do [[ "$r" == *" PASS "* ]] || FINAL=FAIL; done
+
+{
+  echo
+  echo "===== SUMMARY (paste this block back) ====="
+  echo "act:      FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION B4"
+  echo "host:     $(hostname) / $OS $(uname -r)"
+  echo "head:     $HEAD_NOW"
+  echo "expected: $EXPECT"
+  echo "node:     $(node --version)   bun: $(bun --version)"
+  echo "postgres: $PGVER"
+  echo "tui:      $(git -C "$TUI" rev-parse HEAD)"
+  echo "started:  $STAMP   finished: $(date -u +%Y%m%dT%H%M%SZ)"
+  for r in "${RESULTS[@]}"; do echo "$r"; done
+  echo "RESULT:   $FINAL"
+} | tee "$LOGDIR/summary.txt"
+( cd "$LOGDIR" && shasum -a 256 ./*.log summary.txt 2>/dev/null || sha256sum ./*.log summary.txt )
+echo "logs:     $LOGDIR"
+echo "===== END SUMMARY ====="
+[[ "$FINAL" == PASS ]]

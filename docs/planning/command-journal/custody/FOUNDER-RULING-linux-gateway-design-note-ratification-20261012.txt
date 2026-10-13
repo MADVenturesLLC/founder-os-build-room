@@ -1,0 +1,32 @@
+FOUNDER-ACT-20261012-BR-LINUX-DESIGN-NOTE-RATIFICATION: the Linux Gateway design note
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows. This act takes effect when I post it as a comment on MADVenturesLLC/founder-os-build-room#111.
+
+A1. Basis. B6 of my act FOUNDER-ACT-20261010-BUILD-ROOM-LINUX-GATEWAY (recorded in FounderOS DEC-20260815-14) requires, before any Linux Gateway code is written, a design note covering B2 to B5, which takes effect only by a separate act of mine that ratifies its exact text. The builder drafted it in pull request #111.
+
+A2. The text I ratify. docs/planning/linux-gateway/linux-gateway-design-note-r1.md at head 60c1128122a8c3b8957a52b0abcea0e71dbe6758 of pull request #111: git blob 6df3dc5bcd7de1fa0568b2030517f6a6e6a6e20c, 39,639 bytes, 655 lines, SHA-256 5f32173439426d879538d18d4753897f58d7f202ddc522bae669eecbb5cb6cd7. Copilot reviewed that head with no open finding; every earlier finding was taken or declined on the record in the pull request.
+
+B1. Ratification. I ratify that exact text as the design note owed under B6. Any other text, including a later revision of the same file, is not ratified by this act.
+
+B2. My rulings on section 8 of the note.
+  R1. Phase 3's counted-run harness stays macOS-only. Lifting it is a change to the counted-run gate and needs its own act.
+  R2. On Linux the Gateway keeps the macOS-style directory, ~/Library/Application Support/founder-os/gateway, with no operating-system branch.
+  R3. For the Linux custody backend (P1) and the Linux redaction key source (P3), CI exercises the branch against a fake systemd-creds runner, and the real backend is exercised by the real Linux custody suite at certification on the PC. I accept that as meeting B2's requirement for those two branches. A macOS CI job, and its cost, is decided in the implementation act.
+  R4. Not decided by this act. Whether the PC's redaction HMAC key is a new value or the Mac's is decided by my act that mints it, which comes after the builder reports whether redaction tokens are compared across hosts.
+  S1. An egress allowlist enforced by a proxy outside the sandbox, behind a network namespace with no other route out, meets clause 2's egress allowlist.
+  S2. A private tmpfs for each task, discarded when the task ends, is inside clause 2's write allowlist.
+  S3. No shell, hooks disabled and the submodule allowlist are accepted as enforced by the Gateway's spawner and git configuration, on both operating systems.
+  S4. The native code for Landlock and seccomp is built in the repository, kept small, and reviewed with the sandbox.
+  S5. Loading the AppArmor profile on the PC is its own act of mine, which I run.
+  S6. The sandbox is built with the first Gateway path that runs a task, on macOS and Linux together, not in the implementation of B7.
+  S7. B4's "and nothing else" means reading (a): a confining launcher profile that lists only what bubblewrap uses, with a child profile, reached by an exec transition, that allows no user namespaces, capabilities or mounts.
+
+B3. Versions. Under my act's B9, the Gateway runs on Node v22.23.2 and Bun 1.4.2 on the PC and on every Mac, as section 7 of the note fixes.
+
+C1. Not authorized. This act authorizes no Gateway code, test, CI change or spend, sandbox, AppArmor profile or custody implementation (B7 needs my separate act naming its base and scope); no minting of any key; no enrollment, revocation or pairing-code mint of any Gateway; no change to the control plane, the database, a Railway variable, a Neon role or any secret; and not the merge of pull request #111, which needs my separate SHA-named authorization.
+
+C2. Filing. The builder files this act verbatim, with a receipt, in the Build Room custody record. That record pull request needs my separate authorization.
+
+Signed: Michael Daley
+Date: 2026-10-12 (UTC)
+Actor-Id: founder

@@ -1,0 +1,15 @@
+FOUNDER-RULING-20261013-BR112-MAC-A521B19: the Mac half of B4 at head a521b198df8c124eed56736cf5f101adaceef153
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows under B4 of FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION. This ruling takes effect when I post it as a comment on MADVenturesLLC/founder-os-build-room#112. My earlier ruling FOUNDER-RULING-20261012-BR112-MAC-SMOKE (comment 6131817329) certified head 92e253b29dff36a308fd90c6b58391a55cf13da8, which the pull request has since moved past; it stands as a record but certifies nothing at the head named here.
+
+R1. Facts. On MikeMacBook.local (macOS 27.0.1, Node v22.23.2, Bun 1.4.2, PostgreSQL 16.15), at head a521b198df8c124eed56736cf5f101adaceef153, the certification run that started 20261013T014705Z passed the default suite (1598 passed, 1 skipped, 0 failed; the skipped test is Linux-only), every storage suite (366/366), the runtime-role tier (259/259), the Prerequisite C proof (15/15) and the real Keychain suite (7/7, none skipped). scripts/gateway-smoke.sh failed one check, "tail ... says why".
+
+R2. Cause. As found in my ruling of 2026-10-12 (comment 6131817329, R2): the smoke script's throwaway HOME under the Mac's per-user temporary directory makes the Gateway socket path longer than the 104 bytes macOS allows, and the Gateway's socket-path guard reports that instead of "daemon not running", as designed. The same check fails at main 85c2a1451a933afca3a8c147e34bb336fd554cd9 on this Mac. It is not caused by pull request #112.
+
+R3. Ruling. The Mac half of B4 at head a521b198df8c124eed56736cf5f101adaceef153 is certified by the run of R1 together with scripts/gateway-smoke.sh run again at the same head on the same Mac with its throwaway HOME at /tmp/brsmoke.lDgxXp, which passed every check. Nothing in the repository was changed for that run.
+
+R4. Not ruled. This ruling does not authorize the merge and does not authorize any change to scripts/gateway-smoke.sh.
+
+Signed: Michael Daley
+Date: 2026-10-13 (UTC)
+Actor-Id: founder

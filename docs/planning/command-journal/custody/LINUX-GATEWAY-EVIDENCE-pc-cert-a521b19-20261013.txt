@@ -1,0 +1,84 @@
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-cert/logs/20261012T230024Z$ bash ~/buildroom-cert/buildroom-cert.sh a521b198df8c124eed56736cf5f101adaceef153
+== host
+hostname:   michaeldaley-Z890-Pro-RS-WiFi-White
+uname:      Linux 7.0.0-38-generic x86_64
+distro:     Ubuntu 26.04.1 LTS
+systemd:    systemd 259 (259.5-0ubuntu3.4)
+user:       michaeldaley (uid 1000)
+started:    20261013T012557Z
+== preconditions
+head:       a521b198df8c124eed56736cf5f101adaceef153
+node:       v22.23.2 at /home/michaeldaley/.nvm/versions/node/v22.23.2/bin/node
+bun:        1.4.2 at /home/michaeldaley/.bun/bin/bun
+npm:        10.9.8
+postgres:   postgres (PostgreSQL) 16.15 (Ubuntu 16.15-1.pgdg26.04+2)
+tui head:   3f9b414c0ffcaf6955873f757cb55b97b2de77a1
+== install: npm ci
+install          PASS  exit=0 tests=- pass=- fail=- skipped=-
+== default: npm test
+# tests 1603
+# pass 1603
+# fail 0
+# skipped 0
+default          PASS  exit=0 tests=1603 pass=1603 fail=0 skipped=0
+== storage: npm run test:storage
+# tests 366
+# pass 366
+# fail 0
+# skipped 0
+storage          PASS  exit=0 tests=366 pass=366 fail=0 skipped=0
+== runtime-role: npm run test:storage:runtime-role
+test:storage:runtime-role — 15 suites, the application connected as br_app_runtime (BUILDROOM_RUNTIME_ROLE=1)
+ℹ tests 259
+ℹ pass 259
+ℹ fail 0
+ℹ skipped 0
+test:storage:runtime-role — pass: 15 suites ran as br_app_runtime, none skipped
+runtime-role     PASS  exit=0 tests=259 pass=259 fail=0 skipped=0
+== prereq-c: npm run test:prereq-c
+# tests 15
+# pass 15
+# fail 0
+# skipped 0
+prereq-c         PASS  exit=0 tests=15 pass=15 fail=0 skipped=0
+== custody: npm run test:custody:linux
+# tests 7
+# pass 7
+# fail 0
+# skipped 0
+custody          PASS  exit=0 tests=7 pass=7 fail=0 skipped=0
+== smoke: npm run smoke:gateway
+gateway-smoke: sandbox HOME=/tmp/tmp.KL9FYZIRZA
+gateway-smoke: PASS — the five-verb surface behaves as specified with no daemon
+smoke            PASS  exit=0 tests=- pass=- fail=- skipped=-
+
+===== SUMMARY (paste this block back) =====
+act:      FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION B4
+host:     michaeldaley-Z890-Pro-RS-WiFi-White / Linux 7.0.0-38-generic
+head:     a521b198df8c124eed56736cf5f101adaceef153
+expected: a521b198df8c124eed56736cf5f101adaceef153
+node:     v22.23.2   bun: 1.4.2
+postgres: postgres (PostgreSQL) 16.15 (Ubuntu 16.15-1.pgdg26.04+2)
+tui:      3f9b414c0ffcaf6955873f757cb55b97b2de77a1
+started:  20261013T012557Z   finished: 20261013T013213Z
+install          PASS  exit=0 tests=- pass=- fail=- skipped=-
+default          PASS  exit=0 tests=1603 pass=1603 fail=0 skipped=0
+storage          PASS  exit=0 tests=366 pass=366 fail=0 skipped=0
+runtime-role     PASS  exit=0 tests=259 pass=259 fail=0 skipped=0
+prereq-c         PASS  exit=0 tests=15 pass=15 fail=0 skipped=0
+custody          PASS  exit=0 tests=7 pass=7 fail=0 skipped=0
+smoke            PASS  exit=0 tests=- pass=- fail=- skipped=-
+RESULT:   PASS
+181c21b16632e86c77b17562249869843e56f8f307ecbc55462148335cc28903  ./cert.log
+8afe566f40f788c417b28579fac2ee76f6bad25fcc5c6521ab17c7981d3b744c  ./custody.log
+c25c3e3c0f98dc67e1eb5f9af15a6925bad9e6f682c85d1988d6a673849baad3  ./default.log
+4313ce9394f9630faf94ba973b707bd39724eea4cb20693cd038cb1706b9f3a1  ./initdb.log
+3bc099478aade40359f84400cdea655dd1ecc18ed43cd4fbdf3ee01bf2c66438  ./install.log
+cbf059a2a0e762162d041e1d248cfec04fe9d522ec85438df66803899159f89c  ./postgres.log
+8b0599d629b4a97133136c5dd91b078dd827be94098c3efcd84e849fe5c59eaa  ./prereq-c.log
+7caf9db40c79996f753752fbe553b94af536380313c5f8aa365a4a40103cad3a  ./runtime-role.log
+ff50471d2d67218ed2e2379ecfe76f4189641317c93672bcf5ac49039d6657eb  ./smoke.log
+d9ab4de85e5ddc208ba85bb16fb47c968faa025e94566a53a05a4dc8c80c78ca  ./storage.log
+2486e2bbb29230c4a0ecac569af2b5490aa48317a71edc9b62153678364de643  summary.txt
+logs:     /home/michaeldaley/buildroom-cert/logs/20261013T012557Z
+===== END SUMMARY =====
