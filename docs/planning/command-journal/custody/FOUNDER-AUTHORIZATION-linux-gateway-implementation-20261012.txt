@@ -1,0 +1,33 @@
+FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION: the Linux Gateway, built and certified
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows. This act takes effect when I post it as a comment on MADVenturesLLC/founder-os-build-room#111.
+
+A1. Basis. B7 of my act FOUNDER-ACT-20261010-BUILD-ROOM-LINUX-GATEWAY says that after the design note is ratified, the Linux Gateway is implemented under a separate act of mine naming its base and scope, and that its certification requires the same reviewed commit to pass the Gateway suites and the Prerequisite C proof on the PC and on a Mac. I ratified the note by FOUNDER-ACT-20261012-BR-LINUX-DESIGN-NOTE-RATIFICATION (comment 6117149364), and pull request #111 landed it on main as 85c2a1451a933afca3a8c147e34bb336fd554cd9.
+
+A2. The design. The note at docs/planning/linux-gateway/linux-gateway-design-note-r1.md, blob 6df3dc5bcd7de1fa0568b2030517f6a6e6a6e20c, with my rulings in that act. Where this act and the note differ, this act governs; where the note is silent, the builder stops and asks.
+
+B1. Base. One pull request in founder-os-build-room, branched from main at 85c2a1451a933afca3a8c147e34bb336fd554cd9. If main moves before the merge, the builder may merge main into the branch and says so in the pull request; it never rebases.
+
+B2. Preflight on the PC, before any code. I run on the PC the read-only commands the builder gives me and post their output: the systemd version; whether systemd-creds sees the TPM; and a systemd-creds --user encrypt and decrypt round trip of a non-secret value through standard input and output, once with --with-key=tpm2 and once with --with-key=host+tpm2, writing nothing to disk. The builder fixes the key mode from that output. If systemd is older than 256, or neither round trip works, the builder stops and reports: there is no fallback to the Secret Service, a plaintext file or any other backend without my new ruling.
+
+B3. Scope. The pull request makes exactly these changes, each as the note describes it:
+  1. Custody: a custody interface with today's five operations plus probe(); one factory in packages/gateway-daemon that returns the Keychain backend on darwin, the systemd-creds backend on linux, and an always-unavailable backend elsewhere; the three construction sites (gateway-cli bin.ts, gateway-daemon main.ts, run-harness phase3/cli.ts) call it. The Keychain backend's behaviour does not change. The systemd-creds backend meets every guarantee of the note's section 4.3, takes its directory and name prefix as constructor parameters, and no environment variable selects a backend.
+  2. Fail closed: inventory() reports an unavailable backend instead of "absent"; doctor prints its code; enroll calls probe() before it reads the pairing code or generates a keypair. On both operating systems.
+  3. Redaction key: a read-only systemd-creds source for the HMAC key and its linux branch in run-harness redaction-boundary.ts. It never writes the key.
+  4. Worker supervisor: the fix of the note's section 6.2, mapping any channel or child error to worker_lost, with the lasting exit handler attached before the handshake. I authorize updating the two SHA-256 pins in test/worker-supervisor-contract.test.ts for packages/worker-supervisor/src/index.ts and ipc-contract.md, and one added sentence in ipc-contract.md that any error on a worker channel is worker loss.
+  5. Tests: the Linux forms of Prerequisite C tests 5.2 and 5.6 and of the worker environment read (the note's section 6.3); the Prerequisite C runtime gate refusing any Bun other than 1.4.2; the real Linux custody suite under npm run test:custody:linux, isolated from real custody as the note's section 3.3 requires; fake-runner tests for the systemd-creds backend and the HMAC source; and tests that doctor shows a custody error and enroll refuses before reading the code.
+  6. CI: one macOS job in .github/workflows/ci.yml running the build, typecheck, default suite and the real-Keychain suite under its synthetic service name. I accept the cost of hosted macOS minutes for that job.
+  7. Documents: README, AGENTS.md and package descriptions that call the Gateway macOS-only are corrected; nothing else in them changes.
+  8. A report, with no code: whether anything compares redaction tokens across hosts, for my ruling R4.
+
+B4. Certification. Before the merge, I run on the PC and on my Mac, at the pull request's final reviewed head, the commands the builder gives me: the default suite, every storage suite, the runtime-role tier, the Prerequisite C proof (15 of 15, under Node v22.23.2 and Bun 1.4.2), the real custody suite of that operating system, and scripts/gateway-smoke.sh. Each run names its host and the head SHA. I post the output; the builder files it. A run that fails, or is at any other head, does not certify.
+
+B5. Merge. The merge needs my separate SHA-named authorization under DEC-20260718-04, after B4 passes on both machines at the same head. Merging redeploys production; the builder states in the pull request whether the control plane imports any package the pull request changes.
+
+C1. Not authorized. This act does not authorize: the sandbox, a seccomp filter, Landlock code or an AppArmor profile (my rulings S5 and S6); lifting Phase 3's macOS-only harness (R1); minting, moving or reading any real key; the enrollment, revocation or pairing-code mint of any Gateway (B8 of my Linux act needs its own act); a self-hosted runner; any change to the control plane, the database, a migration, a Railway variable, a Neon role or any secret; any change to the Node or Bun versions; or any change outside B3. Each needs my separate act.
+
+C2. Filing. The builder files this act verbatim, with a receipt and the B2 and B4 outputs, in the Build Room custody record. That record needs my separate authorization.
+
+Signed: Michael Daley
+Date: 2026-10-12 (UTC)
+Actor-Id: founder

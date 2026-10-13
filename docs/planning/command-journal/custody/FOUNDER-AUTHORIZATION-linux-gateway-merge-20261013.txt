@@ -1,0 +1,67 @@
+Authorized: merge MADVenturesLLC/founder-os-build-room#112 at head a521b198df8c124eed56736cf5f101adaceef153
+
+This head is the builder's twelve commits on main at 85c2a145; no merge
+commit. The diff against main is the one reviewed: 37 files, 2305
+insertions and 100 deletions. It is the Linux Gateway built under my
+act FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION (comment
+6121186623 on #111), items B3.1 to B3.8, to the design note I ratified
+by FOUNDER-ACT-20261012-BR-LINUX-DESIGN-NOTE-RATIFICATION.
+
+Certification, B4, at this head. PC: on
+michaeldaley-Z890-Pro-RS-WiFi-White (Ubuntu, Linux 7.0.0-38), the run
+that started 20261013T012557Z passed every step: default 1603/1603,
+storage 366/366, runtime-role 259/259, Prerequisite C 15/15 under Node
+v22.23.2 and Bun 1.4.2, the real systemd-creds custody suite with TPM
+7/7, and gateway-smoke.sh. Mac: certified by my ruling
+FOUNDER-RULING-20261013-BR112-MAC-A521B19 (comment 6136380880).
+
+Pins. The act authorized two pin changes in
+test/worker-supervisor-contract.test.ts, and the PR makes them. It
+also changes a third: the pin in
+test/room-runtime-phase1-acceptance-gateway.test.ts on
+test/room-runtime-phase1-c2.storage.test.ts, 37d70e85 to 8520e61d,
+because B3.5 ordered a change to that suite. I accept that third pin
+change as part of this merge. The packages/redaction source pins are
+unchanged.
+
+Review bar, DEC-20260801-02 clause 2: Copilot reviewed nine heads. Of
+its twelve findings the builder took nine, each with a test that fails
+on the old code, and declined three on the record (binary ciphertext;
+the second probe in enroll; the keychain: label in doctor on Linux,
+kept per design note 4.3). All six review threads are resolved, and
+its review of this head has no open finding. CodeQL completed on this
+head with no finding. The Cursor security agent passed on every head
+it reviewed through aefa86a and has posted no run on a31d9f7, 35d6541
+or this head; for this head I rule it out of the review bar. If a
+Cursor run on this head reports a merge-blocking finding, this
+authorization is void. The advisory-reviewers and Claude Code Review
+(advisory) workflows did not run; I rule them out of the review bar,
+as I did on #91 through #111.
+
+Checks on this head, read from the Checks API at 2026-10-13T01:58Z:
+build-and-test, build-and-test-macos, storage-integration,
+custody-pin-check, path-audit, hygiene, CodeQL and both Analyze jobs
+green. The attribution-shape run that started after the PR body was
+set (01:17:58Z) is green.
+
+This merge starts a deployment of rare-enjoyment from main, as each
+merge does. The control plane imports none of the packages this PR
+changes, so the new revision boots the same server code as deployment
+a1bc8fb9 (85c2a145), which is serving; I accept that deployment.
+Nothing is staged in Railway, a1bc8fb9 is SUCCESS and no deployment is
+building or queued (Railway API, 01:57Z); main is still 85c2a145
+(GitHub, 01:58Z); /health answered 200 at 01:58:13Z.
+
+This authorizes this merge only. Tree:
+3244564d5f66f4df87b522b478848014f6595a8d. It does not authorize the
+enrollment, revocation or pairing-code mint of any Gateway, on the PC
+or anywhere else; the minting, moving or reading of any real key; any
+change to scripts/gateway-smoke.sh; any other deploy, redeploy or
+rollback; any migration or run of DB Admin Migration; my act setting
+DATABASE_URL to sslmode=verify-full, which is not issued; or any change
+to a variable, secret, Neon role, workflow, runner, environment or the
+repository ruleset. Each needs my separate act. Any push to this branch
+voids it.
+
+Signed: Michael Daley
+Date: 2026-10-13 (UTC)
