@@ -108,6 +108,7 @@ export class SystemdCredsCustody implements GatewayCustody {
   ) {}
 
   async createStaging(secret: string): Promise<void> {
+    assertSingleLine(secret);
     await this.ensureDirectory();
     const sealed = await this.encrypt(this.nameOf('staging'), secret);
     const temporary = await this.writeTemporary(sealed);
@@ -140,6 +141,7 @@ export class SystemdCredsCustody implements GatewayCustody {
       throw new CustodyError('item_not_found', 'staging custody could not be read consistently');
     }
 
+    assertSingleLine(first);
     await this.ensureDirectory();
     const sealed = await this.encrypt(this.nameOf('primary'), first);
     const temporary = await this.writeTemporary(sealed);
@@ -298,4 +300,19 @@ function errnoOf(error: unknown): string | undefined {
   return typeof error === 'object' && error !== null && 'code' in error
     ? String((error as { code: unknown }).code)
     : undefined;
+}
+
+/**
+ * Refuse a secret carrying a newline, as the Keychain backend does. That
+ * backend must (the `security` prompt reads one line); this one could store
+ * it, but the two backends keep one behaviour (design note 4.3), so a secret
+ * one refuses is never held by the other.
+ */
+function assertSingleLine(secret: string): void {
+  if (/[\r\n]/.test(secret)) {
+    throw new CustodyError(
+      'write_unverified',
+      'a custody secret may not contain a newline: both custody backends hold one-line secrets',
+    );
+  }
 }

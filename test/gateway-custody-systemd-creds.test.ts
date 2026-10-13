@@ -7,7 +7,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -148,6 +148,37 @@ describe('gateway-custody-systemd-creds · promotion', () => {
     const f = fixture();
     try {
       await assert.rejects(() => f.custody.promoteStagingToPrimary(), (error) => codeOf(error) === 'item_not_found');
+    } finally {
+      f.cleanup();
+    }
+  });
+});
+
+describe('gateway-custody-systemd-creds · one-line secrets, as the Keychain backend', () => {
+  it('refuses to create staging from a secret with a newline, and writes nothing', async () => {
+    const f = fixture();
+    try {
+      for (const secret of [`${STAGING}\n${OTHER}`, `${STAGING}\r`]) {
+        await assert.rejects(() => f.custody.createStaging(secret), (error) => codeOf(error) === 'write_unverified');
+      }
+      assert.equal(existsSync(join(f.directory, 'staging.cred')), false, 'no staging item');
+      assert.ok(!f.fake.argvLog.some((argv) => argv.includes('encrypt')), 'nothing was even encrypted');
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  it('refuses to promote a staged secret with a newline, and keeps staging', async () => {
+    const f = fixture();
+    try {
+      // A staging item written by something other than createStaging.
+      const multiline = `${STAGING}\n${OTHER}`;
+      const sealed = await f.fake.run(['--user', '--with-key=host+tpm2', '--name=staging', 'encrypt', '-', '-'], multiline);
+      mkdirSync(f.directory, { recursive: true, mode: 0o700 });
+      writeFileSync(join(f.directory, 'staging.cred'), sealed.stdout, { mode: 0o600 });
+      await assert.rejects(() => f.custody.promoteStagingToPrimary(), (error) => codeOf(error) === 'write_unverified');
+      assert.equal(existsSync(join(f.directory, 'primary.cred')), false, 'no primary was written');
+      assert.equal(await f.custody.read('staging'), multiline, 'staging is retained');
     } finally {
       f.cleanup();
     }
