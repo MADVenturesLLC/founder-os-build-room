@@ -67,10 +67,11 @@ const PACKAGE_SRC = join(REPO_ROOT, 'packages', 'worker-supervisor', 'src');
  * worker loss, the lasting exit handler is attached before the handshake, and
  * ipc-contract.md gains the one sentence saying so. Review of PR #112: a
  * failed write on fd 3 is such an error, a channel error after `hello`
- * answers fails the handshake, and loss applies in every state but disposed.
+ * answers fails the handshake, loss applies in every state but disposed, and
+ * an exit before the handshake goes through the same loss path.
  */
 const PHASE1_PINS: Record<string, string> = {
-  'packages/worker-supervisor/src/index.ts': '2f3ba42d6b18cc5b9e30114f32ea80fc4051cf98f1b6df17fe479369999e7a2d',
+  'packages/worker-supervisor/src/index.ts': '4942b80a27b645318887118040ca1391c167f1b4321976b24df420a4d7805e0e',
   'packages/worker-supervisor/src/ipc-contract.md': '4f5eabdc96d7bce222f730020b19c1d9d02a2315378f23a50b985ebaa6acd480',
 };
 

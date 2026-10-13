@@ -14,7 +14,9 @@
  *   - a channel error after `hello` has answered but before the worker's
  *     exit is recorded: the handshake fails closed, never 'active';
  *   - a channel error during a graceful shutdown: the supervisor is 'lost'
- *     at once, and the exit is reported as a loss, not as graceful.
+ *     at once, and the exit is reported as a loss, not as graceful;
+ *   - an exit before the handshake: the hello is rejected at once, not left
+ *     to its timeout, and the exit is reported as a loss.
  */
 
 import { after, describe, it } from 'node:test';
@@ -166,6 +168,31 @@ describe('worker-supervisor-channel-loss · a channel error during a graceful sh
       await stopping.catch(() => undefined);
       const exit = await exitEvent;
       assert.equal(exit.graceful, false);
+      assert.equal(lostEmitted, true);
+      assert.equal(sup.currentState(), 'lost');
+    } finally {
+      sup.dispose();
+    }
+  });
+});
+
+describe('worker-supervisor-channel-loss · an exit before the handshake is loss', () => {
+  it('rejects the hello, leaves nothing pending, and reports the exit as a loss', async () => {
+    const sup = supervisor('normal');
+    try {
+      const exitEvent = new Promise<{ graceful: boolean }>((resolve) => sup.once('worker-exit', resolve));
+      let lostEmitted = false;
+      sup.once('worker-lost', () => {
+        lostEmitted = true;
+      });
+      const starting = sup.start();
+      const child = childOf(sup);
+      // The exit lands before the worker can answer hello: the handler sees 'starting'.
+      child.emit('exit', 3, null);
+      await assert.rejects(() => starting, (error) => codeOf(error) === 'worker_lost');
+      const pending = (sup as unknown as { pending: Map<number, unknown> }).pending;
+      assert.equal(pending.size, 0, 'the hello request is not left waiting for its timeout');
+      assert.equal((await exitEvent).graceful, false);
       assert.equal(lostEmitted, true);
       assert.equal(sup.currentState(), 'lost');
     } finally {

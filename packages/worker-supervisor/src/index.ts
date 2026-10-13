@@ -293,9 +293,9 @@ export class C2WorkerSupervisor extends EventEmitter {
 
     /*
      * The one exit handler, attached before the handshake so no exit can fall
-     * between them. Before the handshake completes it rejects the handshake;
-     * after, it is the loss path. A stale child's exit, after a restart, is
-     * ignored.
+     * between them. It is the loss path in every state; before the handshake
+     * completes it also rejects the handshake. A stale child's exit, after a
+     * restart, is ignored.
      */
     let rejectHandshake: (reason: C2SupervisorError) => void = () => undefined;
     const lostBeforeHandshake = new Promise<never>((_, reject) => {
@@ -311,8 +311,9 @@ export class C2WorkerSupervisor extends EventEmitter {
             `worker exited before handshake (code=${String(code)} signal=${String(signal)})`,
           ),
         );
-        return;
       }
+      // Before the handshake too, this is the one place an exit becomes loss:
+      // pending requests (the hello) are rejected and the exit is reported.
       this.onChildExit(code, signal);
     });
 
