@@ -14,8 +14,10 @@ import {
   Custody,
   CustodyError,
   SYSTEMD_CREDS_KEY_MODE,
+  SystemdCredsCommandRunner,
   SystemdCredsCustody,
   UnavailableCustody,
+  systemdCredsEnvironment,
   custodyDirectory,
   defaultGatewayCustody,
   gatewayPaths,
@@ -314,5 +316,38 @@ describe('gateway-custody-systemd-creds · the factory', () => {
     await assert.rejects(() => other.probe(), (error) => codeOf(error) === 'keychain_unavailable');
     await assert.rejects(() => other.inventory(), (error) => codeOf(error) === 'keychain_unavailable');
     assert.equal(custodyDirectory(paths), join('/nonexistent/gateway', 'custody'));
+  });
+});
+
+describe('gateway-custody-systemd-creds · the tool inherits no secret from the environment', () => {
+  it('passes only the non-secret allowlist', () => {
+    const environment = systemdCredsEnvironment({
+      PATH: '/usr/local/bin:/usr/bin',
+      HOME: '/home/someone',
+      XDG_RUNTIME_DIR: '/run/user/1000',
+      CONTROL_PLANE_TOKEN: 'not-a-real-token',
+      DATABASE_URL: 'postgresql://not-real',
+    });
+    assert.deepEqual(environment, {
+      PATH: '/usr/local/bin:/usr/bin',
+      HOME: '/home/someone',
+      XDG_RUNTIME_DIR: '/run/user/1000',
+    });
+    assert.deepEqual(systemdCredsEnvironment({}), { PATH: '/usr/bin:/bin' });
+  });
+
+  it('spawns the tool without the caller\'s CONTROL_PLANE_TOKEN', async () => {
+    const before = process.env['CONTROL_PLANE_TOKEN'];
+    process.env['CONTROL_PLANE_TOKEN'] = 'not-a-real-token';
+    try {
+      // `env` with no arguments prints the environment it was given.
+      const result = await new SystemdCredsCommandRunner('/usr/bin/env').run([], '');
+      assert.equal(result.code, 0);
+      assert.ok(!result.stdout.includes('CONTROL_PLANE_TOKEN'), 'the token is not inherited');
+      assert.match(result.stdout, /^PATH=/m);
+    } finally {
+      if (before === undefined) delete process.env['CONTROL_PLANE_TOKEN'];
+      else process.env['CONTROL_PLANE_TOKEN'] = before;
+    }
   });
 });

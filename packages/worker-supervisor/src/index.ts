@@ -600,7 +600,8 @@ export class C2WorkerSupervisor extends EventEmitter {
     if (child === null) {
       return Promise.reject(new C2SupervisorError('transport_invalid', 'no worker process'));
     }
-    if (child.exitCode !== null) return Promise.resolve(child.exitCode);
+    // An exit already observed, by code or by signal, is not waited for again.
+    if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode ?? -1);
     return new Promise<number>((resolve, reject) => {
       const timer = setTimeout(() => {
         reject(new C2SupervisorError('reap_timeout', 'worker did not exit within timeout'));

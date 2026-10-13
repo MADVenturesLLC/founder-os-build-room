@@ -40,6 +40,7 @@ export {
   SYSTEMD_CREDS_KEY_MODE,
   SystemdCredsCommandRunner,
   SystemdCredsCustody,
+  systemdCredsEnvironment,
   type CredsRunner,
 } from './systemd-creds-custody.js';
 

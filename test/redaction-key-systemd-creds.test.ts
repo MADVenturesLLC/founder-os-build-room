@@ -15,6 +15,8 @@ import {
   REDACTION_CREDENTIAL_NAME,
   SystemdCredsHmacKeyCustody,
   defaultRedactionCredentialPath,
+  SystemdCredsReadRunner,
+  systemdCredsReadEnvironment,
 } from '../packages/run-harness/src/redaction-key-linux.js';
 
 const KEY_HEX = 'ab'.repeat(32);
@@ -79,5 +81,28 @@ describe('redaction-key-systemd-creds', () => {
       defaultRedactionCredentialPath(),
       join(homedir(), 'Library', 'Application Support', 'founder-os', 'redaction', 'hmac-v1.cred'),
     );
+  });
+});
+
+describe('redaction-key-systemd-creds · the tool inherits no secret from the environment', () => {
+  it('passes only the non-secret allowlist', () => {
+    assert.deepEqual(
+      systemdCredsReadEnvironment({ PATH: '/usr/bin', LANG: 'C.UTF-8', CONTROL_PLANE_TOKEN: 'not-a-real-token' }),
+      { PATH: '/usr/bin', LANG: 'C.UTF-8' },
+    );
+  });
+
+  it('spawns the tool without the caller\'s CONTROL_PLANE_TOKEN', async () => {
+    const before = process.env['CONTROL_PLANE_TOKEN'];
+    process.env['CONTROL_PLANE_TOKEN'] = 'not-a-real-token';
+    try {
+      const result = await new SystemdCredsReadRunner('/usr/bin/env').run([]);
+      assert.equal(result.code, 0);
+      assert.ok(!result.stdout.includes('CONTROL_PLANE_TOKEN'), 'the token is not inherited');
+      assert.match(result.stdout, /^PATH=/m);
+    } finally {
+      if (before === undefined) delete process.env['CONTROL_PLANE_TOKEN'];
+      else process.env['CONTROL_PLANE_TOKEN'] = before;
+    }
   });
 });

@@ -16,7 +16,9 @@
  *   - a channel error during a graceful shutdown: the supervisor is 'lost'
  *     at once, and the exit is reported as a loss, not as graceful;
  *   - an exit before the handshake: the hello is rejected at once, not left
- *     to its timeout, and the exit is reported as a loss.
+ *     to its timeout, and the exit is reported as a loss;
+ *   - a signal exit already observed when shutdown starts waiting: shutdown
+ *     returns at once, not after a reap timeout.
  */
 
 import { after, describe, it } from 'node:test';
@@ -35,7 +37,7 @@ after(() => rmSync(root, { recursive: true, force: true }));
  * A stand-in worker. It answers every request with the generation `hello`
  * gave it. The mode arrives in the one variable the supervisor passes.
  * `close-control-after-hello`: after answering `hello` it closes fd 3 and
- * keeps running.
+ * keeps running. `mute-shutdown`: it never answers `shutdown`.
  */
 const WORKER = `
 import net from 'node:net';
@@ -58,6 +60,7 @@ control.on('data', (chunk) => {
     const frame = JSON.parse(buffer.subarray(4, 4 + length).toString('utf8'));
     buffer = buffer.subarray(4 + length);
     if (frame.op === 'hello') generation = frame.params.generation;
+    if (frame.op === 'shutdown' && mode === 'mute-shutdown') continue;
     send({ ok: true, id: frame.id, generation, result: {} });
     if (frame.op === 'hello' && mode === 'close-control-after-hello') control.destroy();
   }
@@ -195,6 +198,27 @@ describe('worker-supervisor-channel-loss · an exit before the handshake is loss
       assert.equal((await exitEvent).graceful, false);
       assert.equal(lostEmitted, true);
       assert.equal(sup.currentState(), 'lost');
+    } finally {
+      sup.dispose();
+    }
+  });
+});
+
+describe('worker-supervisor-channel-loss · shutdown after an observed signal exit', () => {
+  it('returns at once instead of waiting out a reap timeout', async () => {
+    const sup = supervisor('mute-shutdown');
+    try {
+      await sup.start();
+      const child = childOf(sup);
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      const stopping = sup.shutdown();
+      // The worker never answers shutdown; it dies by signal, and its exit is
+      // observed before shutdown starts waiting for one.
+      child.kill('SIGKILL');
+      await exited;
+      const began = Date.now();
+      assert.equal(await stopping, -1, 'a signal exit reads as -1');
+      assert.ok(Date.now() - began < 2_000, 'no reap timeout was waited out');
     } finally {
       sup.dispose();
     }

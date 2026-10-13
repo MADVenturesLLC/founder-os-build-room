@@ -40,13 +40,32 @@ export function defaultRedactionCredentialPath(): string {
   return join(homedir(), 'Library', 'Application Support', 'founder-os', 'redaction', `${REDACTION_CREDENTIAL_NAME}.cred`);
 }
 
+/**
+ * The environment `systemd-creds` is given: an allowlist of non-secret
+ * variables, nothing else. The tool needs no secret from its environment (the
+ * secret travels on standard input), and inheriting the caller's whole
+ * environment would hand it whatever the caller holds, such as the Phase 3
+ * harness's CONTROL_PLANE_TOKEN (design note 4.3: no secret in an environment
+ * variable).
+ */
+export const SYSTEMD_CREDS_ENV_ALLOWLIST = ['PATH', 'HOME', 'XDG_RUNTIME_DIR', 'LANG', 'LC_ALL', 'LC_CTYPE'] as const;
+
+export function systemdCredsReadEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { PATH: '/usr/bin:/bin' };
+  for (const key of SYSTEMD_CREDS_ENV_ALLOWLIST) {
+    const value = source[key];
+    if (value !== undefined) environment[key] = value;
+  }
+  return environment;
+}
+
 /** The real runner: `/usr/bin/systemd-creds`, spawned with an argv array, no shell. */
 export class SystemdCredsReadRunner implements CommandRunner {
   constructor(private readonly binary = '/usr/bin/systemd-creds') {}
 
   run(args: readonly string[]): Promise<CommandResult> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.binary, [...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(this.binary, [...args], { stdio: ['ignore', 'pipe', 'pipe'], env: systemdCredsReadEnvironment() });
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', (chunk: Buffer) => {
