@@ -6,7 +6,7 @@ Gateway design note and his authorization of its merge (PR #111), his
 act implementing the Linux Gateway, his two rulings on the Mac half of
 its certification, and his authorization of its merge (PR #112). It
 files the PC preflight (B2) and the certifying runs (B4) the
-implementation act requires, records the builder's reads and four
+implementation act requires, records the builder's reads and five
 findings, and authorizes nothing.** Each instrument's own text governs.
 The filing is ordered by C2 of the ratification and C2 of the
 implementation act; each says the record needs the Founder's separate
@@ -198,6 +198,22 @@ runs at `92e253b` on both machines, and a second PC run at `a521b19`
 (20261013T013739Z, the Mac command block run on the PC, every step
 PASS), are listed above and not filed. The Mac ruling at `92e253b` is
 filed because it is a Founder instrument.
+
+**5. The certification script does not check the madventures-tui
+checkout for local changes.** The Prerequisite C proof runs the C2
+Worker from `packages/room-runtime-worker/src/worker.ts` in that
+checkout. The script checks that the checkout exists and logs its
+`HEAD`; the proof's own prelude requires that `HEAD` to descend from the
+bound base `3d5c4c97`. Neither rejects uncommitted changes in the
+worktree, so a modified Worker would run under an unchanged logged
+`HEAD`. The two runs also used different `HEAD`s: the PC
+`3f9b414c`, the Mac `03dda124`, its ancestor on `main`. The builder
+read both commits from the repository: both descend from `3d5c4c97`,
+and the tree of `packages/room-runtime-worker` is the same in both
+(`90fcc2d9`). That shows the committed Worker was the same on both
+machines; it does not show either worktree was clean when the run
+started. Found by Copilot's review of this receipt (r4254165074). The
+filed script is left as it ran.
 
 None of the findings was corrected.
 
