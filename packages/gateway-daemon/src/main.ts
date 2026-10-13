@@ -10,7 +10,8 @@
  * the real wiring exists.
  *
  * It constructs the REAL collaborators and nothing injectable: the fixed
- * documented paths, the real clock, `/usr/bin/security` custody (no
+ * documented paths, the real clock, the platform's custody backend from
+ * `defaultGatewayCustody` (the Keychain on macOS, `systemd-creds` on Linux; no
  * environment variable selects a different custody backend, and there is no
  * plaintext-file fallback — ruling clause 2), and the real control-plane
  * client. Suites that need seams construct `GatewayDaemon` themselves with
@@ -25,7 +26,7 @@
 
 import { GatewayDaemon } from './daemon.js';
 import { ControlPlaneClient, validateControlPlaneUrl } from './client.js';
-import { Custody, SecurityCommandRunner } from './custody.js';
+import { defaultGatewayCustody } from './custody-factory.js';
 import { createDaemonClock } from './clock.js';
 import { gatewayPaths } from './paths.js';
 
@@ -53,10 +54,11 @@ async function main(): Promise<number> {
     return 1;
   }
 
+  const paths = gatewayPaths();
   const daemon = new GatewayDaemon({
-    paths: gatewayPaths(),
+    paths,
     clock: createDaemonClock(),
-    custody: new Custody(new SecurityCommandRunner()),
+    custody: defaultGatewayCustody(paths),
     client: new ControlPlaneClient(urlVerdict.url),
     heartbeatCadenceMs: HEARTBEAT_CADENCE_MS,
   });

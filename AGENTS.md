@@ -63,7 +63,7 @@ Execution-Surface: <surface_id>
 ## Stack
 
 - **Control plane:** Node 22 / TypeScript / Express on Railway
-- **Gateway:** macOS-local daemon (Node >= 22 / TypeScript)
+- **Gateway:** local daemon on macOS and Linux (Ubuntu 26.04 on `x86_64`) (Node >= 22 / TypeScript)
 - **Web:** DEFERRED. `DEC-20260815-08` clause 5 binds only Railway (control
   plane) and Postgres/Neon for the current phases; Cloudflare Workers and the
   web tier are explicitly not authorized (`DEC-20260815-08`, `DEC-20260815-17`

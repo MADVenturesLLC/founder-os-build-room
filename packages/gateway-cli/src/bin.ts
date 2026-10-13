@@ -3,10 +3,11 @@
  * `buildroom` — the five-verb CLI (contract §16).
  *
  * The entrypoint constructs the REAL collaborators and nothing else: the
- * `/usr/bin/security` runner, the real clock, the documented paths. There is no
- * environment variable that selects a different custody backend and no
- * plaintext-file fallback — fail-closed custody means an unavailable Keychain
- * refuses the enrolment and `doctor` says why (ruling clause 2).
+ * platform's custody backend from `defaultGatewayCustody` (the Keychain on
+ * macOS, `systemd-creds` on Linux), the real clock, the documented paths.
+ * There is no environment variable that selects a different custody backend
+ * and no plaintext-file fallback — fail-closed custody means an unavailable
+ * backend refuses the enrolment and `doctor` says why (ruling clause 2).
  *
  * Suites that need two real processes contending on the staging lock import
  * `runEnroll` and friends and inject their own collaborators, so the lock under
@@ -19,10 +20,9 @@ import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import {
   ControlPlaneClient,
-  Custody,
   GatewayStateStore,
-  SecurityCommandRunner,
   createDaemonClock,
+  defaultGatewayCustody,
   gatewayPaths,
   validateControlPlaneUrl,
 } from '../../gateway-daemon/src/index.js';
@@ -88,7 +88,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 
   const paths = gatewayPaths();
   const clock = createDaemonClock();
-  const custody = new Custody(new SecurityCommandRunner());
+  const custody = defaultGatewayCustody(paths);
   const state = new GatewayStateStore(paths);
   /*
    * (correction 5, finding #3) The plane URL is process configuration, and

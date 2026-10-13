@@ -14,7 +14,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Clock } from '../../gateway-protocol/src/index.js';
-import type { Custody } from './custody.js';
+import type { GatewayCustody } from './custody.js';
 import { StagingLockBusy, acquireStagingLock, type StagingOperation } from './staging-lock.js';
 import type { ControlPlaneClient } from './client.js';
 import { PrimaryLane, StagingLane, type StagingOutcome } from './lanes.js';
@@ -28,7 +28,7 @@ import { privateKeyFromSecret, publicMembersOf, type GatewayIdentity } from './s
 export interface GatewayDaemonDeps {
   readonly paths: GatewayPaths;
   readonly clock: Clock;
-  readonly custody: Custody;
+  readonly custody: GatewayCustody;
   readonly client: ControlPlaneClient;
   readonly heartbeatCadenceMs: number;
 }

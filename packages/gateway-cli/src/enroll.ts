@@ -21,7 +21,6 @@
  */
 
 import {
-  Custody,
   GatewayStateStore,
   StagingLane,
   StagingLockBusy,
@@ -29,14 +28,16 @@ import {
   generateGatewayKeypair,
   hasUnresolvedStaging,
   privateKeyFromSecret,
+  sanitizeCustodyError,
   type ControlPlaneClient,
+  type GatewayCustody,
   type GatewayPaths,
 } from '../../gateway-daemon/src/index.js';
 import type { Clock } from '../../gateway-protocol/src/index.js';
 
 export interface EnrollDeps {
   readonly paths: GatewayPaths;
-  readonly custody: Custody;
+  readonly custody: GatewayCustody;
   readonly client: ControlPlaneClient;
   readonly clock: Clock;
   readonly state: GatewayStateStore;
@@ -91,7 +92,20 @@ export async function runEnroll(deps: EnrollDeps): Promise<EnrollResult> {
       };
     }
 
-    const inventory = await deps.custody.inventory();
+    /*
+     * Custody must be usable BEFORE the code is read or a key is generated. A
+     * backend that cannot be used refuses here, with its classified code, and
+     * nothing has been consumed: the pairing code is still unread, no keypair
+     * exists, no state was written.
+     */
+    let inventory;
+    try {
+      await deps.custody.probe();
+      inventory = await deps.custody.inventory();
+    } catch (error) {
+      const refusal = sanitizeCustodyError(error);
+      return { ok: false, code: refusal.code, message: `custody is unavailable: ${refusal.message}` };
+    }
     if (inventory.staging) {
       return {
         ok: false,

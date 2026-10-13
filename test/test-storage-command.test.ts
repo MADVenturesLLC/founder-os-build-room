@@ -103,4 +103,11 @@ describe('test-storage-command · the command is wired to the prelude', () => {
     assert.match(command, /BUILDROOM_CUSTODY_MACOS=1/, 'the opt-in is explicit');
     assert.match(command, /custody-macos/);
   });
+
+  it('runs the real systemd-creds suite only under its own command, on linux', () => {
+    const command = scripts['test:custody:linux'];
+    assert.ok(command !== undefined, 'test:custody:linux must exist');
+    assert.match(command, /BUILDROOM_CUSTODY_LINUX=1/, 'the opt-in is explicit');
+    assert.match(command, /custody-linux/);
+  });
 });

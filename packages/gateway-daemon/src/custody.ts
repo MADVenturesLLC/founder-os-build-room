@@ -1,4 +1,13 @@
 /**
+ * Gateway key custody (contract §14): the backend interface, and the macOS
+ * Keychain backend.
+ *
+ * `GatewayCustody` is what every consumer types against. Exactly two backends
+ * implement it in production — this Keychain one on darwin and
+ * `SystemdCredsCustody` on linux (`systemd-creds-custody.ts`) — and the one
+ * factory in `custody-factory.ts` chooses between them by platform. The rest
+ * of this header is about the Keychain backend.
+ *
  * Keychain custody (contract §14).
  *
  * Verified live on the target machine on 2026-08-18, and one of those
@@ -147,7 +156,34 @@ export interface CustodyInventory {
   readonly staging: boolean;
 }
 
-export class Custody {
+/**
+ * The custody backend, as every consumer sees it.
+ *
+ * Every backend keeps the same guarantees: no plaintext-file fallback; every
+ * write verified by reading it back, and nothing deleted until a read-back
+ * has succeeded; staging creation fails if a staging item exists; primary is
+ * replaced only by promotion; no secret in a log, diagnostic, environment
+ * variable or argv.
+ */
+export interface GatewayCustody {
+  createStaging(secret: string): Promise<void>;
+  promoteStagingToPrimary(): Promise<void>;
+  read(account: CustodyAccount): Promise<string | null>;
+  delete(account: CustodyAccount): Promise<void>;
+  /**
+   * Which items exist. Throws `keychain_unavailable` when the backend cannot
+   * be used: an unavailable backend is never reported as "absent", so
+   * `doctor` can say why and `enroll` refuses before it does anything.
+   */
+  inventory(): Promise<CustodyInventory>;
+  /** Proves the backend can be used now, touching no item. Throws `keychain_unavailable` if not. */
+  probe(): Promise<void>;
+}
+
+/** The account `probe()` looks up. No item is ever written under it. */
+export const PROBE_ACCOUNT = 'probe';
+
+export class Custody implements GatewayCustody {
   constructor(
     private readonly runner: KeychainRunner,
     private readonly service: string = KEYCHAIN_SERVICE,
@@ -270,20 +306,60 @@ export class Custody {
     }
   }
 
+  /**
+   * Which items exist. A Keychain that cannot be read throws
+   * `keychain_unavailable` here rather than reading as "absent": `doctor`
+   * reports the code, and `enroll` refuses before it reads a pairing code.
+   */
   async inventory(): Promise<CustodyInventory> {
     return {
-      primary: (await this.readQuietly('primary')) !== null,
-      staging: (await this.readQuietly('staging')) !== null,
+      primary: (await this.read('primary')) !== null,
+      staging: (await this.read('staging')) !== null,
     };
   }
 
-  /** Inventory must not throw on an unavailable Keychain; `doctor` reports it. */
-  private async readQuietly(account: CustodyAccount): Promise<string | null> {
-    try {
-      return await this.read(account);
-    } catch {
-      return null;
+  /**
+   * Query the Keychain for an item that never exists, without `-w`, so no
+   * secret is read and no access prompt is raised. Found or not found both
+   * prove the Keychain answers; anything else is `keychain_unavailable`.
+   */
+  async probe(): Promise<void> {
+    const result = await this.runner.run(['find-generic-password', '-a', PROBE_ACCOUNT, '-s', this.service]);
+    if (result.code !== 0 && result.code !== ITEM_NOT_FOUND_EXIT) {
+      throw new CustodyError('keychain_unavailable', 'the Keychain could not be queried', result.stderr);
     }
+  }
+}
+
+/**
+ * The backend on a platform with no custody facility. Every operation fails
+ * `keychain_unavailable`, so `enroll` refuses and `doctor` says why; nothing
+ * falls back to a file.
+ */
+export class UnavailableCustody implements GatewayCustody {
+  constructor(private readonly reason: string) {}
+
+  private fail(): never {
+    throw new CustodyError('keychain_unavailable', this.reason);
+  }
+
+  createStaging(): Promise<void> {
+    return Promise.resolve().then(() => this.fail());
+  }
+  promoteStagingToPrimary(): Promise<void> {
+    return Promise.resolve().then(() => this.fail());
+  }
+  read(): Promise<string | null> {
+    return Promise.resolve().then(() => this.fail());
+  }
+  delete(): Promise<void> {
+    return Promise.resolve().then(() => this.fail());
+  }
+  inventory(): Promise<CustodyInventory> {
+    return Promise.resolve().then(() => this.fail());
+  }
+  probe(): Promise<void> {
+    return Promise.resolve().then(() => this.fail());
   }
 }
 

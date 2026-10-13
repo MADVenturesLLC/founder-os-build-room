@@ -56,6 +56,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { proveUnnamedConnectedPairs, socketInodesHeldBy } from './support/linux-socket-proof.js';
 import {
   C2SupervisorError,
   C2WorkerSupervisor,
@@ -223,10 +224,20 @@ describe('prereq-c C2 gateway — spawn, transport, custody', { skip: SKIP }, ()
           !u.name.includes('/'),
           `socket descriptor ${u.fd} is unnamed (no filesystem path): name=${u.name}`,
         );
-        assert.ok(
-          u.name.startsWith('->') || u.name === '',
-          `socket descriptor ${u.fd} is a connected endpoint, not a bound path: name=${u.name}`,
-        );
+        if (process.platform !== 'linux') {
+          assert.ok(
+            u.name.startsWith('->') || u.name === '',
+            `socket descriptor ${u.fd} is a connected endpoint, not a bound path: name=${u.name}`,
+          );
+        }
+      }
+      if (process.platform === 'linux') {
+        // Linux lsof names these sockets `type=STREAM`, which proves nothing
+        // about being connected. The kernel's own records do: each channel is
+        // unnamed, connected, never listened, and its peer is held by this
+        // Gateway process alone (Linux Gateway design note §6.3).
+        const proof = proveUnnamedConnectedPairs(pid!, [3, 4, 5], process.pid);
+        assert.deepEqual(proof.failures, [], 'fds 3 to 5 are unnamed, unbound, connected pairs to the Gateway');
       }
       // No FIFO/pipe masquerading as the transport on the channel fds:
       for (const fd of ['3', '4', '5']) {
@@ -271,19 +282,31 @@ describe('prereq-c C2 gateway — spawn, transport, custody', { skip: SKIP }, ()
         assert.notEqual(sibling.pid, undefined);
         await new Promise((r) => setTimeout(r, 400));
 
-        const workerUnix = lsofFields(workerPid!)
-          .filter((r) => r.type === 'unix')
-          .map((r) => r.name);
-        assert.ok(workerUnix.length >= 3, 'worker unix endpoints observed');
+        if (process.platform === 'linux') {
+          // Every Linux unix-socket name is `type=STREAM`, so names cannot
+          // tell endpoints apart. Socket inodes can: neither the worker's
+          // channel sockets nor their Gateway-side peers may be held by the
+          // sibling.
+          const proof = proveUnnamedConnectedPairs(workerPid!, [3, 4, 5], process.pid);
+          assert.deepEqual(proof.failures, [], 'the worker channels are pairs to the Gateway');
+          const siblingHeld = sibling.pid !== undefined ? socketInodesHeldBy(sibling.pid) : new Set<string>();
+          const shared = [...proof.inodes, ...proof.peers].filter((inode) => siblingHeld.has(inode));
+          assert.deepEqual(shared, [], `sibling shares transport sockets with the worker: ${shared.join(', ')}`);
+        } else {
+          const workerUnix = lsofFields(workerPid!)
+            .filter((r) => r.type === 'unix')
+            .map((r) => r.name);
+          assert.ok(workerUnix.length >= 3, 'worker unix endpoints observed');
 
-        const siblingRows = sibling.pid !== undefined ? lsofFields(sibling.pid) : [];
-        const siblingNames = new Set(siblingRows.map((r) => r.name));
-        const shared = workerUnix.filter((n) => siblingNames.has(n));
-        assert.deepEqual(
-          shared,
-          [],
-          `sibling shares transport endpoints with the worker: ${shared.join(', ')}`,
-        );
+          const siblingRows = sibling.pid !== undefined ? lsofFields(sibling.pid) : [];
+          const siblingNames = new Set(siblingRows.map((r) => r.name));
+          const shared = workerUnix.filter((n) => siblingNames.has(n));
+          assert.deepEqual(
+            shared,
+            [],
+            `sibling shares transport endpoints with the worker: ${shared.join(', ')}`,
+          );
+        }
       } finally {
         sibling.kill('SIGKILL');
       }

@@ -27,7 +27,7 @@ Monorepo. Present today:
 
 - `packages/control-plane` — the single writer to the durable ledger: Postgres storage, the HTTP surface, the boot sequence.
 - `packages/run-harness` — performs the Phase 2 run cycle, judges it against the Founder's three conditions, and emits the evidence bundle.
-- `packages/gateway-daemon` — the macOS-local gateway host: Keychain custody through `/usr/bin/security`, two identity lanes, timers, an IPC socket and a ring buffer.
+- `packages/gateway-daemon` — the local gateway host, on macOS and on Linux (Ubuntu 26.04 on `x86_64`): key custody through the Keychain (`/usr/bin/security`) on macOS and `systemd-creds` on Linux, chosen by one factory, two identity lanes, timers, an IPC socket and a ring buffer.
 - `packages/gateway-cli` — the `buildroom` five-verb surface: `enroll`, `status`, `doctor`, `providers`, `tail`.
 - `packages/spend-broker` — mints a provider credential only while the room or run is under its spend ceiling; `api` mints go through the cost meter's ceiling gate, `oauth` mints around it (Founder ruling 2026-09-13). Fixture gateway in v0; merged as PR #69.
 
@@ -161,10 +161,15 @@ TEST_DATABASE_URL=postgresql://…/buildroom_test npm run test:storage
 # `permission denied for table …`, which names the privilege to add.
 TEST_DATABASE_URL=postgresql://…/buildroom_test npm run test:storage:runtime-role
 
-# The real-Keychain suite. Darwin only, opt-in only, synthetic item, never in
-# CI: touching a developer's login Keychain because they typed `npm test` would
-# be a surprising thing for a test suite to do.
+# The real-Keychain suite. Darwin only, opt-in only, synthetic item: touching
+# a developer's login Keychain because they typed `npm test` would be a
+# surprising thing for a test suite to do. CI runs it only in the macOS job.
 npm run test:custody:macos
+
+# The real systemd-creds suite. Linux only, opt-in only: synthetic names in a
+# fresh temporary directory, never the Gateway's. Not in CI (hosted runners
+# have no TPM and no systemd-creds --user); run on the PC at certification.
+npm run test:custody:linux
 
 npm run gate:path-audit             # required check
 npm run gate:attribution-selftest   # required check, parser regression cases

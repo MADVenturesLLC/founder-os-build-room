@@ -743,7 +743,10 @@ const REGRESSION_PINS: Record<string, string> = {
   'test/room-runtime-phase1-ipc.test.ts': 'dbb399a1a52afde9e76c312a305f5c062b2f2672b7c127822c7df1c2a9521efd',
   'test/room-runtime-phase1-runtime.test.ts': 'dfcd41051ce04987acecd2f985610460b6ba1e8459e80b735cf3c58180f990e8',
   'test/room-runtime-phase1-protocol.test.ts': 'bc430396f48f7447d54d1cea8b0a8640eb011cb75925e19858b06accb619f0ca',
-  'test/room-runtime-phase1-c2.storage.test.ts': '37d70e85c6ad61bcfa821b4f921e21243fc348e37aef5bce49645e40579a42a0',
+  // Repinned deliberately in the same change as the Linux form of its worker
+  // environment read (/proc/<pid>/environ for BSD `ps -E`), authorized by
+  // FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION B3.5.
+  'test/room-runtime-phase1-c2.storage.test.ts': '8520e61d29bba52e307a26e65094ae4b27ab75491861d5ade3a1c5f753f4f8d6',
 };
 
 const BASELINE_DEV_DEPENDENCIES = ['@types/express', '@types/node', '@types/pg', 'eslint', 'typescript', 'typescript-eslint'];

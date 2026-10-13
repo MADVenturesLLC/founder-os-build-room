@@ -17,8 +17,11 @@
  *      plane but never match on the way out. Every value is trimmed before
  *      registration; exact-substring matching is only safer for it.
  *   3. **Where the key comes from.** Keychain on darwin, through the
- *      package's read-only custody of `mad.redaction.hmac` / `hmac-v1`.
- *      Every other platform has no key source in v1 and refuses. There is no
+ *      package's read-only custody of `mad.redaction.hmac` / `hmac-v1`;
+ *      on linux, the read-only `systemd-creds` credential `hmac-v1` in
+ *      `redaction-key-linux.ts` (Linux Gateway design note §4.6). Every
+ *      other platform has no key source
+ *      and refuses. There is no
  *      environment-variable key path and no switch that turns the boundary
  *      off; fixture custody is constructed only by tests, through the
  *      `keyCustody` seam.
@@ -46,6 +49,7 @@ import {
   type RefusalCode,
   type SecretManifest,
 } from '../../redaction/src/index.js';
+import { SystemdCredsHmacKeyCustody, SystemdCredsReadRunner } from './redaction-key-linux.js';
 
 /** Exit code of either harness when the boundary refuses. Distinct from Phase 3's exit 2. */
 export const REDACTION_REFUSED_EXIT = 3;
@@ -85,13 +89,16 @@ export function normalizeHarnessEnvironment(
   return normalized;
 }
 
-/** Keychain on darwin; no key source anywhere else in v1. */
+/** Keychain on darwin, `systemd-creds` on linux; no key source anywhere else. */
 export function harnessKeyCustody(platformName: string = platform()): HmacKeyCustody {
   if (platformName === 'darwin') {
     return new KeychainHmacKeyCustody(new SecurityCommandRunner());
   }
+  if (platformName === 'linux') {
+    return new SystemdCredsHmacKeyCustody(new SystemdCredsReadRunner());
+  }
   return new UnavailableHmacKeyCustody(
-    `no redaction key source on ${platformName}: v1 provisions Keychain custody on darwin only`,
+    `no redaction key source on ${platformName}: keys are provisioned on darwin and linux only`,
   );
 }
 

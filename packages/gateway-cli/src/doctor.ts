@@ -19,7 +19,6 @@
  */
 
 import {
-  Custody,
   GatewayStateStore,
   isPidLive,
   readStagingLock,
@@ -27,12 +26,13 @@ import {
   stagingLockExists,
   ipcRequest,
   type ControlPlaneClient,
+  type GatewayCustody,
   type GatewayPaths,
 } from '../../gateway-daemon/src/index.js';
 
 export interface DoctorDeps {
   readonly paths: GatewayPaths;
-  readonly custody: Custody;
+  readonly custody: GatewayCustody;
   readonly client: ControlPlaneClient;
   readonly state: GatewayStateStore;
 }
@@ -125,10 +125,13 @@ const STOP_CONDITION_GUIDANCE =
   'may still hold its handle would break mutual exclusion.';
 
 export function renderDoctor(report: DoctorReport): string {
+  // With custody unusable nothing is known about either item: say so, never "absent".
+  const item = (present: boolean): string =>
+    report.custody.error !== null ? 'unknown (custody unavailable)' : present ? 'present' : 'absent';
   const lines = [
     'custody',
-    `  primary item: ${report.custody.primary ? 'present' : 'absent'}`,
-    `  staging item: ${report.custody.staging ? 'present' : 'absent'}`,
+    `  primary item: ${item(report.custody.primary)}`,
+    `  staging item: ${item(report.custody.staging)}`,
     `  error:        ${report.custody.error ?? 'none'}`,
     'daemon',
     `  reachable:    ${report.daemon.reachable ? 'yes' : `no (${report.daemon.reason ?? 'unknown'})`}`,
@@ -154,7 +157,7 @@ export function renderDoctor(report: DoctorReport): string {
 
   lines.push(
     'staging inventory',
-    `  keychain:     ${report.stagingInventory.keychainItem ? 'present' : 'absent'}`,
+    `  keychain:     ${item(report.stagingInventory.keychainItem)}`,
     `  persisted:    ${report.stagingInventory.persistedState}`,
   );
 

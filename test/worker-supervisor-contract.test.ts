@@ -58,10 +58,22 @@ import {
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const PACKAGE_SRC = join(REPO_ROOT, 'packages', 'worker-supervisor', 'src');
 
-/** Pinned at the lane base 736b12b33a20dd055d88ba0ec1e30621797cc959: the Phase 1 files this lane must not touch. */
+/**
+ * Pinned at the lane base 736b12b33a20dd055d88ba0ec1e30621797cc959: the Phase 1 files this lane must not touch.
+ *
+ * Repinned deliberately in the same change as the Linux fail-closed channel fix,
+ * under FOUNDER-ACT-20261012-BR-LINUX-GATEWAY-IMPLEMENTATION B3.4, which
+ * authorizes updating these two pins: any worker channel or child error is
+ * worker loss, the lasting exit handler is attached before the handshake, and
+ * ipc-contract.md gains the one sentence saying so. Review of PR #112: a
+ * failed write on fd 3 is such an error, a channel error after `hello`
+ * answers fails the handshake, loss applies in every state but disposed, and
+ * an exit before the handshake goes through the same loss path; shutdown does
+ * not wait again for a signal exit already observed.
+ */
 const PHASE1_PINS: Record<string, string> = {
-  'packages/worker-supervisor/src/index.ts': 'be7450db50ac1bb0aac234b0bef4ec7753fbbdbd76c3c6574f23ed9761719fa2',
-  'packages/worker-supervisor/src/ipc-contract.md': '4c54c27aae3c7e7f09dcb85fbcc5036b7d5401ede5d0e028f938d2902a249aaf',
+  'packages/worker-supervisor/src/index.ts': '46997000517b324fbc85ffd6afddfb3a518dd28c68e2b56e01dc2971c32f8ca0',
+  'packages/worker-supervisor/src/ipc-contract.md': '4f5eabdc96d7bce222f730020b19c1d9d02a2315378f23a50b985ebaa6acd480',
 };
 
 /* ------------------------------------------------------------------ */
