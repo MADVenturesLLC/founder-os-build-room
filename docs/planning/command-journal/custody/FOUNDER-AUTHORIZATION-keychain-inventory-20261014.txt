@@ -1,0 +1,23 @@
+FOUNDER-ACT-20261014-BR-KEYCHAIN-INVENTORY: the Gateway's Keychain inventory reads no secret, and the certification summary stops hashing its own unfinished log
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows. This act takes effect when I post it as a comment on MADVenturesLLC/founder-os-build-room#117.
+
+A1. Basis. Two findings of CUSTODY-RECEIPT-smoke-cert-scripts-20261014.md were left for a separate act by my authorization of the merge of PR #116. Finding 1 (Copilot, r4266646576): on macOS, inventory() in packages/gateway-daemon/src/custody.ts answers present or absent by calling read(), which runs security find-generic-password -w and loads each secret, primary and staging, into the process. doctor and enroll both call it, and scripts/gateway-smoke.sh runs doctor; a throwaway HOME does not reach the Keychain, so on a Mac with an enrolled Gateway every smoke run and every doctor has read the real items, printing only present or absent. The script's header says it cannot touch a real Gateway's state, which is not true on macOS. probe() in the same file already queries the Keychain without -w. The Linux backend's inventory() also decrypts each credential, but from under the Gateway directory, which a throwaway HOME does isolate. Finding 2: scripts/gateway-cert.sh prints a checksum of cert.log before the last lines are written to it, so that checksum can never match the finished file.
+
+B1. The Keychain inventory. The builder changes inventory() in the macOS custody backend so that, for each of primary and staging, it runs find-generic-password for that account under the Gateway's service without -w, as probe() does, and reads nothing from stdout: exit 0 is present, the item-not-found exit is absent, and any other exit throws keychain_unavailable, as now. read(), every write path, the read-back verifications, the Linux backend, the service name and the backend choice do not change.
+
+B2. The smoke script's header. The builder corrects the comments of scripts/gateway-smoke.sh that say it cannot touch a real Gateway's state, to say that on macOS doctor queries the real Gateway Keychain service for whether its items exist, reading no secret. No check, verb or expected result changes.
+
+B3. The certification summary. The builder changes scripts/gateway-cert.sh so that its printed checksums leave out cert.log, the run's own log, which is still being written when they are taken, and the summary says that cert.log is not hashed. The checksums of every other log and of summary.txt stay. No step, rule or check changes.
+
+B4. Proof. In the pull request: a unit test showing that inventory() runs find-generic-password without -w for both accounts and reports present, absent and keychain_unavailable correctly; the real-Keychain macOS suite in CI, under its synthetic service, showing inventory() reporting an item it created as present and a missing one as absent; the macOS CI smoke step passing; and, for B3, a run on stub outputs showing cert.log absent from the checksums and every listed checksum matching its file. Tests whose counts of Keychain reads change because of B1 may be updated to the new counts; no test is skipped, disabled or deleted.
+
+C1. Merge. The pull request needs my separate SHA-named merge authorization. Merging starts a deployment of rare-enjoyment from main; the change is to Gateway and script code, which the control plane does not run, so the new revision boots the same control-plane code that is serving.
+
+C2. Filing. After the merge, the builder files this act verbatim with a custody receipt in the Build Room custody record, through a pull request that needs my separate authorization.
+
+C3. Not authorized. This act does not authorize: updating the Gateway code on any machine, or restarting any Gateway daemon; running a certification on any machine; any change to read(), to any custody write path, to the Linux custody backend, to the redaction key's Keychain read, or to any custody file; any change to the control plane, the database, a migration, a workflow, a Railway variable, a Neon role or any secret; the enrollment, revocation, denial or pairing-code mint of any Gateway; or any deploy, redeploy or rollback other than the one the merge starts. Each needs my separate act.
+
+Signed: Michael Daley
+Date: 2026-10-14 (UTC)
+Actor-Id: founder
