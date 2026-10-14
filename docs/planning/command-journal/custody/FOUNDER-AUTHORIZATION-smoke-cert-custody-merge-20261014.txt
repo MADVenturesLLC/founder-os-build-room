@@ -1,0 +1,45 @@
+Authorized: merge MADVenturesLLC/founder-os-build-room#116 at head 84774d289fe38719ddc9ae9ab045152b377fd5f8
+
+This head is the builder's one commit on main at 2db15255; no merge
+commit. The diff against main is the one reviewed: 6 files, 278
+insertions, documents only, under
+docs/planning/command-journal/custody/ and in README.md. It is the
+custody record C2 of my act FOUNDER-ACT-20261014-BR-SMOKE-CERT-SCRIPTS
+orders: that act, its AMENDMENT-1 and my authorization of the merge of
+PR #115, each filed verbatim; the builder's 30 polls of /health across
+deployment 9f4d66a0; and a receipt with the two notes C2 orders and
+three findings, which I accept as recorded. Findings 1 and 2, the
+smoke's Keychain read and the cert.log checksum, stay open for a
+separate act.
+
+Review bar, DEC-20260801-02 clause 2: Copilot's review of this head
+has no open finding and no inline comment. The Cursor security agent
+completed on this head with success.
+
+Checks on this head, read from the Checks API at 2026-10-14T11:08Z:
+build-and-test, build-and-test-macos, storage-integration,
+custody-pin-check, path-audit, hygiene, CodeQL and both Analyze jobs
+green; attribution-shape green on the run that started at 11:07:26Z,
+after the PR body was set at 11:07:19Z. The earlier run, on the
+placeholder body, is disregarded. GitHub reports the PR mergeable.
+
+This merge starts a deployment of rare-enjoyment from main, as each
+merge does. It changes documents only, so the new revision boots the
+same code as deployment 9f4d66a0 (2db15255), which is serving; I
+accept that deployment. Nothing is staged in Railway, 9f4d66a0 is
+SUCCESS and no deployment is building or queued (Railway API, 11:06Z);
+main is still 2db15255 (GitHub, 11:08Z); /health answered 200 at
+11:08:13Z.
+
+This authorizes this merge only. Tree:
+8c4c596f3cf5876aa57f79dd7512ff1fd109cad8. It does not authorize a fix
+to the Gateway's Keychain inventory or to gateway-cert.sh; a
+certification run on any machine; the revocation, denial, enrollment
+or pairing-code mint of any Gateway; any other deploy, redeploy or
+rollback; any migration; or any change to the control plane, the
+database, a variable, a secret, a Neon role, a workflow or the
+repository ruleset. Each needs my separate act. Any push to this
+branch voids it.
+
+Signed: Michael Daley
+Date: 2026-10-14 (UTC)
