@@ -1,0 +1,15 @@
+FOUNDER-RULING-20261013-BR-PC-ENROLLMENT-B6: the late B6 reading of the PC enrollment
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows under B6 and B7 of my act FOUNDER-ACT-20261013-BR-PC-GATEWAY-ENROLLMENT (comment 6143424572 on MADVenturesLLC/founder-os-build-room#113). This ruling takes effect when I post it as a comment on that pull request.
+
+R1. Facts. I confirmed the PC's Gateway, 1880c12d-d98d-4a91-b25a-23320aa7f58a, at 2026-10-13T10:47:58Z; the server answered HTTP 201, state enrolled. B6 asks for its checks within 15 minutes of the confirmation. Within that window the builder read /health 200 at 10:48:07Z. The other B6 checks were read at 11:33:18Z to 11:33:33Z, 45 minutes after the confirmation: buildroom status answered from the running daemon with primary HEARTBEATING; doctor showed the primary item present and the staging item absent; the daemon process was running; GET /control-plane/enrollments showed 1880c12d enrolled in slot 2 since 10:47:58.159Z and 2222132d enrolled in slot 1 on MikeMacBook.local. My read-only query at 12:43:48Z showed the registry events minted (af824593-96c8-48a7-b26f-3288e5c0e613), key_received (24dde971-a905-451c-954c-904ef31fcc10) and enrolled (b3a530b8-a100-441b-9fac-9cda4b7f2f94), and the same two enrolled Gateways.
+
+R2. Cause. I ran the B6 commands late. Nothing in the enrollment failed. The readings show the state B6 requires, but they do not show it held within the 15 minutes; the enrollment state is unchanged since 10:47:58.159Z.
+
+R3. Ruling. I accept the readings of R1 as meeting B6 for this enrollment, notwithstanding the time limit. The departure under B7 is closed by this ruling. The enrollment of the PC as the second Gateway stands.
+
+R4. Not ruled. This ruling changes no other clause of my act, authorizes nothing C2 excludes, and does not authorize the merge of any pull request.
+
+Signed: Michael Daley
+Date: 2026-10-13 (UTC)
+Actor-Id: founder

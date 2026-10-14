@@ -1,0 +1,29 @@
+FOUNDER-ACT-20261013-BR-PC-GATEWAY-ENROLLMENT: the Ubuntu PC enrolled as the second Build Room Gateway
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows. This act takes effect when I post it as a comment on MADVenturesLLC/founder-os-build-room#113.
+
+A1. Basis. B8 of my act FOUNDER-ACT-20261010-BUILD-ROOM-LINUX-GATEWAY says the PC becomes a Gateway only through the ratified enrollment pattern of DEC-20260818-01: I mint a pairing code at the control plane and confirm the fingerprint the PC's CLI shows; no private key moves from a Mac to the PC; the enrolled Gateway on my Mac is kept alongside the PC's; and neither is revoked by that act. C1 of my implementation act left enrollment to its own act. The Linux Gateway is on main since pull request #112 (merge commit feed9ef24ac3112e2b0112939df9640a746e76f6), certified on the PC and on my MacBook at a521b198df8c124eed56736cf5f101adaceef153, and its record is on main since pull request #113 (merge commit 750b6839090df90c7dcf0fa7fc7feee4f9045e1b). Migration 0009 allows two enrolled Gateways, each holding one of two enrollment slots.
+
+A2. What it costs. A Phase 3 counted run requires exactly one enrolled Gateway and is refused while two are enrolled (docs/gateway-ops-actions-log-runbook.md). Phase 3 is closed and Phase 4 is not authorized, so no run is affected today; a future counted run needs one Gateway revoked first, by its own act. I accept that.
+
+B1. The Gateways. The Gateway enrolled today is 2222132d-da43-4e5e-ba9a-f71f7ee81968, on my MacBook, in slot 1. It stays enrolled. The PC becomes the second, in slot 2, with its own identity and its own key, generated on the PC by buildroom enroll and held by systemd-creds under the host+tpm2 key mode. No key moves between machines.
+
+B2. Who does what. I hold the control-plane token and do every step that uses it: the reads of the enrollment list, the mint and the confirmation. I run every command on the PC. The builder gives me the exact commands, holds no token, pairing code, key or connection string, and calls no tool that returns one. The pairing code goes only from the mint response to the PC's standard input; it is never pasted into a message, a file, a log or a comment.
+
+B3. Before the mint, all of these hold, and the builder reports each with its check and time: main on GitHub is at 750b6839090df90c7dcf0fa7fc7feee4f9045e1b or a later commit that changes documents only; Railway's serving deployment of rare-enjoyment is SUCCESS at such a commit, nothing is staged and nothing is building; /health answers 200. I read GET /control-plane/enrollments and it shows 2222132d enrolled in slot 1, no other Gateway enrolled, none awaiting approval, and no unexpired pairing code. On the PC, the Build Room checkout is at that main commit with no local changes, built with npm ci and npm run build under Node v22.23.2, and buildroom doctor reports custody available with no staging identity and no staging lock.
+
+B4. Enrollment. I mint one pairing code with POST /control-plane/pairing-codes. On the PC I run buildroom enroll with BUILDROOM_CONTROL_PLANE_URL set to the production control plane and the code on standard input. I accept its offer to start the daemon. I read the fingerprint from the PC's own terminal.
+
+B5. Confirmation. I confirm with POST /control-plane/enrollments/<the PC's gateway_id>/confirm, typing the fingerprint I read from the PC's terminal. If the server answers 409 fingerprint_mismatch, or the gateway_id is not the one the PC printed, I deny that enrollment instead and stop.
+
+B6. After. Within 15 minutes of the confirmation: GET /control-plane/enrollments shows 2222132d enrolled in slot 1 and the PC's Gateway enrolled in slot 2; buildroom status on the PC answers from the running daemon, not from its last persisted state, and shows a primary lane; /health answers 200. I read the registry event ids of the mint and the confirmation with the read-only query the builder gives me, which opens BEGIN TRANSACTION READ ONLY and ends ROLLBACK.
+
+B7. Stop. If any condition of B3 fails, or enroll, the confirmation or a check of B6 fails, the builder and I stop and report. Nothing is retried, revoked, denied (except under B5) or minted again without my new ruling. An unredeemed code is left to expire.
+
+C1. Filing. The builder files the same calendar day, in FounderOS 07-decisions/ops-actions-log.md, one row for the mint and one for the confirmation, as the runbook requires, through the governed flow; and files this act verbatim, with a receipt and the B3 and B6 evidence, in the Build Room custody record. Each pull request needs my separate SHA-named merge authorization.
+
+C2. Not authorized. This act does not authorize: revoking or denying 2222132d or any Gateway except under B5; enrolling any machine other than the PC; minting, moving or reading the redaction HMAC key on the PC, or any other key beyond the one buildroom enroll generates; a systemd unit, user lingering or any other way to keep the PC's daemon running beyond the session I start it in; a Phase 3 counted run; moving the hermes worker (B10 of my Linux act); any change to the control plane, the database, a migration, a Railway variable, a Neon role or any secret; any SQL other than the read-only query of B6; or any deploy, redeploy or rollback. Each needs my separate act.
+
+Signed: Michael Daley
+Date: 2026-10-13 (UTC)
+Actor-Id: founder

@@ -1,0 +1,230 @@
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ set -u
+SRC_URL="$(git -C ~/buildroom-cert/founder-os-build-room remote get-url origin)"
+[ -d ~/buildroom-gateway/.git ] || git clone -q "$SRC_URL" ~/buildroom-gateway
+cd ~/buildroom-gateway && git fetch -q origin main && git checkout -q --detach 750b6839090df90c7dcf0fa7fc7feee4f9045e1b
+echo "head: $(git rev-parse HEAD)   local changes: $(git status --porcelain | wc -l)"
+. ~/.nvm/nvm.sh && nvm use -s 22.23.2 && echo "node: $(node --version)"
+npm ci --silent && npm run -s build && echo BUILD-OK
+export BUILDROOM_CONTROL_PLANE_URL=https://rare-enjoyment-production-0869.up.railway.app
+echo "== doctor"; node dist/packages/gateway-cli/src/bin.js doctor
+read -rs -p 'control-plane token (hidden): ' CPT; echo
+for p in enrollments pairing-codes; do
+  echo "== GET /control-plane/$p"
+  curl -sS --config - "$BUILDROOM_CONTROL_PLANE_URL/control-plane/$p" <<<"header = \"Authorization: Bearer $CPT\"" | python3 -m json.tool
+done
+unset CPT; date -u +%FT%TZ
+head: 750b6839090df90c7dcf0fa7fc7feee4f9045e1b   local changes: 0
+Now using node v22.23.2 (npm v10.9.8)
+node: v22.23.2
+BUILD-OK
+== doctor
+custody
+  primary item: absent
+  staging item: absent
+  error:        none
+daemon
+  reachable:    no (daemon not running)
+  socket:       /home/michaeldaley/Library/Application Support/founder-os/gateway/ipc.sock
+control plane
+  reachable:    yes (200)
+lanes
+  primary:      IDLE
+  staging:      INACTIVE
+  last refusal: none
+staging lock
+  present:      no
+staging inventory
+  keychain:     absent
+  persisted:    INACTIVE
+control-plane token (hidden):
+== GET /control-plane/enrollments
+{
+    "enrollments": [
+        {
+            "gatewayId": "2222132d-da43-4e5e-ba9a-f71f7ee81968",
+            "state": "enrolled",
+            "keyId": "3c8975f9…",
+            "fingerprint": "3c8975f9…",
+            "hostDescriptor": {
+                "os": "darwin",
+                "arch": "arm64",
+                "hostname": "MikeMacBook.local"
+            },
+            "stateSince": "2026-08-26T12:26:23.178Z",
+            "awaitingApprovalExpiresAt": null,
+            "isCurrentlyEnrolled": true,
+            "enrollmentSlot": 1
+        },
+        {
+            "gatewayId": "4369975d-f50a-4611-98fa-73287e1e6e07",
+            "state": "revoked",
+            "keyId": "75e35718…",
+            "fingerprint": "75e35718…",
+            "hostDescriptor": {
+                "os": "darwin",
+                "arch": "arm64",
+                "hostname": "MikeMacBook.local"
+            },
+            "stateSince": "2026-08-26T12:26:23.053Z",
+            "awaitingApprovalExpiresAt": null,
+            "isCurrentlyEnrolled": false,
+            "enrollmentSlot": null
+        },
+        {
+            "gatewayId": "48476acc-f601-4404-9f7f-af38147551ac",
+            "state": "denied",
+            "keyId": "730a964f…",
+            "fingerprint": "730a964f…",
+            "hostDescriptor": {
+                "os": "darwin",
+                "arch": "x64",
+                "hostname": "Michaels-iMac.local"
+            },
+            "stateSince": "2026-08-25T00:53:09.037Z",
+            "awaitingApprovalExpiresAt": null,
+            "isCurrentlyEnrolled": false,
+            "enrollmentSlot": null
+        }
+    ]
+}
+== GET /control-plane/pairing-codes
+{
+    "pairingCodes": [
+        {
+            "pairingId": "b478275f-de24-438a-99c7-98ff7e98ee41",
+            "mintedAt": "2026-08-26T12:14:48.526Z",
+            "expiresAt": "2026-08-26T12:24:48.526Z",
+            "consumedAt": "2026-08-26T12:14:49.075Z",
+            "consumedByGatewayId": "2222132d-da43-4e5e-ba9a-f71f7ee81968"
+        },
+        {
+            "pairingId": "bc4e896b-4288-4067-8d45-c3cf498d759a",
+            "mintedAt": "2026-08-25T00:34:19.252Z",
+            "expiresAt": "2026-08-25T00:44:19.252Z",
+            "consumedAt": "2026-08-25T00:35:32.390Z",
+            "consumedByGatewayId": "48476acc-f601-4404-9f7f-af38147551ac"
+        },
+        {
+            "pairingId": "27ea2fb7-b07c-4b2f-9b5b-f141a4372726",
+            "mintedAt": "2026-08-24T21:51:17.267Z",
+            "expiresAt": "2026-08-24T22:01:17.267Z",
+            "consumedAt": "2026-08-24T21:51:17.740Z",
+            "consumedByGatewayId": "4369975d-f50a-4611-98fa-73287e1e6e07"
+        },
+        {
+            "pairingId": "f54c0778-eba9-4025-9f54-ddd587f4b7df",
+            "mintedAt": "2026-08-24T17:01:10.772Z",
+            "expiresAt": "2026-08-24T17:11:10.772Z",
+            "consumedAt": null,
+            "consumedByGatewayId": null
+        },
+        {
+            "pairingId": "dbda43dc-3c84-4565-841b-f71737b8bfbe",
+            "mintedAt": "2026-08-24T16:36:29.819Z",
+            "expiresAt": "2026-08-24T16:46:29.819Z",
+            "consumedAt": null,
+            "consumedByGatewayId": null
+        },
+        {
+            "pairingId": "a65548b7-bdfe-46e8-87d5-f8e07c31cfe9",
+            "mintedAt": "2026-08-24T12:55:31.988Z",
+            "expiresAt": "2026-08-24T13:05:31.988Z",
+            "consumedAt": null,
+            "consumedByGatewayId": null
+        }
+    ]
+}
+2026-10-13T10:35:36Z
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway$
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway$ cd ~/buildroom-gateway && . ~/.nvm/nvm.sh && nvm use -s 22.23.2 >/dev/null
+export BUILDROOM_CONTROL_PLANE_URL=https://rare-enjoyment-production-0869.up.railway.app
+read -rs -p 'control-plane token (hidden): ' CPT; echo
+MINT="$(curl -sS -X POST --config - "$BUILDROOM_CONTROL_PLANE_URL/control-plane/pairing-codes" <<<"header = \"Authorization: Bearer $CPT\"")"
+unset CPT
+CODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("code",""))' <<<"$MINT" 2>/dev/null)"
+if [ -n "$CODE" ]; then
+  python3 -c 'import json,sys; d=json.load(sys.stdin); print("pairing_id:", d["pairing_id"]); print("expires_at:", d["expires_at"])' <<<"$MINT"
+  unset MINT; echo "mint read at: $(date -u +%FT%TZ)"
+  printf '%s\ny\n' "$CODE" | node dist/packages/gateway-cli/src/bin.js enroll
+  unset CODE; echo "enroll finished at: $(date -u +%FT%TZ)"
+  python3 - <<'EOF'
+import json, os
+p = os.path.expanduser("~/Library/Application Support/founder-os/gateway/state.json")
+s = json.load(open(p))
+for lane in ("primary", "staging"):
+    print(lane, "identity:", s.get(lane, {}).get("identity"))
+EOF
+else
+  echo "MINT FAILED — response: $MINT"; unset MINT CODE
+fi
+control-plane token (hidden):
+pairing_id: c0a96b06-33e7-449d-9f1e-4249da5d5e1b
+expires_at: 2026-10-13T10:49:15.074Z
+mint read at: 2026-10-13T10:39:15Z
+pairing code: fingerprint: 08b6179e…
+hand this fingerprint to the Founder for confirmation
+start the gateway daemon now? [y/N] daemon started (detached)
+enroll finished at: 2026-10-13T10:39:16Z
+primary identity: {'gatewayId': None, 'keyId': None, 'fingerprint': None}
+staging identity: {'gatewayId': '1880c12d-d98d-4a91-b25a-23320aa7f58a', 'keyId': '08b6179e…', 'fingerprint': '08b6179e…'}
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway$ cd ~/buildroom-gateway
+export BUILDROOM_CONTROL_PLANE_URL=https://rare-enjoyment-production-0869.up.railway.app
+read -rs -p 'control-plane token (hidden): ' CPT; echo
+echo "== the request as the control plane holds it"
+curl -sS --config - "$BUILDROOM_CONTROL_PLANE_URL/control-plane/enrollments" <<<"header = \"Authorization: Bearer $CPT\"" \
+  | python3 -c 'import json,sys; [print(json.dumps(e)) for e in json.load(sys.stdin)["enrollments"] if e["state"]=="awaiting_approval"]'
+read -r -p 'gateway_id, from the PC screen: ' GID
+read -r -p 'fingerprint, from the PC screen: ' FP
+echo "== confirm at $(date -u +%FT%TZ)"
+curl -sS -w '\nHTTP %{http_code}\n' -X POST --config - "$BUILDROOM_CONTROL_PLANE_URL/control-plane/enrollments/$GID/confirm" <<<"header = \"Authorization: Bearer $CPT\"
+header = \"Content-Type: application/json\"
+data = \"{\\\"fingerprint\\\":\\\"$FP\\\"}\""
+unset CPT GID FP; date -u +%FT%TZ
+control-plane token (hidden):
+== the request as the control plane holds it
+{"gatewayId": "1880c12d-d98d-4a91-b25a-23320aa7f58a", "state": "awaiting_approval", "keyId": "08b6179e…", "fingerprint": "08b6179e…", "hostDescriptor": {"os": "linux", "arch": "x64", "hostname": "michaeldaley-Z890-Pro-RS-WiFi-White"}, "stateSince": "2026-10-13T10:39:16.833Z", "awaitingApprovalExpiresAt": "2026-10-13T11:39:16.833Z", "isCurrentlyEnrolled": false, "enrollmentSlot": null}
+gateway_id, from the PC screen: 1880c12d-d98d-4a91-b25a-23320aa7f58a
+fingerprint, from the PC screen: 08b6179e…
+== confirm at 2026-10-13T10:47:58Z
+{"gatewayId":"1880c12d-d98d-4a91-b25a-23320aa7f58a","state":"enrolled"}
+HTTP 201
+2026-10-13T10:47:58Z
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway$ cd ~/buildroom-gateway && . ~/.nvm/nvm.sh && nvm use -s 22.23.2 >/dev/null
+export BUILDROOM_CONTROL_PLANE_URL=https://rare-enjoyment-production-0869.up.railway.app
+echo "== status at $(date -u +%FT%TZ)"; node dist/packages/gateway-cli/src/bin.js status
+echo "== doctor"; node dist/packages/gateway-cli/src/bin.js doctor
+echo "== daemon process"; pgrep -af 'gateway-daemon/src/main.js' || echo "no daemon process"
+read -rs -p 'control-plane token (hidden): ' CPT; echo
+echo "== enrolled gateways"
+curl -sS --config - "$BUILDROOM_CONTROL_PLANE_URL/control-plane/enrollments" <<<"header = \"Authorization: Bearer $CPT\"" \
+  | python3 -c 'import json,sys; [print(e["gatewayId"], e["state"], "slot", e["enrollmentSlot"], e["hostDescriptor"]["hostname"], e["stateSince"]) for e in json.load(sys.stdin)["enrollments"] if e["isCurrentlyEnrolled"]]'
+unset CPT; date -u +%FT%TZ
+== status at 2026-10-13T11:33:18Z
+primary: HEARTBEATING
+staging: INACTIVE
+== doctor
+custody
+  primary item: present
+  staging item: absent
+  error:        none
+daemon
+  reachable:    yes
+  socket:       /home/michaeldaley/Library/Application Support/founder-os/gateway/ipc.sock
+control plane
+  reachable:    yes (200)
+lanes
+  primary:      IDLE
+  staging:      INACTIVE
+  last refusal: none
+staging lock
+  present:      no
+staging inventory
+  keychain:     absent
+  persisted:    INACTIVE
+== daemon process
+26506 /home/michaeldaley/.nvm/versions/node/v22.23.2/bin/node /home/michaeldaley/buildroom-gateway/dist/packages/gateway-daemon/src/main.js
+control-plane token (hidden):
+== enrolled gateways
+1880c12d-d98d-4a91-b25a-23320aa7f58a enrolled slot 2 michaeldaley-Z890-Pro-RS-WiFi-White 2026-10-13T10:47:58.159Z
+2222132d-da43-4e5e-ba9a-f71f7ee81968 enrolled slot 1 MikeMacBook.local 2026-08-26T12:26:23.178Z
+2026-10-13T11:33:33Z
