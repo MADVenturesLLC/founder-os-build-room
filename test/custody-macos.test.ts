@@ -122,6 +122,14 @@ describe('custody-macos · refusal-vs-transport-classification', { skip: SKIP },
     assert.equal(await custody.read('staging'), null);
     assert.deepEqual(await custody.inventory(), { primary: false, staging: false });
   });
+
+  it('inventories an item it created as present and a missing one as absent, without -w (FOUNDER-ACT-20261014-BR-KEYCHAIN-INVENTORY B1)', async () => {
+    await clean();
+    await custody.createStaging(SYNTHETIC_VALUE);
+    assert.deepEqual(await custody.inventory(), { primary: false, staging: true });
+    await custody.delete('staging');
+    assert.deepEqual(await custody.inventory(), { primary: false, staging: false });
+  });
 });
 
 describe('custody-macos · existing-item-with-large-stdin', { skip: SKIP }, () => {

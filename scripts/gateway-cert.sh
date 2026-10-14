@@ -13,7 +13,8 @@
 # the act's AMENDMENT-1 a full step must also run at least one test and an n=K
 # step exactly K, untracked files in the Build Room checkout count, the run
 # stops if its temporary directory cannot be made, and the throwaway cluster
-# takes a free port.
+# takes a free port. Under FOUNDER-ACT-20261014-BR-KEYCHAIN-INVENTORY B3 the
+# summary's checksums leave out cert.log, the run's own unfinished log.
 #
 # Runs, at exactly that head: the default suite, every storage suite, the
 # runtime-role tier, the Prerequisite C proof (must be 15 of 15 under Node
@@ -194,8 +195,16 @@ for r in "${RESULTS[@]}"; do [[ "$r" == *" PASS "* ]] || FINAL=FAIL; done
   echo "started:  $STAMP   finished: $(date -u +%Y%m%dT%H%M%SZ)"
   for r in "${RESULTS[@]}"; do echo "$r"; done
   echo "RESULT:   $FINAL"
+  echo "cert.log: not hashed; it is this run's own log, still being written"
 } | tee "$LOGDIR/summary.txt"
-( cd "$LOGDIR" && shasum -a 256 ./*.log summary.txt 2>/dev/null || sha256sum ./*.log summary.txt )
+# cert.log is left out: the run's output is still being appended to it, so a
+# checksum taken now could never match the finished file
+# (FOUNDER-ACT-20261014-BR-KEYCHAIN-INVENTORY B3).
+HASHED=()
+for f in "$LOGDIR"/*.log; do
+  [[ "$(basename "$f")" == cert.log ]] || HASHED+=("./$(basename "$f")")
+done
+( cd "$LOGDIR" && shasum -a 256 "${HASHED[@]}" summary.txt 2>/dev/null || sha256sum "${HASHED[@]}" summary.txt )
 echo "logs:     $LOGDIR"
 echo "===== END SUMMARY ====="
 [[ "$FINAL" == PASS ]]

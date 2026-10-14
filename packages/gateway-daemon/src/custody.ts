@@ -307,15 +307,26 @@ export class Custody implements GatewayCustody {
   }
 
   /**
-   * Which items exist. A Keychain that cannot be read throws
+   * Which items exist. A Keychain that cannot be queried throws
    * `keychain_unavailable` here rather than reading as "absent": `doctor`
    * reports the code, and `enroll` refuses before it reads a pairing code.
+   *
+   * Queried without `-w`, as `probe()` is, so no secret is loaded to answer
+   * present or absent (FOUNDER-ACT-20261014-BR-KEYCHAIN-INVENTORY B1).
    */
   async inventory(): Promise<CustodyInventory> {
     return {
-      primary: (await this.read('primary')) !== null,
-      staging: (await this.read('staging')) !== null,
+      primary: await this.exists('primary'),
+      staging: await this.exists('staging'),
     };
+  }
+
+  /** Whether an item exists, without `-w`; stdout is never read. */
+  private async exists(account: CustodyAccount): Promise<boolean> {
+    const result = await this.runner.run(['find-generic-password', '-a', account, '-s', this.service]);
+    if (result.code === 0) return true;
+    if (result.code === ITEM_NOT_FOUND_EXIT) return false;
+    throw new CustodyError('keychain_unavailable', `querying ${account} custody failed`, result.stderr);
   }
 
   /**

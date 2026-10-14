@@ -21,6 +21,7 @@ import {
   Custody,
   CustodyError,
   ITEM_NOT_FOUND_EXIT,
+  KEYCHAIN_SERVICE,
   generateGatewayKeypair,
   privateKeyFromSecret,
   sanitizeCustodyError,
@@ -286,6 +287,38 @@ describe('gateway-custody-recovery · refusal-vs-transport-classification', () =
       assert.equal(seen.length, 1);
       assert.equal(seen[0]![0], 'find-generic-password');
       assert.ok(!seen[0]!.includes('-w'), 'the probe never reads secret data');
+    } finally {
+      f.cleanup();
+    }
+  });
+
+  it('inventories without reading a secret: no -w for either account (FOUNDER-ACT-20261014-BR-KEYCHAIN-INVENTORY B1)', async () => {
+    const f = fixture();
+    try {
+      const seen: string[][] = [];
+      f.faulty.failOn = (args) => {
+        seen.push([...args]);
+        return null;
+      };
+
+      assert.deepEqual(await f.custody.inventory(), { primary: false, staging: false }, 'absent reads as absent');
+      await f.custody.createStaging(STAGING);
+      seen.length = 0;
+      assert.deepEqual(await f.custody.inventory(), { primary: false, staging: true }, 'present reads as present');
+      assert.equal(seen.length, 2);
+      for (const [index, account] of ['primary', 'staging'].entries()) {
+        assert.deepEqual(seen[index], ['find-generic-password', '-a', account, '-s', KEYCHAIN_SERVICE]);
+      }
+
+      // Whatever the tool prints, inventory decides on the exit code alone.
+      f.faulty.failOn = () => ({ code: 0, stdout: 'not a secret', stderr: '' });
+      assert.deepEqual(await f.custody.inventory(), { primary: true, staging: true });
+      f.faulty.failOn = (args) => (args.includes('primary') ? { code: 51, stdout: '', stderr: 'unavailable' } : null);
+      await assert.rejects(() => f.custody.inventory(), (error: unknown) => {
+        assert.ok(error instanceof CustodyError);
+        assert.equal(error.code, 'keychain_unavailable');
+        return true;
+      });
     } finally {
       f.cleanup();
     }

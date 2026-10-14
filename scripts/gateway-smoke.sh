@@ -2,9 +2,12 @@
 # gateway-smoke.sh — local CLI smoke for the gateway surface (contract §20).
 #
 # Exercises the five verbs against a THROWAWAY HOME, so it cannot read, write or
-# delete anything in the developer's real gateway state directory. It contacts
-# no control plane and performs no Founder act: minting, confirming and revoking
-# are Founder-reserved and are deliberately absent from this script.
+# delete anything in the developer's real gateway state directory. On macOS the
+# Keychain is not under HOME: `doctor` queries the real Gateway Keychain service
+# for whether its items exist, reading no secret
+# (FOUNDER-ACT-20261014-BR-KEYCHAIN-INVENTORY B2). It contacts no control plane
+# and performs no Founder act: minting, confirming and revoking are
+# Founder-reserved and are deliberately absent from this script.
 #
 # What it proves: the binary runs, the verb surface is exactly five, `providers`
 # refuses with a reason, and `status`, `tail` and `doctor` behave correctly with
@@ -32,8 +35,9 @@ fi
 SANDBOX="$(mktemp -d /tmp/brsmoke.XXXXXX)"
 trap 'rm -rf "$SANDBOX"' EXIT
 
-# A throwaway HOME. `gatewayPaths()` derives everything from it, so nothing this
-# script does can touch a real gateway's state.
+# A throwaway HOME. `gatewayPaths()` derives every file path from it, so nothing
+# this script does can touch a real gateway's state directory. The one exception
+# is the macOS Keychain, which `doctor` queries for existence only (header).
 run_cli() {
   HOME="$SANDBOX" BUILDROOM_CONTROL_PLANE_URL="http://127.0.0.1:1" \
     node "$CLI" "$@" 2>&1 || true
