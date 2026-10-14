@@ -1,0 +1,23 @@
+FOUNDER-ACT-20261014-BR-SMOKE-CERT-SCRIPTS: the smoke script's short sandbox and a certification script in the repository
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows. This act takes effect when I post it as a comment on MADVenturesLLC/founder-os-build-room#114.
+
+A1. Basis. Two defects were found in certifying the Linux Gateway and left as they ran. First, scripts/gateway-smoke.sh fails one check on my MacBook: it makes its throwaway HOME with mktemp -d, which on macOS lands under the per-user temporary directory, and the Gateway socket path under that HOME is longer than the 104 bytes macOS allows (finding 2 of CUSTODY-RECEIPT-linux-gateway-20261013.md; my ruling FOUNDER-RULING-20261013-BR112-MAC-A521B19). Second, the certification script the builder gave for B4 of my Linux Gateway implementation act, filed as LINUX-GATEWAY-EVIDENCE-buildroom-cert-script-20261012.txt (SHA-256 1917b097b6be60516035446b9f192077b964a22f1e51795b5675c911de6cad66), does not refuse a madventures-tui checkout with local changes (finding 5), and its storage step does not fail when tests are skipped. That script exists only as filed evidence, bound to PR #112's branch, and stays as filed.
+
+B1. The smoke script. The builder changes scripts/gateway-smoke.sh so that its throwaway HOME is made under /tmp with a short name, mktemp -d /tmp/brsmoke.XXXXXX, on every OS, and is still removed on exit. No check, verb or expected result changes.
+
+B2. The smoke script in CI. The builder adds one step to the build-and-test-macos job of .github/workflows/ci.yml, after the build it needs, that runs scripts/gateway-smoke.sh. No other job, step, permission, trigger or action in any workflow changes.
+
+B3. A certification script in the repository. The builder adds scripts/gateway-cert.sh, made from the filed script with only these changes: (1) it takes the 40-hex head SHA to certify and the branch that carries it as its two arguments, in place of PR #112's fixed branch, and its summary names no act; (2) it stops before any suite runs if the madventures-tui checkout has any local change, tracked or untracked, or if its HEAD does not descend from 3d5c4c97, and it prints that HEAD; (3) its storage step fails when any test is skipped, as the runtime-role step already does. Everything it creates stays under its work directory, and it touches no real Gateway, no real key and no production system, as the filed script does. The filed script is not edited.
+
+B4. Proof. In the pull request: the macOS CI job runs the smoke step and passes; the builder runs scripts/gateway-smoke.sh on Linux and shows its sandbox under /tmp; and the builder shows scripts/gateway-cert.sh stopping on a madventures-tui checkout with a local change, and marking a storage step with a skipped test FAIL, before any suite of the real repository runs. No test is skipped, disabled or deleted.
+
+C1. Merge. The pull request needs my separate SHA-named merge authorization. Merging starts a deployment of rare-enjoyment from main; it changes scripts and CI only, so the new revision boots the same control-plane code that is serving.
+
+C2. Filing. After the merge, the builder files this act verbatim with a custody receipt in the Build Room custody record, through a pull request that needs my separate authorization. That receipt also records two notes: my closing of the sslmode=verify-full act on 2026-10-14, superseded by PR #107, with no act issued; and that C2 of FOUNDER-ACT-20261013-BR-PC-GATEWAY-ENROLLMENT listed moving the hermes worker as not authorized, although B10 of FOUNDER-ACT-20261010-BUILD-ROOM-LINUX-GATEWAY had already moved it to the PC, so that clause excluded nothing.
+
+C3. Not authorized. This act does not authorize: running a certification on any machine; any change to the filed certification script or any other custody file; any change to the Gateway, the control plane, the database, a migration, a Railway variable, a Neon role or any secret; any other change to a workflow, a runner or the repository ruleset; the enrollment, revocation, denial or pairing-code mint of any Gateway; a Phase 3 run; or any deploy, redeploy or rollback other than the one the merge starts. Each needs my separate act.
+
+Signed: Michael Daley
+Date: 2026-10-14 (UTC)
+Actor-Id: founder

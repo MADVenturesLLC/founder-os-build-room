@@ -1,0 +1,15 @@
+FOUNDER-ACT-20261014-BR-SMOKE-CERT-SCRIPTS-AMENDMENT-1: four more changes to the certification script
+
+I, Michael Daley, Founder of MAD Ventures, amend my act FOUNDER-ACT-20261014-BR-SMOKE-CERT-SCRIPTS (comment 6160133718 on MADVenturesLLC/founder-os-build-room#114). This amendment takes effect when I post it as a comment on MADVenturesLLC/founder-os-build-room#115.
+
+A1. Basis. Copilot's reviews of PR #115 found four defects in scripts/gateway-cert.sh, each carried unchanged from the filed certification script and so outside the three changes B3 allows: a suite that runs no tests, or more tests than pass, can still be reported PASS (r4266530065); untracked files in the Build Room checkout do not stop a run (r4266530109); a failed mktemp leaves the cluster path empty and the run continues (r4266588880); and the throwaway cluster always takes port 55432, so a stale run or another service on that port blocks certification (noted in the review of dc4a5cb). The builder's change for the branch check, in dc4a5cb, is within B3 and stands.
+
+B1. B3 of my act also allows these four changes to scripts/gateway-cert.sh, and no others: (4) a step with the full rule fails unless at least one test ran, and a step with the n=K rule fails unless exactly K tests ran and all K passed; (5) the Build Room checkout check counts untracked files, as the madventures-tui check does; (6) the run stops before any cluster is created if its temporary directory cannot be made; (7) the throwaway cluster listens on a free loopback port chosen when the run starts, not on 55432, and the database URL uses that port. Everything the script creates still stays under its work directory, and it still touches no real Gateway, no real key and no production system.
+
+B2. Proof. In the pull request the builder shows each of (4) to (7): a step marked FAIL on an empty run and on a run with more tests than passes; a run stopped by an untracked file in the Build Room checkout; a run stopped when the temporary directory cannot be made, with nothing created; and a cluster started on a port other than 55432 while 55432 is in use.
+
+C1. Everything else in my act stands, including C1 to C3. Each push voids any earlier merge authorization; the merge needs my SHA-named authorization of the final head.
+
+Signed: Michael Daley
+Date: 2026-10-14 (UTC)
+Actor-Id: founder
