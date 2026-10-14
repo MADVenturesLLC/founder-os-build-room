@@ -9,7 +9,11 @@
 # differs in three ways: it takes the head and the branch that carries it as
 # arguments; it refuses a madventures-tui checkout with any local change, or
 # whose HEAD does not descend from the bound base 3d5c4c97; and its storage step
-# fails when any test is skipped.
+# fails when any test is skipped; the named branch must carry the head. Under
+# the act's AMENDMENT-1 a full step must also run at least one test and an n=K
+# step exactly K, untracked files in the Build Room checkout count, the run
+# stops if its temporary directory cannot be made, and the throwaway cluster
+# takes a free port.
 #
 # Runs, at exactly that head: the default suite, every storage suite, the
 # runtime-role tier, the Prerequisite C proof (must be 15 of 15 under Node
@@ -88,7 +92,7 @@ git -C "$BR" merge-base --is-ancestor "$EXPECT" FETCH_HEAD 2>/dev/null \
 git -C "$BR" checkout --quiet --detach "$EXPECT" || die "cannot check out $EXPECT"
 HEAD_NOW="$(git -C "$BR" rev-parse HEAD)"
 [[ "$HEAD_NOW" == "$EXPECT" ]] || die "HEAD is $HEAD_NOW, not $EXPECT"
-[[ -z "$(git -C "$BR" status --porcelain --untracked-files=no)" ]] || die "checkout has local changes"
+[[ -z "$(git -C "$BR" status --porcelain)" ]] || die "checkout has local changes (untracked files count)"
 git -C "$TUI" fetch --quiet origin || true
 # The Prerequisite C proof runs the Worker from this checkout, so a change in
 # its worktree would run under an unchanged logged HEAD. Untracked files count.
@@ -104,8 +108,16 @@ echo "npm:        $(npm --version)"
 echo "postgres:   $PGVER"
 echo "tui head:   $(git -C "$TUI" rev-parse HEAD)"
 
-# A throwaway PostgreSQL 16 cluster, port 55432, trust auth on loopback only.
-PGTMP="$(mktemp -d "$WORK/pg.XXXXXX")"
+# A throwaway PostgreSQL 16 cluster, trust auth on loopback only, on a free
+# loopback port chosen now rather than a fixed one, so a stale run or another
+# service cannot block it. The port is free when chosen; if something takes it
+# before the cluster starts, the start fails and the run stops.
+PGTMP="$(mktemp -d "$WORK/pg.XXXXXX")" || die "could not make a temporary directory under $WORK"
+[[ -n "$PGTMP" && -d "$PGTMP" ]] || die "could not make a temporary directory under $WORK"
+PGPORT="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{process.stdout.write(String(s.address().port));s.close()})')" \
+  || die "could not choose a free loopback port"
+[[ "$PGPORT" =~ ^[0-9]+$ ]] || die "could not choose a free loopback port"
+echo "pg port:    $PGPORT"
 cleanup() {
   "$PGBIN/pg_ctl" -D "$PGTMP/data" -m immediate stop >/dev/null 2>&1 || true
   rm -rf "$PGTMP"
@@ -114,11 +126,11 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$PGTMP/data" --auth=trust --username=postgres --no-sync >"$LOGDIR/initdb.log" 2>&1 \
   || die "initdb failed (see $LOGDIR/initdb.log)"
 "$PGBIN/pg_ctl" -D "$PGTMP/data" -l "$LOGDIR/postgres.log" -w \
-  -o "-p 55432 -k $PGTMP -c listen_addresses=127.0.0.1" start >/dev/null \
+  -o "-p $PGPORT -k $PGTMP -c listen_addresses=127.0.0.1" start >/dev/null \
   || die "throwaway PostgreSQL did not start (see $LOGDIR/postgres.log)"
-"$PGBIN/createdb" -h 127.0.0.1 -p 55432 -U postgres buildroom_test \
+"$PGBIN/createdb" -h 127.0.0.1 -p "$PGPORT" -U postgres buildroom_test \
   || die "could not create the throwaway database"
-DBURL="postgresql://postgres:postgres@127.0.0.1:55432/buildroom_test"
+DBURL="postgresql://postgres:postgres@127.0.0.1:$PGPORT/buildroom_test"
 
 cd "$BR" || die "cd $BR"
 export BUILDROOM_TEST_PG_BINDIR="$PGBIN"
@@ -127,8 +139,9 @@ export BUILDROOM_PREREQC_TUI_ROOT="$TUI"
 RESULTS=()
 # step <name> <needs-db:yes|no> <rule> <command...>
 #   rule: any  -> exit 0 and "# fail 0"
-#         full -> also "# skipped 0" (a suite that skipped proves nothing)
-#         n=K  -> also exactly K passing tests and nothing skipped
+#         full -> also "# skipped 0" and at least one test run (a suite that
+#                 skipped, or ran nothing, proves nothing)
+#         n=K  -> also exactly K tests run, all K passing, nothing skipped
 step() {
   local name="$1" db="$2" rule="$3"; shift 3
   local out="$LOGDIR/$name.log" rc
@@ -146,8 +159,8 @@ step() {
   [[ "$rc" == 0 ]] || verdict=FAIL
   [[ -z "$fail" || "$fail" == 0 ]] || verdict=FAIL
   case "$rule" in
-    full) [[ "$skipped" == 0 ]] || verdict=FAIL ;;
-    n=*)  [[ "$skipped" == 0 && "$pass" == "${rule#n=}" ]] || verdict=FAIL ;;
+    full) [[ "$skipped" == 0 && "$tests" =~ ^[0-9]+$ && "$tests" -gt 0 ]] || verdict=FAIL ;;
+    n=*)  [[ "$skipped" == 0 && "$tests" == "${rule#n=}" && "$pass" == "${rule#n=}" ]] || verdict=FAIL ;;
   esac
   grep -E '^(#|ℹ) (tests|pass|fail|skipped) |gateway-smoke: |runtime-role — |^not ok ' "$out" | tail -12
   local line
