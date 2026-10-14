@@ -99,6 +99,12 @@ jobs:
       - name: Test (real Keychain custody, synthetic service)
         run: npm run test:custody:macos
 
+      # The CLI smoke on macOS, where the throwaway HOME's socket path must fit
+      # the 104-byte sun_path (FOUNDER-ACT-20261014-BR-SMOKE-CERT-SCRIPTS B2).
+      # `smoke:gateway` builds first; it touches no real Gateway.
+      - name: Gateway CLI smoke (throwaway HOME)
+        run: npm run smoke:gateway
+
   # The storage suite skips itself when TEST_DATABASE_URL is unset, which is the
   # right default locally and the wrong one in CI: coverage that depends on
   # someone remembering to export a variable is coverage that quietly lapses.

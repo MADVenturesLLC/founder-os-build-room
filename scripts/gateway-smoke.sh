@@ -24,7 +24,12 @@ if [[ ! -f "$CLI" ]]; then
   exit 2
 fi
 
-SANDBOX="$(mktemp -d)"
+# Under /tmp with a short name, not the default temporary directory: on macOS
+# that is under /var/folders, and the Gateway socket path derived from a HOME
+# there is longer than the 104 bytes macOS allows, so the socket-path guard
+# fails the doctor check. From /tmp it is 75 bytes, 83 if /tmp is resolved to
+# /private/tmp, under the 103 the guard in gateway-daemon's ipc.ts allows.
+SANDBOX="$(mktemp -d /tmp/brsmoke.XXXXXX)"
 trap 'rm -rf "$SANDBOX"' EXIT
 
 # A throwaway HOME. `gatewayPaths()` derives everything from it, so nothing this
