@@ -81,6 +81,10 @@ if [[ "$OS" == Linux ]]; then
 fi
 
 git -C "$BR" fetch --quiet origin "$BRANCH" || die "git fetch failed"
+# The branch named must carry the head: a typo or another branch would
+# otherwise certify a commit that is merely present in the checkout.
+git -C "$BR" merge-base --is-ancestor "$EXPECT" FETCH_HEAD 2>/dev/null \
+  || die "$EXPECT is not on origin/$BRANCH"
 git -C "$BR" checkout --quiet --detach "$EXPECT" || die "cannot check out $EXPECT"
 HEAD_NOW="$(git -C "$BR" rev-parse HEAD)"
 [[ "$HEAD_NOW" == "$EXPECT" ]] || die "HEAD is $HEAD_NOW, not $EXPECT"
