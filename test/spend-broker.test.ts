@@ -9,9 +9,8 @@
  *
  * Boundary semantics are NOT re-decided here. The per-room ≥ and the monthly
  * strictly-above comparisons are the live meter's, exercised through
- * `MeterCeilingPort`; tests that touch them pin the live rule (including the
- * meter's own recorded `FOUNDER_DECISION_REQUIRED` deviation at
- * `perRoomTokenLimb`), they do not settle it.
+ * `MeterCeilingPort`; tests that touch them pin the live rule: the per-room
+ * limb inclusive as `-16` clause 2 is written (Founder ruling 2026-08-29).
  */
 
 import { describe, it } from 'node:test';
@@ -171,8 +170,8 @@ describe('SpendBroker.mint — ceiling coupling', () => {
   });
 
   it('denies at the ceiling (committed == ceiling) and emits one interrupt frame', async () => {
-    // Pins the live meter's ≥ boundary at perRoomTokenLimb — including that
-    // rule's recorded open Founder question; not re-litigated here.
+    // Pins the live meter's ≥ boundary at perRoomTokenLimb, inclusive as
+    // `-16` clause 2 is written (Founder ruling 2026-08-29).
     const h = harness({ budgets: [room({ tokensSpent: 1_000 })] });
 
     const result = expectDenied(await h.broker.mint(mintRequest({ estimatedCost: 0 })));
@@ -233,9 +232,12 @@ describe('SpendBroker.mint — ceiling coupling', () => {
 });
 
 describe('SpendBroker.mint — single flight per runId', () => {
-  it('serializes two parallel mints; only one succeeds past the remaining budget', async () => {
+  it('serializes two parallel mints; the second sees the first’s reservation and is refused at the ceiling', async () => {
+    // 700 spent: the first mint is admitted (700 < 1000) and its reservation
+    // takes the room to 1100; serialized behind it, the second sees 1100 >=
+    // 1000 and is refused (`-16` clause 2, inclusive, ruled 2026-08-29).
     const h = harness({
-      budgets: [room({ tokensSpent: 300, perRunTokenCap: 500 })],
+      budgets: [room({ tokensSpent: 700, perRunTokenCap: 500 })],
       gateway: new FixtureGatewayPort({ delayMs: 10 }),
     });
 
@@ -253,7 +255,120 @@ describe('SpendBroker.mint — single flight per runId', () => {
     // The winner's reservation is on the ledger; exactly one frame was emitted.
     assert.equal(h.ledger.activeTokens('room-1', h.now()), 400);
     assert.equal(h.sink.frames.length, 1);
-    assert.equal(expectMinted(mintedOutcomes[0] ?? outcomes[0]!).budgetRemaining, 300); // 1000 − (300 + 400)
+    assert.equal(expectMinted(mintedOutcomes[0] ?? outcomes[0]!).budgetRemaining, 0); // 1000 − (700 + 400), floored: the disclosed overshoot
+  });
+
+  it('admits only one of two concurrent mints for DIFFERENT runs once the first crosses the ceiling', async () => {
+    // The lock is per run, so two runs race. The reservation is taken with the
+    // check, before the gateway is awaited, so the second run's check already
+    // sees the first: 700 + 400 = 1100 >= 1000, refused. Without that, both
+    // would pass against 700 and the room would reach 1500.
+    const h = harness({
+      budgets: [room({ tokensSpent: 700, perRunTokenCap: 500 })],
+      gateway: new FixtureGatewayPort({ delayMs: 10 }),
+    });
+
+    const outcomes = await Promise.all([
+      h.broker.mint(mintRequest({ runId: 'run-a', estimatedCost: 400 })),
+      h.broker.mint(mintRequest({ runId: 'run-b', estimatedCost: 400 })),
+    ]);
+
+    assert.equal(outcomes.filter((result) => result.ok).length, 1);
+    assert.equal(outcomes.filter((result) => !result.ok).length, 1);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 400);
+    assert.equal(h.sink.frames.length, 1);
+  });
+
+  it('keeps a reservation counted while its gateway call outlasts the token lifetime', async () => {
+    // A pending reservation counts whatever the clock says: had it carried the
+    // check-time expiry, a gateway slower than the TTL would let it lapse, and
+    // the second run below would pass against 700 and the room reach 1500.
+    let release!: () => void;
+    class SlowGateway implements GatewayPort {
+      calls = 0;
+      async mintProviderAuth(): Promise<OpaqueToken> {
+        this.calls += 1;
+        if (this.calls === 1) await new Promise<void>((resolve) => { release = resolve; });
+        return 'fix_slow' as OpaqueToken;
+      }
+    }
+    const gateway = new SlowGateway();
+    const h = harness({
+      budgets: [room({ tokensSpent: 700, perRunTokenCap: 500 })],
+      gateway,
+      tokenTtlMs: 1_000,
+    });
+
+    const first = h.broker.mint(mintRequest({ runId: 'run-a', estimatedCost: 400 }));
+    await new Promise((resolve) => setImmediate(resolve));
+    h.advance(5_000); // well past the check-time expiry, the call still pending
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 400, 'pending counts past its check-time expiry');
+    expectDenied(await h.broker.mint(mintRequest({ runId: 'run-b', estimatedCost: 400 })));
+
+    release();
+    const minted = expectMinted(await first);
+    // The token's lifetime runs from its issuance, and so does the settled reservation's.
+    assert.equal(minted.expiresAt, h.now() + 1_000);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 400);
+    assert.equal(h.ledger.active(h.now()).every((view) => view.pending !== true), true, 'settled, not pending');
+    h.advance(1_000);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 0, 'and it expires with the token');
+  });
+
+  it('keeps a pending reservation through an explicit release, so a late success cannot reopen the room', async () => {
+    // release() is public and takes no run lock. Had it dropped the pending
+    // reservation, a second run would be admitted in the gap and the first
+    // mint's success would then spend budget nothing held: past the bound.
+    let release!: () => void;
+    class SlowGateway implements GatewayPort {
+      calls = 0;
+      async mintProviderAuth(): Promise<OpaqueToken> {
+        this.calls += 1;
+        if (this.calls === 1) await new Promise<void>((resolve) => { release = resolve; });
+        return 'fix_slow' as OpaqueToken;
+      }
+    }
+    const h = harness({
+      budgets: [room({ tokensSpent: 700, perRunTokenCap: 500 })],
+      gateway: new SlowGateway(),
+    });
+
+    const first = h.broker.mint(mintRequest({ runId: 'run-a', estimatedCost: 400 }));
+    await new Promise((resolve) => setImmediate(resolve));
+    h.broker.release('run-a');
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 400, 'the pending reservation survives the release');
+    expectDenied(await h.broker.mint(mintRequest({ runId: 'run-b', estimatedCost: 400 })));
+
+    release();
+    expectMinted(await first);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 400, 'the issued token is reserved for');
+    h.broker.release('run-a');
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 0, 'and a release after the mint returns drops it');
+  });
+
+  it('removes exactly one entry, even when the same reservation object was recorded twice', () => {
+    const ledger = new ReservationLedger();
+    const view = { runId: 'run-1', roomId: 'room-1', tokens: 100, expiresAt: BASE_NOW_MS + 1_000 };
+    ledger.record(view);
+    ledger.record(view);
+    ledger.remove(view);
+    assert.equal(ledger.activeTokens('room-1', BASE_NOW_MS), 100);
+  });
+
+  it('removes the reservation taken before a gateway call that fails, and only that one', async () => {
+    let calls = 0;
+    class SecondCallFails implements GatewayPort {
+      async mintProviderAuth(): Promise<OpaqueToken> {
+        calls += 1;
+        if (calls === 2) throw new Error('boom');
+        return 'fix_ok' as OpaqueToken;
+      }
+    }
+    const h = harness({ gateway: new SecondCallFails() });
+
+    expectMinted(await h.broker.mint(mintRequest({ estimatedCost: 100 })));
+    expectDenied(await h.broker.mint(mintRequest({ estimatedCost: 200 })));
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 100, 'the first mint still holds its reservation');
   });
 
   it('lets two parallel mints both succeed when together they fit, and stacks them', async () => {
@@ -298,19 +413,35 @@ describe('SpendBroker.refresh — interrupt an in-flight turn on breach', () => 
     assert.equal(h.sink.frames.length, 0);
   });
 
-  it('denies the refresh that would breach and leaves nothing reserved', async () => {
+  it('admits a refresh that overshoots from below the ceiling, and reports nothing remaining', async () => {
+    // The refresh releases this run's 300 first, so the room is at 0 < 1000:
+    // admitted, 200 over once it runs — clause 3's disclosed overshoot.
     const h = harness({ budgets: [room({ perRunTokenCap: 5_000 })] });
 
     await h.broker.mint(mintRequest({ estimatedCost: 300 }));
+    const refreshed = expectMinted(await h.broker.refresh(mintRequest({ estimatedCost: 1_200 })));
+
+    assert.equal(refreshed.budgetRemaining, 0);
+    assert.equal(h.sink.frames.length, 0);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 1_200);
+  });
+
+  it('denies the refresh of a run once the room is at its ceiling, and leaves that run nothing reserved', async () => {
+    // run-b holds 100; run-a then takes the room to 300 + 100 + 700 = 1100.
+    // run-b's refresh releases its 100 and sees 1000 >= 1000: denied, interrupted.
+    const h = harness({ budgets: [room({ tokensSpent: 300, perRunTokenCap: 5_000 })] });
+
+    expectMinted(await h.broker.mint(mintRequest({ runId: 'run-b', estimatedCost: 100 })));
+    expectMinted(await h.broker.mint(mintRequest({ runId: 'run-a', estimatedCost: 700 })));
     const breached = expectDenied(
-      await h.broker.refresh(mintRequest({ estimatedCost: 1_200 })),
+      await h.broker.refresh(mintRequest({ runId: 'run-b', estimatedCost: 100 })),
     );
 
     assert.equal(breached.reason, 'spend_ceiling_exceeded');
     assert.ok((breached.detail ?? []).some((line) => line.includes('per_room_tokens')));
     assert.ok(breached.interrupt !== undefined);
     assert.equal(h.sink.frames.length, 1);
-    assert.equal(h.ledger.activeTokens('room-1', h.now()), 0);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 700, 'only run-a holds a reservation');
   });
 });
 
@@ -485,7 +616,7 @@ describe("OAuth credential class — 'unlimited' per the Founder ruling of 2026-
 });
 
 describe('CLI — one-command founder demo (fixtures only)', () => {
-  it('deny-demo mints under the ceiling, then denies the breaching refresh with a frame', async () => {
+  it('deny-demo mints under the ceiling, overshoots once on a refresh, then denies at the ceiling with a frame', async () => {
     const { report } = await runCli(['deny-demo']);
 
     const demo = report as {
@@ -494,11 +625,15 @@ describe('CLI — one-command founder demo (fixtures only)', () => {
       claims: { notEvidenceOf: readonly string[] };
     };
     const first = demo.steps['1_mint_under_ceiling'];
-    const breach = demo.steps['2_refresh_breaching'];
+    const overshoot = demo.steps['2_refresh_overshoots_once'];
+    const breach = demo.steps['3_mint_at_ceiling'];
     assert.ok(first !== undefined);
+    assert.ok(overshoot !== undefined);
     assert.ok(breach !== undefined);
 
     assert.equal(first.ok, true);
+    assert.equal(overshoot.ok, true);
+    if (overshoot.ok) assert.equal(overshoot.budgetRemaining, 0);
     assert.equal(breach.ok, false);
     if (!breach.ok) {
       assert.equal(breach.reason, 'spend_ceiling_exceeded');

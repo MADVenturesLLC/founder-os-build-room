@@ -13,7 +13,8 @@
  * ledger exist to prevent.
  *
  * Scope, stated plainly: these reservations are **in-process and ephemeral**.
- * They expire with the token's lifetime, they do not survive a restart, and
+ * They expire with the token's lifetime, counted from the mint, and count
+ * unconditionally while the mint is still pending. They do not survive a restart, and
  * they do not double-count later — when real usage is reported into the meter
  * and the reservation has expired, the spend appears once, via the meter.
  * A reservation that outlives its token would overstate the room's
@@ -53,20 +54,48 @@ export class ReservationLedger {
     this.byRunId.set(view.runId, held === undefined ? [view] : [...held, view]);
   }
 
-  /** Drop every reservation for a run, if any. No-op when none is held. */
-  release(runId: string): void {
-    this.byRunId.delete(runId);
+  /**
+   * Drop exactly one recorded reservation (the same object `record` was
+   * given): the broker's undo when a reservation taken before the gateway
+   * call is not followed by a mint. A run's other reservations stay.
+   */
+  remove(view: ReservationView): void {
+    const held = this.byRunId.get(view.runId);
+    if (held === undefined) return;
+    // One entry, even if the same object was recorded twice: two records are
+    // two reservations, and dropping both would understate the room.
+    const index = held.indexOf(view);
+    if (index === -1) return;
+    const kept = [...held.slice(0, index), ...held.slice(index + 1)];
+    if (kept.length === 0) this.byRunId.delete(view.runId);
+    else this.byRunId.set(view.runId, kept);
   }
 
   /**
-   * Total tokens actively reserved for a room: non-expired only, summed
+   * Drop a run's settled reservations, if any. A PENDING reservation is kept:
+   * its mint is still in flight and will settle it, and the token it reserves
+   * for may yet be issued. Dropping it would let another run be admitted
+   * against budget that issuance is about to spend — the fail-open direction.
+   * A caller that wants that issuance released releases again once the mint
+   * returns.
+   */
+  release(runId: string): void {
+    const held = this.byRunId.get(runId);
+    if (held === undefined) return;
+    const pending = held.filter((entry) => entry.pending === true);
+    if (pending.length === 0) this.byRunId.delete(runId);
+    else this.byRunId.set(runId, pending);
+  }
+
+  /**
+   * Total tokens actively reserved for a room: pending or non-expired, summed
    * across every run and every issuance holding a reservation on that room.
    */
   activeTokens(roomId: string, now: number): number {
     let total = 0;
     for (const held of this.byRunId.values()) {
       for (const reservation of held) {
-        if (reservation.roomId === roomId && reservation.expiresAt > now) {
+        if (reservation.roomId === roomId && (reservation.pending === true || reservation.expiresAt > now)) {
           total += reservation.tokens;
         }
       }
@@ -74,12 +103,12 @@ export class ReservationLedger {
     return total;
   }
 
-  /** Every non-expired reservation, write order preserved as a copy. */
+  /** Every pending or non-expired reservation, write order preserved as a copy. */
   active(now: number): readonly ReservationView[] {
     const live: ReservationView[] = [];
     for (const held of this.byRunId.values()) {
       for (const reservation of held) {
-        if (reservation.expiresAt > now) live.push(reservation);
+        if (reservation.pending === true || reservation.expiresAt > now) live.push(reservation);
       }
     }
     return live;

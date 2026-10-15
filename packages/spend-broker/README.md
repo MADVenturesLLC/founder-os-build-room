@@ -3,7 +3,9 @@
 Work ID `GLM-20260913-SPEND-BROKER-V0`. OFF-ROADMAP Build Room side bet
 (Open-Inspect S3 evolved). A library that **refuses to hand an LLM provider a
 usable credential when the room/run is at or over its spend ceiling**, and
-interrupts an in-flight turn when a refresh would breach.
+interrupts an in-flight turn when its refresh finds the room at or over that
+ceiling. A refresh from below the ceiling is admitted even if it overshoots:
+the one-run overshoot `DEC-20260815-16` clause 3 discloses.
 
 Allowed claim language: `SPEND_BROKER_V0`, `COST_CEILING_ENFORCEMENT`. Nothing
 else. See "What this is NOT" below — the list is also exported from
@@ -32,8 +34,11 @@ caller ──mint(request)──▶ SpendBroker
                             │           imported read-only — no second meter)
                             │ 3a. denial ──▶ InterruptSink.emit(InterruptFrame)
                             │        + MintResult{ok:false, spend_ceiling_exceeded, detail}
-                            │ 3b. permit ──▶ GatewayPort.mintProviderAuth ──▶ OpaqueToken
-                            │ 4. success ──▶ ReservationLedger.record (tokens, expiresAt)
+                            │ 3b. permit ──▶ ReservationLedger.record (tokens, pending)
+                            │        in the same step as the check, then
+                            │        GatewayPort.mintProviderAuth ──▶ OpaqueToken
+                            │ 4a. success ──▶ settle: pending ──▶ (tokens, expiresAt)
+                            │ 4b. gateway failure ──▶ ReservationLedger.remove
                             └──▶ MintResult{ok:true, token, expiresAt, budgetRemaining}
 ```
 
@@ -58,7 +63,9 @@ Modules and the one thing each owns:
   run's reservations. Reservations expire with the token lifetime. The
   parallel-mints test caught a one-slot-per-runId draft that understated held
   budget — the stacking semantics are pinned by tests.
-- `broker.ts` — the flow: check ceiling → deny+interrupt or mint → record.
+- `broker.ts` — the flow: check ceiling and reserve (pending) in one step →
+  deny+interrupt, or mint → settle the reservation to the token's lifetime;
+  a gateway failure removes it.
   Any unexpected gateway throw denies as `provider_unavailable`; silent
   success on a throw is the one direction this package never goes.
 - `cost-meter-adapter.ts` — the ONLY code that touches the live meter, via
@@ -80,12 +87,19 @@ The live meter's boundary semantics are used as-is:
 
 - Monthly limb pauses strictly **above** USD 85 (`DEC-20260815-09` clause 2);
   exactly at USD 85 permits — pinned by a test.
-- Per-room limb refuses when spent + reserved + requested is **≥** the token
-  ceiling (`DEC-20260815-16` clause 2, as the meter mechanizes it). The meter
-  source records, at `perRoomTokenLimb`, that this projected reading is an
-  open `FOUNDER_DECISION_REQUIRED` question relative to the clause as
-  written. **This package does not settle that question** — it asks the
-  meter, and the tests pin the live behavior whatever the Founder rules.
+- Per-room limb refuses when spent + reserved is **≥** the token ceiling
+  (`DEC-20260815-16` clause 2, inclusive as written, Founder ruling
+  2026-08-29). The request is not added first, so a mint or refresh from
+  below the ceiling is admitted and may overshoot by up to one run; the
+  per-run cap bounds its size, and `budgetRemaining` reads 0. Within one
+  broker process the bound holds across concurrent runs: the reservation
+  is recorded in the same step as the check, before the gateway is
+  awaited, so a second run's check already sees the first. It counts
+  while the gateway call is pending, however long that takes, and then
+  expires with the token, counted from the mint. Until the
+  ruling's code correction the meter added the request first (exclusive);
+  that reading is closed (`docs/phase-2-known-limits.md` §9). This package
+  still asks the meter and re-implements nothing.
 - UNKNOWN spend pauses (fail-closed) — pinned by a test with an unbucketable
   run.
 - The monthly dollar limb sees the ledger snapshot supplied to the adapter.
@@ -194,8 +208,11 @@ nothing in the package imports a network module). The suite pins, among
 others: mint under ceiling; deny + one interrupt frame at and over the
 ceiling (including the live ≥ boundary); two parallel mints serialize and
 cannot both succeed past the remaining budget; two parallel mints that fit
-stack their reservations; refresh replaces and the breaching refresh
-interrupts with nothing left reserved; `provider_unavailable` /
+stack their reservations; refresh replaces, a refresh from below the
+ceiling is admitted even if it overshoots, and a refresh once the room is
+at or over the ceiling interrupts with nothing left reserved; a
+reservation counts while its mint is pending, and `release` keeps a
+pending one; `provider_unavailable` /
 `not_authorized` / unexpected-crash mappings; the monthly strictly-above-$85
 boundary and UNKNOWN-is-absorbing through the real adapter; reservation
 expiry; and the CLI demo end to end. The 2026-09-13 credential-class ruling
