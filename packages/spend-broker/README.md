@@ -60,7 +60,9 @@ Modules and the one thing each owns:
   run's reservations. Reservations expire with the token lifetime. The
   parallel-mints test caught a one-slot-per-runId draft that understated held
   budget — the stacking semantics are pinned by tests.
-- `broker.ts` — the flow: check ceiling → deny+interrupt or mint → record.
+- `broker.ts` — the flow: check ceiling and reserve (pending) in one step →
+  deny+interrupt, or mint → settle the reservation to the token's lifetime;
+  a gateway failure removes it.
   Any unexpected gateway throw denies as `provider_unavailable`; silent
   success on a throw is the one direction this package never goes.
 - `cost-meter-adapter.ts` — the ONLY code that touches the live meter, via
@@ -89,7 +91,9 @@ The live meter's boundary semantics are used as-is:
   per-run cap bounds its size, and `budgetRemaining` reads 0. Within one
   broker process the bound holds across concurrent runs: the reservation
   is recorded in the same step as the check, before the gateway is
-  awaited, so a second run's check already sees the first. Until the
+  awaited, so a second run's check already sees the first. It counts
+  while the gateway call is pending, however long that takes, and then
+  expires with the token, counted from the mint. Until the
   ruling's code correction the meter added the request first (exclusive);
   that reading is closed (`docs/phase-2-known-limits.md` §9). This package
   still asks the meter and re-implements nothing.

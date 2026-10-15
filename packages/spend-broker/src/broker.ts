@@ -165,7 +165,6 @@ export class SpendBroker {
     // is the metered kind and stays gated.
     const isOauth = (request.credentialKind ?? 'api') === 'oauth';
 
-    const expiresAt = now + this.tokenTtlMs;
     let budgetRemaining: number | null = null;
     let reservation: ReservationView | null = null;
     if (!isOauth) {
@@ -195,13 +194,16 @@ export class SpendBroker {
        * two runs both pass the check against the same total, and each could
        * then overshoot. With the reservation taken here, the next run's check
        * already sees it, so a room overshoots by at most the one admission
-       * that crossed its ceiling. Undone below if no mint follows.
+       * that crossed its ceiling. It is PENDING until the gateway settles, and
+       * counts whatever the clock says meanwhile: a gateway slower than the
+       * token lifetime must not let it lapse. Undone below if no mint follows.
        */
       reservation = {
         runId: request.runId,
         ...(request.roomId === undefined ? {} : { roomId: request.roomId }),
         tokens: request.estimatedCost ?? 0,
-        expiresAt,
+        expiresAt: now + this.tokenTtlMs,
+        pending: true,
       };
       this.reservations.record(reservation);
     }
@@ -217,6 +219,22 @@ export class SpendBroker {
       // Any other throw — including non-GatewayError crashes — denies.
       const message = error instanceof Error ? error.message : String(error);
       return denied('provider_unavailable', [message]);
+    }
+
+    /*
+     * The token's lifetime runs from its issuance. The pending reservation is
+     * swapped for a settled one expiring with the token, in one synchronous
+     * step, so there is no moment the room's reservation is uncounted.
+     */
+    const expiresAt = this.clock() + this.tokenTtlMs;
+    if (reservation !== null) {
+      this.reservations.remove(reservation);
+      this.reservations.record({
+        runId: reservation.runId,
+        ...(reservation.roomId === undefined ? {} : { roomId: reservation.roomId }),
+        tokens: reservation.tokens,
+        expiresAt,
+      });
     }
 
     // An oauth mint recorded nothing: reservations keep the ceiling honest

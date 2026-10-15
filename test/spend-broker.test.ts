@@ -279,6 +279,42 @@ describe('SpendBroker.mint — single flight per runId', () => {
     assert.equal(h.sink.frames.length, 1);
   });
 
+  it('keeps a reservation counted while its gateway call outlasts the token lifetime', async () => {
+    // A pending reservation counts whatever the clock says: had it carried the
+    // check-time expiry, a gateway slower than the TTL would let it lapse, and
+    // the second run below would pass against 700 and the room reach 1500.
+    let release!: () => void;
+    class SlowGateway implements GatewayPort {
+      calls = 0;
+      async mintProviderAuth(): Promise<OpaqueToken> {
+        this.calls += 1;
+        if (this.calls === 1) await new Promise<void>((resolve) => { release = resolve; });
+        return 'fix_slow' as OpaqueToken;
+      }
+    }
+    const gateway = new SlowGateway();
+    const h = harness({
+      budgets: [room({ tokensSpent: 700, perRunTokenCap: 500 })],
+      gateway,
+      tokenTtlMs: 1_000,
+    });
+
+    const first = h.broker.mint(mintRequest({ runId: 'run-a', estimatedCost: 400 }));
+    await new Promise((resolve) => setImmediate(resolve));
+    h.advance(5_000); // well past the check-time expiry, the call still pending
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 400, 'pending counts past its check-time expiry');
+    expectDenied(await h.broker.mint(mintRequest({ runId: 'run-b', estimatedCost: 400 })));
+
+    release();
+    const minted = expectMinted(await first);
+    // The token's lifetime runs from its issuance, and so does the settled reservation's.
+    assert.equal(minted.expiresAt, h.now() + 1_000);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 400);
+    assert.equal(h.ledger.active(h.now()).every((view) => view.pending !== true), true, 'settled, not pending');
+    h.advance(1_000);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 0, 'and it expires with the token');
+  });
+
   it('removes the reservation taken before a gateway call that fails, and only that one', async () => {
     let calls = 0;
     class SecondCallFails implements GatewayPort {

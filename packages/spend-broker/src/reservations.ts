@@ -13,7 +13,8 @@
  * ledger exist to prevent.
  *
  * Scope, stated plainly: these reservations are **in-process and ephemeral**.
- * They expire with the token's lifetime, they do not survive a restart, and
+ * They expire with the token's lifetime, counted from the mint, and count
+ * unconditionally while the mint is still pending. They do not survive a restart, and
  * they do not double-count later — when real usage is reported into the meter
  * and the reservation has expired, the spend appears once, via the meter.
  * A reservation that outlives its token would overstate the room's
@@ -72,14 +73,14 @@ export class ReservationLedger {
   }
 
   /**
-   * Total tokens actively reserved for a room: non-expired only, summed
+   * Total tokens actively reserved for a room: pending or non-expired, summed
    * across every run and every issuance holding a reservation on that room.
    */
   activeTokens(roomId: string, now: number): number {
     let total = 0;
     for (const held of this.byRunId.values()) {
       for (const reservation of held) {
-        if (reservation.roomId === roomId && reservation.expiresAt > now) {
+        if (reservation.roomId === roomId && (reservation.pending === true || reservation.expiresAt > now)) {
           total += reservation.tokens;
         }
       }
@@ -87,12 +88,12 @@ export class ReservationLedger {
     return total;
   }
 
-  /** Every non-expired reservation, write order preserved as a copy. */
+  /** Every pending or non-expired reservation, write order preserved as a copy. */
   active(now: number): readonly ReservationView[] {
     const live: ReservationView[] = [];
     for (const held of this.byRunId.values()) {
       for (const reservation of held) {
-        if (reservation.expiresAt > now) live.push(reservation);
+        if (reservation.pending === true || reservation.expiresAt > now) live.push(reservation);
       }
     }
     return live;

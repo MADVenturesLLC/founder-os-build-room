@@ -127,4 +127,10 @@ export interface ReservationView {
   /** Tokens held against the room's ceiling until `expiresAt`. */
   readonly tokens: number;
   readonly expiresAt: number;
+  /**
+   * True while the gateway call it was taken for has not settled. A pending
+   * reservation counts whatever the clock says, so a slow gateway cannot let
+   * it lapse before the token it reserves for even exists.
+   */
+  readonly pending?: boolean;
 }
