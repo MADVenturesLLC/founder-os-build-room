@@ -1,0 +1,17 @@
+FOUNDER-RULING-20261014-BR-MAC-GATEWAY-UPDATE-CLOSED: my MacBook update act is closed with no update
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows on my act FOUNDER-ACT-20261014-BR-MAC-GATEWAY-UPDATE (comment 6180284551 on MADVenturesLLC/founder-os-build-room#119). This ruling takes effect when I post it as a comment on that pull request.
+
+R1. Facts, read by me on the MacBook on 2026-10-14. At 23:10:49Z: buildroom is not on my PATH, and node --version in my shell is v26.5.1. At 23:13:42Z: no process runs the Gateway daemon, gateway-daemon/src/main.js; the Gateway directory, ~/Library/Application Support/founder-os/gateway, holds only state.json, last written on 26 August, and no socket; Node v22.23.2 is installed under nvm. From 23:14:41Z to 23:15:31Z, a search six levels deep under my home directory found one Build Room checkout with a built CLI: ~/founder-os-build-room at fc1ffb6e7c733a6904469d3903c824ca3ffc0338, a commit on main of 2026-10-01 (PR #89), 111 commits behind 3f16f576, with 10 Gateway files changed since and one local change. A checkout nested deeper, such as ~/buildroom-cert/founder-os-build-room from the certification of 2026-10-13, would not have been found.
+
+R2. Closure. B1 of the act is not met: there is no checkout that buildroom runs from, and my Node is not v22.23.2. B2 and B3 were not run. The act is closed with no update. Nothing on the MacBook was changed, built or started.
+
+R3. What remains. Gateway 2222132d-da43-4e5e-ba9a-f71f7ee81968 stays enrolled in slot 1 with no daemon running on the MacBook. The Gateway code in ~/founder-os-build-room, and in any other old checkout, still reads the Keychain items with find-generic-password -w if its doctor, enroll or smoke script is run. Updating the MacBook's Gateway code is left to the act that next runs Gateway 2222132d or revokes it.
+
+R4. Filing. In place of C1 of the act, the builder files the act verbatim, this ruling verbatim, the outputs of R1 as I gave them in session, and the polls of /health across deployment 0df04a38 held at commit 6eb4333 on its branch, with a custody receipt in the Build Room custody record, through a pull request that needs my separate authorization.
+
+R5. This ruling authorizes nothing else. C2 of the act stands.
+
+Signed: Michael Daley
+Date: 2026-10-14 (UTC)
+Actor-Id: founder
