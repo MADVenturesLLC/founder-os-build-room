@@ -56,3 +56,12 @@ export {
   type BuilderVerificationHandoffInput,
   type BuilderVerificationReport,
 } from './dogfood.js';
+
+export {
+  PLANDOC_SCHEMA_V1,
+  PLANDOC_SCHEMA_VERSION,
+  PLAN_READY_STATUS,
+  PLAN_TERMINAL_STATUSES,
+  type PlanDocV1,
+  type PlanTerminalStatus,
+} from './plandoc.js';

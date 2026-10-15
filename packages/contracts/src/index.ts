@@ -68,4 +68,13 @@ export {
   type EvidenceRef,
 } from './attribution.js';
 
+export {
+  MAX_SCOPE_PATHS,
+  MAX_SCOPE_PATH_LENGTH,
+  scopePathDefect,
+  checkScopePaths,
+  isCanonicalScopePaths,
+  type ScopePathsVerdict,
+} from './scope.js';
+
 export { SPEC } from './spec.js';
