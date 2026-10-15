@@ -292,6 +292,79 @@ proposed resolutions of Q1 and Q3 below. Q2 and Q4 stay open.
   that fails the schema would instead take the one corrective re-ask the
   same item names. This is a Founder call.
 
+## Founder answers of 2026-10-15 (Q2, Q4, Q6, Q7, Q8)
+
+Asked one at a time in session at the Founder's direction ("Ask me each
+question needed 1 by 1"). Where the Founder chose an option, the answer
+is recorded as that option's label and text, as presented. Where the
+Founder wrote an answer, it is quoted verbatim. Nothing here is built
+yet.
+
+- **Q6, cancel while a planner command runs.** Selected: "Allow, mark
+  unconfirmed (Recommended)". Option text: "Cancel goes through. In the
+  same transaction, a still-pending command is recorded `unresolved`;
+  one already unresolved stays so. That counts as the guard's 'recorded
+  unconfirmed_cancel'. Risk: the Planner may keep running unseen; any
+  plan it later returns is rejected because the room is closed."
+- **Q8, retrying a failed round.** Selected: "Retry only not_sent
+  (Recommended)". Option text: "Retry only a round whose command
+  provably never left (not_sent: a transport failure with affirmative
+  no-effect evidence). At most 2 per deployment, each a new command id
+  with the attempt number, gated on the existing retry-budget function.
+  Nothing else retries."
+- **Q2a, the Planner's adapter.** Founder, verbatim: "Antigravity but
+  model wise would need to be active model. Not sure how you would want
+  to word it." The builder proposed this wording: "The Planner runs on
+  the Antigravity adapter, on the active model: the Gemini model the
+  Founder has manually selected for the run, which must be registered
+  and provider-verified with a model-registry entry. Build Room records
+  it as the intended model before dispatch; an attested or observed
+  model that differs fails the round closed. No Auto mode or silent
+  switching." Asked where the active model comes from, the Founder
+  selected "Named in the run's authorization (Recommended)". Option
+  text: "Your entry authorization for each counted run names the
+  selected model. Build Room journals that as the intended model, then
+  checks Antigravity's attestation against it."
+- **Q2b, handing work to the Gateway.** Selected: "Gateway pulls, in
+  Phase 4 (Recommended)". Option text: "The Gateway asks for assigned
+  planner commands over its existing authenticated session, and reports
+  results the same way. The PC still accepts no inbound connection.
+  Built on this branch as Phase 4 work."
+- **Q7a, who assigns seats.** Selected: "Named in the run's
+  authorization (Recommended)". Option text: "Your counted-run
+  authorization names each seat's model, the same instrument as Q2a.
+  Build Room checks each against that seat's approved lanes in the seat
+  registry; reviewer must run a different model from builder
+  (DEC-20260815-05)."
+- **Q7b, attribution of the control plane's T2.** The Founder first
+  asked, verbatim: "I thought MADVentures-Tui was the control plane? Am
+  I mistaken, If yes ask again." The builder answered that the control
+  plane is the Railway service in this repository, and that MadBridge
+  is a consumed client-side bridge with no authority over command
+  history (`DEC-20260827-01`). Re-asked, the Founder selected "New
+  control-plane surface (Recommended)". Option text: "Register
+  `build-room-control-plane` in the execution-surface registry (a
+  FounderOS change under DEC-20260815-06). T2 records role `builder`,
+  actor `control-plane:<deployment id>`, model `n/a (deterministic
+  control-plane act)`. Truthful; needs that registration before a
+  counted run."
+- **Q7c, the goal text.** Selected: "Captured with the scope
+  (Recommended)". Option text: "You supply the goal text when the room's
+  scope is captured (T1), alongside repository, base and paths. Build
+  Room stores it with the event, scans it for credentials, records its
+  digest as evidence, and it is immutable for the room from then on."
+- **Q4, the ceiling code fix.** Selected: "Separate small PR
+  (Recommended)". Option text: "A focused PR on main with the
+  one-condition change, its tests and the §9 doc update. Reviewed and
+  merged on its own SHA-named authorization."
+
+What these answers do not yet settle:
+- Q7b's surface needs a FounderOS registry change before a counted run.
+  That is a FounderOS pull request needing the Founder's own merge
+  authorization.
+- Q2a and Q7a name an instrument that does not exist yet: the counted-run
+  entry authorization, slice 10's proposal.
+
 ## Verification
 
 Every slice: typecheck, the default suite as an unprivileged user, lint on
