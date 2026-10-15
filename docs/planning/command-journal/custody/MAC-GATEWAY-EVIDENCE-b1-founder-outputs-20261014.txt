@@ -1,0 +1,33 @@
+=== mac-b1-output-1-2310 ===
+2026-10-14T23:10:49Z
+realpath: : No such file or directory
+resolves to:
+fatal: not a git repository (or any of the parent directories): .git
+checkout:
+fatal: not a git repository (or any of the parent directories): .git
+--- local changes (blank means none):
+fatal: not a git repository (or any of the parent directories): .git
+v26.5.1
+zsh: command not found: buildroom
+2026-10-14T23:10:49Z
+
+=== mac-b1-output-2-2313 ===
+2026-10-14T23:13:42Z
+--- daemon process:
+node used by daemon:
+checkout:
+--- local changes (blank means none):
+--- installed node versions:
+/Users/michaeldaley/.nvm/versions/node/v22.12.0/        /Users/michaeldaley/.nvm/versions/node/v22.23.2/
+/Users/michaeldaley/.nvm/versions/node/v22.19.0/        /Users/michaeldaley/.nvm/versions/node/v24.18.0/
+--- gateway state dir:
+total 8
+drwx------  3 michaeldaley  staff   96 Sep 21 11:29 .
+drwx------  3 michaeldaley  staff   96 Aug 24 13:01 ..
+-rw-------@ 1 michaeldaley  staff  677 Aug 26 08:35 state.json
+2026-10-14T23:13:42Z
+
+=== mac-b1-output-3-2314 ===
+2026-10-14T23:14:41Z
+/Users/michaeldaley/founder-os-build-room  HEAD=fc1ffb6e  changes=1
+2026-10-14T23:15:31Z

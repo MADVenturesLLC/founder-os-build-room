@@ -1,0 +1,21 @@
+FOUNDER-ACT-20261014-BR-MAC-GATEWAY-UPDATE: my MacBook's Gateway checkout moves to main, so its doctor and enroll read no Keychain secret
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows. This act takes effect when I post it as a comment on MADVenturesLLC/founder-os-build-room#119.
+
+A1. Basis. Finding 1 of CUSTODY-RECEIPT-keychain-inventory-20261014.md: the fix of FOUNDER-ACT-20261014-BR-KEYCHAIN-INVENTORY, merged as PR #118 at ef63501dbea76f74e292343b063fab4b31cae0d2, reaches no machine. Gateway 2222132d-da43-4e5e-ba9a-f71f7ee81968, on my MacBook (MikeMacBook.local), is enrolled in slot 1, and its buildroom doctor and buildroom enroll still read the Gateway's Keychain items with find-generic-password -w to answer present or absent. Only those two verbs call the inventory; the running Gateway daemon does not. Updating and rebuilding the checkout that buildroom runs from therefore ends the reads without stopping or restarting the daemon. The daemon keeps running the code it started with; when it is next started, it runs the updated build, which carries every Gateway change on main since the checkout's current head.
+
+B1. Before. On the MacBook, I read and give the builder, each with its time: the path buildroom resolves to (command -v buildroom, and the checkout that path lies in); that checkout's HEAD and git status --porcelain; node --version, which must be v22.23.2; and buildroom status. The builder reads, each with its time: main on GitHub at 3f16f576a995e1068b08934eb383b31d306e3082 or a later commit that changes documents only, which is the target; the commits and the Gateway files that change between the checkout's HEAD and the target; Railway's serving deployment of rare-enjoyment SUCCESS, nothing staged, nothing building; /health 200. I go on to B2 only after the builder has reported all of these. If the checkout has any local change, tracked or untracked, I stop here.
+
+B2. The update. In that checkout only, I run git fetch origin main, git checkout --detach <target>, npm ci and npm run build, under Node v22.23.2. I do not stop, restart or signal the Gateway daemon, and I do not run buildroom enroll. I accept that the daemon's files on disk change while it runs.
+
+B3. After. Within 15 minutes of the build, I read and give the builder, each with its time: git rev-parse HEAD equal to the target and git status --porcelain empty; grep -n -A1 "async exists" dist/packages/gateway-daemon/src/custody.js, showing find-generic-password with no -w; buildroom doctor, showing custody error none, the primary item present and the staging item absent; and buildroom status. I read GET /control-plane/enrollments and it shows 2222132d in slot 1 and 1880c12d in slot 2. The builder reads /health 200. If the updated buildroom cannot reach the running daemon, I report it and leave the daemon as it is; that is a finding, not a reason to restart it.
+
+B4. Delivery. I give the outputs of B1 and B3 in session or post them on this pull request. Nothing I give contains a key, a pairing code or a full fingerprint.
+
+C1. Filing. After B3, the builder files this act verbatim, the outputs of B1 and B3, and the polls of /health across deployment 0df04a38 held at commit 6eb4333 on its branch, with a custody receipt in the Build Room custody record, through a pull request that needs my separate authorization.
+
+C2. Not authorized. This act does not authorize: stopping, restarting or signalling the Gateway daemon on any machine, or a launchd job or any other way to keep it running; updating, building or running anything on the PC or any machine other than my MacBook; any change to a Keychain item, or reading, moving or minting any key, the redaction key included; the enrollment, revocation, denial or pairing-code mint of any Gateway; a certification run or the smoke script on any machine; any change to the control plane, the database, a migration, a workflow, a Railway variable, a Neon role or any secret; or any deploy, redeploy or rollback. Each needs my separate act.
+
+Signed: Michael Daley
+Date: 2026-10-14 (UTC)
+Actor-Id: founder

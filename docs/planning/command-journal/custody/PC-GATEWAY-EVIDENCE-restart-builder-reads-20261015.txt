@@ -1,0 +1,8 @@
+FOUNDER-ACT-20261015-BR-PC-GATEWAY-RESTART: builder's reads (verbatim summaries of tool output)
+B1 builder: Railway serving deployment 0df04a38-fe06-4dd8-857f-9c82bb74e435 SUCCESS at 3f16f576a995e1068b08934eb383b31d306e3082, no deployment building (list-deployments, ~01:14Z); /health 200 at 2026-10-15T01:14:17Z (uptimeSeconds 36443).
+Signature received in session ~01:15Z (act SHA-256 5b41a59baa83aef200752877e50678111190336fd03361e9f23d8915460f832c).
+Railway http log, no Gateway request 01:10Z to the start.
+B2/B3 builder: GET /gateway/session-challenge 200 at 01:17:07.876Z; POST /gateway/session-start 200 at 01:17:08.087Z; POST /gateway/heartbeat 200 every ~10 s from 01:17:17.858Z through 01:22:28.011Z (32 heartbeats, all 200), from one source address, the Founder's home connection (not recorded in this public repository), UA node.
+/health 200 at 01:21:38Z (uptimeSeconds 36884) and 01:22:36Z (uptimeSeconds 36942).
+B3 Founder: status from running daemon: "primary: HEARTBEATING / staging: INACTIVE" (no not-running marker), received ~01:22Z.
+Later read: POST /gateway/heartbeat 200 every ~10 s continuing through 01:38:58.493Z, read at 2026-10-15T01:39:08Z.
