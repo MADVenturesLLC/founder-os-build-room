@@ -102,7 +102,7 @@ export interface MintDeniedResult {
 export type MintResult = MintedResult | MintDeniedResult;
 
 /**
- * Emitted when a mint or refresh would breach the spend ceiling. The shape's
+ * Emitted when a mint or refresh is refused at or over the spend ceiling. The shape's
  * required fields are commissioned; `roomId` and `detail` are additive so the
  * frame is actionable without re-deriving which limb fired.
  */

@@ -93,8 +93,9 @@ OFF-ROADMAP Build Room side bet (Open-Inspect S3 evolved). Claim language:
   Keychain writes, no network in tests.
 - **Fixture-first:** the gateway is a fixture (`fix_…` tokens); the only live
   integration is a read-only adapter to `@build-room/cost-meter`'s public
-  API. The meter's boundary semantics — including the `perRoomTokenLimb`
-  `FOUNDER_DECISION_REQUIRED` question — are used as-is, not re-decided; see
+  API. The meter's boundary semantics — including the per-room limb,
+  inclusive as `DEC-20260815-16` clause 2 is written (Founder ruling
+  2026-08-29) — are used as-is, not re-decided; see
   `packages/spend-broker/README.md`.
 - **Credential classes (Founder ruling 2026-09-13, verbatim: "Only API
   ceiling is $85. OAuth should be unlimited."):** `MintRequest.credentialKind`

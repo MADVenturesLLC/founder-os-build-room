@@ -52,23 +52,19 @@ OS temp dir) so an empty scan is not the only evidence it works.
 
 ## Known cost-meter divergence (characterized, not fixed here)
 
-The real meter's per-room limb at this base (`packages/cost-meter/src/meter.ts`,
-`perRoomTokenLimb`) refuses when `spent + reserved + requested >= ceiling`.
-`DEC-20260815-16` §Ceiling Inclusivity Clarified (2026-08-29) rules the
-comparison as: refuse when `spent + reserved >= ceiling`. The current
-implementation is therefore non-compliant with the ruled comparison — this is
-known, recorded in `docs/phase-2-known-limits.md` §9, and NOT corrected by
-A1 (A1's scope is three files, none of them the meter).
+The real meter's per-room limb (`packages/cost-meter/src/meter.ts`,
+`perRoomTokenLimb`) refuses when `spent + reserved >= ceiling`, the
+comparison `DEC-20260815-16` §Ceiling Inclusivity Clarified (2026-08-29)
+rules. Until the WF-04 Step 3 meter correction it refused when `spent +
+reserved + requested >= ceiling` (exclusive), as recorded in
+`docs/phase-2-known-limits.md` §9, now closed.
 
-The characterization test pins the CURRENT observed behavior with
-`tokensSpent: 700, tokensReserved: 0, tokenCeiling: 1000, requestedTokens:
-300, perRunTokenCap: 300`: the current exclusive limb refuses (700 + 300 ≥
-1000), the ruled comparison would permit (700 < 1000), and the per-run cap
-cannot explain the refusal (300 > 300 is false). This test labels the
-refusal as current-behavior characterization, NOT as the ruled semantics. A
-separately authorized WF-04 Step 3 meter correction must update this
-expectation within that correction's own scope; a compliant meter correction
-must never be reverted merely to keep this characterization test green.
+Test 8 holds the ruled comparison with `tokensSpent: 700, tokensReserved: 0,
+tokenCeiling: 1000, requestedTokens: 300, perRunTokenCap: 300`: the per-room
+limb admits (700 < 1000) and so does the per-run cap (300 > 300 is false).
+Before the correction this case pinned the exclusive limb's refusal; the
+correction updated the expectation within its own scope, as this note
+required. It must not be reverted to the exclusive reading.
 
 ## Unimplemented production dependencies (deliberate)
 

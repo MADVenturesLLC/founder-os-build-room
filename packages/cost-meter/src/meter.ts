@@ -260,48 +260,43 @@ function tokenInputLimb(budget: RoomBudget, requestedTokens: number): LimbResult
 }
 
 /*
- * FOUNDER_DECISION_REQUIRED — the comparison here does not match `-16`
- * clause 2 as written, and relabelling it did not fix that.
+ * `-16` clause 2, inclusive as written (Founder ruling of 2026-08-29,
+ * "Ceiling Inclusivity Clarified"): dispatch refuses when spent + reserved
+ * >= ceiling. The request is not added before the comparison. A room at 700
+ * of 1000 asking for 400 is permitted, and the run may overshoot the ceiling
+ * by up to one run's worth: clause 3's honesty mechanism, which the ruling
+ * kept ("one-run overshoot honest per clause 3"). The request itself is
+ * bounded only by the per-run cap below.
  *
- * The clause refuses when spent + reserved ≥ ceiling. This adds
- * `requestedTokens` on top, so the ceiling becomes exclusive: a room at 700
- * of 1000 asking for 300 is refused, where the clause read literally permits
- * it (700 < 1000). The reading is defensible — it asks whether GRANTING the
- * request breaches the ceiling rather than noticing afterwards that it did,
- * and it errs fail-closed, which is the direction §3.15 requires. It is still
- * a different rule from the ratified one, not a stricter statement of the
- * same rule, and only the Founder can settle which is meant.
- *
- * What this commit fixed is narrower, and must not be read as settling the
- * above: the reason string called its figure "spent + reserved" while
- * reporting spent + reserved + the request. An operator reconciling the
- * message against the room's counters would find a number matching neither
- * and conclude the room was further along than it was. Both figures are now
- * named separately so the arithmetic is checkable. The behaviour is
- * unchanged and the semantic question stays open — see
- * `docs/phase-2-known-limits.md` §9.
+ * Until this correction the limb refused when spent + reserved + requested
+ * >= ceiling, which made the ceiling exclusive and stricter than the
+ * ratified rule (`docs/phase-2-known-limits.md` §9, now closed). The reason
+ * strings name spent + reserved and the request separately, and on a permit
+ * that would overshoot they say by how much, so the overshoot is disclosed
+ * rather than discovered.
  */
 function perRoomTokenLimb(budget: RoomBudget, requestedTokens: number): LimbResult {
   const alreadyCommitted = budget.tokensSpent + budget.tokensReserved;
   const projected = alreadyCommitted + requestedTokens;
 
-  if (projected >= budget.tokenCeiling) {
+  if (alreadyCommitted >= budget.tokenCeiling) {
     return {
       limb: 'per_room_tokens',
       verdict: 'pause',
       reason:
-        `room ${budget.roomId}: spent + reserved (${alreadyCommitted}) plus this request ` +
-        `(${requestedTokens}) is ${projected}, at or above its token ceiling ` +
-        `(${budget.tokenCeiling})`,
+        `room ${budget.roomId}: spent + reserved (${alreadyCommitted}) is at or above its token ceiling ` +
+        `(${budget.tokenCeiling}); this request (${requestedTokens}) is not admitted`,
     };
   }
 
+  const overshoot = projected - budget.tokenCeiling;
   return {
     limb: 'per_room_tokens',
     verdict: 'permit',
     reason:
-      `room ${budget.roomId}: spent + reserved (${alreadyCommitted}) plus this request ` +
-      `(${requestedTokens}) is ${projected} of ${budget.tokenCeiling} tokens`,
+      `room ${budget.roomId}: spent + reserved (${alreadyCommitted}) is below its token ceiling ` +
+      `(${budget.tokenCeiling}); with this request (${requestedTokens}) the room is at ${projected}` +
+      (overshoot > 0 ? `, ${overshoot} over the ceiling — the one-run overshoot clause 3 discloses` : ''),
   };
 }
 

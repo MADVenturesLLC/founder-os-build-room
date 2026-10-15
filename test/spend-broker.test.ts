@@ -9,9 +9,8 @@
  *
  * Boundary semantics are NOT re-decided here. The per-room ≥ and the monthly
  * strictly-above comparisons are the live meter's, exercised through
- * `MeterCeilingPort`; tests that touch them pin the live rule (including the
- * meter's own recorded `FOUNDER_DECISION_REQUIRED` deviation at
- * `perRoomTokenLimb`), they do not settle it.
+ * `MeterCeilingPort`; tests that touch them pin the live rule: the per-room
+ * limb inclusive as `-16` clause 2 is written (Founder ruling 2026-08-29).
  */
 
 import { describe, it } from 'node:test';
@@ -233,9 +232,12 @@ describe('SpendBroker.mint — ceiling coupling', () => {
 });
 
 describe('SpendBroker.mint — single flight per runId', () => {
-  it('serializes two parallel mints; only one succeeds past the remaining budget', async () => {
+  it('serializes two parallel mints; the second sees the first’s reservation and is refused at the ceiling', async () => {
+    // 700 spent: the first mint is admitted (700 < 1000) and its reservation
+    // takes the room to 1100; serialized behind it, the second sees 1100 >=
+    // 1000 and is refused (`-16` clause 2, inclusive, ruled 2026-08-29).
     const h = harness({
-      budgets: [room({ tokensSpent: 300, perRunTokenCap: 500 })],
+      budgets: [room({ tokensSpent: 700, perRunTokenCap: 500 })],
       gateway: new FixtureGatewayPort({ delayMs: 10 }),
     });
 
@@ -253,7 +255,7 @@ describe('SpendBroker.mint — single flight per runId', () => {
     // The winner's reservation is on the ledger; exactly one frame was emitted.
     assert.equal(h.ledger.activeTokens('room-1', h.now()), 400);
     assert.equal(h.sink.frames.length, 1);
-    assert.equal(expectMinted(mintedOutcomes[0] ?? outcomes[0]!).budgetRemaining, 300); // 1000 − (300 + 400)
+    assert.equal(expectMinted(mintedOutcomes[0] ?? outcomes[0]!).budgetRemaining, 0); // 1000 − (700 + 400), floored: the disclosed overshoot
   });
 
   it('lets two parallel mints both succeed when together they fit, and stacks them', async () => {
@@ -298,19 +300,35 @@ describe('SpendBroker.refresh — interrupt an in-flight turn on breach', () => 
     assert.equal(h.sink.frames.length, 0);
   });
 
-  it('denies the refresh that would breach and leaves nothing reserved', async () => {
+  it('admits a refresh that overshoots from below the ceiling, and reports nothing remaining', async () => {
+    // The refresh releases this run's 300 first, so the room is at 0 < 1000:
+    // admitted, 200 over once it runs — clause 3's disclosed overshoot.
     const h = harness({ budgets: [room({ perRunTokenCap: 5_000 })] });
 
     await h.broker.mint(mintRequest({ estimatedCost: 300 }));
+    const refreshed = expectMinted(await h.broker.refresh(mintRequest({ estimatedCost: 1_200 })));
+
+    assert.equal(refreshed.budgetRemaining, 0);
+    assert.equal(h.sink.frames.length, 0);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 1_200);
+  });
+
+  it('denies the refresh of a run once the room is at its ceiling, and leaves that run nothing reserved', async () => {
+    // run-b holds 100; run-a then takes the room to 300 + 100 + 700 = 1100.
+    // run-b's refresh releases its 100 and sees 1000 >= 1000: denied, interrupted.
+    const h = harness({ budgets: [room({ tokensSpent: 300, perRunTokenCap: 5_000 })] });
+
+    expectMinted(await h.broker.mint(mintRequest({ runId: 'run-b', estimatedCost: 100 })));
+    expectMinted(await h.broker.mint(mintRequest({ runId: 'run-a', estimatedCost: 700 })));
     const breached = expectDenied(
-      await h.broker.refresh(mintRequest({ estimatedCost: 1_200 })),
+      await h.broker.refresh(mintRequest({ runId: 'run-b', estimatedCost: 100 })),
     );
 
     assert.equal(breached.reason, 'spend_ceiling_exceeded');
     assert.ok((breached.detail ?? []).some((line) => line.includes('per_room_tokens')));
     assert.ok(breached.interrupt !== undefined);
     assert.equal(h.sink.frames.length, 1);
-    assert.equal(h.ledger.activeTokens('room-1', h.now()), 0);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 700, 'only run-a holds a reservation');
   });
 });
 
@@ -485,7 +503,7 @@ describe("OAuth credential class — 'unlimited' per the Founder ruling of 2026-
 });
 
 describe('CLI — one-command founder demo (fixtures only)', () => {
-  it('deny-demo mints under the ceiling, then denies the breaching refresh with a frame', async () => {
+  it('deny-demo mints under the ceiling, overshoots once on a refresh, then denies at the ceiling with a frame', async () => {
     const { report } = await runCli(['deny-demo']);
 
     const demo = report as {
@@ -494,11 +512,15 @@ describe('CLI — one-command founder demo (fixtures only)', () => {
       claims: { notEvidenceOf: readonly string[] };
     };
     const first = demo.steps['1_mint_under_ceiling'];
-    const breach = demo.steps['2_refresh_breaching'];
+    const overshoot = demo.steps['2_refresh_overshoots_once'];
+    const breach = demo.steps['3_mint_at_ceiling'];
     assert.ok(first !== undefined);
+    assert.ok(overshoot !== undefined);
     assert.ok(breach !== undefined);
 
     assert.equal(first.ok, true);
+    assert.equal(overshoot.ok, true);
+    if (overshoot.ok) assert.equal(overshoot.budgetRemaining, 0);
     assert.equal(breach.ok, false);
     if (!breach.ok) {
       assert.equal(breach.reason, 'spend_ceiling_exceeded');

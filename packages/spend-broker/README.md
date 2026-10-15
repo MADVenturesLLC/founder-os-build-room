@@ -3,7 +3,9 @@
 Work ID `GLM-20260913-SPEND-BROKER-V0`. OFF-ROADMAP Build Room side bet
 (Open-Inspect S3 evolved). A library that **refuses to hand an LLM provider a
 usable credential when the room/run is at or over its spend ceiling**, and
-interrupts an in-flight turn when a refresh would breach.
+interrupts an in-flight turn when its refresh finds the room at or over that
+ceiling. A refresh from below the ceiling is admitted even if it overshoots:
+the one-run overshoot `DEC-20260815-16` clause 3 discloses.
 
 Allowed claim language: `SPEND_BROKER_V0`, `COST_CEILING_ENFORCEMENT`. Nothing
 else. See "What this is NOT" below — the list is also exported from
@@ -80,12 +82,14 @@ The live meter's boundary semantics are used as-is:
 
 - Monthly limb pauses strictly **above** USD 85 (`DEC-20260815-09` clause 2);
   exactly at USD 85 permits — pinned by a test.
-- Per-room limb refuses when spent + reserved + requested is **≥** the token
-  ceiling (`DEC-20260815-16` clause 2, as the meter mechanizes it). The meter
-  source records, at `perRoomTokenLimb`, that this projected reading is an
-  open `FOUNDER_DECISION_REQUIRED` question relative to the clause as
-  written. **This package does not settle that question** — it asks the
-  meter, and the tests pin the live behavior whatever the Founder rules.
+- Per-room limb refuses when spent + reserved is **≥** the token ceiling
+  (`DEC-20260815-16` clause 2, inclusive as written, Founder ruling
+  2026-08-29). The request is not added first, so a mint or refresh from
+  below the ceiling is admitted and may overshoot by up to one run; the
+  per-run cap bounds its size, and `budgetRemaining` reads 0. Until the
+  ruling's code correction the meter added the request first (exclusive);
+  that reading is closed (`docs/phase-2-known-limits.md` §9). This package
+  still asks the meter and re-implements nothing.
 - UNKNOWN spend pauses (fail-closed) — pinned by a test with an unbucketable
   run.
 - The monthly dollar limb sees the ledger snapshot supplied to the adapter.

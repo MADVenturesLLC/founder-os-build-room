@@ -3,7 +3,10 @@
  *
  * GLM-20260913-SPEND-BROKER-V0. A library that refuses to hand an LLM
  * provider a usable credential when the room/run is at or over its spend
- * ceiling, and interrupts an in-flight turn when a refresh would breach.
+ * ceiling, and interrupts an in-flight turn when its refresh finds the room
+ * at or over that ceiling. A refresh from below the ceiling is admitted even
+ * if it overshoots: `-16` clause 2 is inclusive (Founder ruling 2026-08-29),
+ * and clause 3 discloses the one-run overshoot.
  *
  * Fixture-first: `GatewayPort`, `CostMeterPort` and `InterruptSink` are all
  * ports; v0 ships fixtures for each plus one real adapter — the meter

@@ -197,7 +197,7 @@ async function runDenyDemo(): Promise<CliResult> {
   const runId = 'demo-run-1';
 
   // Step 1 — the turn starts with room to spare: 600 spent, 300 requested,
-  // projected 900 of the 1,000-token ceiling. Mints cleanly.
+  // 900 of the 1,000-token ceiling. Mints cleanly.
   const minted = await broker.mint({
     runId,
     roomId: DEMO_ROOM,
@@ -207,14 +207,26 @@ async function runDenyDemo(): Promise<CliResult> {
   });
 
   // Step 2 — mid-turn the estimate grows; a refresh replaces the prior
-  // reservation and re-checks: 600 spent + 500 requested = 1,100, at or over
-  // the 1,000 ceiling. Denied, and the interrupt frame is emitted.
+  // reservation and re-checks spent + reserved = 600, below the ceiling.
+  // `-16` clause 2 is inclusive (Founder ruling 2026-08-29), so the refresh
+  // is admitted and the room runs 100 over: clause 3's one-run overshoot,
+  // disclosed as budgetRemaining 0.
   const refreshed = await broker.refresh({
     runId,
     roomId: DEMO_ROOM,
     provider: 'demo-provider',
     purpose: 'deny-demo: mid-turn refresh at a grown estimate',
     estimatedCost: 500,
+  });
+
+  // Step 3 — a second turn in the same room now meets 1,100 committed,
+  // at or over the 1,000 ceiling. Denied, and the interrupt frame is emitted.
+  const denied = await broker.mint({
+    runId: 'demo-run-2',
+    roomId: DEMO_ROOM,
+    provider: 'demo-provider',
+    purpose: 'deny-demo: next turn at the ceiling',
+    estimatedCost: 100,
   });
 
   return jsonOut({
@@ -224,7 +236,8 @@ async function runDenyDemo(): Promise<CliResult> {
     tokensSpentBefore: DEMO_TOKENS_SPENT,
     steps: {
       '1_mint_under_ceiling': minted,
-      '2_refresh_breaching': refreshed,
+      '2_refresh_overshoots_once': refreshed,
+      '3_mint_at_ceiling': denied,
     },
     interruptFrames: sink.frames,
     activeReservationsAfter: broker.status().activeReservations,
@@ -304,7 +317,7 @@ const COMMANDS: Readonly<Record<string, CommandSpec>> = Object.freeze({
     run: runMint,
   },
   'deny-demo': {
-    summary: 'two-step demo: mint under ceiling, refresh past it',
+    summary: 'three-step demo: mint under ceiling, refresh overshoots once, next turn denied at ceiling',
     run: () => runDenyDemo(),
   },
   'oauth-unlimited': {

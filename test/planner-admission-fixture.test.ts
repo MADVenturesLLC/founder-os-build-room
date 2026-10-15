@@ -22,17 +22,13 @@
  *    (token_inputs limb pauses; unknown accounting is never converted to
  *    zero);
  * 7. a thrown policy callback propagates BEFORE invocation (0 calls);
- * 8. current-behavior characterization: spent 700 / reserved 0 / ceiling
- *    1000 / request 300 / perRunTokenCap 300 — the EXCLUSIVE per-room limb
- *    refuses. This is pinned characterization of the current non-compliant
- *    meter at this base (meter.ts perRoomTokenLimb includes
- *    requestedTokens), NOT the ruled comparison. DEC-20260815-16 §Ceiling
+ * 8. the ruled comparison: spent 700 / reserved 0 / ceiling 1000 / request
+ *    300 / perRunTokenCap 300 is ADMITTED. DEC-20260815-16 §Ceiling
  *    Inclusivity Clarified (2026-08-29) rules the comparison "refuse when
- *    spent + reserved >= ceiling"; the per-run cap cannot explain this
- *    refusal (300 > 300 is false). A separately authorized WF-04 Step 3
- *    meter correction must update this expectation within that
- *    correction's scope; never revert a compliant correction to keep this
- *    test green.
+ *    spent + reserved >= ceiling" (700 < 1000), and the per-run cap admits
+ *    it (300 > 300 is false). Until the WF-04 Step 3 meter correction this
+ *    case pinned the exclusive meter's refusal; the correction updated the
+ *    expectation within its own scope, as this note required.
  * 9. an import-boundary detector rejects runtime references to
  *    planner-admission-fixture from production locations (control-plane,
  *    gateway-daemon, gateway-cli, run-harness production entry points) and
@@ -264,7 +260,7 @@ describe('A1 planner admission fixture — gates and invocation', () => {
     assert.equal(calls, 0, 'invocation must not run when the policy callback throws');
   });
 
-  it('8. CHARACTERIZATION (current base): exclusive meter refuses 700 + 300 request at ceiling 1000 — not the ruled comparison, and the per-run cap cannot explain it', async () => {
+  it('8. the ruled comparison admits a 700 + 300 request at ceiling 1000, and the per-run cap admits it too', async () => {
     let calls = 0;
     const result = await runPlannerAdmissionFixture(
       request({
@@ -280,22 +276,16 @@ describe('A1 planner admission fixture — gates and invocation', () => {
     );
 
     assert.equal(result.policy.allowed, true);
-    assert.equal(result.cost.permit, false, 'CURRENT exclusive per-room limb refuses');
-    assert.equal(result.outcome, 'refused');
-    assert.equal(calls, 0);
+    assert.equal(result.cost.permit, true, 'the inclusive per-room limb admits: 700 < 1000');
+    assert.equal(calls, 1);
 
-    // Label the refusal as the exclusive limb — the distinguishing boundary.
     const perRoom = result.cost.limbs.find((limb) => limb.limb === 'per_room_tokens');
     assert.ok(perRoom, 'per_room_tokens limb present');
-    assert.equal(perRoom?.verdict, 'pause');
-    // And prove the per-run cap is NOT what refused: request == cap.
+    assert.equal(perRoom?.verdict, 'permit');
+    // The request equals the per-run cap, which admits it (300 > 300 is false).
     const perRun = result.cost.limbs.find((limb) => limb.limb === 'per_run_cap');
     assert.ok(perRun);
-    assert.notEqual(perRun?.verdict, 'pause', 'per-run cap must not explain this refusal');
-    // The ruled comparison (DEC-20260815-16 §Ceiling Inclusivity Clarified,
-    // 2026-08-29) — refuse when spent + reserved >= ceiling — would PERMIT
-    // here (700 < 1000). This test pins the observed EXCLUSIVE behavior of
-    // the current implementation only; see the file header note.
+    assert.equal(perRun?.verdict, 'permit');
   });
 });
 
