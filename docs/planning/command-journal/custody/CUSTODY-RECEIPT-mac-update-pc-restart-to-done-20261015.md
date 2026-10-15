@@ -6,7 +6,7 @@ his act `FOUNDER-ACT-20261015-BR-PC-GATEWAY-RESTART`; and his ruling
 `FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE` with its same-day amendment
 of B3. It files the outputs and readings the acts name, the builder's
 reads, and the builder's polls of `/health` across deployment
-`0df04a38`. It records nine findings and authorizes nothing.** Each
+`0df04a38`. It records ten findings and authorizes nothing.** Each
 instrument's own text governs. The filing is ordered by R4 of the
 closing ruling, C1 of the restart act, and C1 and D1 of the Build Room
 to done ruling. The merge of this record needs the Founder's separate
@@ -60,7 +60,17 @@ reference to its SHA-256.
 | Bytes | 8311 |
 | Lines | 38 (`wc -l`) |
 | Trailing newline | present (single LF); no CR bytes |
-| What it is | `FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE`, comment 6182082725 on PR #119, posted 2026-10-15T01:12:55Z from `decivantiq`; signed in session at about 01:15Z by reference to that comment; B3 amended in session before 02:39Z |
+| What it is | `FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE`, comment 6182082725 on PR #119, posted 2026-10-15T01:12:55Z from `decivantiq`; signed in session at about 01:15Z by reference to that comment. **Its B3 is superseded by the amendment in the next table**: read alone, this text states the ceiling exclusive, and that is not the rule |
+
+| Field | Value |
+|---|---|
+| Path | `docs/planning/command-journal/custody/FOUNDER-RULING-build-room-to-done-B3-amendment-20261015.txt` |
+| Git blob id | `b626606e7e0877395c831875e57fa858c23a9e8b` |
+| SHA-256 | `33c3ec58342651c024df35c76349642496ac4fac17653112aba1c2ec05698f55` |
+| Bytes | 41 |
+| Lines | 1 (`wc -l`) |
+| Trailing newline | present (single LF); no CR bytes |
+| What it is | the Founder's amendment of B3 of the to-done ruling, given in session before 2026-10-15T02:39Z, verbatim. It controls: the per-room ceiling is inclusive, as the Founder ruled on 2026-08-29 in `DEC-20260815-16` |
 
 **The signature, verbatim**, given in session for both the restart act
 and the to-done ruling:
@@ -75,7 +85,8 @@ and the to-done ruling:
 (Rewrapped; the signature named the pull request as
 `MADVenturesLLC/founder-os-build-room#119`.)
 
-**The amendment of B3, verbatim**, given in session:
+**The amendment of B3, verbatim**, given in session and filed as its own
+pinned file above:
 
 > I amend B3 to inclusive, as ruled Aug 29
 
@@ -205,6 +216,16 @@ together, so that one merge carries all three.
 deployment.** Under C1 of the to-done ruling it gets no custody pull
 request of its own; its authorization and post-merge verification are
 filed with the next act's custody, or in the ops-actions log.
+
+**10. The restart act's title says "at the certified commit".** The
+PC's checkout, and so the restart, was at `750b6839`, the merge that
+landed the PC enrollment record. The certified commit is
+`a521b198df8c124eed56736cf5f101adaceef153`. No file under
+`packages/gateway-daemon`, `packages/gateway-cli`,
+`packages/gateway-protocol` or `packages/worker-supervisor` differs
+between the two (`git diff a521b19 750b6839` over those paths is empty),
+so the daemon ran the certified Gateway code. The signed act is not
+edited.
 
 None of the findings was corrected.
 
