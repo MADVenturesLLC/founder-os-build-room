@@ -62,7 +62,11 @@ export class ReservationLedger {
   remove(view: ReservationView): void {
     const held = this.byRunId.get(view.runId);
     if (held === undefined) return;
-    const kept = held.filter((entry) => entry !== view);
+    // One entry, even if the same object was recorded twice: two records are
+    // two reservations, and dropping both would understate the room.
+    const index = held.indexOf(view);
+    if (index === -1) return;
+    const kept = [...held.slice(0, index), ...held.slice(index + 1)];
     if (kept.length === 0) this.byRunId.delete(view.runId);
     else this.byRunId.set(view.runId, kept);
   }

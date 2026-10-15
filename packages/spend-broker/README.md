@@ -34,8 +34,11 @@ caller ──mint(request)──▶ SpendBroker
                             │           imported read-only — no second meter)
                             │ 3a. denial ──▶ InterruptSink.emit(InterruptFrame)
                             │        + MintResult{ok:false, spend_ceiling_exceeded, detail}
-                            │ 3b. permit ──▶ GatewayPort.mintProviderAuth ──▶ OpaqueToken
-                            │ 4. success ──▶ ReservationLedger.record (tokens, expiresAt)
+                            │ 3b. permit ──▶ ReservationLedger.record (tokens, pending)
+                            │        in the same step as the check, then
+                            │        GatewayPort.mintProviderAuth ──▶ OpaqueToken
+                            │ 4a. success ──▶ settle: pending ──▶ (tokens, expiresAt)
+                            │ 4b. gateway failure ──▶ ReservationLedger.remove
                             └──▶ MintResult{ok:true, token, expiresAt, budgetRemaining}
 ```
 

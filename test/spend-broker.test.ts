@@ -346,6 +346,15 @@ describe('SpendBroker.mint — single flight per runId', () => {
     assert.equal(h.ledger.activeTokens('room-1', h.now()), 0, 'and a release after the mint returns drops it');
   });
 
+  it('removes exactly one entry, even when the same reservation object was recorded twice', () => {
+    const ledger = new ReservationLedger();
+    const view = { runId: 'run-1', roomId: 'room-1', tokens: 100, expiresAt: BASE_NOW_MS + 1_000 };
+    ledger.record(view);
+    ledger.record(view);
+    ledger.remove(view);
+    assert.equal(ledger.activeTokens('room-1', BASE_NOW_MS), 100);
+  });
+
   it('removes the reservation taken before a gateway call that fails, and only that one', async () => {
     let calls = 0;
     class SecondCallFails implements GatewayPort {
