@@ -35,6 +35,8 @@ const DEFAULT_BEHAVIOUR: ExecutorBehaviour = {
 export class SyntheticExecutor implements PlannerExecutor {
   behaviour: ExecutorBehaviour = { ...DEFAULT_BEHAVIOUR };
   readonly calls: { attest: string[]; start: string[] } = { attest: [], start: [] };
+  /** The work each start was handed, in order, as the Gateway received it. */
+  readonly works: PlannerWorkWire[] = [];
   private executions = 0;
   private held: (() => void) | null = null;
 
@@ -42,6 +44,7 @@ export class SyntheticExecutor implements PlannerExecutor {
     this.behaviour = { ...DEFAULT_BEHAVIOUR, ...behaviour };
     this.calls.attest.length = 0;
     this.calls.start.length = 0;
+    this.works.length = 0;
     return this;
   }
 
@@ -72,6 +75,7 @@ export class SyntheticExecutor implements PlannerExecutor {
 
   async start(work: PlannerWorkWire): Promise<PlannerStart> {
     this.calls.start.push(work.commandId);
+    this.works.push(work);
     if (this.behaviour.start === 'throw') throw new Error('synthetic launch outcome unknown');
     if (this.behaviour.start === 'not_sent') return { kind: 'not_sent' };
     const plan = (): PlannerResultWire => ({

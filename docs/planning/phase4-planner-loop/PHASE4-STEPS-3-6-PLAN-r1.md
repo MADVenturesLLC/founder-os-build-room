@@ -171,7 +171,32 @@ Each slice lands as commits on the one branch, with its tests.
    lost dispatch response, a lost wait, a crash before T3. They include a
    restart on fresh stores over the same database.
 9. **The integrated lifecycle tests (step 5).** The stop gate's items 1 to
-   10 and the contract's §10 map, unit and storage.
+   10 and the contract's §10 map, unit and storage. Built, on the Founder's
+   direction "go ahead with slices 9-10":
+   - `test/phase4-lifecycle.storage.test.ts`: the pieces assembled as
+     production assembles them. The real composition root runs over a socket.
+     One enrolled Gateway runs the daemon's real lane and worker against a
+     synthetic executor. The goal enters on T1 and every decision enters on
+     the plan-decision route, both over HTTP. The cases, in order:
+     - a round to PLAN_REVIEW, bound end to end;
+     - every bypass refused;
+     - credential-shaped feedback refused;
+     - a revision whose superseded hash approves nothing;
+     - approval that dispatches nothing;
+     - a Gateway lost mid-round, then recovered over the real channel after
+       a restart, executing once;
+     - a rebuild on fresh stores, with the mixed chain's classes in order and
+       nothing duplicated;
+     - a scan of every persisted row for the tokens, the Gateway key and the
+       database password;
+     - T2 refused once real heartbeats go stale.
+     It runs in the runtime-role tier only, because the journal accepts no
+     login but `br_app_runtime`.
+   - `docs/phase4-stop-gate-test-map.md`: each item and each §10 row mapped
+     to the tests that evidence it, by exact title, with what the map does
+     not show.
+   - `test/phase4-stop-gate-map.test.ts`: holds the map to the tests it
+     cites, and to the contract's 15 §10 rows.
 10. **Counted-run preparation (step 6).** A Phase 4 run harness under
     `packages/run-harness/src/phase4/`, and a proposed run unit for the act
     C6 of the ruling calls for. No counted run executes.
