@@ -170,8 +170,8 @@ describe('SpendBroker.mint — ceiling coupling', () => {
   });
 
   it('denies at the ceiling (committed == ceiling) and emits one interrupt frame', async () => {
-    // Pins the live meter's ≥ boundary at perRoomTokenLimb — including that
-    // rule's recorded open Founder question; not re-litigated here.
+    // Pins the live meter's ≥ boundary at perRoomTokenLimb, inclusive as
+    // `-16` clause 2 is written (Founder ruling 2026-08-29).
     const h = harness({ budgets: [room({ tokensSpent: 1_000 })] });
 
     const result = expectDenied(await h.broker.mint(mintRequest({ estimatedCost: 0 })));
@@ -313,6 +313,37 @@ describe('SpendBroker.mint — single flight per runId', () => {
     assert.equal(h.ledger.active(h.now()).every((view) => view.pending !== true), true, 'settled, not pending');
     h.advance(1_000);
     assert.equal(h.ledger.activeTokens('room-1', h.now()), 0, 'and it expires with the token');
+  });
+
+  it('keeps a pending reservation through an explicit release, so a late success cannot reopen the room', async () => {
+    // release() is public and takes no run lock. Had it dropped the pending
+    // reservation, a second run would be admitted in the gap and the first
+    // mint's success would then spend budget nothing held: past the bound.
+    let release!: () => void;
+    class SlowGateway implements GatewayPort {
+      calls = 0;
+      async mintProviderAuth(): Promise<OpaqueToken> {
+        this.calls += 1;
+        if (this.calls === 1) await new Promise<void>((resolve) => { release = resolve; });
+        return 'fix_slow' as OpaqueToken;
+      }
+    }
+    const h = harness({
+      budgets: [room({ tokensSpent: 700, perRunTokenCap: 500 })],
+      gateway: new SlowGateway(),
+    });
+
+    const first = h.broker.mint(mintRequest({ runId: 'run-a', estimatedCost: 400 }));
+    await new Promise((resolve) => setImmediate(resolve));
+    h.broker.release('run-a');
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 400, 'the pending reservation survives the release');
+    expectDenied(await h.broker.mint(mintRequest({ runId: 'run-b', estimatedCost: 400 })));
+
+    release();
+    expectMinted(await first);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 400, 'the issued token is reserved for');
+    h.broker.release('run-a');
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 0, 'and a release after the mint returns drops it');
   });
 
   it('removes the reservation taken before a gateway call that fails, and only that one', async () => {

@@ -205,8 +205,11 @@ nothing in the package imports a network module). The suite pins, among
 others: mint under ceiling; deny + one interrupt frame at and over the
 ceiling (including the live ≥ boundary); two parallel mints serialize and
 cannot both succeed past the remaining budget; two parallel mints that fit
-stack their reservations; refresh replaces and the breaching refresh
-interrupts with nothing left reserved; `provider_unavailable` /
+stack their reservations; refresh replaces, a refresh from below the
+ceiling is admitted even if it overshoots, and a refresh once the room is
+at or over the ceiling interrupts with nothing left reserved; a
+reservation counts while its mint is pending, and `release` keeps a
+pending one; `provider_unavailable` /
 `not_authorized` / unexpected-crash mappings; the monthly strictly-above-$85
 boundary and UNKNOWN-is-absorbing through the real adapter; reservation
 expiry; and the CLI demo end to end. The 2026-09-13 credential-class ruling

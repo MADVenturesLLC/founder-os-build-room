@@ -67,9 +67,20 @@ export class ReservationLedger {
     else this.byRunId.set(view.runId, kept);
   }
 
-  /** Drop every reservation for a run, if any. No-op when none is held. */
+  /**
+   * Drop a run's settled reservations, if any. A PENDING reservation is kept:
+   * its mint is still in flight and will settle it, and the token it reserves
+   * for may yet be issued. Dropping it would let another run be admitted
+   * against budget that issuance is about to spend — the fail-open direction.
+   * A caller that wants that issuance released releases again once the mint
+   * returns.
+   */
   release(runId: string): void {
-    this.byRunId.delete(runId);
+    const held = this.byRunId.get(runId);
+    if (held === undefined) return;
+    const pending = held.filter((entry) => entry.pending === true);
+    if (pending.length === 0) this.byRunId.delete(runId);
+    else this.byRunId.set(runId, pending);
   }
 
   /**

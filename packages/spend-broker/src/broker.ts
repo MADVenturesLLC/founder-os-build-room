@@ -140,7 +140,11 @@ export class SpendBroker {
     };
   }
 
-  /** Drop a run's reservation explicitly (e.g. the turn ended early). */
+  /**
+   * Drop a run's reservation explicitly (e.g. the turn ended early). A mint
+   * still in flight keeps its pending reservation: release again once it
+   * returns (`ReservationLedger.release`).
+   */
   release(runId: string): void {
     this.reservations.release(runId);
   }
