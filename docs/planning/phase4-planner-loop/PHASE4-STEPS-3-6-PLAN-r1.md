@@ -76,6 +76,12 @@ Each slice lands as commits on the one branch, with its tests.
 
 These change the build. Slices 1 to 5 do not depend on them.
 
+**Founder direction in session, 2026-10-15, verbatim: "GO".** Given in
+answer to the builder's request to approve, together: this work's own
+branch `builder/phase4-steps3-6` (the session's designated branch carries
+custody PR #120, and C2 requires the base `3f16f57`), and the builder's
+proposed resolutions of Q1 and Q3 below. Q2 and Q4 stay open.
+
 - **Q1. How MadBridge capabilities are consumed.** `DEC-20260827-01` says
   "adopts" and "consumes" but names no mechanism. The pinned sources
   import `bun:sqlite` and `@madventures/protocol`, which Build Room cannot
