@@ -36,4 +36,16 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': 'error',
     },
   },
+  {
+    // Consumed MadBridge source (DEC-20260827-01 §4 frozen consumption):
+    // each `consumed` file is its 7d37a61 source with only import
+    // specifiers changed, and test/madbridge-consumed.test.ts checks that
+    // byte for byte. The source carries four unused imports; removing them
+    // would make the port differ from what is pinned, so the rule is off
+    // for this package alone.
+    files: ['packages/madbridge-consumed/src/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unused-vars': 'off',
+    },
+  },
 );

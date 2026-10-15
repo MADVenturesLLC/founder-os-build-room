@@ -77,7 +77,18 @@ Each slice lands as commits on the one branch, with its tests.
    ledger store gained `appendDerived` for that: the event is built from
    the locked state and a further step runs before the commit. Tests:
    `test/plan-decision.test.ts` and `test/plan-decision.storage.test.ts`.
-6. **Consumed capabilities (step 3).** See the open question Q1.
+6. **Consumed capabilities (step 3).** See Q1 and the ruling on unpinned
+   dependencies. Built in `packages/madbridge-consumed`, a package with no
+   manifest:
+   - §3.1: the ownership machine and the path policy.
+   - §3.3: the artifact store, manifest and hash-chained ledger, with the
+     ledger in memory because §3.5 consumes no storage medium.
+   - §3.4: the closed adapter registry and the `AdapterV1` contract.
+   - §3.5: rebuild and reconciliation.
+   `PROVENANCE.json` records all 34 files of the pinned closure with their
+   blob ids and statuses. The concrete adapters wait on Q2.
+   `evaluateAction` and its policies wait for a slice that needs them.
+   Tests: `test/madbridge-consumed.test.ts`.
 7. **The governed planner loop.** Also carries `founder.cancel` (T22)
    under the Q5 ruling: bound to the room's planner command, G22's fact
    derived from that command's journaled state, refused before a planner
@@ -120,6 +131,14 @@ proposed resolutions of Q1 and Q3 below. Q2 and Q4 stay open.
   thirteen pinned files have changed on MadBridge's `main` since the pin
   (one removes `resumeSession`, a consumed export), so only the `7d37a61`
   form is consumed.
+  **Founder ruling in session, 2026-10-15, verbatim:** "Consume the
+  unpinned dependencies at 7d37a61, blob ids recorded". It answers the
+  builder's finding that the thirteen pinned files import twenty-one
+  MadBridge files `DEC-20260827-01` §5 does not list (the protocol
+  types, the session machine, three policy modules, the ledger's hash
+  chain and schema, and each adapter's shell, attestation and config
+  modules). Those are consumed in their `7d37a61` form, and every
+  consumed file, pinned or not, is recorded with its blob id.
 - **Q2. How the Planner actually runs.** No adapter exists and §6 forbids
   new provider onboarding. Steps 4 and 5 can be built and tested end to end
   against a synthetic Planner. The counted runs need a real one: the
