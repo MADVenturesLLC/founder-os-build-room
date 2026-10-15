@@ -11,6 +11,7 @@ import type {
   ObservedRoute,
   PlannerDispatchReceipt,
   PlannerPort,
+  PlannerReconciliation,
   PlannerResult,
   PlannerWork,
 } from '../../packages/control-plane/src/planner-loop.js';
@@ -60,39 +61,70 @@ export function readyPlanFor(work: PlannerWork, overrides: Record<string, unknow
 
 export interface SyntheticBehaviour {
   attest: 'ok' | 'throw' | Partial<ExecutionIdentity>;
-  dispatch: 'accept' | 'not_sent' | 'throw';
+  /**
+   * `throw`: the work never arrived, and the call throws (contact unknown to
+   * the caller). `lost_response`: the work arrived and runs, but the answer
+   * is lost and the call throws.
+   */
+  dispatch: 'accept' | 'not_sent' | 'throw' | 'lost_response';
   observed: ObservedRoute;
-  result: 'plan' | 'failed' | 'throw';
+  /** `running`: the plan is not ready, and `awaitPlan` throws. */
+  result: 'plan' | 'failed' | 'throw' | 'running';
   /** Applied to the ready plan the Planner returns. */
   planOverrides: Record<string, unknown>;
+  /** `truth` answers from what the Planner holds; the others override it. */
+  reconcile: 'truth' | 'throw' | 'wrong_execution' | 'never_received';
+}
+
+const DEFAULT_BEHAVIOUR: SyntheticBehaviour = {
+  attest: 'ok',
+  dispatch: 'accept',
+  observed: SYNTHETIC_ROUTE,
+  result: 'plan',
+  planOverrides: {},
+  reconcile: 'truth',
+};
+
+interface Held {
+  readonly work: PlannerWork;
+  readonly executionId: string;
+  readonly observed: ObservedRoute;
 }
 
 export class SyntheticPlanner implements PlannerPort {
-  behaviour: SyntheticBehaviour = {
-    attest: 'ok',
-    dispatch: 'accept',
-    observed: SYNTHETIC_ROUTE,
-    result: 'plan',
-    planOverrides: {},
+  behaviour: SyntheticBehaviour = { ...DEFAULT_BEHAVIOUR };
+  readonly calls: { attest: number; dispatched: PlannerWork[]; awaited: string[]; reconciled: string[] } = {
+    attest: 0,
+    dispatched: [],
+    awaited: [],
+    reconciled: [],
   };
-  readonly calls: { attest: number; dispatched: PlannerWork[]; awaited: string[] } = { attest: 0, dispatched: [], awaited: [] };
-  private readonly works = new Map<string, PlannerWork>();
+  /** What the Planner holds per command id; survives `reset`, as a real Planner outlives a control-plane restart. */
+  private readonly held = new Map<string, Held>();
   private executions = 0;
+  private lastExecutionId = '';
 
   reset(behaviour: Partial<SyntheticBehaviour> = {}): this {
-    this.behaviour = { attest: 'ok', dispatch: 'accept', observed: SYNTHETIC_ROUTE, result: 'plan', planOverrides: {}, ...behaviour };
+    this.behaviour = { ...DEFAULT_BEHAVIOUR, ...behaviour };
     this.calls.attest = 0;
     this.calls.dispatched.length = 0;
     this.calls.awaited.length = 0;
+    this.calls.reconciled.length = 0;
     return this;
+  }
+
+  /** How many times work for `commandId` was accepted: at most once is the property under test. */
+  executionsOf(commandId: string): number {
+    return this.calls.dispatched.filter((work) => work.commandId === commandId && this.held.has(commandId)).length;
   }
 
   async attest(): Promise<ExecutionIdentity> {
     this.calls.attest += 1;
     if (this.behaviour.attest === 'throw') throw new Error('synthetic attestation failure');
     this.executions += 1;
+    this.lastExecutionId = `exec-synthetic-${this.executions}`;
     const identity: ExecutionIdentity = {
-      executionId: `exec-synthetic-${this.executions}`,
+      executionId: this.lastExecutionId,
       role: 'architect',
       surface: 'claude-code',
       model: SYNTHETIC_ROUTE.model,
@@ -106,16 +138,38 @@ export class SyntheticPlanner implements PlannerPort {
     this.calls.dispatched.push(work);
     if (this.behaviour.dispatch === 'throw') throw new Error('synthetic transport timeout');
     if (this.behaviour.dispatch === 'not_sent') return { kind: 'not_sent' };
-    this.works.set(work.commandId, work);
+    if (this.held.has(work.commandId)) throw new Error(`synthetic planner: ${work.commandId} dispatched twice`);
+    this.held.set(work.commandId, { work, executionId: this.lastExecutionId, observed: this.behaviour.observed });
+    if (this.behaviour.dispatch === 'lost_response') throw new Error('synthetic response lost');
     return { kind: 'accepted', observed: this.behaviour.observed };
+  }
+
+  private resultFor(commandId: string): PlannerResult | 'running' {
+    const held = this.held.get(commandId);
+    if (held === undefined) throw new Error('a result for a command that was never dispatched');
+    if (this.behaviour.result === 'running') return 'running';
+    if (this.behaviour.result === 'failed') return { kind: 'failed' };
+    return { kind: 'plan', document: readyPlanFor(held.work, this.behaviour.planOverrides) };
   }
 
   async awaitPlan(commandId: string): Promise<PlannerResult> {
     this.calls.awaited.push(commandId);
-    if (this.behaviour.result === 'throw') throw new Error('synthetic wait timeout');
-    if (this.behaviour.result === 'failed') return { kind: 'failed' };
-    const work = this.works.get(commandId);
-    if (work === undefined) throw new Error('awaited a command that was never dispatched');
-    return { kind: 'plan', document: readyPlanFor(work, this.behaviour.planOverrides) };
+    if (this.behaviour.result === 'throw' || this.behaviour.result === 'running') throw new Error('synthetic wait timeout');
+    const result = this.resultFor(commandId);
+    if (result === 'running') throw new Error('synthetic wait timeout');
+    return result;
+  }
+
+  async reconcile(commandId: string): Promise<PlannerReconciliation> {
+    this.calls.reconciled.push(commandId);
+    if (this.behaviour.reconcile === 'throw') throw new Error('synthetic planner unreachable');
+    if (this.behaviour.reconcile === 'never_received') return { kind: 'never_received' };
+    const held = this.held.get(commandId);
+    if (held === undefined) return { kind: 'never_received' };
+    const executionId = this.behaviour.reconcile === 'wrong_execution' ? 'exec-synthetic-other' : held.executionId;
+    // A wait that threw ('throw') still leaves the plan ready to report.
+    const result = this.behaviour.result === 'throw' ? { kind: 'plan' as const, document: readyPlanFor(held.work, this.behaviour.planOverrides) } : this.resultFor(commandId);
+    if (result === 'running') return { kind: 'running', executionId, observed: held.observed };
+    return { kind: 'finished', executionId, observed: held.observed, result };
   }
 }

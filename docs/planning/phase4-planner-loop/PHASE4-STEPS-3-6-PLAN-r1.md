@@ -138,9 +138,38 @@ Each slice lands as commits on the one branch, with its tests.
    `test/plan-decision.test.ts`.
 8. **Recovery.** `journaled` without `dispatched`, and `unresolved` without
    `resolved`, reconcile by `command_id` before any retry, and a bounded
-   retry of a failed round is decided here; restart rebuilds
-   without duplicate commands, approvals or authority (stop gate items 9
-   and 10).
+   retry of a failed round is decided here; restart rebuilds without
+   duplicate commands, approvals or authority (stop gate items 9 and 10).
+   Built in `control-plane/src/planner-recovery.ts`:
+   - Recovery verifies the journal from genesis first; a chain that does
+     not verify stops it before anything is read or written.
+   - The Planner is asked about the room's open command by its id
+     (`PlannerPort.reconcile`), never given it again. Recovery mints no
+     command and dispatches nothing.
+   - Latest `journaled` or `identity_bound`: never received is a pre-send
+     `failed`; accepted is recorded `dispatched` with the route the Planner
+     reports, then finishes like a round; no answer is `unresolved` (§5.3).
+   - Latest `dispatched`: a finished plan is submitted with `completed`
+     (T3, the plan and the row in one transaction); still running, or no
+     answer, writes nothing; "never received" contradicts the journal and
+     is `unresolved`, reported as a mismatch.
+   - Latest `unresolved`: only a `reconciled` answer resolves, the consumed
+     §3.5 rule (MadBridge's `resumeSession` continues only on
+     `reconciled`). A reconciled plan resolves `completed` with T3 and the
+     plan, through the same completion test; a reconciled failure, an
+     unacceptable plan or a diverged route resolves `failed`. `ambiguous`
+     (no answer, still running, or a finished command whose dispatch the
+     journal never recorded) and `mismatch` (another execution id or
+     route) are reported and stay `unresolved`.
+   - The execution id is the re-attestation: the Planner's answer must name
+     the execution the journal bound.
+   - No retry, by choice (Q8). §5.3 allows a never-received command to
+     "proceed to a governed dispatch attempt"; this slice records it as
+     `failed` instead.
+   Tests: `test/planner-recovery.storage.test.ts`. They inject each
+   interruption where it happens: a journal append failing mid-round, a
+   lost dispatch response, a lost wait, a crash before T3. They include a
+   restart on fresh stores over the same database.
 9. **The integrated lifecycle tests (step 5).** The stop gate's items 1 to
    10 and the contract's §10 map, unit and storage.
 10. **Counted-run preparation (step 6).** A Phase 4 run harness under
@@ -244,6 +273,24 @@ proposed resolutions of Q1 and Q3 below. Q2 and Q4 stay open.
   `independent-reviewer`, and "reviewer≠builder" means the two seats run
   different models (`DEC-20260815-05`). Each of these is a Founder call
   before a counted run.
+- **Q8. Retrying a failed planning round.** Raised by slice 8. A failed
+  round leaves the room in PLANNING, and the only way out is the
+  Founder's cancel. A ratified budget exists: `DEC-20260716-02` item 5,
+  consumed in `packages/seat-registry/src/dispatch-policy.ts` as
+  `retryBudgetTransition`.
+  - Two retries per deployment within one execution, at most.
+  - Each retry is a new `command_id`.
+  - No retry while any outcome is unknown.
+  - One failover, on the listed triggers only.
+  The Seat Registry V1.1 plan reserves wiring that policy into a dispatch
+  path for "a separately authorized tranche". Each retry contacts a
+  provider again. So this branch retries nothing. The builder's proposal,
+  if retries are wanted: retry only a round whose command failed as
+  `not_sent`, which is a transport failure with affirmative no-effect
+  evidence. Derive each retry's id from the room, the opening transition
+  and the attempt number, and gate it on `retryBudgetTransition`. A plan
+  that fails the schema would instead take the one corrective re-ask the
+  same item names. This is a Founder call.
 
 ## Verification
 

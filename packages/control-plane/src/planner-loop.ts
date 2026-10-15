@@ -53,10 +53,12 @@
  * finds the command it opened instead of minting a second one, and the
  * `journaled` row's own room and lifecycle reference cross-check it.
  *
- * WHAT A ROUND DOES NOT DO (slice 8, recovery): retry. A failed or
- * unresolved round leaves the room in PLANNING; nothing here re-dispatches,
- * and a round already opened is never opened again. The Founder can cancel
- * once the command is terminal (`plan-decision.ts`).
+ * WHAT A ROUND DOES NOT DO: retry (plan r1 Q8). A failed or unresolved
+ * round leaves the room in PLANNING; nothing here re-dispatches, and a round
+ * already opened is never opened again. An interrupted round is reconciled
+ * by `planner-recovery.ts`, which shares this module's plan check and T3
+ * transaction. The Founder can cancel once the command is terminal
+ * (`plan-decision.ts`).
  *
  * THE PLANNER is a `PlannerPort`. Only a synthetic one exists (plan r1 Q2:
  * which adapter runs the Planner, and how the control plane hands it work,
@@ -147,14 +149,28 @@ export type PlannerResult =
   | { readonly kind: 'failed' };
 
 /**
+ * What the Planner knows of one command when asked by its id (journal
+ * contract §5.3, dispatch-attempt reconciliation). It reports; it never
+ * executes anything, so asking cannot dispatch a second time.
+ */
+export type PlannerReconciliation =
+  /** Affirmative evidence that the command never reached a provider. */
+  | { readonly kind: 'never_received' }
+  | { readonly kind: 'running'; readonly executionId: string; readonly observed: ObservedRoute }
+  | { readonly kind: 'finished'; readonly executionId: string; readonly observed: ObservedRoute; readonly result: PlannerResult };
+
+/**
  * The Planner as the loop sees it. `attest` is `AdapterV1.attest`, read
  * locally with no provider contact. `dispatch` and `awaitPlan` throw when
  * the outcome is unknown; the loop then records `unresolved`, never a guess.
+ * `reconcile` is recovery's question (`planner-recovery.ts`); it throws when
+ * the Planner cannot answer, and an answer it cannot give is never assumed.
  */
 export interface PlannerPort {
   attest(): Promise<ExecutionIdentity>;
   dispatch(work: PlannerWork): Promise<PlannerDispatchReceipt>;
   awaitPlan(commandId: string): Promise<PlannerResult>;
+  reconcile(commandId: string): Promise<PlannerReconciliation>;
 }
 
 /** The authorized Planner route a room's commands are journaled with. */
@@ -235,14 +251,14 @@ export class PlannerLoopUnfencedError extends Error {
   }
 }
 
-class RoundStateChangedError extends Error {
+export class RoundStateChangedError extends Error {
   override readonly name = 'RoundStateChangedError';
   constructor(readonly reason: string) {
     super(reason);
   }
 }
 
-interface RoundInputs {
+export interface RoundInputs {
   readonly repository: string;
   readonly baseSha: string;
   readonly scopePaths: readonly string[];
@@ -470,82 +486,174 @@ export class PlannerLoop {
     }
     if (result.kind === 'failed') return this.fail(commandId, 'planner_reported_failure');
 
-    const verdict = judgePlanDoc(result.document);
-    if (!verdict.ok || !verdict.readyForDecision) return this.fail(commandId, 'plan_invalid');
-    const document = verdict.document;
-    if (
-      document.repository !== inputs.repository
-      || document.base_sha !== inputs.baseSha
-      || !document.scope_paths.every((path) => isWithinScope(path, inputs.scopePaths))
-    ) {
-      return this.fail(commandId, 'plan_outside_captured_scope');
-    }
+    const verdict = judgeRoundPlan(result.document, inputs);
+    if (!verdict.ok) return this.fail(commandId, verdict.classification);
 
-    return this.submit(roomId, round, observed, result.document, verdict.planHash);
+    const submitted = await submitRoundPlan(this.submitDeps(), {
+      roomId,
+      commandId,
+      observed,
+      document: result.document,
+      planHash: verdict.planHash,
+      terminal: 'completed',
+    });
+    switch (submitted.kind) {
+      case 'plan_review':
+        return { kind: 'plan_review', commandId, planHash: verdict.planHash, eventId: submitted.eventId };
+      case 'interrupted':
+        return { kind: 'interrupted', commandId, committed: submitted.committed };
+      case 'completion_refused':
+        if (submitted.coverage === 'does_not_cover') return this.fail(commandId, 'completion_not_covered');
+        return this.unresolved(commandId, `completion not determinable (${submitted.coverage})`);
+      case 'plan_refused':
+        return this.fail(commandId, 'plan_refused');
+      case 'superseded':
+        return this.fail(commandId, 'round_superseded');
+    }
   }
 
-  private async submit(
-    roomId: string,
-    round: OpenedRound,
-    observed: ObservedRoute,
-    document: unknown,
-    planHash: string,
-  ): Promise<PlannerRoundOutcome> {
-    const { commandId } = round;
-    const eventId = this.mintEventId();
-    let appended;
-    try {
-      appended = await this.deps.ledger.appendDerived(roomId, {
-        build: async (_client, current) => {
-          const rounds = plannerRoundsOf(roomId, current);
-          if (current.state !== 'PLANNING' || rounds[rounds.length - 1]?.commandId !== commandId) {
-            throw new RoundStateChangedError('the round is no longer the room’s current round');
-          }
-          const plan = judgePlanDoc(document);
-          if (!plan.ok) throw new Error('a judged plan no longer judges');
-          return {
-            eventId,
-            event: 'plan.submitted',
-            actor: 'agent.planner',
-            attribution: {
-              roleId: PLANNER_ROLE,
-              actorId: this.deps.route.actorId,
-              actualModel: observed.model,
-              executionSurface: observed.executionSurface,
-            },
-            scope: { roomId, repo: plan.document.repository, paths: [...plan.document.scope_paths] },
-            evidence: [{ kind: 'plandoc', ref: commandId, digest: planHash }],
-            occurredAt: this.now().toISOString(),
-            facts: { planDocSchemaValid: true, planHash: plan.planHash },
-          } as LifecycleEvent;
-        },
-        afterTransition: async (client, { entry }) => {
-          await this.deps.plans.inTransaction(client).recordPlan({ roomId, commandId, lifecycleEventId: entry.eventId, document });
-          return this.deps.journal.inTransaction(client).appendCommandEvent({
-            eventType: 'completed',
-            commandId,
-            lifecycleEventRef: { roomId, eventId: entry.eventId },
-            evidenceRefs: [`plandoc/${planHash}`],
-          });
-        },
-      });
-    } catch (error) {
-      if (error instanceof JournalCompletionRefusedError) {
-        if (error.coverage === 'does_not_cover') return this.fail(commandId, 'completion_not_covered');
-        return this.unresolved(commandId, `completion not determinable (${error.coverage})`);
-      }
-      if (error instanceof PlanRefusedError) return this.fail(commandId, 'plan_refused');
-      if (error instanceof RoundStateChangedError) return this.fail(commandId, 'round_superseded');
-      throw error;
-    }
-    const result = appended.result;
-    if (!result.ok && result.outcome === 'not_leader') return { kind: 'interrupted', commandId, committed: result.committed };
-    if (!result.ok || result.outcome !== 'transition' || appended.after === null) {
-      // The reducer refused T3 (its rejection is recorded) or replayed it: no plan was submitted.
-      return this.fail(commandId, 'round_superseded');
-    }
-    return { kind: 'plan_review', commandId, planHash, eventId };
+  private submitDeps(): SubmitDeps {
+    return { ledger: this.deps.ledger, journal: this.deps.journal, plans: this.deps.plans, route: this.deps.route, now: this.now, mintEventId: this.mintEventId };
   }
+
+}
+
+// ---------------------------------------------------------------------------
+// Shared with recovery: the plan check, the T3 transaction, the round inputs
+
+/** Whether a returned document is a ready plan inside the round's captured repository, base and scope. */
+export function judgeRoundPlan(
+  document: unknown,
+  inputs: RoundInputs,
+): { readonly ok: true; readonly planHash: string } | { readonly ok: false; readonly classification: 'plan_invalid' | 'plan_outside_captured_scope' } {
+  const verdict = judgePlanDoc(document);
+  if (!verdict.ok || !verdict.readyForDecision) return { ok: false, classification: 'plan_invalid' };
+  const plan = verdict.document;
+  if (
+    plan.repository !== inputs.repository
+    || plan.base_sha !== inputs.baseSha
+    || !plan.scope_paths.every((path) => isWithinScope(path, inputs.scopePaths))
+  ) {
+    return { ok: false, classification: 'plan_outside_captured_scope' };
+  }
+  return { ok: true, planHash: verdict.planHash };
+}
+
+export interface SubmitDeps {
+  readonly ledger: Pick<PostgresLedgerStore, 'appendDerived'>;
+  readonly journal: Pick<JournalStore, 'inTransaction'>;
+  readonly plans: Pick<PlanStore, 'inTransaction'>;
+  readonly route: Pick<PlannerRoute, 'actorId'>;
+  readonly now: () => Date;
+  readonly mintEventId: () => string;
+}
+
+export interface SubmitRequest {
+  readonly roomId: string;
+  readonly commandId: string;
+  readonly observed: ObservedRoute;
+  readonly document: unknown;
+  readonly planHash: string;
+  /**
+   * The command's terminal row in the T3 transaction: `completed` for a
+   * round still running, or a `resolved` completed determination
+   * (`reconciled`) for one recovery is resolving. Either is subject to the
+   * journal's completion test.
+   */
+  readonly terminal: 'completed' | 'resolved';
+}
+
+export type SubmitOutcome =
+  | { readonly kind: 'plan_review'; readonly eventId: string }
+  | { readonly kind: 'completion_refused'; readonly coverage: 'does_not_cover' | 'indeterminate' | 'no_resolver' }
+  | { readonly kind: 'plan_refused' }
+  | { readonly kind: 'superseded' }
+  | { readonly kind: 'interrupted'; readonly committed: boolean };
+
+/**
+ * T3, the stored plan and the command's terminal row, in ONE transaction
+ * (journal contract §1.4). A refused completion, a refused plan or a room
+ * whose current round is no longer this one leaves nothing of it.
+ */
+export async function submitRoundPlan(deps: SubmitDeps, request: SubmitRequest): Promise<SubmitOutcome> {
+  const { roomId, commandId, observed, document, planHash } = request;
+  const eventId = deps.mintEventId();
+  let appended;
+  try {
+    appended = await deps.ledger.appendDerived(roomId, {
+      build: async (_client, current) => {
+        const rounds = plannerRoundsOf(roomId, current);
+        if (current.state !== 'PLANNING' || rounds[rounds.length - 1]?.commandId !== commandId) {
+          throw new RoundStateChangedError('the round is no longer the room’s current round');
+        }
+        const plan = judgePlanDoc(document);
+        if (!plan.ok) throw new Error('a judged plan no longer judges');
+        return {
+          eventId,
+          event: 'plan.submitted',
+          actor: 'agent.planner',
+          attribution: {
+            roleId: PLANNER_ROLE,
+            actorId: deps.route.actorId,
+            actualModel: observed.model,
+            executionSurface: observed.executionSurface,
+          },
+          scope: { roomId, repo: plan.document.repository, paths: [...plan.document.scope_paths] },
+          evidence: [{ kind: 'plandoc', ref: commandId, digest: planHash }],
+          occurredAt: deps.now().toISOString(),
+          facts: { planDocSchemaValid: true, planHash: plan.planHash },
+        } as LifecycleEvent;
+      },
+      afterTransition: async (client, { entry }) => {
+        await deps.plans.inTransaction(client).recordPlan({ roomId, commandId, lifecycleEventId: entry.eventId, document });
+        const lifecycleEventRef = { roomId, eventId: entry.eventId };
+        const evidenceRefs = [`plandoc/${planHash}`];
+        return deps.journal.inTransaction(client).appendCommandEvent(
+          request.terminal === 'completed'
+            ? { eventType: 'completed', commandId, lifecycleEventRef, evidenceRefs }
+            : {
+                eventType: 'resolved',
+                commandId,
+                resolutionDetermination: 'completed',
+                resolutionSemantics: 'reconciled',
+                lifecycleEventRef,
+                evidenceRefs,
+              },
+        );
+      },
+    });
+  } catch (error) {
+    if (error instanceof JournalCompletionRefusedError) return { kind: 'completion_refused', coverage: error.coverage };
+    if (error instanceof PlanRefusedError) return { kind: 'plan_refused' };
+    if (error instanceof RoundStateChangedError) return { kind: 'superseded' };
+    throw error;
+  }
+  const result = appended.result;
+  if (!result.ok && result.outcome === 'not_leader') return { kind: 'interrupted', committed: result.committed };
+  // The reducer refused T3 (its rejection is recorded) or replayed it: no plan was submitted.
+  if (!result.ok || result.outcome !== 'transition' || appended.after === null) return { kind: 'superseded' };
+  return { kind: 'plan_review', eventId };
+}
+
+/**
+ * The inputs of the round whose command is `commandId`, read under the room
+ * lock, with the room's state and whether that round is still its latest.
+ * `null` when no round of the room derives that command id.
+ */
+export async function readRoundInputs(
+  ledger: Pick<PostgresLedgerStore, 'underRoomLock'>,
+  roomId: string,
+  commandId: string,
+): Promise<{ readonly inputs: RoundInputs; readonly state: LedgerState['state']; readonly latest: boolean } | null | 'not_leader'> {
+  const locked = await ledger.underRoomLock(roomId, async (client, current) => {
+    const rounds = plannerRoundsOf(roomId, current);
+    const index = rounds.findIndex((round) => round.commandId === commandId);
+    if (index < 0) return null;
+    const round = rounds[index] as PlannerRound;
+    const inputs = await roundInputs(client, roomId, current, round.opening.transition === 'T4' ? round.opening : null);
+    return { inputs, state: current.state, latest: index === rounds.length - 1 };
+  });
+  return locked.status === 'not_leader' ? 'not_leader' : locked.value;
 }
 
 /** G2's `rolesAssigned`: all three seats, the planner seat in the architect role on the route's model. */
