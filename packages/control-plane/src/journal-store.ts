@@ -96,6 +96,14 @@
  *     the same cross-row rules over every command. It never trusts the head.
  *     The authorization test is not re-run on verify: it needs the
  *     resolver, and its verdict was a condition of the append.
+ *
+ * THE PLANNER LOOP (plan r1 slice 7). A planner command's `journaled` row
+ * can also join a caller's transaction (`inTransaction(...).appendJournaled`),
+ * bound to its room and to the transition that opened its round, so that T2
+ * and the command it dispatches commit together or not at all (§1.4). The
+ * same transaction can read a command's rows (`commandHistory`), which is how
+ * a cancel decides, under the room lock, whether a planner command is still
+ * running.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -127,6 +135,7 @@ import {
   type DecodedJournalRow,
   type DerivedCommandState,
   type GovernedCommandRequest,
+  type LifecycleEventRef,
 } from '../../journal/src/index.js';
 
 const EVENT_TYPE_JOURNALED = 'journaled' as const;
@@ -189,6 +198,16 @@ export interface CompletionAuthorizationQuery {
 export type AuthorizationCoverage = 'covers' | 'does_not_cover' | 'indeterminate';
 
 export type CompletionAuthorizationResolver = (query: CompletionAuthorizationQuery) => Promise<AuthorizationCoverage>;
+
+/**
+ * What a `journaled` row may bind beyond the request (§5.2: "any element-2
+ * identities that already exist"): the room, and the lifecycle transition the
+ * command corresponds to. Both are set by the server, never by a request body.
+ */
+export interface JournaledBinding {
+  readonly roomId?: string;
+  readonly lifecycleEventRef?: LifecycleEventRef;
+}
 
 /** A command event after `journaled`. `seq` and `recorded_at` are the server's. */
 export type LaterCommandEvent = Omit<CommandEventRow, 'seq' | 'recordedAt' | 'eventType'> & {
@@ -499,6 +518,18 @@ export class JournalStore {
    */
   inTransaction(client: PoolClient): JournalTransaction {
     return {
+      appendJournaled: async (request, binding = {}) => {
+        const { rowInput, envelopeDigest: digest } = buildJournaledRow(request, this.now, binding);
+        const appended = await this.joined(client, () => this.appendCommandRow(client, rowInput));
+        return { commandId: appended.commandId, seq: appended.seq, chainHash: appended.chainHash, envelopeDigest: digest };
+      },
+      commandHistory: async (commandId) => {
+        try {
+          return historyOf(commandId, await readBound(client, commandId));
+        } catch (error) {
+          throw isConnectionFailure(error) ? new JournalStoreUnavailableError(error) : error;
+        }
+      },
       appendCommandEvent: async (event) => {
         const row = this.laterRow(event);
         return this.joined(client, () => this.appendCommandRow(client, row));
@@ -535,9 +566,7 @@ export class JournalStore {
   async commandHistory(commandId: string): Promise<CommandHistory> {
     const client = await acquire(this.pool);
     try {
-      const entries = await readBound(client, commandId);
-      const commands = entries.flatMap((e) => (e.decoded.recordClass === RECORD_CLASS_COMMAND ? [e.decoded.row] : []));
-      return { commandId, entries, state: commands.length === 0 ? null : deriveCommandState(commands) };
+      return historyOf(commandId, await readBound(client, commandId));
     } catch (error) {
       throw isConnectionFailure(error) ? new JournalStoreUnavailableError(error) : error;
     } finally {
@@ -793,8 +822,12 @@ export class JournalStore {
   }
 }
 
-/** The appends available inside a caller's transaction. */
+/** The appends, and the one read, available inside a caller's transaction. */
 export interface JournalTransaction {
+  /** A `journaled` row bound to its room and transition; commits with the caller's transaction. */
+  appendJournaled(request: GovernedCommandRequest, binding?: JournaledBinding): Promise<JournaledAppendResult>;
+  /** The command's rows as this transaction sees them. */
+  commandHistory(commandId: string): Promise<CommandHistory>;
   appendCommandEvent(event: LaterCommandEvent): Promise<AppendedRecord>;
   appendDecision(decision: DecisionInput): Promise<AppendedRecord>;
 }
@@ -838,7 +871,16 @@ interface JournaledRowInput {
   readonly envelopeDigest: string;
 }
 
-function buildJournaledRow(request: GovernedCommandRequest, now: () => Date): JournaledRowInput {
+function historyOf(commandId: string, entries: readonly JournalRecord[]): CommandHistory {
+  const commands = entries.flatMap((e) => (e.decoded.recordClass === RECORD_CLASS_COMMAND ? [e.decoded.row] : []));
+  return { commandId, entries, state: commands.length === 0 ? null : deriveCommandState(commands) };
+}
+
+function buildJournaledRow(
+  request: GovernedCommandRequest,
+  now: () => Date,
+  binding: JournaledBinding = {},
+): JournaledRowInput {
   let envelope;
   try {
     envelope = normalizeForJournal(request);
@@ -862,9 +904,16 @@ function buildJournaledRow(request: GovernedCommandRequest, now: () => Date): Jo
     intendedProvider: request.intendedProvider,
     intendedModel: request.intendedModel,
     intendedSurface: request.intendedSurface,
+    ...(binding.roomId === undefined ? {} : { roomId: binding.roomId }),
+    ...(binding.lifecycleEventRef === undefined
+      ? {}
+      : { lifecycleEventRef: { roomId: binding.lifecycleEventRef.roomId, eventId: binding.lifecycleEventRef.eventId } }),
     evidenceRefs: [...(request.evidenceRefs ?? [])],
     recordedAt: canonicalRecordedAt(now()),
   };
+  // Validated before any statement, as `laterRow` does: a binding the row
+  // shape refuses is refused without touching the store.
+  encodeCommandEventRow({ ...row, seq: '1' });
   // The whole row, not just the envelope: `actorId`, `authorizationRef`,
   // the routing identities and `commandId` are all caller-supplied and all
   // reach the chained bytes (contract §6.3).

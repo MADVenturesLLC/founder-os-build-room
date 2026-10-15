@@ -253,6 +253,57 @@ export class PostgresLedgerStore {
     return outcome.value;
   }
 
+  /** Whether appends run inside the leader fence with `gatewayOnline` derived. */
+  isFenced(): boolean {
+    return this.fence !== undefined;
+  }
+
+  /**
+   * A step that runs under the room lock (L3) and appends no lifecycle event:
+   * the planner loop opening a revision round, whose command is journaled
+   * with no transition of its own (`planner-loop.ts`). `body` sees the state
+   * as it stands under the lock, and whatever it writes on `client` commits
+   * with the lock released, or not at all. Fenced exactly as `append` is.
+   */
+  async underRoomLock<T>(
+    roomId: string,
+    body: (client: PoolClient, current: LedgerState) => Promise<T>,
+  ): Promise<{ readonly status: 'ok'; readonly value: T } | { readonly status: 'not_leader'; readonly committed: boolean }> {
+    if (this.fence === undefined) {
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { current } = await lockAndReplay(client, roomId);
+        const value = await body(client, current);
+        await client.query('COMMIT');
+        return { status: 'ok', value };
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    let notFound = false;
+    const outcome = await this.fence.runRoomAppend<{ readonly value: T } | null>(async (client) => {
+      try {
+        const { current } = await lockAndReplay(client, roomId);
+        return { value: { value: await body(client, current) }, commit: true };
+      } catch (error) {
+        if (error instanceof RoomNotFoundError) {
+          notFound = true;
+          return { value: null, commit: false };
+        }
+        throw error;
+      }
+    });
+    if (notFound) throw new RoomNotFoundError(roomId);
+    if (outcome.status === 'not_leader') return { status: 'not_leader', committed: outcome.committed };
+    if (outcome.status === 'commit_failed') throw new Error(`room lock commit failed: ${outcome.message}`);
+    if (outcome.value === null) throw new RoomNotFoundError(roomId);
+    return { status: 'ok', value: outcome.value.value };
+  }
+
   private async runDerivedBody<T>(
     client: PoolClient,
     roomId: string,

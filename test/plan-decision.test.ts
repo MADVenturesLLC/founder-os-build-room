@@ -1,7 +1,7 @@
 /**
  * The Founder's plan decision without a database: the body's shape, the
- * route's credential (journal contract §8.2), the cancel refusal (Q5), and
- * the event the server builds from the stored plan rather than from anything
+ * route's credential (journal contract §8.2), the cancel's binding under the
+ * Q5 ruling, and the event the server builds from the stored plan rather than from anything
  * the caller asserts. `test/plan-decision.storage.test.ts` proves the same
  * path end to end on PostgreSQL.
  */
@@ -18,13 +18,18 @@ import { loadConfig } from '../packages/control-plane/src/config.js';
 import { initialLedger, type LedgerEntry, type LedgerState, type LifecycleEvent } from '../packages/ledger/src/index.js';
 import {
   PLAN_DECISION_AUTHORIZATION_REF,
+  FounderCancelUnavailableError,
   PlanHashMismatchError,
+  PlanHashNotApplicableError,
+  PlannerCommandInFlightError,
   decidePlan,
   validatePlanDecisionBody,
   type PlanDecisionDeps,
 } from '../packages/control-plane/src/plan-decision.js';
 import type { StoredPlan } from '../packages/control-plane/src/plan-store.js';
-import type { DecisionInput } from '../packages/control-plane/src/journal-store.js';
+import type { CommandHistory, DecisionInput } from '../packages/control-plane/src/journal-store.js';
+import { plannerCommandIdFor } from '../packages/control-plane/src/planner-loop.js';
+import type { CommandOutcome } from '../packages/journal/src/index.js';
 import { containsCredentialMaterial } from '../packages/journal/src/index.js';
 import { closeServer } from './support/close-server.js';
 
@@ -60,9 +65,18 @@ describe('plan decision — the body', () => {
     assert.equal(validatePlanDecisionBody(body({ decision: 'plan.revision_requested', feedback: 'Narrow the scope.' })).ok, true);
   });
 
-  it('answers founder.cancel with 501, pending the Founder ruling on Q5', () => {
-    const verdict = validatePlanDecisionBody(body({ decision: 'founder.cancel' }));
-    assert.deepEqual(verdict.ok ? null : [verdict.status, verdict.error], [501, 'founder_cancel_unavailable']);
+  it('accepts founder.cancel with or without a plan hash, and refuses feedback or a malformed hash on it', () => {
+    const bare = validatePlanDecisionBody(body({ decision: 'founder.cancel', planHash: undefined }));
+    assert.ok(bare.ok);
+    assert.equal(bare.value.planHash, undefined);
+    assert.equal(validatePlanDecisionBody(body({ decision: 'founder.cancel' })).ok, true);
+    assert.equal(validatePlanDecisionBody(body({ decision: 'founder.cancel', planHash: 'short' })).ok, false);
+    assert.equal(validatePlanDecisionBody(body({ decision: 'founder.cancel', feedback: 'x' })).ok, false);
+  });
+
+  it('still requires a plan hash for approve and revise', () => {
+    assert.equal(validatePlanDecisionBody(body({ planHash: undefined })).ok, false);
+    assert.equal(validatePlanDecisionBody(body({ decision: 'plan.revision_requested', feedback: 'x', planHash: undefined })).ok, false);
   });
 
   for (const [label, candidate, reason] of [
@@ -165,11 +179,9 @@ describe('plan decision — the ruled credential and nothing else (contract §8.
     }
   });
 
-  it('with the adjudication token: cancel is 501 and a bad room or body is 400, none reaching the ledger', async () => {
+  it('with the adjudication token: a bad room or body is 400, none reaching the ledger', async () => {
     const url = await start({ ...BASE_ENV, PHASE3_ADJUDICATION_TOKEN: ADJUDICATION_TOKEN });
-    const cancel = await post(url, ADJUDICATION_TOKEN, body({ decision: 'founder.cancel' }));
-    assert.equal(cancel.status, 501);
-    assert.equal(((await cancel.json()) as { error: string }).error, 'founder_cancel_unavailable');
+    assert.equal((await post(url, ADJUDICATION_TOKEN, body({ decision: 'founder.cancel', planHash: 'short' }))).status, 400);
     assert.equal((await post(url, ADJUDICATION_TOKEN, body(), 'not-a-room')).status, 400);
     assert.equal((await post(url, ADJUDICATION_TOKEN, body({ planHash: 'short' }))).status, 400);
   });
@@ -195,7 +207,11 @@ function underReview(): LedgerState {
 }
 
 /** A ledger that runs `build`, accepts the event as a transition, then runs `afterTransition`. */
-function stubDeps(current: LedgerState, plan: StoredPlan | null): { deps: PlanDecisionDeps; built: LifecycleEvent[]; decisions: DecisionInput[] } {
+function stubDeps(
+  current: LedgerState,
+  plan: StoredPlan | null,
+  outcomes: Readonly<Record<string, CommandOutcome>> = {},
+): { deps: PlanDecisionDeps; built: LifecycleEvent[]; decisions: DecisionInput[] } {
   const built: LifecycleEvent[] = [];
   const decisions: DecisionInput[] = [];
   const client = {} as PoolClient;
@@ -219,6 +235,17 @@ function stubDeps(current: LedgerState, plan: StoredPlan | null): { deps: PlanDe
         },
         appendCommandEvent: async () => {
           throw new Error('unused');
+        },
+        appendJournaled: async () => {
+          throw new Error('unused');
+        },
+        commandHistory: async (commandId: string): Promise<CommandHistory> => {
+          const outcome = outcomes[commandId];
+          return {
+            commandId,
+            entries: [],
+            state: outcome === undefined ? null : { dispatchState: outcome === 'pending' ? 'dispatched' : outcome, outcome },
+          };
         },
       }),
     },
@@ -269,5 +296,97 @@ describe('plan decision — the server builds the event and binds the decision r
     assert.ok(request.ok);
     await assert.rejects(decidePlan(deps, ROOM, request.value), /no stored plan under review/);
     assert.deepEqual(built[0]!.facts, { expectedPlanHash: HASH, scopePathsCanonical: false });
+  });
+});
+
+/* ---------------- founder.cancel under the Q5 ruling ---------------- */
+
+const T2 = { seq: 2, eventId: 'evt_t2', transition: 'T2', fromState: 'SCOPED', resultingState: 'PLANNING' } as unknown as LedgerEntry;
+const T1 = {
+  seq: 1, eventId: 'evt_t1', transition: 'T1', fromState: 'ROOM_CREATED', resultingState: 'SCOPED',
+  scope: { roomId: ROOM, repo: 'example-org/example-repo', paths: ['src'] },
+} as unknown as LedgerEntry;
+const ROUND_ONE = plannerCommandIdFor(ROOM, 'evt_t2');
+
+function cancel(planHash?: string) {
+  const parsed = validatePlanDecisionBody(body({ decision: 'founder.cancel', planHash }));
+  assert.ok(parsed.ok);
+  return parsed.value;
+}
+
+function room(state: LedgerState['state'], entries: readonly LedgerEntry[], priorState: LedgerState['state'] | null = null): LedgerState {
+  return { ...initialLedger(), state, priorState, entries: [...entries] };
+}
+
+describe('plan decision — founder.cancel binds to the room’s planner command', () => {
+  it('with no planner command (SCOPED, or a round never journaled) it is unavailable and builds no event', async () => {
+    for (const current of [room('SCOPED', [T1]), room('PLANNING', [T1, T2])]) {
+      const { deps, built } = stubDeps(current, null);
+      await assert.rejects(decidePlan(deps, ROOM, cancel()), FounderCancelUnavailableError);
+      assert.equal(built.length, 0);
+    }
+  });
+
+  it('refuses while the planner command is pending or unresolved', async () => {
+    for (const outcome of ['pending', 'unresolved'] as const) {
+      const { deps, built } = stubDeps(room('PLANNING', [T1, T2]), null, { [ROUND_ONE]: outcome });
+      await assert.rejects(decidePlan(deps, ROOM, cancel()), PlannerCommandInFlightError);
+      assert.equal(built.length, 0);
+    }
+  });
+
+  it('in PLANNING after a failed command: no plan hash, bound to that command, G22 fact derived', async () => {
+    const { deps, built, decisions } = stubDeps(room('PLANNING', [T1, T2]), null, { [ROUND_ONE]: 'failed' });
+    await decidePlan(deps, ROOM, cancel());
+    assert.deepEqual(built[0]!.facts, { runningTasksCancelled: true });
+    assert.deepEqual(built[0]!.scope, { roomId: ROOM, repo: 'example-org/example-repo', paths: ['src'] });
+    assert.deepEqual(built[0]!.evidence, []);
+    assert.deepEqual(decisions[0], {
+      commandId: ROUND_ONE,
+      decision: 'founder.cancel',
+      recordedState: 'PLANNING',
+      authorizationRef: PLAN_DECISION_AUTHORIZATION_REF,
+      lifecycleEventRef: { roomId: ROOM, eventId: built[0]!.eventId },
+    });
+    await assert.rejects(
+      decidePlan(stubDeps(room('PLANNING', [T1, T2]), null, { [ROUND_ONE]: 'failed' }).deps, ROOM, cancel(HASH)),
+      PlanHashNotApplicableError,
+    );
+  });
+
+  it('in PLAN_REVIEW the Founder sends the plan’s hash, and the row carries it', async () => {
+    const t3 = { seq: 3, eventId: 'evt_t3', transition: 'T3', fromState: 'PLANNING', resultingState: 'PLAN_REVIEW' } as unknown as LedgerEntry;
+    const current = room('PLAN_REVIEW', [T1, T2, t3]);
+    const { deps, decisions } = stubDeps(current, STORED, { [ROUND_ONE]: 'completed' });
+    await decidePlan(deps, ROOM, cancel(HASH));
+    assert.equal(decisions[0]?.planHash, HASH);
+    assert.equal(decisions[0]?.commandId, ROUND_ONE);
+    await assert.rejects(decidePlan(stubDeps(current, STORED, { [ROUND_ONE]: 'completed' }).deps, ROOM, cancel()), PlanHashMismatchError);
+    await assert.rejects(decidePlan(stubDeps(current, STORED, { [ROUND_ONE]: 'completed' }).deps, ROOM, cancel('b'.repeat(64))), PlanHashMismatchError);
+  });
+
+  it('binds to the latest journaled round, and every round must be terminal', async () => {
+    const t3 = { seq: 3, eventId: 'evt_t3', transition: 'T3', fromState: 'PLANNING', resultingState: 'PLAN_REVIEW' } as unknown as LedgerEntry;
+    const t4 = { seq: 4, eventId: 'evt_t4', transition: 'T4', fromState: 'PLAN_REVIEW', resultingState: 'PLANNING' } as unknown as LedgerEntry;
+    const roundTwo = plannerCommandIdFor(ROOM, 'evt_t4');
+    const entries = [T1, T2, t3, t4];
+    const notYet = stubDeps(room('PLANNING', entries), null, { [ROUND_ONE]: 'completed' });
+    await decidePlan(notYet.deps, ROOM, cancel());
+    assert.equal(notYet.decisions[0]?.commandId, ROUND_ONE, 'round two never journaled: bound to round one');
+    const done = stubDeps(room('PLANNING', entries), null, { [ROUND_ONE]: 'completed', [roundTwo]: 'failed' });
+    await decidePlan(done.deps, ROOM, cancel());
+    assert.equal(done.decisions[0]?.commandId, roundTwo);
+    const running = stubDeps(room('PLANNING', entries), null, { [ROUND_ONE]: 'completed', [roundTwo]: 'pending' });
+    await assert.rejects(decidePlan(running.deps, ROOM, cancel()), PlannerCommandInFlightError);
+  });
+
+  it('a RECONCILING room records its prior state, and the plan rule follows that state', async () => {
+    const t3 = { seq: 3, eventId: 'evt_t3', transition: 'T3', fromState: 'PLANNING', resultingState: 'PLAN_REVIEW' } as unknown as LedgerEntry;
+    const current = room('RECONCILING', [T1, T2, t3], 'PLAN_REVIEW');
+    const { deps, decisions } = stubDeps(current, STORED, { [ROUND_ONE]: 'completed' });
+    await decidePlan(deps, ROOM, cancel(HASH));
+    assert.equal(decisions[0]?.recordedState, 'RECONCILING');
+    assert.equal(decisions[0]?.priorState, 'PLAN_REVIEW');
+    assert.equal(decisions[0]?.planHash, HASH);
   });
 });

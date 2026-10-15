@@ -219,7 +219,7 @@ describe('plan decision — approval and revision, each with its decision record
     const { appended, decided } = await decidePlan(deps!, roomId, approve(planHash));
     assert.equal(appended.result.ok && appended.result.outcome, 'transition');
     assert.equal(await roomState(roomId), 'BUILDING');
-    assert.equal(decided?.plan.commandId, commandId);
+    assert.equal(decided?.plan?.commandId, commandId);
     assert.deepEqual(await decisionsFor(commandId), ['plan.approved']);
     const { rows } = await admin!.query<{ facts: Record<string, unknown> }>(
       "SELECT payload->'facts' AS facts FROM build_room_events WHERE room_id = $1 AND event = 'plan.approved'",

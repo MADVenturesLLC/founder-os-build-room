@@ -98,8 +98,47 @@ Each slice lands as commits on the one branch, with its tests.
    hash, then PLAN_REVIEW. Fail closed on every failure the authorization's
    §5 lists. First against a synthetic Planner (§6 allows "fixtures and
    synthetic provider behavior"); the real path depends on Q2.
+   Built in `control-plane/src/planner-loop.ts`:
+   - T2 and the planner command's `journaled` row commit in one
+     transaction, the row bound to its room and to T2. G2's role facts come
+     from an injected role assignment and `gatewayOnline` from the fence;
+     the loop refuses an unfenced store. A refused T2 is the store's
+     recorded rejection, and no command exists.
+   - A revision round is a second command, journaled under the room lock
+     and bound to the T4 that asked for it.
+   - Each round's command id is derived from the room and the transition
+     that opened it, because a journal row has no room column and Q5 allows
+     no migration. A room's planner commands are the ids its T2 and T4
+     entries derive that the journal holds.
+   - Before contact: the route's authorization and the Planner's attested
+     identity, each a pre-send `failed` when it fails. Then
+     `identity_bound`, `dispatched` with the observed route, and the plan.
+     A divergent route, a reported failure, an invalid plan or one outside
+     the captured repository, base and scope is `failed`. A dispatch or
+     wait whose outcome is unknown is `unresolved`.
+   - T3, the stored plan and `completed` commit in one transaction. The
+     journal's resolver must say the authorization covers the observed
+     route; otherwise nothing of it remains and the command is `failed`
+     (does not cover) or `unresolved` (indeterminate, or no resolver).
+     Production builds its journal store with no resolver, and nothing in
+     `server.ts` constructs a loop, so no planner command can complete
+     outside tests until Q2 and the counted-run authorization.
+   - No retry: a failed or unresolved round leaves the room in PLANNING and
+     is never reopened. That is slice 8's.
+   - Cancel (T22) on the plan-decision endpoint, under the Q5 ruling. It
+     binds to the room's latest journaled planner command. It answers 409
+     `founder_cancel_unavailable` when the room has none, and 409
+     `planner_command_in_flight` while any is pending or unresolved (Q6).
+     G22's `runningTasksCancelled` is asserted only when every planner
+     command is terminal. `plan_hash` is required in a plan-bearing state
+     and refused in PLANNING, and a RECONCILING room records its prior
+     state.
+   Tests: `test/planner-loop.storage.test.ts` (with
+   `test/support/synthetic-planner.ts`) and cancel cases in
+   `test/plan-decision.test.ts`.
 8. **Recovery.** `journaled` without `dispatched`, and `unresolved` without
-   `resolved`, reconcile by `command_id` before any retry; restart rebuilds
+   `resolved`, reconcile by `command_id` before any retry, and a bounded
+   retry of a failed round is decided here; restart rebuilds
    without duplicate commands, approvals or authority (stop gate items 9
    and 10).
 9. **The integrated lifecycle tests (step 5).** The stop gate's items 1 to
@@ -175,8 +214,36 @@ proposed resolutions of Q1 and Q3 below. Q2 and Q4 stay open.
   slice 7, not slice 5, because G22 needs a fact the server must derive
   rather than accept ("running tasks cancelled or recorded
   unconfirmed_cancel"), and whether a planner command is still running is
-  the planner loop's state. Until slice 7 the endpoint answers 501 for
-  `founder.cancel`.
+  the planner loop's state. Until slice 7 the endpoint answered 501 for
+  `founder.cancel`. Built in slice 7.
+- **Q6. Cancel while a planner command is running.** Raised by slice 7.
+  G22 passes on "running tasks cancelled or recorded unconfirmed_cancel".
+  Build Room has no channel to stop a running Planner (Q2). The journal's
+  closed vocabulary has no unconfirmed-cancel record either. So this
+  branch refuses a cancel while any planner command of the room is
+  pending or `unresolved` (409 `planner_command_in_flight`). The cost: an
+  `unresolved` command blocks cancel until slice 8 reconciles it, and an
+  ambiguous reconciliation could block it indefinitely. The options:
+  (a) keep refusing;
+  (b) treat "recorded unconfirmed_cancel" as the cancel's own transaction
+  appending `unresolved` to the running command, leaving reconciliation to
+  own its outcome;
+  (c) another record, which needs a contract amendment.
+  This is a Founder call; the builder has not chosen.
+- **Q7. Inputs the system does not yet hold.** Raised by slice 7. Three
+  facts the planner loop needs have no source in Build Room today. The
+  loop takes each as an injected input, and production wires none.
+  - Who assigns a room's planner, builder and reviewer seats. G2 reads
+    `rolesAssigned` and `reviewerIsNotBuilder` from that assignment.
+  - Which role and identity the control plane's own T2 act is attributed
+    to.
+  - The Founder goal as text. T1 carries the repository, base and scope
+    paths but no goal statement, so the Planner is handed the T1 event as
+    its goal reference.
+  Builder's reading, for the record: the reviewer seat's role is
+  `independent-reviewer`, and "reviewer≠builder" means the two seats run
+  different models (`DEC-20260815-05`). Each of these is a Founder call
+  before a counted run.
 
 ## Verification
 

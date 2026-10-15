@@ -65,6 +65,8 @@ export const RUNTIME_ROLE_EXCLUDED: Readonly<Record<string, string>> = {
     'already drives the plan decision end to end on a genuine br_app_runtime login on its own owned instance, the fenced HTTP route included, and destroys that instance at teardown',
   'plan-store':
     'already builds the plan store on a genuine br_app_runtime login on its own owned instance, including the T3 insert the plan is bound to, and destroys that instance at teardown',
+  'planner-loop':
+    'already drives the planner loop end to end on a genuine br_app_runtime login on its own owned instance — T2 with its journaled command, the round\'s command events, T3 with its plan and completion, and the Founder\'s cancel — and destroys that instance at teardown',
   'room-runtime-phase1-c2':
     'uses no database: its storage suffix marks the proof-runtime gate (Bun worker over a supervised transport), not a data-access identity',
   'schema-preflight':
