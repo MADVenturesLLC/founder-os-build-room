@@ -28,6 +28,7 @@ import type { Config } from './config.js';
 import { probe } from './db.js';
 import { phase3RunRouter } from './phase3-run-routes.js';
 import { gateRunRouter } from './gate-run-routes.js';
+import { requiresGovernedPath } from './governed-events.js';
 import { journalRouter } from './journal-routes.js';
 import { JournalStore } from './journal-store.js';
 import { PostgresLedgerStore, RoomNotFoundError } from './store.js';
@@ -208,6 +209,16 @@ export function createServer(deps: ServerDeps): Express {
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.params.roomId, 'roomId');
       const event = requireEvent(req.body);
+      /*
+       * The planner path's events are not this route's to accept: the
+       * governed planner loop and the Founder's plan decision write them
+       * (see governed-events.ts). Refused before the ledger, unrecorded, as
+       * an authorization refusal.
+       */
+      if (requiresGovernedPath(event.event)) {
+        res.status(403).json({ error: 'governed_path_required', event: event.event });
+        return;
+      }
       const result = await store.append(roomId, event);
 
       /*

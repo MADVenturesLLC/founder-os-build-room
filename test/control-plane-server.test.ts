@@ -432,7 +432,7 @@ describe('control plane — room surface', () => {
         ok: false as const,
         outcome: 'rejected' as const,
         code: 'guard_failed' as const,
-        reason: 'G4 (T4): plan hash mismatch',
+        reason: 'G7 (T7): no decision is pending',
         state: initialLedger(),
       }),
     } as unknown as PostgresLedgerStore;
@@ -441,14 +441,14 @@ describe('control plane — room surface', () => {
     const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
-      body: JSON.stringify(makeEvent('plan.approved')),
+      body: JSON.stringify(makeEvent('decision.answered')),
     });
     const body = await json(response);
 
     // A refusal is a recorded outcome, not a server fault.
     assert.equal(response.status, 409);
     assert.equal(body.code, 'guard_failed');
-    assert.equal(body.reason, 'G4 (T4): plan hash mismatch');
+    assert.equal(body.reason, 'G7 (T7): no decision is pending');
     await harness.close();
   });
 
@@ -583,6 +583,75 @@ describe('control plane — room surface', () => {
     assert.equal(response.status, 409);
     assert.equal(seen, 'made.up');
     assert.equal((await json(response)).code, 'unknown_event');
+    await harness.close();
+  });
+});
+
+describe('control plane — the planner path is not the generic route', () => {
+  /*
+   * T2 and T3 belong to the governed planner loop, and T4, T5 and T22 to the
+   * Founder's plan decision, which is authenticated by the ruled credential
+   * and the exact plan_hash (contract §8). The generic route takes the actor
+   * and the guard facts from its body, so a token holder could otherwise post
+   * `plan.approved` as `founder` with a self-asserted plan hash. Each of the
+   * five is refused before the store is reached.
+   */
+  for (const name of [
+    'task.dispatched.planner',
+    'plan.submitted',
+    'plan.revision_requested',
+    'plan.approved',
+    'founder.cancel',
+  ] as const) {
+    it(`refuses ${name} with 403 and never reaches the store`, async () => {
+      let reached = false;
+      const store = {
+        append: async () => {
+          reached = true;
+          throw new Error('should not be reached');
+        },
+      } as unknown as PostgresLedgerStore;
+
+      const harness = await start(reachablePool, store);
+      const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify(makeEvent(name)),
+      });
+      const body = await json(response);
+
+      assert.equal(response.status, 403);
+      assert.equal(body.error, 'governed_path_required');
+      assert.equal(body.event, name);
+      assert.equal(reached, false);
+      await harness.close();
+    });
+  }
+
+  it('still passes every other event to the ledger', async () => {
+    let seen: string | null = null;
+    const store = {
+      append: async (_room: string, event: { event: string }) => {
+        seen = event.event;
+        return {
+          ok: false as const,
+          outcome: 'rejected' as const,
+          code: 'state_not_in_from_set' as const,
+          reason: 'not from this state',
+          state: initialLedger(),
+        };
+      },
+    } as unknown as PostgresLedgerStore;
+
+    const harness = await start(reachablePool, store);
+    const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify(makeEvent('scope.captured')),
+    });
+
+    assert.equal(response.status, 409);
+    assert.equal(seen, 'scope.captured');
     await harness.close();
   });
 });
