@@ -61,6 +61,8 @@ export const RUNTIME_ROLE_EXCLUDED: Readonly<Record<string, string>> = {
     'already builds the journal store on a genuine br_app_runtime login on its own owned instance, and manages the cluster-wide roles itself',
   'journal-writer':
     'already builds the complete journal writer on a genuine br_app_runtime login on its own owned instance, including the decision path\'s lifecycle insert, and destroys that instance at teardown',
+  'plan-store':
+    'already builds the plan store on a genuine br_app_runtime login on its own owned instance, including the T3 insert the plan is bound to, and destroys that instance at teardown',
   'room-runtime-phase1-c2':
     'uses no database: its storage suffix marks the proof-runtime gate (Bun worker over a supervised transport), not a data-access identity',
   'schema-preflight':

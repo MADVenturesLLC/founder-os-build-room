@@ -56,7 +56,13 @@ Each slice lands as commits on the one branch, with its tests.
    `0008`-style grants) and `control-plane/src/plan-store.ts`. A migration
    means the merge's deployment refuses to boot until `0010` is applied;
    the merge authorization must sequence that apply (the Oct 10 rebind
-   act's B3).
+   act's B3). Built as `0010_plan_store` (table `build_room_plans`): one
+   plan per planner command, keyed by `command_id`, with a foreign key to
+   the T3 event that submitted it. The store keeps only a ready plan that
+   `judgePlanDoc` accepts and that carries no credential-shaped text. It
+   writes the plan only in the transaction that wrote its T3 event, whose
+   `planHash` fact must equal the hash it computes, and it recomputes the
+   hash on every read. Tests: `test/plan-store.storage.test.ts`.
 5. **The plan-decision endpoint.** `POST /control-plane/rooms/:roomId/plan-decision`
    for approve (T5), revise with feedback (T4) and cancel (T22), behind the
    adjudication token, which becomes mandatory for this route (refuse if

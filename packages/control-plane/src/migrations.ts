@@ -1840,6 +1840,79 @@ export const MIGRATIONS: readonly Migration[] = [
                            'enrollment_cap_reached'))`,
       `GRANT UPDATE (enrollment_slot) ON public.gateway_current_state TO br_app_runtime`,
     ],
+  },  {
+    /*
+     * 0010 — the plan store (Phase 4 steps 3 to 6, plan r1 slice 4).
+     *
+     * One row per plan the Planner submitted for the Founder's decision, kept
+     * so the plan-decision endpoint can recompute `plan_hash` from the plan
+     * itself instead of believing a hash it is handed (DEC-20260815-11 G5;
+     * contract §8.2, the decision is authenticated by the exact plan_hash).
+     *
+     * - `command_id` is the planner command that produced the plan, and the
+     *   key: one planner command, one plan. It is the same id a decision row
+     *   carries in its `command_id` column (Founder direction "GO",
+     *   2026-10-15, Q3), so a decision and the plan it decides join on it.
+     * - `(room_id, lifecycle_event_id)` names the T3 `plan.submitted` event
+     *   that submitted the plan, and is a foreign key to
+     *   `build_room_events (room_id, event_id)`: a plan row cannot name a
+     *   lifecycle event that does not exist, and one T3 event carries at
+     *   most one plan.
+     * - `document` is the PlanDoc as received, serialized as JSON text. Text,
+     *   not jsonb: jsonb re-spells what it stores (key order, duplicate
+     *   keys), and the store must hand back exactly what was hashed. The
+     *   store recomputes `plan_hash` from `document` on every read and
+     *   refuses a row whose hash no longer matches.
+     *
+     * Append-only like the ledger: no UPDATE, DELETE or TRUNCATE, enforced
+     * by a statement-level trigger, so TRUNCATE is covered too. The runtime
+     * gets SELECT and INSERT and nothing else, in the form 0008 grants them.
+     *
+     * Deployment order: the revision that ships this migration refuses to
+     * boot until it is applied (schema-preflight.ts requires every id), so
+     * the apply precedes that revision's deployment.
+     */
+    id: '0010_plan_store',
+    statements: [
+      `CREATE TABLE public.build_room_plans (
+         command_id          text        NOT NULL,
+         room_id             uuid        NOT NULL,
+         lifecycle_event_id  text        NOT NULL,
+         plan_hash           text        NOT NULL,
+         schema_version      text        NOT NULL,
+         document            text        NOT NULL,
+         recorded_at         timestamptz NOT NULL DEFAULT now(),
+         CONSTRAINT build_room_plans_pkey PRIMARY KEY (command_id),
+         CONSTRAINT build_room_plans_command_id_namespace
+           CHECK (command_id LIKE 'cmd\\_%' AND length(command_id) > 4),
+         CONSTRAINT build_room_plans_plan_hash_hex64
+           CHECK (plan_hash ~ '^[0-9a-f]{64}$'),
+         CONSTRAINT build_room_plans_schema_version_known
+           CHECK (schema_version IN ('plandoc/1')),
+         CONSTRAINT build_room_plans_document_nonempty
+           CHECK (length(document) > 0),
+         CONSTRAINT build_room_plans_one_per_event
+           UNIQUE (room_id, lifecycle_event_id),
+         CONSTRAINT build_room_plans_lifecycle_event
+           FOREIGN KEY (room_id, lifecycle_event_id)
+           REFERENCES public.build_room_events (room_id, event_id)
+       )`,
+      `CREATE INDEX build_room_plans_by_hash ON public.build_room_plans (room_id, plan_hash)`,
+      `CREATE FUNCTION public.build_room_plans_immutable()
+         RETURNS trigger
+         LANGUAGE plpgsql
+         AS $$
+       BEGIN
+         RAISE EXCEPTION 'build_room_plans is append-only: % rejected', TG_OP
+           USING ERRCODE = 'restrict_violation';
+       END;
+       $$`,
+      `CREATE TRIGGER build_room_plans_append_only
+         BEFORE UPDATE OR DELETE OR TRUNCATE ON public.build_room_plans
+         FOR EACH STATEMENT EXECUTE FUNCTION public.build_room_plans_immutable()`,
+      `REVOKE ALL ON public.build_room_plans FROM PUBLIC`,
+      `GRANT SELECT, INSERT ON public.build_room_plans TO br_app_runtime`,
+    ],
   },
 ];
 
