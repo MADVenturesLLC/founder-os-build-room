@@ -42,8 +42,10 @@ of four statuses:
   storage medium.
 - **deferred**, each with its reason:
   - the two concrete adapters and their shell, attestation and config
-    modules wait on the Founder's Q2 ruling (which adapter runs the
-    Planner). §3.4 authorizes no provider binding.
+    modules. The Founder's Q2a answer names Antigravity, on the active
+    model, but §3.4 authorizes no provider binding, so neither is
+    consumed. The Gateway's planner worker takes an injected executor
+    instead (`gateway-daemon/src/planner-worker.ts`, plan r1 Q2b).
   - `evaluateAction` and its egress, review and command policies govern
     Builder actions, which are Phase 5. The planner path does not call
     them.

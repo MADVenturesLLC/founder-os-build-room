@@ -16,6 +16,7 @@
 
 import {
   HEX32_LENGTH,
+  MAX_PLANNER_PAYLOAD_BYTES,
   MIN_GENERATION,
   MIN_SEQUENCE,
   MAX_SEQUENCE,
@@ -58,7 +59,46 @@ export interface HeartbeatEnvelope {
   readonly signature: string;
 }
 
-export type Envelope = SessionStartEnvelope | HeartbeatEnvelope;
+/** The Gateway asks for its next planner request. Session-bound, like a heartbeat. */
+export interface PlannerPollEnvelope {
+  readonly protocol: string;
+  readonly version: number;
+  readonly purpose: 'planner_poll';
+  readonly gatewayId: string;
+  readonly keyId: string;
+  readonly epoch: string;
+  readonly sequence: number;
+  readonly nonce: string;
+  readonly timestampMs: number;
+  readonly pubkey: string;
+  readonly signature: string;
+}
+
+/**
+ * The Gateway answers one planner request. `payload` is a JSON text carried
+ * outside the signed array; its SHA-256, `payloadDigest`, is inside it. The
+ * receiver recomputes the digest over the exact text it received and parses
+ * the text only after the signature and digest both hold, so there is no
+ * JSON canonicalization for a signature to depend on.
+ */
+export interface PlannerReportEnvelope {
+  readonly protocol: string;
+  readonly version: number;
+  readonly purpose: 'planner_report';
+  readonly gatewayId: string;
+  readonly keyId: string;
+  readonly epoch: string;
+  readonly sequence: number;
+  readonly nonce: string;
+  readonly timestampMs: number;
+  readonly requestId: string;
+  readonly payloadDigest: string;
+  readonly payload: string;
+  readonly pubkey: string;
+  readonly signature: string;
+}
+
+export type Envelope = SessionStartEnvelope | HeartbeatEnvelope | PlannerPollEnvelope | PlannerReportEnvelope;
 
 /**
  * The two structured refusals this module can produce, both members of the
@@ -99,6 +139,25 @@ const HEARTBEAT_FIELDS = [
   'signature',
 ] as const;
 
+const PLANNER_POLL_FIELDS = HEARTBEAT_FIELDS;
+
+const PLANNER_REPORT_FIELDS = [
+  'protocol',
+  'version',
+  'purpose',
+  'gatewayId',
+  'keyId',
+  'epoch',
+  'sequence',
+  'nonce',
+  'timestampMs',
+  'requestId',
+  'payloadDigest',
+  'payload',
+  'pubkey',
+  'signature',
+] as const;
+
 function fail<T>(error: EnvelopeErrorCode, detail: string): EnvelopeResult<T> {
   return { ok: false, error, detail };
 }
@@ -130,6 +189,17 @@ export function isValidSequence(value: unknown): value is number {
 
 export function isValidTimestampMs(value: unknown): value is number {
   return isSafeInteger(value);
+}
+
+/** A planner request id: a canonical lowercase UUID the control plane minted. */
+export function isValidRequestId(value: unknown): value is string {
+  return typeof value === 'string' && isCanonicalUuid(value);
+}
+
+/** A report payload: a non-empty string within `MAX_PLANNER_PAYLOAD_BYTES` UTF-8 bytes. */
+export function isValidPlannerPayload(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  return new TextEncoder().encode(value).length <= MAX_PLANNER_PAYLOAD_BYTES;
 }
 
 /** Decode a transport pubkey, or `null` when it is not exactly 32 canonical bytes. */
@@ -219,4 +289,39 @@ export function validateHeartbeat(body: unknown): EnvelopeResult<HeartbeatEnvelo
   if (!isValidSequence(candidate['sequence'])) return fail('invalid_request', 'sequence');
 
   return { ok: true, envelope: candidate as unknown as HeartbeatEnvelope };
+}
+
+/** The checks every session-bound envelope shares; the purpose's own members follow. */
+function validateSessionBound(
+  body: unknown,
+  fields: readonly string[],
+  purpose: 'planner_poll' | 'planner_report',
+):
+  | { readonly ok: true; readonly candidate: Record<string, unknown> }
+  | { readonly ok: false; readonly error: EnvelopeErrorCode; readonly detail: string } {
+  const candidate = asObject(body);
+  if (candidate === null) return { ok: false, error: 'invalid_request', detail: 'body must be a JSON object' };
+
+  const shared = checkShared(candidate, fields, purpose);
+  if (shared !== null) return { ok: false, ...shared };
+
+  if (!isValidHex32(candidate['epoch'])) return { ok: false, error: 'invalid_request', detail: 'epoch' };
+  if (!isValidSequence(candidate['sequence'])) return { ok: false, error: 'invalid_request', detail: 'sequence' };
+  return { ok: true, candidate };
+}
+
+export function validatePlannerPoll(body: unknown): EnvelopeResult<PlannerPollEnvelope> {
+  const checked = validateSessionBound(body, PLANNER_POLL_FIELDS, 'planner_poll');
+  if (!checked.ok) return checked;
+  return { ok: true, envelope: checked.candidate as unknown as PlannerPollEnvelope };
+}
+
+export function validatePlannerReport(body: unknown): EnvelopeResult<PlannerReportEnvelope> {
+  const checked = validateSessionBound(body, PLANNER_REPORT_FIELDS, 'planner_report');
+  if (!checked.ok) return checked;
+  const candidate = checked.candidate;
+  if (!isValidRequestId(candidate['requestId'])) return fail('invalid_request', 'requestId');
+  if (!isValidHex32(candidate['payloadDigest'])) return fail('invalid_request', 'payloadDigest');
+  if (!isValidPlannerPayload(candidate['payload'])) return fail('invalid_request', 'payload');
+  return { ok: true, envelope: candidate as unknown as PlannerReportEnvelope };
 }

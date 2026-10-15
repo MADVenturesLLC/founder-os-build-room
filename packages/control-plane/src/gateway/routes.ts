@@ -25,6 +25,12 @@ import type { GatewayLeadership } from './leadership.js';
 export const GATEWAY_BODY_LIMIT = '16kb';
 /** 256 KB on the room routes, which carry evidence payloads. */
 export const ROOM_BODY_LIMIT = '256kb';
+/**
+ * 256 KB on the planner report route, which carries a PlanDoc
+ * (`MAX_PLANNER_PAYLOAD_BYTES` is the payload's own bound under it). The
+ * poll route carries an envelope only and keeps the 16 KB limit.
+ */
+export const PLANNER_REPORT_BODY_LIMIT = '256kb';
 
 export interface GatewayRoutesDeps {
   readonly service: GatewaySessionService;
@@ -150,6 +156,43 @@ export function gatewayRouter(deps: GatewayRoutesDeps): Router {
     asyncRoute(async (req, res) => {
       const sourceIp = sourceIpOf(req);
       const result = await service.heartbeat(req.body, sourceIp);
+      if (isVerificationFailure(result.status)) {
+        limiter.take(`verify-fail:${sourceIp}`, RATE_LIMITS.verificationFailure);
+      }
+      res.status(result.status).json(result.body);
+    }),
+  );
+
+  /*
+   * The planner pull channel (plan r1 Q2b). Same guard order as the
+   * heartbeat: body limit, rate limit, verification budget, leader
+   * pre-filter, then the service's clock, parse, resolve, verify and fence.
+   */
+  router.post(
+    '/gateway/planner/poll',
+    express.json({ limit: GATEWAY_BODY_LIMIT }),
+    limit(limiter, 'planner-poll', RATE_LIMITS.plannerPoll),
+    verificationBudget(limiter),
+    deps.leadership.requireLeader(),
+    asyncRoute(async (req, res) => {
+      const sourceIp = sourceIpOf(req);
+      const result = await service.plannerPoll(req.body, sourceIp);
+      if (isVerificationFailure(result.status)) {
+        limiter.take(`verify-fail:${sourceIp}`, RATE_LIMITS.verificationFailure);
+      }
+      res.status(result.status).json(result.body);
+    }),
+  );
+
+  router.post(
+    '/gateway/planner/report',
+    express.json({ limit: PLANNER_REPORT_BODY_LIMIT }),
+    limit(limiter, 'planner-report', RATE_LIMITS.plannerReport),
+    verificationBudget(limiter),
+    deps.leadership.requireLeader(),
+    asyncRoute(async (req, res) => {
+      const sourceIp = sourceIpOf(req);
+      const result = await service.plannerReport(req.body, sourceIp);
       if (isVerificationFailure(result.status)) {
         limiter.take(`verify-fail:${sourceIp}`, RATE_LIMITS.verificationFailure);
       }

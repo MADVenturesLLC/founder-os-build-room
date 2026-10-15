@@ -91,6 +91,9 @@ export const RATE_LIMITS = {
   enroll: 10,
   sessionStart: 10,
   heartbeat: 60,
+  /** The planner pull channel (plan r1 Q2b): a few exchanges per session cadence. */
+  plannerPoll: 60,
+  plannerReport: 60,
   /** The additional budget spent by requests that fail verification. */
   verificationFailure: 20,
 } as const;

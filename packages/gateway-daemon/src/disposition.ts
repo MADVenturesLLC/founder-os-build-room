@@ -97,6 +97,49 @@ export const SERVER_VOCABULARY: Readonly<Record<string, readonly string[]>> = {
     '503 clock_unreliable',
     '5xx',
   ],
+  /*
+   * The planner pull channel (plan r1 Q2b) answers in the heartbeat's
+   * vocabulary: same session, same checks. A report for a request no longer
+   * open is a 200 with `accepted: false`, not a new refusal code.
+   */
+  'POST /gateway/planner/poll': [
+    '200',
+    '400 invalid_request',
+    '401 unknown_key',
+    '401 bad_signature',
+    '401 purpose_mismatch',
+    '403 revoked',
+    '403 awaiting_approval',
+    '403 denied',
+    '403 expired',
+    '409 session_required',
+    '409 stale_sequence',
+    '409 stale_timestamp',
+    '413 payload_too_large',
+    '429 rate_limited',
+    '503 not_leader',
+    '503 clock_unreliable',
+    '5xx',
+  ],
+  'POST /gateway/planner/report': [
+    '200',
+    '400 invalid_request',
+    '401 unknown_key',
+    '401 bad_signature',
+    '401 purpose_mismatch',
+    '403 revoked',
+    '403 awaiting_approval',
+    '403 denied',
+    '403 expired',
+    '409 session_required',
+    '409 stale_sequence',
+    '409 stale_timestamp',
+    '413 payload_too_large',
+    '429 rate_limited',
+    '503 not_leader',
+    '503 clock_unreliable',
+    '5xx',
+  ],
 };
 
 /**
@@ -156,7 +199,7 @@ export const STAGING_PROBE_TABLE: Readonly<Record<string, Disposition>> = {
   '413 payload_too_large': 'halt_fail_closed',
 };
 
-/** Primary lane (heartbeat and session-start traffic). */
+/** Primary lane (heartbeat, session-start, and planner poll and report traffic). */
 export const PRIMARY_TABLE: Readonly<Record<string, Disposition>> = {
   '200': 'retain_and_continue',
   '409 session_required': 'resync_session',

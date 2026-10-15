@@ -394,12 +394,80 @@ Tests: Q6, Q8 and Q7c cases in `test/planner-loop.storage.test.ts`,
 `test/plan-decision.test.ts`, `test/planner-recovery.storage.test.ts` and
 `test/control-plane-server.test.ts`.
 
+Built for Q2b, on the Founder's direction "go ahead with the Q2b Gateway
+pull channel":
+- **Transport.** The ratified one: `DEC-20260815-15` clause 2,
+  outbound-only HTTPS long-poll plus POST, with a zero wait. A poll
+  answers at once and the Gateway polls on its session cadence. The PC
+  accepts no inbound connection. Clause 3's delivery confirmation is per
+  request: a request is re-delivered until answered, and `status` is the
+  reconciliation poll.
+- **Protocol** (`packages/gateway-protocol`). Two new session-bound
+  purposes, `planner_poll` and `planner_report`, each signed under its
+  own domain tag on the heartbeat's epoch and sequence counter. A report
+  signs its request id and the SHA-256 of its payload text. The payload
+  is carried beside the signed array, bounded at 200 KiB of UTF-8, and
+  parsed only once the signature and digest both hold. The request and
+  report shapes are closed and validated by one module both sides use
+  (`planner.ts`).
+- **Control plane** (`gateway/planner-channel.ts`, `session.ts`,
+  `routes.ts`). An in-memory mailbox addressed by Gateway id, and the
+  `PlannerPort` it backs.
+  - `POST /gateway/planner/poll` collects one request.
+  - `POST /gateway/planner/report` answers one, with its own 256 KB body
+    limit.
+  - Both run the heartbeat's guard order and fenced checks. They advance
+    the session cursor and never touch liveness.
+  - Nothing is durable, so there is no migration. A restart ends the loop,
+    and recovery asks the Gateway `status` again.
+  - `dispatch` answers `not_sent` only when the Gateway says so, or when
+    the `execute` request was withdrawn before any poll carried it. A
+    delivered, unanswered `execute` throws, and the loop records
+    `unresolved`.
+  - `PlannerPort.attest` now takes the command id, so the Gateway binds
+    its execution to that one command.
+- **Gateway** (`gateway-daemon/src/planner-worker.ts`, `lanes.ts`,
+  `daemon.ts`). A worker answers `attest`, `execute` and `status` from a
+  durable record per command, kept in the Gateway's directory.
+  - It writes `starting` before it starts anything, so a command executes
+    at most once.
+  - It answers `never_received` and `not_sent` only on proof.
+  - It answers nothing when it cannot know: a start that threw, or an
+    execution a previous process held, which is marked `lost` at boot.
+  - The primary lane exchanges after each heartbeat, in the same
+    single-flight tick, on the same sequence counter.
+- **What is not built.** No executor ships. Q2a rules Antigravity on the
+  active model, but `DEC-20260827-01` §3.4 authorizes no provider binding,
+  and the two adapter classes remain deferred (`madbridge-consumed`). So
+  the daemon polls nothing unless an executor is injected. Nothing in
+  `server.ts` runs a loop either: the counted-run authorization that names
+  the model and the seats (Q2a, Q7a) is slice 10's. Cancelling a running
+  Gateway execution is not built: Q6's unconfirmed cancel stands, and the
+  Gateway may keep running unseen.
+- **For the Founder.** The Gateway protocol was built from the Gateway
+  Enrollment Pairing contract Rev 4.7, an artifact outside this
+  repository. Its code said "two purposes exist and no more". This slice
+  adds two more under the Q2b ruling. The builder cannot see whether that
+  contract expects an amendment record of its own.
+
+Tests:
+- `test/gateway-planner-protocol.test.ts`: signed bytes, cross-purpose
+  refusal, the payload bound, the closed shapes.
+- `test/gateway-planner-channel.test.ts`: the port and the worker over an
+  in-process pump.
+- `test/gateway-planner-pull.storage.test.ts`: a real control plane over a
+  socket, the real lane and worker. It runs in the runtime-role tier.
+- A Q2b case in `test/planner-loop.storage.test.ts`: the real loop reaching
+  PLAN_REVIEW over the channel.
+
 What these answers do not yet settle:
 - Q7b's surface needs a FounderOS registry change before a counted run.
   That is a FounderOS pull request needing the Founder's own merge
   authorization.
 - Q2a and Q7a name an instrument that does not exist yet: the counted-run
   entry authorization, slice 10's proposal.
+- Q2a's executor: the Gateway's Antigravity adapter is a provider binding,
+  which `DEC-20260827-01` §3.4 does not authorize.
 
 ## Verification
 

@@ -64,9 +64,13 @@
  * exists; a cancel of a running round is unconfirmed (Q6,
  * `plan-decision.ts`), and the round reports `cancelled`.
  *
- * THE PLANNER is a `PlannerPort`. Only a synthetic one exists (plan r1 Q2:
- * which adapter runs the Planner, and how the control plane hands it work,
- * are unruled), so nothing in `server.ts` constructs a loop.
+ * THE PLANNER is a `PlannerPort`. The Gateway's pull channel
+ * (`gateway/planner-channel.ts`, plan r1 Q2b) is the real one: the
+ * assigned Gateway collects each question on its signed poll and answers it
+ * on its signed report. Nothing in `server.ts` constructs a loop yet: the
+ * counted-run authorization that names the active model and the seats
+ * (Q2a, Q7a) is slice 10's, and the Gateway's Antigravity executor is not
+ * built (`DEC-20260827-01` §3.4 authorizes no provider binding).
  */
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -195,13 +199,14 @@ export type PlannerReconciliation =
 
 /**
  * The Planner as the loop sees it. `attest` is `AdapterV1.attest`, read
- * locally with no provider contact. `dispatch` and `awaitPlan` throw when
+ * locally with no provider contact, for the one command the execution will
+ * run. `dispatch` and `awaitPlan` throw when
  * the outcome is unknown; the loop then records `unresolved`, never a guess.
  * `reconcile` is recovery's question (`planner-recovery.ts`); it throws when
  * the Planner cannot answer, and an answer it cannot give is never assumed.
  */
 export interface PlannerPort {
-  attest(): Promise<ExecutionIdentity>;
+  attest(commandId: string): Promise<ExecutionIdentity>;
   dispatch(work: PlannerWork): Promise<PlannerDispatchReceipt>;
   awaitPlan(commandId: string): Promise<PlannerResult>;
   reconcile(commandId: string): Promise<PlannerReconciliation>;
@@ -571,7 +576,7 @@ export class PlannerLoop {
 
     let identity: ExecutionIdentity;
     try {
-      identity = await planner.attest();
+      identity = await planner.attest(commandId);
     } catch {
       return this.fail(commandId, 'attestation_failed');
     }

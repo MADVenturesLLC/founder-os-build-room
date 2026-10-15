@@ -55,6 +55,13 @@ import {
 import type { CommandEventRow } from '../packages/journal/src/index.js';
 import type { LifecycleEvent } from '../packages/ledger/src/index.js';
 import { founderGoalDigest, prepareFounderGoal } from '../packages/control-plane/src/founder-goal.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { GatewayPlannerChannel } from '../packages/control-plane/src/gateway/planner-channel.js';
+import { createSystemClock } from '../packages/control-plane/src/gateway/clock.js';
+import { GatewayPlannerWorker, PlannerRecordStore } from '../packages/gateway-daemon/src/planner-worker.js';
+import { SyntheticExecutor } from './support/synthetic-executor.js';
 
 const { Client, Pool } = pgDefault;
 
@@ -635,6 +642,52 @@ describe('planner loop on PostgreSQL', { skip: SKIP_REASON }, () => {
     planner.reset();
     const blocked = await new PlannerLoop(loopDeps()).runRound(lost.roomId);
     assert.deepEqual(blocked.kind === 'refused' && blocked.code, 'round_already_open', 'an unknown outcome is never retried');
+  });
+
+  it('Q2b: a round over the Gateway pull channel reaches PLAN_REVIEW, the Gateway starting the work once', async () => {
+    const roomId = await scopedRoom();
+    minted.length = 0;
+    const gatewayId = randomUUID();
+    const channel = new GatewayPlannerChannel(createSystemClock());
+    const executor = new SyntheticExecutor().reset();
+    const recordsRoot = mkdtempSync(join(tmpdir(), 'buildroom-loop-pull-'));
+    const worker = new GatewayPlannerWorker({ executor, records: new PlannerRecordStore(recordsRoot) });
+    const port = channel.port({
+      gatewayId,
+      role: 'architect',
+      intended: SYNTHETIC_ROUTE,
+      timings: { answerTimeoutMs: 3_000, planTimeoutMs: 10_000, statusIntervalMs: 10 },
+    });
+
+    // The Gateway's side, in process: collect, answer, settle, as its poll and report do.
+    let running = true;
+    const pumping = (async () => {
+      while (running) {
+        const request = channel.collect(gatewayId);
+        if (request !== null) {
+          const payload = await worker.handle(request);
+          if (payload !== null) channel.answer(gatewayId, request.requestId, payload);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+    })();
+    try {
+      const outcome = await new PlannerLoop(loopDeps({ planner: port })).runRound(roomId);
+      assert.equal(outcome.kind, 'plan_review', JSON.stringify(outcome));
+      assert.equal(await stateOf(roomId), 'PLAN_REVIEW');
+      const commandId = plannerCommandIdFor(roomId, minted[0]!);
+      assert.deepEqual(await eventTypes(commandId), ['journaled', 'identity_bound', 'dispatched', 'completed']);
+      const [, bound] = await rowsOf(commandId);
+      assert.equal(bound!.executionId, 'exec-gateway-1', 'the execution the Gateway attested for this command');
+      assert.deepEqual(executor.calls.attest, [commandId]);
+      assert.equal(executor.startsOf(commandId), 1);
+      assert.equal(await planCount(commandId), 1);
+    } finally {
+      running = false;
+      await pumping;
+      rmSync(recordsRoot, { recursive: true, force: true });
+    }
+    assert.equal(channel.openCount, 0);
   });
 
   it('the journal verifies from genesis over everything above', async () => {

@@ -17,6 +17,7 @@ import { ClockGate, createSystemClock } from './clock.js';
 import type { Clock } from '../../../gateway-protocol/src/index.js';
 import { NO_HOOKS, type GatewayHooks } from './hooks.js';
 import { GatewayLeadership } from './leadership.js';
+import { GatewayPlannerChannel } from './planner-channel.js';
 import { RateLimiter } from './rate-limit.js';
 import { GatewayRoomAppendFence } from './room-append.js';
 import { GatewaySessionService } from './session.js';
@@ -44,6 +45,11 @@ export interface GatewaySurface {
   readonly roomAppendFence: GatewayRoomAppendFence;
   readonly sweeps: GatewaySweeps;
   readonly phase3Runs: Phase3RunStore;
+  /**
+   * The planner pull channel's mailbox (plan r1 Q2b). Empty unless a planner
+   * loop asks through a port it hands out; a poll then collects nothing.
+   */
+  readonly planner: GatewayPlannerChannel;
   /** Start the supervisor, the limiter sweep, and the retention cadence. */
   start(): void;
   stop(): Promise<void>;
@@ -62,6 +68,7 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
   const store = new GatewayRegistryStore(pool, config);
   const phase3Runs = new Phase3RunStore(pool, config);
   const limiter = new RateLimiter(clock);
+  const planner = new GatewayPlannerChannel(clock);
 
   let service!: GatewaySessionService;
   const leadership = new GatewayLeadership({
@@ -74,7 +81,7 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
     reconciler: async (context) => service.reconcile(context),
   });
 
-  service = new GatewaySessionService({ pool, config, clock, session, leadership, store, phase3Runs });
+  service = new GatewaySessionService({ pool, config, clock, session, leadership, store, phase3Runs, planner });
 
   const roomAppendFence = new GatewayRoomAppendFence({ config, clock, session, leadership });
   /*
@@ -95,6 +102,7 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
     roomAppendFence,
     sweeps,
     phase3Runs,
+    planner,
     start(): void {
       leadership.start();
       limiter.start();
@@ -110,6 +118,14 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
 
 export { ClockGate, ScriptedClock, createSystemClock, primeClockGate } from './clock.js';
 export { GatewayLeadership } from './leadership.js';
+export {
+  DEFAULT_PLANNER_CHANNEL_TIMINGS,
+  GatewayPlannerChannel,
+  PlannerChannelUnansweredError,
+  type PlannerChannelAssignment,
+  type PlannerChannelClock,
+  type PlannerChannelTimings,
+} from './planner-channel.js';
 export { GatewayRegistryStore } from './store.js';
 export { GatewaySessionService } from './session.js';
 export { GatewaySessionState } from './session-state.js';
@@ -118,6 +134,7 @@ export { GatewaySweeps } from './sweeps.js';
 export { RateLimiter, RATE_LIMITS } from './rate-limit.js';
 export {
   GATEWAY_BODY_LIMIT,
+  PLANNER_REPORT_BODY_LIMIT,
   ROOM_BODY_LIMIT,
   founderRouter,
   gatewayRouter,

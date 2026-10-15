@@ -32,6 +32,7 @@ export const RUNTIME_ROLE_SUITES: readonly string[] = [
   'gateway-lanes',
   'gateway-leadership',
   'gateway-online',
+  'gateway-planner-pull',
   'gateway-projection',
   'gateway-retention',
   'gateway-session',

@@ -1,7 +1,7 @@
 /**
- * The signed routes: session-challenge, session-start, heartbeat — and
- * promotion reconciliation, which shares their availability machinery
- * (contract §7, §9, §12).
+ * The signed routes: session-challenge, session-start, heartbeat, the
+ * planner pull channel's poll and report — and promotion reconciliation,
+ * which shares their availability machinery (contract §7, §9, §12).
  *
  * The ordering in each handler is not stylistic. Reading down `sessionStart`
  * you can check each of the contract's claims in turn, and several of them are
@@ -19,17 +19,25 @@
  *     acceptance.
  */
 
-import { randomBytes, verify as cryptoVerify, createPublicKey } from 'node:crypto';
+import { createHash, randomBytes, verify as cryptoVerify, createPublicKey } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import {
   encodeBase64Url,
   decodeTransportSignature,
   heartbeatSignedBytes,
+  plannerPollSignedBytes,
+  plannerReportSignedBytes,
   sessionStartSignedBytes,
   timestampWithinWindow,
   validateHeartbeat,
+  validatePlannerPoll,
+  validatePlannerReport,
+  validatePlannerReportPayload,
   validateSessionStart,
   type HeartbeatEnvelope,
+  type PlannerPollEnvelope,
+  type PlannerReportEnvelope,
+  type PlannerReportPayload,
   type SessionStartEnvelope,
 } from '../../../gateway-protocol/src/index.js';
 import type { GatewayState } from '../../../gateway-registry/src/index.js';
@@ -38,13 +46,14 @@ import type { Phase3RunStore } from '../phase3-run.js';
 import type { ClockGate } from './clock.js';
 import { readLease } from './fence.js';
 import type { GatewayLeadership } from './leadership.js';
+import type { GatewayPlannerChannel } from './planner-channel.js';
 import type { GatewayRegistryStore } from './store.js';
 import {
   insertTransition,
   latestTransition,
   planHeartbeatEdges,
 } from './availability.js';
-import type { EpochKey, GatewaySessionState, StagedEffects } from './session-state.js';
+import type { EpochKey, GatewaySessionState, SessionCursor, StagedEffects } from './session-state.js';
 
 export interface RouteResult {
   readonly status: number;
@@ -59,6 +68,7 @@ export interface SessionServiceDeps {
   readonly leadership: GatewayLeadership;
   readonly store: GatewayRegistryStore;
   readonly phase3Runs: Phase3RunStore;
+  readonly planner: GatewayPlannerChannel;
 }
 
 interface ResolvedKey {
@@ -76,6 +86,7 @@ export class GatewaySessionService {
   private readonly leadership: GatewayLeadership;
   private readonly store: GatewayRegistryStore;
   private readonly phase3Runs: Phase3RunStore;
+  private readonly planner: GatewayPlannerChannel;
 
   /**
    * Set when reconciliation could not write its edges because the clock was
@@ -92,6 +103,7 @@ export class GatewaySessionService {
     this.leadership = deps.leadership;
     this.store = deps.store;
     this.phase3Runs = deps.phase3Runs;
+    this.planner = deps.planner;
   }
 
   get hasDeferredReconciliation(): boolean {
@@ -384,6 +396,155 @@ export class GatewaySessionService {
     return this.finishSigned(outcome, resolved.keyId, sourceIp);
   }
 
+  /* ---- POST /gateway/planner/poll and /gateway/planner/report ---------- */
+
+  /**
+   * The Gateway collects its next planner request (plan r1 Q2b).
+   *
+   * Session-bound exactly like a heartbeat, in the same order: clock,
+   * parse, resolve, verify, then the fenced epoch, sequence and timestamp
+   * checks. It consumes a sequence and touches liveness not at all: only an
+   * accepted heartbeat makes `gatewayOnline` true. The request is collected
+   * inside the fence, so a refused poll collects nothing; one collected in a
+   * transaction that then fails to publish stays marked delivered, which is
+   * the conservative direction (it can no longer be reported `not_sent`).
+   */
+  async plannerPoll(body: unknown, sourceIp: string): Promise<RouteResult> {
+    if (!this.clock.reliable) return this.refuse(503, 'clock_unreliable', null, sourceIp);
+
+    const parsed = validatePlannerPoll(body);
+    if (!parsed.ok) {
+      return this.refuse(parsed.error === 'purpose_mismatch' ? 401 : 400, parsed.error, null, sourceIp);
+    }
+    const envelope = parsed.envelope;
+
+    const resolved = await this.resolveKey(envelope.gatewayId, envelope.keyId);
+    if (resolved === null) return this.refuse(401, 'unknown_key', null, sourceIp);
+    if (!this.verify(resolved, plannerPollSignedBytes(sessionBoundCanonical(envelope)), envelope.signature)) {
+      return this.refuse(401, 'bad_signature', resolved.keyId, sourceIp);
+    }
+
+    const outcome = await this.leadership.runFenced<RouteResult>(
+      { pipeline: 'plannerPoll', takeL0: true, takeRegistryLock: true, verifyServingGeneration: true },
+      async (ctx) => {
+        const checked = await this.sessionBoundChecks(ctx.client, envelope);
+        if (checked.refusal !== null) return rollback(checked.refusal);
+        const request = this.planner.collect(envelope.gatewayId);
+        return {
+          value: { status: 200, body: { ok: true, state: 'enrolled', epoch: checked.cursor.epoch, request } },
+          commit: true,
+          staged: this.advanceCursor(envelope, checked.cursor, ctx.leaseRow.generation),
+        };
+      },
+    );
+    return this.finishSigned(outcome, resolved.keyId, sourceIp);
+  }
+
+  /**
+   * The Gateway answers one planner request (plan r1 Q2b).
+   *
+   * The payload is a JSON text outside the signed array; its SHA-256 is
+   * inside it. Both the signature and the digest must hold over the exact
+   * text received before it is parsed, and the parsed payload must be one
+   * of the closed report shapes, or the report is `invalid_request`. A
+   * well-formed report for a request that is no longer open (answered,
+   * withdrawn, or never this Gateway's) is accepted as traffic and answered
+   * `accepted: false`: the Gateway keeps its record and asks nothing more.
+   */
+  async plannerReport(body: unknown, sourceIp: string): Promise<RouteResult> {
+    if (!this.clock.reliable) return this.refuse(503, 'clock_unreliable', null, sourceIp);
+
+    const parsed = validatePlannerReport(body);
+    if (!parsed.ok) {
+      return this.refuse(parsed.error === 'purpose_mismatch' ? 401 : 400, parsed.error, null, sourceIp);
+    }
+    const envelope = parsed.envelope;
+
+    const resolved = await this.resolveKey(envelope.gatewayId, envelope.keyId);
+    if (resolved === null) return this.refuse(401, 'unknown_key', null, sourceIp);
+    const signedBytes = plannerReportSignedBytes({
+      ...sessionBoundCanonical(envelope),
+      requestId: envelope.requestId,
+      payloadDigest: envelope.payloadDigest,
+    });
+    if (!this.verify(resolved, signedBytes, envelope.signature)) {
+      return this.refuse(401, 'bad_signature', resolved.keyId, sourceIp);
+    }
+
+    const digest = createHash('sha256').update(envelope.payload, 'utf8').digest('hex');
+    if (digest !== envelope.payloadDigest) return this.refuse(400, 'invalid_request', resolved.keyId, sourceIp);
+    let payload: PlannerReportPayload | null;
+    try {
+      payload = validatePlannerReportPayload(JSON.parse(envelope.payload));
+    } catch {
+      payload = null;
+    }
+    if (payload === null) return this.refuse(400, 'invalid_request', resolved.keyId, sourceIp);
+    const report = payload;
+
+    const outcome = await this.leadership.runFenced<RouteResult>(
+      { pipeline: 'plannerReport', takeL0: true, takeRegistryLock: true, verifyServingGeneration: true },
+      async (ctx) => {
+        const checked = await this.sessionBoundChecks(ctx.client, envelope);
+        if (checked.refusal !== null) return rollback(checked.refusal);
+        return {
+          value: { status: 200, body: { ok: true, state: 'enrolled', epoch: checked.cursor.epoch } },
+          commit: true,
+          staged: this.advanceCursor(envelope, checked.cursor, ctx.leaseRow.generation),
+        };
+      },
+    );
+    /*
+     * The answer is handed to the waiting loop only once the report's
+     * sequence is published, so a report refused or unpublished answers
+     * nothing; the Gateway re-reports on its next exchange.
+     */
+    if (outcome.status === 'published') {
+      const result = outcome.value as RouteResult;
+      if (result.status === 200) {
+        const accepted = this.planner.answer(envelope.gatewayId, envelope.requestId, report);
+        return { status: 200, body: { ...result.body, accepted } };
+      }
+    }
+    return this.finishSigned(outcome, resolved.keyId, sourceIp);
+  }
+
+  /** The heartbeat's fenced checks, shared by the planner routes: enrolled, epoch, sequence, timestamp. */
+  private async sessionBoundChecks(
+    client: PoolClient,
+    envelope: PlannerPollEnvelope | PlannerReportEnvelope,
+  ): Promise<
+    | { readonly refusal: RouteResult; readonly cursor?: undefined }
+    | { readonly refusal: null; readonly cursor: SessionCursor }
+  > {
+    const wallNow = this.clock.wallNow();
+    const row = await readProjectionRow(client, envelope.gatewayId);
+    if (row === null) return { refusal: { status: 401, body: { error: 'unknown_key' } } };
+    if (row.state !== 'enrolled') return { refusal: { status: 403, body: { error: row.state } } };
+    const cursor = this.session.cursorFor(envelope.gatewayId);
+    if (cursor === null || cursor.epoch !== envelope.epoch) {
+      return { refusal: { status: 409, body: { error: 'session_required' } } };
+    }
+    if (envelope.sequence <= cursor.lastSequence) return { refusal: { status: 409, body: { error: 'stale_sequence' } } };
+    if (!timestampWithinWindow(envelope.timestampMs, wallNow, this.config.gatewayTimestampWindowMs)) {
+      return { refusal: { status: 409, body: { error: 'stale_timestamp' } } };
+    }
+    return { refusal: null, cursor };
+  }
+
+  /** The staged cursor advance for an accepted session-bound message; liveness untouched. */
+  private advanceCursor(
+    envelope: PlannerPollEnvelope | PlannerReportEnvelope,
+    cursor: SessionCursor,
+    generation: number,
+  ): StagedEffects {
+    return {
+      epoch: this.session.activeEpoch(),
+      generation,
+      cursor: { gatewayId: envelope.gatewayId, cursor: { ...cursor, lastSequence: envelope.sequence } },
+    };
+  }
+
   /* ---- promotion reconciliation (§7) ---------------------------------- */
 
   /**
@@ -580,6 +741,24 @@ function canonicalOf(envelope: HeartbeatEnvelope): {
 function canonicalOf(envelope: SessionStartEnvelope | HeartbeatEnvelope): Record<string, unknown> {
   const { protocol: _p, version: _v, purpose: _u, pubkey: _k, signature: _s, ...canonical } = envelope;
   return canonical;
+}
+
+function sessionBoundCanonical(envelope: PlannerPollEnvelope | PlannerReportEnvelope): {
+  gatewayId: string;
+  keyId: string;
+  epoch: string;
+  sequence: number;
+  nonce: string;
+  timestampMs: number;
+} {
+  return {
+    gatewayId: envelope.gatewayId,
+    keyId: envelope.keyId,
+    epoch: envelope.epoch,
+    sequence: envelope.sequence,
+    nonce: envelope.nonce,
+    timestampMs: envelope.timestampMs,
+  };
 }
 
 interface ProjectionRow {

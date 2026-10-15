@@ -95,6 +95,21 @@ const heartbeatShape: SuccessShape = {
     isLowercaseHex(body['epoch'], 64),
 };
 
+/** A poll's success: the heartbeat's members plus the one request collected, or `null`. */
+const plannerPollShape: SuccessShape = {
+  status: 200,
+  validate: (body) =>
+    heartbeatShape.validate(body) &&
+    Object.prototype.hasOwnProperty.call(body, 'request') &&
+    (body['request'] === null || (typeof body['request'] === 'object' && !Array.isArray(body['request']))),
+};
+
+/** A report's success: the heartbeat's members plus whether the answer settled an open request. */
+const plannerReportShape: SuccessShape = {
+  status: 200,
+  validate: (body) => heartbeatShape.validate(body) && typeof body['accepted'] === 'boolean',
+};
+
 /** The default request bound: under the 10 s heartbeat cadence (§15). */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 
@@ -119,6 +134,15 @@ export class ControlPlaneClient {
 
   heartbeat(envelope: Record<string, unknown>): Promise<ControlPlaneResponse> {
     return this.request('POST', '/gateway/heartbeat', envelope, heartbeatShape);
+  }
+
+  /** The planner pull channel's two verbs (plan r1 Q2b). The request itself is validated by the worker. */
+  plannerPoll(envelope: Record<string, unknown>): Promise<ControlPlaneResponse> {
+    return this.request('POST', '/gateway/planner/poll', envelope, plannerPollShape);
+  }
+
+  plannerReport(envelope: Record<string, unknown>): Promise<ControlPlaneResponse> {
+    return this.request('POST', '/gateway/planner/report', envelope, plannerReportShape);
   }
 
   /**
