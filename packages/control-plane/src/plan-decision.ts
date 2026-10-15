@@ -43,12 +43,16 @@
  *     holds, read on the locked transaction;
  *   - a room with none (ROOM_CREATED, SCOPED, or a round never journaled)
  *     answers 409 `founder_cancel_unavailable`, writing nothing;
- *   - G22's fact is derived, never accepted: `runningTasksCancelled` is
- *     asserted only when every planner command of the room has reached
- *     `completed` or `failed`, so no task is running. A command still
- *     pending, or `unresolved`, answers 409 `planner_command_in_flight`:
- *     Build Room has no way yet to cancel a running Planner or to record an
- *     unconfirmed cancel of one (plan r1 Q6), so it refuses instead;
+ *   - G22's fact is derived, never accepted. When every planner command of
+ *     the room has reached `completed` or `failed`, no task is running and
+ *     the fact is `runningTasksCancelled`. Otherwise (Founder answer of
+ *     2026-10-15 to plan r1 Q6, "Allow, mark unconfirmed"), the cancel goes
+ *     through as an unconfirmed cancel: in its own transaction each still
+ *     pending command is recorded `unresolved`, bound to the T22 event, and
+ *     one already `unresolved` stays so; the fact is
+ *     `unconfirmedCancelRecorded`. Build Room cannot stop a running Planner,
+ *     so the journal says what is true: the command's outcome is unknown,
+ *     and reconciliation owns it (`planner-recovery.ts`);
  *   - `plan_hash` follows the decision row's plan-bearing rule: in a state
  *     that bears a plan the Founder must send the hash of the room's latest
  *     plan, and in one that does not (PLANNING) must send none. A RECONCILING
@@ -182,15 +186,6 @@ export class FounderCancelUnavailableError extends Error {
   }
 }
 
-/** A planner command of the room has not reached completed or failed. */
-export class PlannerCommandInFlightError extends Error {
-  override readonly name = 'PlannerCommandInFlightError';
-  readonly code = 'planner_command_in_flight';
-  constructor() {
-    super('a planner command of this room is still pending or unresolved');
-  }
-}
-
 /** A cancel carried a plan_hash in a state that bears no plan. */
 export class PlanHashNotApplicableError extends Error {
   override readonly name = 'PlanHashNotApplicableError';
@@ -220,6 +215,10 @@ interface CancelBinding {
   readonly commandId: string;
   readonly priorState?: LedgerState['state'];
   readonly plan: StoredPlan | null;
+  /** Planner commands still pending: the cancel records each `unresolved`. */
+  readonly pending: readonly string[];
+  /** Whether any planner command was not terminal: the cancel is unconfirmed. */
+  readonly unconfirmed: boolean;
 }
 
 /** The plan the room's latest T3 submitted, whatever state the room is in now. */
@@ -248,11 +247,16 @@ async function cancelBinding(
 ): Promise<CancelBinding> {
   const tx = deps.journal.inTransaction(client);
   let bound: string | null = null;
+  const pending: string[] = [];
+  let unconfirmed = false;
   for (const round of plannerRoundsOf(roomId, current)) {
-    const history = await tx.commandHistory(round.commandId);
-    if (history.state === null) continue;
-    if (history.state.outcome !== 'completed' && history.state.outcome !== 'failed') throw new PlannerCommandInFlightError();
-    bound = round.commandId;
+    for (const commandId of round.commandIds) {
+      const history = await tx.commandHistory(commandId);
+      if (history.state === null) break;
+      bound = commandId;
+      if (history.state.outcome === 'pending') pending.push(commandId);
+      if (history.state.outcome === 'pending' || history.state.outcome === 'unresolved') unconfirmed = true;
+    }
   }
   if (bound === null) throw new FounderCancelUnavailableError();
   const priorState = current.state === 'RECONCILING' ? (current.priorState ?? undefined) : undefined;
@@ -260,12 +264,12 @@ async function cancelBinding(
   const effective = effectivePlanBearingState(current.state, priorState);
   if (!planHashRequired(effective)) {
     if (request.planHash !== undefined) throw new PlanHashNotApplicableError();
-    return { commandId: bound, ...(priorState === undefined ? {} : { priorState }), plan: null };
+    return { commandId: bound, ...(priorState === undefined ? {} : { priorState }), plan: null, pending, unconfirmed };
   }
   const plan = await latestPlan(deps, client, roomId, current);
   if (plan === null) throw new PlanUnderReviewMissingError();
   if (request.planHash !== plan.planHash) throw new PlanHashMismatchError();
-  return { commandId: bound, ...(priorState === undefined ? {} : { priorState }), plan };
+  return { commandId: bound, ...(priorState === undefined ? {} : { priorState }), plan, pending, unconfirmed };
 }
 
 /** The plan the room's latest T3 submitted, or `null` when there is none. */
@@ -316,8 +320,8 @@ export async function decidePlan(
             : { roomId, repo: binding.plan.document.repository, paths: [...binding.plan.document.scope_paths] },
           evidence: binding.plan === null ? [] : [{ kind: 'plandoc', ref: binding.plan.commandId, digest: binding.plan.planHash }],
           occurredAt: now().toISOString(),
-          // Derived by cancelBinding: every planner command of the room is terminal.
-          facts: { runningTasksCancelled: true },
+          // Derived by cancelBinding from the journal, never from the caller.
+          facts: binding.unconfirmed ? { unconfirmedCancelRecorded: true } : { runningTasksCancelled: true },
         } as LifecycleEvent;
       }
       plan = await planUnderReview(deps, client, roomId, current);
@@ -362,7 +366,17 @@ export async function decidePlan(
     afterTransition: async (client, { entry }) => {
       if (cancel !== null) {
         const bound: CancelBinding = cancel;
-        const journal = await deps.journal.inTransaction(client).appendDecision({
+        const tx = deps.journal.inTransaction(client);
+        // The unconfirmed cancel's record (Q6): each running command's outcome is now unknown.
+        for (const commandId of bound.pending) {
+          await tx.appendCommandEvent({
+            eventType: 'unresolved',
+            commandId,
+            lifecycleEventRef: { roomId, eventId: entry.eventId },
+            evidenceRefs: ['unconfirmed-cancel'],
+          });
+        }
+        const journal = await tx.appendDecision({
           commandId: bound.commandId,
           decision: 'founder.cancel',
           recordedState: entry.fromState,
@@ -470,10 +484,6 @@ export function planDecisionRouter(deps: PlanDecisionRouteDeps): Router {
 function answerDecisionFailure(res: Response, error: unknown): boolean {
   if (error instanceof FounderCancelUnavailableError) {
     res.status(409).json({ error: 'founder_cancel_unavailable', message: error.message });
-    return true;
-  }
-  if (error instanceof PlannerCommandInFlightError) {
-    res.status(409).json({ error: 'planner_command_in_flight' });
     return true;
   }
   if (error instanceof PlanHashNotApplicableError) {

@@ -164,16 +164,22 @@ export class PlannerRecovery {
   private async openCommand(roomId: string): Promise<OpenCommand | null | 'not_leader'> {
     const view = await this.deps.ledger.loadRoom(roomId);
     const rounds = plannerRoundsOf(roomId, view.state);
+    // The latest journaled command of the latest round that has one: the
+    // only command that can be open, since a round's next attempt and the
+    // next round both wait on the one before ending.
     for (let i = rounds.length - 1; i >= 0; i -= 1) {
       const round = rounds[i]!;
-      const history = await this.deps.journal.commandHistory(round.commandId);
-      if (history.state === null) continue;
-      if (history.state.outcome === 'completed' || history.state.outcome === 'failed') return null;
-      const rows = history.entries.flatMap((e) => (e.decoded.recordClass === 'command' ? [e.decoded.row] : []));
-      const read = await readRoundInputs(this.deps.ledger, roomId, round.commandId);
-      if (read === 'not_leader') return 'not_leader';
-      if (read === null) return null;
-      return { commandId: round.commandId, rows, inputs: read.inputs, latestRound: read.latest };
+      for (let j = round.commandIds.length - 1; j >= 0; j -= 1) {
+        const commandId = round.commandIds[j]!;
+        const history = await this.deps.journal.commandHistory(commandId);
+        if (history.state === null) continue;
+        if (history.state.outcome === 'completed' || history.state.outcome === 'failed') return null;
+        const rows = history.entries.flatMap((e) => (e.decoded.recordClass === 'command' ? [e.decoded.row] : []));
+        const read = await readRoundInputs(this.deps.ledger, roomId, commandId);
+        if (read === 'not_leader') return 'not_leader';
+        if (read === null) return null;
+        return { commandId, rows, inputs: read.inputs, latestRound: read.latest };
+      }
     }
     return null;
   }

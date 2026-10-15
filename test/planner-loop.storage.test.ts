@@ -41,7 +41,6 @@ import {
   FounderCancelUnavailableError,
   PlanHashMismatchError,
   PlanHashNotApplicableError,
-  PlannerCommandInFlightError,
   decidePlan,
   type PlanDecisionDeps,
   type PlanDecisionRequest,
@@ -55,6 +54,7 @@ import {
 } from '../packages/control-plane/src/planner-loop.js';
 import type { CommandEventRow } from '../packages/journal/src/index.js';
 import type { LifecycleEvent } from '../packages/ledger/src/index.js';
+import { founderGoalDigest, prepareFounderGoal } from '../packages/control-plane/src/founder-goal.js';
 
 const { Client, Pool } = pgDefault;
 
@@ -106,6 +106,7 @@ function loopDeps(overrides: Partial<PlannerLoopDeps> = {}): PlannerLoopDeps {
       intendedProvider: SYNTHETIC_ROUTE.provider,
       intendedModel: SYNTHETIC_ROUTE.model,
       intendedSurface: SYNTHETIC_ROUTE.executionSurface,
+      laneLabel: 'primary',
     },
     dispatcher: {
       roleId: 'builder',
@@ -190,11 +191,19 @@ beforeEach(() => {
 
 /* ---------------- fixtures ---------------- */
 
-/** A room with its scope captured: SCOPED, repository REPO at SHA40, scope `src` and `test`. */
-async function scopedRoom(): Promise<string> {
+const GOAL = 'Add a health detail field to the status route.';
+
+/**
+ * A room with its scope captured: SCOPED, repository REPO at SHA40, scope
+ * `src` and `test`, and the Founder goal prepared as the room route prepares
+ * it. `goal: null` captures no goal; `tamper` changes the stored goal after
+ * its digest was recorded.
+ */
+async function scopedRoom(options: { goal?: string | null; tamper?: boolean } = {}): Promise<string> {
   const roomId = randomUUID();
   await ledger!.createRoom(roomId);
-  const t1 = await ledger!.append(roomId, {
+  const goal = options.goal === undefined ? GOAL : options.goal;
+  const base = {
     eventId: 'evt_t1',
     event: 'scope.captured',
     actor: 'founder',
@@ -203,9 +212,24 @@ async function scopedRoom(): Promise<string> {
     evidence: [],
     occurredAt: '2026-10-15T11:00:00.000Z',
     facts: { repoInAllowlist: true, baseSha: SHA40, remoteHeadSha: SHA40 },
-  } as unknown as LifecycleEvent);
+    ...(goal === null ? {} : { goal }),
+  } as unknown as LifecycleEvent;
+  const prepared = prepareFounderGoal(base);
+  const stored = options.tamper === true ? ({ ...prepared, goal: `${GOAL} And more.` } as unknown as LifecycleEvent) : prepared;
+  const t1 = await ledger!.append(roomId, stored);
   assert.equal(t1.ok && t1.outcome, 'transition', JSON.stringify(t1));
   return roomId;
+}
+
+/** Poll until `probe` yields a value; the fixture's way to wait on a round running in the background. */
+async function waitFor<T>(probe: () => T | undefined | Promise<T | undefined>, timeoutMs = 5000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await probe();
+    if (value !== undefined) return value;
+    if (Date.now() > deadline) throw new Error('waitFor timed out');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 async function stateOf(roomId: string): Promise<string> {
@@ -305,6 +329,8 @@ describe('planner loop on PostgreSQL', { skip: SKIP_REASON }, () => {
       { commandId, repository: REPO, baseSha: SHA40, scopePaths: ['src', 'test'], goal: 'evt_t1' },
     );
     assert.equal(work.revision, undefined);
+    assert.deepEqual([work.goal, work.goalDigest], [GOAL, founderGoalDigest(GOAL)]);
+    assert.ok(journaled!.evidenceRefs.includes(`founder-goal/${founderGoalDigest(GOAL)}`));
 
     const again = await new PlannerLoop(loopDeps()).runRound(roomId);
     assert.deepEqual(again.kind === 'refused' && again.code, 'not_plannable');
@@ -437,19 +463,23 @@ describe('planner loop on PostgreSQL', { skip: SKIP_REASON }, () => {
     assert.match(outcome.kind === 'unresolved' ? outcome.reason : '', /no_resolver/);
   });
 
-  it('a failed round is not reopened: no retry in this slice', async () => {
-    const { roomId, commandId } = await roundOne({ dispatch: 'not_sent' });
+  it('a round that failed for anything but not_sent is not reopened (Q8)', async () => {
+    const { roomId, commandId } = await roundOne({ result: 'failed' });
     planner.reset();
     const again = await new PlannerLoop(loopDeps()).runRound(roomId);
-    assert.deepEqual(again.kind === 'refused' && again.code, 'round_already_open');
-    assert.deepEqual(await eventTypes(commandId), ['journaled', 'identity_bound', 'failed']);
+    assert.deepEqual(again.kind === 'refused' && again.code, 'round_failed');
+    assert.deepEqual(await eventTypes(commandId), ['journaled', 'identity_bound', 'dispatched', 'failed']);
     assert.equal(planner.calls.attest, 0);
   });
 
-  it('cancel: refused while the command is unresolved; once terminal, bound to it with no plan hash in PLANNING', async () => {
+  it('cancel: an unresolved command makes it unconfirmed (Q6); a terminal one binds with no plan hash in PLANNING', async () => {
     const lost = await roundOne({ dispatch: 'throw' });
-    await assert.rejects(decidePlan(decisionDeps!, lost.roomId, cancel()), PlannerCommandInFlightError);
-    assert.equal(await stateOf(lost.roomId), 'PLANNING');
+    const unconfirmed = await decidePlan(decisionDeps!, lost.roomId, cancel());
+    assert.equal(unconfirmed.appended.result.ok && unconfirmed.appended.result.outcome, 'transition');
+    assert.equal(await stateOf(lost.roomId), 'CLOSED_ABANDONED');
+    assert.deepEqual(await eventTypes(lost.commandId), ['journaled', 'identity_bound', 'unresolved'], 'already unresolved: nothing added');
+    const [lostT22] = await eventsOf(lost.roomId, 'founder.cancel');
+    assert.deepEqual(lostT22!['facts'], { unconfirmedCancelRecorded: true, gatewayOnline: true });
 
     const failed = await roundOne({ dispatch: 'not_sent' });
     await assert.rejects(decidePlan(decisionDeps!, failed.roomId, cancel('a'.repeat(64))), PlanHashNotApplicableError);
@@ -482,8 +512,8 @@ describe('planner loop on PostgreSQL', { skip: SKIP_REASON }, () => {
     assert.equal(await stateOf(roomId), 'CLOSED_ABANDONED');
   });
 
-  it('a cancel racing a revision round: never a command journaled after the cancel', async (t) => {
-    const won = { cancel: 0, round: 0 };
+  it('a cancel racing a revision round: never a command that completes after the cancel', async (t) => {
+    const seen = { cancelFirst: 0, cancelledRunning: 0, roundFirst: 0 };
     for (let i = 0; i < 6; i += 1) {
       const { roomId, outcome } = await roundOne();
       assert.ok(outcome.kind === 'plan_review');
@@ -494,26 +524,117 @@ describe('planner loop on PostgreSQL', { skip: SKIP_REASON }, () => {
         new PlannerLoop(loopDeps()).runRound(roomId),
         decidePlan(decisionDeps!, roomId, cancel()),
       ]);
-      assert.equal(round.status, 'fulfilled');
+      assert.equal(round.status, 'fulfilled', round.status === 'rejected' ? String(round.reason) : '');
+      const result = (round as PromiseFulfilledResult<Awaited<ReturnType<PlannerLoop['runRound']>>>).value;
       const roundTwoRows = await eventTypes(roundTwo);
       if (cancelled.status === 'fulfilled') {
         assert.equal(await stateOf(roomId), 'CLOSED_ABANDONED');
-        won.cancel += 1;
-        assert.deepEqual(roundTwoRows, [], 'the cancel won: round two never journaled');
-        assert.deepEqual(await decisionsFor(outcome.commandId), ['plan.revision_requested', 'founder.cancel']);
+        assert.ok(!roundTwoRows.includes('completed'), 'nothing completes after a cancel');
+        if (roundTwoRows.length === 0) {
+          seen.cancelFirst += 1;
+          assert.equal(result.kind, 'refused');
+          assert.deepEqual(await decisionsFor(outcome.commandId), ['plan.revision_requested', 'founder.cancel']);
+        } else {
+          // The round journaled first and was running: the cancel was unconfirmed (Q6).
+          seen.cancelledRunning += 1;
+          assert.ok(roundTwoRows.includes('unresolved'), roundTwoRows.join(','));
+          assert.equal(result.kind, 'cancelled');
+          assert.deepEqual(await decisionsFor(roundTwo), ['founder.cancel']);
+        }
       } else {
-        // The round won the lock. The cancel then saw round two in flight, or,
-        // if the round had already reached PLAN_REVIEW, a hash-less cancel of
-        // a room that bears a plan.
-        won.round += 1;
-        const reason = cancelled.reason;
-        assert.ok(reason instanceof PlannerCommandInFlightError || reason instanceof PlanHashMismatchError, String(reason));
-        if (reason instanceof PlanHashMismatchError) assert.equal(await stateOf(roomId), 'PLAN_REVIEW');
-        assert.equal(roundTwoRows[0], 'journaled', 'the round won: round two was journaled first');
-        assert.deepEqual(await decisionsFor(outcome.commandId), ['plan.revision_requested']);
+        // The round reached PLAN_REVIEW before the cancel read the room: a
+        // hash-less cancel of a room that bears a plan.
+        seen.roundFirst += 1;
+        assert.ok(cancelled.reason instanceof PlanHashMismatchError, String(cancelled.reason));
+        assert.equal(await stateOf(roomId), 'PLAN_REVIEW');
+        assert.equal(roundTwoRows.at(-1), 'completed');
       }
     }
-    t.diagnostic(`lock winners: cancel ${won.cancel}, round ${won.round}`);
+    t.diagnostic(`cancel first ${seen.cancelFirst}, cancelled while running ${seen.cancelledRunning}, round first ${seen.roundFirst}`);
+  });
+
+  it('Q6: a cancel while the Planner is still working marks the command unresolved, and the round reports cancelled', async () => {
+    let release: () => void = () => undefined;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const roomId = await scopedRoom();
+    minted.length = 0;
+    planner.reset({ hold });
+    const running = new PlannerLoop(loopDeps()).runRound(roomId);
+    const commandId = plannerCommandIdFor(roomId, (await waitFor(() => minted[0]))!);
+    await waitFor(async () => (await eventTypes(commandId)).includes('dispatched') || undefined);
+    const cancelled = await decidePlan(decisionDeps!, roomId, cancel());
+    assert.equal(cancelled.appended.result.ok && cancelled.appended.result.outcome, 'transition');
+    assert.deepEqual(await eventTypes(commandId), ['journaled', 'identity_bound', 'dispatched', 'unresolved']);
+    const unresolved = (await rowsOf(commandId))[3]!;
+    assert.deepEqual(unresolved.lifecycleEventRef, { roomId, eventId: cancelled.appended.event.eventId });
+    assert.deepEqual(unresolved.evidenceRefs, ['unconfirmed-cancel']);
+    const [t22] = await eventsOf(roomId, 'founder.cancel');
+    assert.deepEqual(t22!['facts'], { unconfirmedCancelRecorded: true, gatewayOnline: true });
+    release();
+    const outcome = await running;
+    assert.deepEqual(outcome, { kind: 'cancelled', commandId });
+    assert.deepEqual(await eventTypes(commandId), ['journaled', 'identity_bound', 'dispatched', 'unresolved'], 'the late plan changed nothing');
+    assert.deepEqual(await eventsOf(roomId, 'plan.submitted'), []);
+  });
+
+  it('Q7c: no round opens without the Founder goal, or with a goal that no longer matches its digest', async () => {
+    for (const [options, reason] of [[{ goal: null }, /no Founder goal/], [{ tamper: true }, /does not match the digest/]] as const) {
+      const roomId = await scopedRoom(options);
+      minted.length = 0;
+      const outcome = await new PlannerLoop(loopDeps()).runRound(roomId);
+      assert.equal(outcome.kind, 'refused');
+      assert.match(outcome.kind === 'refused' ? outcome.reason : '', reason);
+      assert.equal(await stateOf(roomId), 'SCOPED');
+      assert.deepEqual(await eventTypes(plannerCommandIdFor(roomId, minted[0]!)), []);
+      assert.equal(planner.calls.attest, 0);
+    }
+  });
+
+  it('Q8: a not_sent round is retried as a new command, at most twice; the retry logs its reason', async () => {
+    const roomId = await scopedRoom();
+    minted.length = 0;
+    planner.reset({ dispatch: 'not_sent' });
+    const first = await new PlannerLoop(loopDeps()).runRound(roomId);
+    assert.equal(first.kind === 'failed' && first.classification, 'not_sent');
+    const t2 = minted[0]!;
+    const attempts = [1, 2, 3].map((n) => plannerCommandIdFor(roomId, t2, n));
+    assert.equal(new Set(attempts).size, 3, 'each attempt has its own command id');
+
+    const second = await new PlannerLoop(loopDeps()).runRound(roomId);
+    assert.deepEqual(second, { kind: 'failed', commandId: attempts[1], classification: 'not_sent' });
+    const retryRow = (await rowsOf(attempts[1]!))[0]!;
+    assert.ok(retryRow.evidenceRefs.includes(`retry-of/${attempts[0]}`));
+    assert.ok(retryRow.evidenceRefs.includes('retry-reason/not_sent'));
+
+    planner.reset();
+    const third = await new PlannerLoop(loopDeps()).runRound(roomId);
+    assert.equal(third.kind, 'plan_review', JSON.stringify(third));
+    assert.equal(third.kind === 'plan_review' && third.commandId, attempts[2]);
+    assert.equal(await stateOf(roomId), 'PLAN_REVIEW');
+    assert.ok(third.kind === 'plan_review');
+    const approved = await decidePlan(decisionDeps!, roomId, approve(third.planHash));
+    assert.equal(approved.appended.result.ok && approved.appended.result.outcome, 'transition');
+    assert.deepEqual(await decisionsFor(attempts[2]!), ['plan.approved']);
+  });
+
+  it('Q8: the budget ends after two retries, and nothing but not_sent is retried', async () => {
+    const roomId = await scopedRoom();
+    minted.length = 0;
+    planner.reset({ dispatch: 'not_sent' });
+    for (let i = 0; i < 3; i += 1) assert.equal((await new PlannerLoop(loopDeps()).runRound(roomId)).kind, 'failed');
+    const exhausted = await new PlannerLoop(loopDeps()).runRound(roomId);
+    assert.deepEqual(exhausted.kind === 'refused' && exhausted.code, 'retry_budget_exhausted');
+
+    const other = await roundOne({ attest: { model: 'another-model' } });
+    assert.equal(other.outcome.kind === 'failed' && other.outcome.classification, 'identity_mismatch');
+    planner.reset();
+    const refused = await new PlannerLoop(loopDeps()).runRound(other.roomId);
+    assert.deepEqual(refused.kind === 'refused' && refused.code, 'round_failed');
+
+    const lost = await roundOne({ dispatch: 'throw' });
+    planner.reset();
+    const blocked = await new PlannerLoop(loopDeps()).runRound(lost.roomId);
+    assert.deepEqual(blocked.kind === 'refused' && blocked.code, 'round_already_open', 'an unknown outcome is never retried');
   });
 
   it('the journal verifies from genesis over everything above', async () => {

@@ -36,7 +36,8 @@ import {
   JournalStoreUnavailableError,
   type AuthorizationCoverage,
 } from '../packages/control-plane/src/journal-store.js';
-import { PlannerCommandInFlightError, decidePlan, type PlanDecisionDeps, type PlanDecisionRequest } from '../packages/control-plane/src/plan-decision.js';
+import { decidePlan, type PlanDecisionDeps, type PlanDecisionRequest } from '../packages/control-plane/src/plan-decision.js';
+import { prepareFounderGoal } from '../packages/control-plane/src/founder-goal.js';
 import { PlannerLoop, plannerCommandIdFor, type PlannerLoopDeps } from '../packages/control-plane/src/planner-loop.js';
 import { PlannerRecovery, PlannerRecoveryUnfencedError, type PlannerRecoveryDeps } from '../packages/control-plane/src/planner-recovery.js';
 import type { CommandEventRow } from '../packages/journal/src/index.js';
@@ -96,6 +97,7 @@ const route = {
   intendedProvider: SYNTHETIC_ROUTE.provider,
   intendedModel: SYNTHETIC_ROUTE.model,
   intendedSurface: SYNTHETIC_ROUTE.executionSurface,
+  laneLabel: 'primary',
 };
 
 const mintEventId = (): string => {
@@ -204,7 +206,8 @@ beforeEach(() => {
 async function scopedRoom(): Promise<string> {
   const roomId = randomUUID();
   await ledger!.createRoom(roomId);
-  const t1 = await ledger!.append(roomId, {
+  const t1 = await ledger!.append(roomId, prepareFounderGoal({
+    goal: 'Add a health detail field to the status route.',
     eventId: 'evt_t1',
     event: 'scope.captured',
     actor: 'founder',
@@ -213,7 +216,7 @@ async function scopedRoom(): Promise<string> {
     evidence: [],
     occurredAt: '2026-10-15T11:00:00.000Z',
     facts: { repoInAllowlist: true, baseSha: SHA40, remoteHeadSha: SHA40 },
-  } as unknown as LifecycleEvent);
+  } as unknown as LifecycleEvent));
   assert.equal(t1.ok && t1.outcome, 'transition', JSON.stringify(t1));
   return roomId;
 }
@@ -349,7 +352,6 @@ describe('planner recovery on PostgreSQL', { skip: SKIP_REASON }, () => {
   it('unresolved after dispatched (the wait was lost): a reconciled plan resolves completed with T3, and the Founder decides it', async () => {
     const { roomId, commandId } = await interruptedRound({ result: 'throw' });
     assert.deepEqual(await eventTypes(commandId), ['journaled', 'identity_bound', 'dispatched', 'unresolved']);
-    await assert.rejects(decidePlan(decisionDeps!, roomId, cancel()), PlannerCommandInFlightError);
     const outcome = await recover().recoverRoom(roomId);
     assert.equal(outcome.kind, 'plan_review', JSON.stringify(outcome));
     const rows = await rowsOf(commandId);
@@ -399,7 +401,12 @@ describe('planner recovery on PostgreSQL', { skip: SKIP_REASON }, () => {
     assert.deepEqual(outcome.kind === 'unresolved' && [outcome.reading, outcome.appended], ['ambiguous', false]);
     assert.match(outcome.kind === 'unresolved' ? outcome.reason : '', /dispatch the journal never recorded/);
     assert.deepEqual(await eventTypes(arrived.commandId), ['journaled', 'identity_bound', 'unresolved']);
-    await assert.rejects(decidePlan(decisionDeps!, arrived.roomId, cancel()), PlannerCommandInFlightError, 'plan r1 Q6: this room cannot be cancelled');
+    // Q6: the Founder can still cancel it; the cancel is unconfirmed and the command stays unresolved.
+    const cancelled = await decidePlan(decisionDeps!, arrived.roomId, cancel());
+    assert.equal(cancelled.appended.result.ok && cancelled.appended.result.outcome, 'transition');
+    assert.deepEqual(await eventTypes(arrived.commandId), ['journaled', 'identity_bound', 'unresolved']);
+    const afterCancel = await recover().recoverRoom(arrived.roomId);
+    assert.deepEqual(afterCancel.kind === 'unresolved' && afterCancel.reading, 'ambiguous', 'recovery reports it; nothing resolves it');
   });
 
   it('mismatches are reported, never resolved: another execution, or "never received" for a dispatched command', async () => {

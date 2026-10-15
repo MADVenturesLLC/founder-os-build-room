@@ -74,6 +74,8 @@ export interface SyntheticBehaviour {
   planOverrides: Record<string, unknown>;
   /** `truth` answers from what the Planner holds; the others override it. */
   reconcile: 'truth' | 'throw' | 'wrong_execution' | 'never_received';
+  /** When set, `awaitPlan` waits for it first: a Planner still working. */
+  hold?: Promise<void>;
 }
 
 const DEFAULT_BEHAVIOUR: SyntheticBehaviour = {
@@ -154,6 +156,7 @@ export class SyntheticPlanner implements PlannerPort {
 
   async awaitPlan(commandId: string): Promise<PlannerResult> {
     this.calls.awaited.push(commandId);
+    if (this.behaviour.hold !== undefined) await this.behaviour.hold;
     if (this.behaviour.result === 'throw' || this.behaviour.result === 'running') throw new Error('synthetic wait timeout');
     const result = this.resultFor(commandId);
     if (result === 'running') throw new Error('synthetic wait timeout');

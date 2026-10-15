@@ -33,6 +33,7 @@ import { journalRouter } from './journal-routes.js';
 import { JournalStore } from './journal-store.js';
 import { PlanStore } from './plan-store.js';
 import { planDecisionRouter } from './plan-decision.js';
+import { FounderGoalRefusedError, prepareFounderGoal } from './founder-goal.js';
 import { PostgresLedgerStore, RoomNotFoundError } from './store.js';
 import {
   ROOM_BODY_LIMIT,
@@ -216,16 +217,28 @@ export function createServer(deps: ServerDeps): Express {
     deps.gateway.leadership.requireLeader(),
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.params.roomId, 'roomId');
-      const event = requireEvent(req.body);
+      const offered = requireEvent(req.body);
       /*
        * The planner path's events are not this route's to accept: the
        * governed planner loop and the Founder's plan decision write them
        * (see governed-events.ts). Refused before the ledger, unrecorded, as
        * an authorization refusal.
        */
-      if (requiresGovernedPath(event.event)) {
-        res.status(403).json({ error: 'governed_path_required', event: event.event });
+      if (requiresGovernedPath(offered.event)) {
+        res.status(403).json({ error: 'governed_path_required', event: offered.event });
         return;
+      }
+      // The Founder goal rides on T1 only, checked, with its digest the
+      // server's evidence (founder-goal.ts; plan r1 Q7c).
+      let event: LifecycleEvent;
+      try {
+        event = prepareFounderGoal(offered);
+      } catch (error) {
+        if (error instanceof FounderGoalRefusedError) {
+          res.status(400).json({ error: error.code, kind: error.kind, message: error.message });
+          return;
+        }
+        throw error;
       }
       const result = await store.append(roomId, event);
 

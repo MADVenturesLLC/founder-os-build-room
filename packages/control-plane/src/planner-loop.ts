@@ -53,12 +53,16 @@
  * finds the command it opened instead of minting a second one, and the
  * `journaled` row's own room and lifecycle reference cross-check it.
  *
- * WHAT A ROUND DOES NOT DO: retry (plan r1 Q8). A failed or unresolved
- * round leaves the room in PLANNING; nothing here re-dispatches, and a round
- * already opened is never opened again. An interrupted round is reconciled
- * by `planner-recovery.ts`, which shares this module's plan check and T3
- * transaction. The Founder can cancel once the command is terminal
- * (`plan-decision.ts`).
+ * RETRIES (Founder answer to plan r1 Q8, "Retry only not_sent"). A command
+ * is never dispatched twice. A round whose latest attempt failed `not_sent`
+ * (it provably never left) may journal a new attempt, a new command id,
+ * when the ratified budget's `retryBudgetTransition` allows it: two retries
+ * per round. Any other failure ends the round, and a pending or unresolved
+ * attempt blocks it. An interrupted round is reconciled by
+ * `planner-recovery.ts`, which shares this module's plan check and T3
+ * transaction. The Founder can cancel at any time once a planner command
+ * exists; a cancel of a running round is unconfirmed (Q6,
+ * `plan-decision.ts`), and the round reports `cancelled`.
  *
  * THE PLANNER is a `PlannerPort`. Only a synthetic one exists (plan r1 Q2:
  * which adapter runs the Planner, and how the control plane hands it work,
@@ -69,13 +73,22 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { checkScopePaths } from '../../contracts/src/index.js';
 import type { LedgerEntry, LedgerState, LifecycleEvent } from '../../ledger/src/index.js';
-import { envelopeDigest, normalizeForJournal, type GovernedCommandRequest } from '../../journal/src/index.js';
+import { envelopeDigest, normalizeForJournal, type CommandEventRow, type GovernedCommandRequest } from '../../journal/src/index.js';
 import type { ExecutionIdentity } from '../../madbridge-consumed/src/adapter/adapter-v1.js';
 import { judgePlanDoc } from './plan-doc.js';
+import { FOUNDER_GOAL_EVIDENCE_KIND, founderGoalDigest } from './founder-goal.js';
+import {
+  DISPATCH_POLICY,
+  canonicalBucketKey,
+  retryBudgetTransition,
+  type DeploymentBucket,
+  type RetryBudgetState,
+} from '../../seat-registry/src/index.js';
 import { PlanRefusedError, type PlanStore } from './plan-store.js';
 import type { PostgresLedgerStore } from './store.js';
 import {
   JournalCompletionRefusedError,
+  JournalSequenceError,
   type CompletionAuthorizationResolver,
   type JournalStore,
 } from './journal-store.js';
@@ -87,28 +100,46 @@ export const PLANNER_ROLE = 'architect';
 const ROUND_OPENERS = new Set(['T2', 'T4']);
 
 /**
- * The planner command of the round a transition opened. `cmd_` namespace;
- * 32 hex of SHA-256 over a versioned, NUL-separated input, so no room and
- * event pair can collide with another by concatenation.
+ * Attempts a round may journal: the first and the retries the ratified
+ * budget allows (`DEC-20260716-02` item 5: two per deployment within one
+ * execution; plan r1 Q8). The budget itself is `retryBudgetTransition`'s.
  */
-export function plannerCommandIdFor(roomId: string, openingEventId: string): string {
-  const digest = createHash('sha256')
-    .update(`build-room/planner-command/v1\u0000${roomId}\u0000${openingEventId}`, 'utf8')
-    .digest('hex');
+export const MAX_ROUND_ATTEMPTS = 1 + DISPATCH_POLICY.transport_retries_max;
+
+/**
+ * The planner command of a round's attempt. `cmd_` namespace; 32 hex of
+ * SHA-256 over a versioned, NUL-separated input, so no room, event and
+ * attempt can collide with another by concatenation. Attempt 1 keeps the
+ * input it had before retries existed, so its id is unchanged.
+ */
+export function plannerCommandIdFor(roomId: string, openingEventId: string, attempt = 1): string {
+  if (!Number.isInteger(attempt) || attempt < 1 || attempt > MAX_ROUND_ATTEMPTS) {
+    throw new RangeError(`attempt must be an integer from 1 to ${MAX_ROUND_ATTEMPTS}`);
+  }
+  const input = attempt === 1
+    ? `build-room/planner-command/v1\u0000${roomId}\u0000${openingEventId}`
+    : `build-room/planner-command/v1\u0000${roomId}\u0000${openingEventId}\u0000attempt-${attempt}`;
+  const digest = createHash('sha256').update(input, 'utf8').digest('hex');
   return `cmd_planner_${digest.slice(0, 32)}`;
 }
 
 export interface PlannerRound {
   /** The T2 or T4 entry that opened the round. */
   readonly opening: LedgerEntry;
+  /** Attempt 1's command id. */
   readonly commandId: string;
+  /** Every attempt's command id, attempt 1 first; only journaled ones exist. */
+  readonly commandIds: readonly string[];
 }
 
 /** Every round the room's ledger has opened, oldest first. */
 export function plannerRoundsOf(roomId: string, state: LedgerState): readonly PlannerRound[] {
   return state.entries
     .filter((entry) => ROUND_OPENERS.has(entry.transition))
-    .map((opening) => ({ opening, commandId: plannerCommandIdFor(roomId, opening.eventId) }));
+    .map((opening) => {
+      const commandIds = Array.from({ length: MAX_ROUND_ATTEMPTS }, (_, i) => plannerCommandIdFor(roomId, opening.eventId, i + 1));
+      return { opening, commandId: commandIds[0] as string, commandIds };
+    });
 }
 
 /** Whether `path` is `authorized` or lies beneath it. Both are canonical scope paths. */
@@ -129,6 +160,9 @@ export interface PlannerWork {
   readonly scopePaths: readonly string[];
   /** The T1 `scope.captured` event the round plans for. */
   readonly goalEventId: string;
+  /** The Founder goal captured with the scope, and its recorded digest (plan r1 Q7c). */
+  readonly goal: string;
+  readonly goalDigest: string;
   /** Present on a revision round: the Founder's feedback and the plan it revises. */
   readonly revision?: { readonly feedback: string; readonly revisingPlanHash: string };
 }
@@ -181,6 +215,8 @@ export interface PlannerRoute {
   readonly intendedProvider: string;
   readonly intendedModel: string;
   readonly intendedSurface: string;
+  /** The seat lane the route is, as the retry budget keys its deployment buckets. */
+  readonly laneLabel: string;
 }
 
 /** One assigned seat. */
@@ -238,7 +274,13 @@ export type PlannerFailure = (typeof PLANNER_FAILURES)[number];
 
 export type PlannerRoundOutcome =
   | { readonly kind: 'plan_review'; readonly commandId: string; readonly planHash: string; readonly eventId: string }
-  | { readonly kind: 'refused'; readonly code: 'not_plannable' | 'round_already_open' | 'guard_failed' | 'not_leader'; readonly reason: string }
+  | {
+      readonly kind: 'refused';
+      readonly code: 'not_plannable' | 'round_already_open' | 'round_failed' | 'retry_budget_exhausted' | 'guard_failed' | 'not_leader';
+      readonly reason: string;
+    }
+  /** The Founder cancelled the room while this command ran (plan r1 Q6); its rows stop at `unresolved`. */
+  | { readonly kind: 'cancelled'; readonly commandId: string }
   | { readonly kind: 'failed'; readonly commandId: string; readonly classification: PlannerFailure }
   | { readonly kind: 'unresolved'; readonly commandId: string; readonly reason: string }
   /** Leadership lapsed around a commit; the journal and ledger hold what committed, and recovery owns the rest. */
@@ -263,6 +305,8 @@ export interface RoundInputs {
   readonly baseSha: string;
   readonly scopePaths: readonly string[];
   readonly goalEventId: string;
+  readonly goal: string;
+  readonly goalDigest: string;
   readonly revision?: { readonly feedback: string; readonly revisingPlanHash: string };
 }
 
@@ -272,7 +316,7 @@ interface OpenedRound {
   readonly inputs: RoundInputs;
 }
 
-const T1_FACTS_SQL = `SELECT e.payload->'facts'->>'baseSha' AS base_sha
+const T1_FACTS_SQL = `SELECT e.payload->'facts'->>'baseSha' AS base_sha, e.payload->>'goal' AS goal
   FROM public.build_room_events AS e
  WHERE e.room_id = $1::uuid AND e.event_id = $2 AND e.outcome = 'transition'`;
 
@@ -296,7 +340,7 @@ export class PlannerLoop {
     let opened: OpenedRound | PlannerRoundOutcome;
     try {
       if (view.state.state === 'SCOPED') opened = await this.openFirstRound(roomId);
-      else if (view.state.state === 'PLANNING') opened = await this.openRevisionRound(roomId);
+      else if (view.state.state === 'PLANNING') opened = await this.openNextAttempt(roomId);
       else return { kind: 'refused', code: 'not_plannable', reason: `a round opens from SCOPED or PLANNING, not ${view.state.state}` };
     } catch (error) {
       if (error instanceof RoundStateChangedError) return { kind: 'refused', code: 'not_plannable', reason: error.reason };
@@ -308,7 +352,13 @@ export class PlannerLoop {
 
   // ---- opening a round ----------------------------------------------------
 
-  private plannerRequest(roomId: string, commandId: string, openingEventId: string, inputs: RoundInputs): GovernedCommandRequest {
+  private plannerRequest(
+    roomId: string,
+    commandId: string,
+    openingEventId: string,
+    inputs: RoundInputs,
+    retryOf: string | null = null,
+  ): GovernedCommandRequest {
     const { route } = this.deps;
     return {
       commandKind: PLANNER_COMMAND_KIND,
@@ -321,7 +371,12 @@ export class PlannerLoop {
       intendedProvider: route.intendedProvider,
       intendedModel: route.intendedModel,
       intendedSurface: route.intendedSurface,
-      evidenceRefs: [`scope.captured/${inputs.goalEventId}`],
+      // Each retry is logged with its reason (DEC-20260716-02 item 5).
+      evidenceRefs: [
+        `scope.captured/${inputs.goalEventId}`,
+        `founder-goal/${inputs.goalDigest}`,
+        ...(retryOf === null ? [] : [`retry-of/${retryOf}`, 'retry-reason/not_sent']),
+      ],
       commandId,
     };
   }
@@ -372,29 +427,90 @@ export class PlannerLoop {
     return { commandId, opening: eventId, inputs };
   }
 
-  private async openRevisionRound(roomId: string): Promise<OpenedRound | PlannerRoundOutcome> {
-    const locked = await this.deps.ledger.underRoomLock(roomId, async (client, current) => {
+  /**
+   * Under the room lock, in PLANNING: journal the round's next command. That
+   * is attempt 1 of a revision round T4 opened, or a retry of a round whose
+   * latest attempt failed as `not_sent` — the only retry the Founder's Q8
+   * answer allows — when `retryBudgetTransition` allows it. Anything else
+   * opens nothing.
+   */
+  private async openNextAttempt(roomId: string): Promise<OpenedRound | PlannerRoundOutcome> {
+    const locked = await this.deps.ledger.underRoomLock(roomId, async (client, current): Promise<OpenedRound | PlannerRoundOutcome> => {
       if (current.state !== 'PLANNING') throw new RoundStateChangedError(`the room left PLANNING (now ${current.state})`);
-      const rounds = plannerRoundsOf(roomId, current);
-      const latest = rounds[rounds.length - 1];
-      if (latest === undefined || latest.opening.transition !== 'T4') {
-        return { kind: 'refused', code: 'round_already_open', reason: 'the round T2 opened is already journaled' } as const;
-      }
+      const latest = plannerRoundsOf(roomId, current).at(-1);
+      if (latest === undefined) throw new RoundStateChangedError('the room in PLANNING has no round');
       const tx = this.deps.journal.inTransaction(client);
-      if ((await tx.commandHistory(latest.commandId)).state !== null) {
-        return { kind: 'refused', code: 'round_already_open', reason: 'this revision round is already journaled' } as const;
+      const journaled: { readonly commandId: string; readonly rows: readonly CommandEventRow[]; readonly outcome: string }[] = [];
+      for (const commandId of latest.commandIds) {
+        const history = await tx.commandHistory(commandId);
+        if (history.state === null) break;
+        const rows = history.entries.flatMap((e) => (e.decoded.recordClass === 'command' ? [e.decoded.row] : []));
+        journaled.push({ commandId, rows, outcome: history.state.outcome });
       }
-      const inputs = await roundInputs(client, roomId, current, latest.opening);
-      await tx.appendJournaled(this.plannerRequest(roomId, latest.commandId, latest.opening.eventId, inputs), {
+      const last = journaled.at(-1);
+      if (last === undefined && latest.opening.transition === 'T2') {
+        throw new RoundStateChangedError('the round T2 opened has no journaled command');
+      }
+      if (last !== undefined) {
+        if (last.outcome !== 'failed') {
+          return { kind: 'refused', code: 'round_already_open', reason: `the round's latest command is ${last.outcome}` };
+        }
+        const failed = last.rows.at(-1);
+        if (failed?.eventType !== 'failed' || failed.failureClassification !== 'not_sent') {
+          return { kind: 'refused', code: 'round_failed', reason: 'only a not_sent failure is retried (plan r1 Q8)' };
+        }
+        const budget = retryBudgetTransition(this.retryState(roomId, latest, journaled), { kind: 'retry_request', bucket: this.bucket() });
+        if (!budget.allowed || journaled.length >= MAX_ROUND_ATTEMPTS) {
+          return { kind: 'refused', code: 'retry_budget_exhausted', reason: budget.reason };
+        }
+      }
+      const commandId = latest.commandIds[journaled.length] as string;
+      const inputs = await roundInputs(client, roomId, current, latest.opening.transition === 'T4' ? latest.opening : null);
+      await tx.appendJournaled(this.plannerRequest(roomId, commandId, latest.opening.eventId, inputs, last?.commandId ?? null), {
         roomId,
         lifecycleEventRef: { roomId, eventId: latest.opening.eventId },
       });
-      return { commandId: latest.commandId, opening: latest.opening.eventId, inputs };
+      return { commandId, opening: latest.opening.eventId, inputs };
     });
     if (locked.status === 'not_leader') {
-      return { kind: 'refused', code: 'not_leader', reason: 'the fence refused the revision round' };
+      return { kind: 'refused', code: 'not_leader', reason: 'the fence refused the round' };
     }
     return locked.value;
+  }
+
+  /** The planner route as the retry budget keys it. */
+  private bucket(): DeploymentBucket {
+    const { route } = this.deps;
+    return { seat_id: 'architect', lane_label: route.laneLabel, surface_id: route.intendedSurface, model_id: route.intendedModel, mode: null };
+  }
+
+  /**
+   * The budget state of one round, derived from its journaled attempts: one
+   * execution per round, so a round that completed is closed and a later
+   * revision round starts a fresh budget. Every attempt after the first is a
+   * consumed retry; any attempt not yet terminal is an unknown outcome.
+   */
+  private retryState(
+    roomId: string,
+    round: PlannerRound,
+    journaled: readonly { readonly outcome: string }[],
+  ): RetryBudgetState {
+    const key = canonicalBucketKey(this.bucket());
+    const retries = Math.min(journaled.length - 1, DISPATCH_POLICY.transport_retries_max) as 0 | 1 | 2;
+    return {
+      family: {
+        room: roomId,
+        run: round.opening.eventId,
+        execution: round.commandId,
+        repository_scope: round.opening.scope.repo,
+        authorization: this.deps.route.authorizationRef,
+      },
+      consumed: retries === 0 ? {} : { [key]: retries },
+      exhausted: retries >= DISPATCH_POLICY.transport_retries_max ? [key] : [],
+      failovers_used: 0,
+      pending_unknown_outcome: journaled.some((attempt) => attempt.outcome === 'pending' || attempt.outcome === 'unresolved'),
+      closed: journaled.some((attempt) => attempt.outcome === 'completed'),
+    };
   }
 
   // ---- executing an opened round -----------------------------------------
@@ -409,7 +525,24 @@ export class PlannerLoop {
     return { kind: 'unresolved', commandId, reason };
   }
 
+  /**
+   * Run an opened round. If the Founder cancels the room meanwhile, the
+   * cancel marks this command `unresolved` (plan r1 Q6), and the round's
+   * next append is refused as out of sequence: that is reported as
+   * `cancelled`, never retried and never treated as success.
+   */
   private async execute(roomId: string, round: OpenedRound): Promise<PlannerRoundOutcome> {
+    try {
+      return await this.executeRound(roomId, round);
+    } catch (error) {
+      if (error instanceof JournalSequenceError && (await this.deps.ledger.loadRoom(roomId)).state.state === 'CLOSED_ABANDONED') {
+        return { kind: 'cancelled', commandId: round.commandId };
+      }
+      throw error;
+    }
+  }
+
+  private async executeRound(roomId: string, round: OpenedRound): Promise<PlannerRoundOutcome> {
     const { route, planner } = this.deps;
     const { commandId, inputs } = round;
     const intended: ObservedRoute = {
@@ -583,7 +716,7 @@ export async function submitRoundPlan(deps: SubmitDeps, request: SubmitRequest):
     appended = await deps.ledger.appendDerived(roomId, {
       build: async (_client, current) => {
         const rounds = plannerRoundsOf(roomId, current);
-        if (current.state !== 'PLANNING' || rounds[rounds.length - 1]?.commandId !== commandId) {
+        if (current.state !== 'PLANNING' || !(rounds.at(-1)?.commandIds.includes(commandId) ?? false)) {
           throw new RoundStateChangedError('the round is no longer the room’s current round');
         }
         const plan = judgePlanDoc(document);
@@ -647,7 +780,7 @@ export async function readRoundInputs(
 ): Promise<{ readonly inputs: RoundInputs; readonly state: LedgerState['state']; readonly latest: boolean } | null | 'not_leader'> {
   const locked = await ledger.underRoomLock(roomId, async (client, current) => {
     const rounds = plannerRoundsOf(roomId, current);
-    const index = rounds.findIndex((round) => round.commandId === commandId);
+    const index = rounds.findIndex((round) => round.commandIds.includes(commandId));
     if (index < 0) return null;
     const round = rounds[index] as PlannerRound;
     const inputs = await roundInputs(client, roomId, current, round.opening.transition === 'T4' ? round.opening : null);
@@ -676,11 +809,28 @@ async function roundInputs(
 ): Promise<RoundInputs> {
   const t1 = current.entries.find((entry) => entry.transition === 'T1');
   if (t1 === undefined) throw new RoundStateChangedError('the room has no captured scope');
-  const facts = await client.query<{ base_sha: string | null }>(T1_FACTS_SQL, [roomId, t1.eventId]);
+  const facts = await client.query<{ base_sha: string | null; goal: string | null }>(T1_FACTS_SQL, [roomId, t1.eventId]);
   const baseSha = facts.rows[0]?.base_sha;
   if (typeof baseSha !== 'string' || baseSha === '') throw new RoundStateChangedError('the captured scope carries no base sha');
   if (!checkScopePaths(t1.scope.paths).ok) throw new RoundStateChangedError('the captured scope paths are not canonical');
-  const base: RoundInputs = { repository: t1.scope.repo, baseSha, scopePaths: [...t1.scope.paths], goalEventId: t1.eventId };
+  // The goal is required to plan (plan r1 Q7c), and must still be the goal whose digest T1 recorded.
+  const goal = facts.rows[0]?.goal;
+  const recorded = t1.evidence.filter((e) => e.kind === FOUNDER_GOAL_EVIDENCE_KIND);
+  if (typeof goal !== 'string' || goal.trim() === '' || recorded.length === 0) {
+    throw new RoundStateChangedError('the captured scope carries no Founder goal');
+  }
+  const goalDigest = founderGoalDigest(goal);
+  if (recorded.length !== 1 || recorded[0]?.digest !== goalDigest) {
+    throw new RoundStateChangedError('the captured goal does not match the digest its scope capture recorded');
+  }
+  const base: RoundInputs = {
+    repository: t1.scope.repo,
+    baseSha,
+    scopePaths: [...t1.scope.paths],
+    goalEventId: t1.eventId,
+    goal,
+    goalDigest,
+  };
   if (revisionOpening === null) return base;
   const payload = await client.query<{ feedback: string | null }>(T4_PAYLOAD_SQL, [roomId, revisionOpening.eventId]);
   const feedback = payload.rows[0]?.feedback;

@@ -13,6 +13,7 @@
  * rather than quietly proving less than it appears to.
  */
 
+import { createHash } from 'node:crypto';
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
@@ -653,5 +654,61 @@ describe('control plane — the planner path is not the generic route', () => {
     assert.equal(response.status, 409);
     assert.equal(seen, 'scope.captured');
     await harness.close();
+  });
+});
+
+describe('control plane — the Founder goal rides on scope capture (plan r1 Q7c)', () => {
+  async function post(event: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown>; seen: Record<string, unknown> | null }> {
+    let seen: Record<string, unknown> | null = null;
+    const store = {
+      append: async (_room: string, appended: Record<string, unknown>) => {
+        seen = appended;
+        return { ok: false as const, outcome: 'rejected' as const, code: 'state_not_in_from_set' as const, reason: 'test', state: initialLedger() };
+      },
+    } as unknown as PostgresLedgerStore;
+    const harness = await start(reachablePool, store);
+    try {
+      const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify(event),
+      });
+      return { status: response.status, body: await json(response), seen };
+    } finally {
+      await harness.close();
+    }
+  }
+
+  it('adds the goal digest as the server’s evidence on T1', async () => {
+    const goal = 'Add a health detail field.';
+    const { seen } = await post({ ...makeEvent('scope.captured'), goal });
+    assert.ok(seen !== null);
+    const evidence = (seen as { evidence: { kind: string; ref: string; digest: string }[] }).evidence;
+    const entry = evidence.find((e) => e.kind === 'founder_goal');
+    assert.equal(entry?.digest, createHash('sha256').update(goal, 'utf8').digest('hex'));
+    assert.equal((seen as { goal: string }).goal, goal);
+  });
+
+  for (const [label, event, kind] of [
+    ['a goal on another event', { ...makeEvent('build.closed'), goal: 'x' }, 'not_on_scope_capture'],
+    ['an empty goal', { ...makeEvent('scope.captured'), goal: ' ' }, 'invalid'],
+    ['a credential-shaped goal', { ...makeEvent('scope.captured'), goal: 'use password=hunter2-correct-horse' }, 'credential_material'],
+    ['caller-supplied goal evidence', { ...makeEvent('scope.captured'), evidence: [{ kind: 'founder_goal', ref: 'x', digest: 'a'.repeat(64) }] }, 'server_evidence'],
+  ] as const) {
+    it(`refuses ${label} with 400 before the store`, async () => {
+      const { status, body, seen } = await post(event as Record<string, unknown>);
+      assert.equal(status, 400);
+      assert.equal(body.error, 'founder_goal_refused');
+      assert.equal(body.kind, kind);
+      assert.equal(seen, null);
+    });
+  }
+
+  it('leaves a scope capture with no goal unchanged', async () => {
+    const { seen } = await post({ ...makeEvent('scope.captured') });
+    assert.ok(seen !== null);
+    const evidence = (seen as { evidence: { kind: string }[] }).evidence;
+    assert.equal(evidence.some((e) => e.kind === 'founder_goal'), false);
+    assert.equal('goal' in (seen as object), false);
   });
 });

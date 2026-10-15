@@ -297,8 +297,9 @@ proposed resolutions of Q1 and Q3 below. Q2 and Q4 stay open.
 Asked one at a time in session at the Founder's direction ("Ask me each
 question needed 1 by 1"). Where the Founder chose an option, the answer
 is recorded as that option's label and text, as presented. Where the
-Founder wrote an answer, it is quoted verbatim. Nothing here is built
-yet.
+Founder wrote an answer, it is quoted verbatim. Q6, Q8 and Q7c are built
+(below, "Built for Q6, Q8 and Q7c", on the Founder's direction "go ahead
+with the Q6, Q8 and Q7c slice"); the rest are not.
 
 - **Q6, cancel while a planner command runs.** Selected: "Allow, mark
   unconfirmed (Recommended)". Option text: "Cancel goes through. In the
@@ -357,6 +358,41 @@ yet.
   (Recommended)". Option text: "A focused PR on main with the
   one-condition change, its tests and the §9 doc update. Reviewed and
   merged on its own SHA-named authorization."
+
+Built for Q6, Q8 and Q7c:
+- **Q6** in `control-plane/src/plan-decision.ts`. A cancel while a planner
+  command is pending or `unresolved` goes through, with G22's
+  `unconfirmedCancelRecorded`. In the same transaction each pending
+  command is recorded `unresolved`, bound to the T22 event, with evidence
+  `unconfirmed-cancel`. An `unresolved` one is left as it is. A round
+  still running when its room is cancelled reports `cancelled` once its
+  next journal append is refused. Any plan that comes back later changes
+  nothing.
+- **Q8** in `control-plane/src/planner-loop.ts`. A round whose latest
+  attempt failed `not_sent` is retried as a new command when
+  `retryBudgetTransition` allows it.
+  - Attempt ids derive from the room, the opening transition and the
+    attempt number; attempt 1 keeps its id.
+  - The retry's `journaled` row carries `retry-of/<command>` and
+    `retry-reason/not_sent`.
+  - The builder's reading of "within one execution" is one round, so a
+    revision round starts a fresh budget.
+  - Any other failure answers `round_failed`. A pending or unresolved
+    attempt answers `round_already_open`. A spent budget answers
+    `retry_budget_exhausted`.
+  - Cancel and recovery read every attempt.
+- **Q7c** in `control-plane/src/founder-goal.ts` and the room route. A
+  goal on T1 is checked (non-empty, at most 20000 characters, no
+  credential-shaped text) and its digest is added as server evidence
+  (`founder_goal`). A goal on any other event, or caller-supplied goal
+  evidence, is refused with 400. The planner loop opens no round without
+  a goal, or when the goal no longer matches its digest. It hands the
+  goal to the Planner and journals the digest. A T1 with no goal is still
+  accepted, because the run harness captures scope without one.
+
+Tests: Q6, Q8 and Q7c cases in `test/planner-loop.storage.test.ts`,
+`test/plan-decision.test.ts`, `test/planner-recovery.storage.test.ts` and
+`test/control-plane-server.test.ts`.
 
 What these answers do not yet settle:
 - Q7b's surface needs a FounderOS registry change before a counted run.

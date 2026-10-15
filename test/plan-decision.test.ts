@@ -21,13 +21,12 @@ import {
   FounderCancelUnavailableError,
   PlanHashMismatchError,
   PlanHashNotApplicableError,
-  PlannerCommandInFlightError,
   decidePlan,
   validatePlanDecisionBody,
   type PlanDecisionDeps,
 } from '../packages/control-plane/src/plan-decision.js';
 import type { StoredPlan } from '../packages/control-plane/src/plan-store.js';
-import type { CommandHistory, DecisionInput } from '../packages/control-plane/src/journal-store.js';
+import type { CommandHistory, DecisionInput, LaterCommandEvent } from '../packages/control-plane/src/journal-store.js';
 import { plannerCommandIdFor } from '../packages/control-plane/src/planner-loop.js';
 import type { CommandOutcome } from '../packages/journal/src/index.js';
 import { containsCredentialMaterial } from '../packages/journal/src/index.js';
@@ -211,9 +210,10 @@ function stubDeps(
   current: LedgerState,
   plan: StoredPlan | null,
   outcomes: Readonly<Record<string, CommandOutcome>> = {},
-): { deps: PlanDecisionDeps; built: LifecycleEvent[]; decisions: DecisionInput[] } {
+): { deps: PlanDecisionDeps; built: LifecycleEvent[]; decisions: DecisionInput[]; commandEvents: LaterCommandEvent[] } {
   const built: LifecycleEvent[] = [];
   const decisions: DecisionInput[] = [];
+  const commandEvents: LaterCommandEvent[] = [];
   const client = {} as PoolClient;
   const ledger = {
     appendDerived: async <T>(_roomId: string, spec: DerivedAppend<T>) => {
@@ -233,8 +233,9 @@ function stubDeps(
           decisions.push(decision);
           return { recordClass: 'decision', commandId: decision.commandId, eventType: decision.decision, seq: '9', chainHash: 'c'.repeat(64) };
         },
-        appendCommandEvent: async () => {
-          throw new Error('unused');
+        appendCommandEvent: async (event: LaterCommandEvent) => {
+          commandEvents.push(event);
+          return { recordClass: 'command', commandId: event.commandId, eventType: event.eventType, seq: '8', chainHash: 'd'.repeat(64) };
         },
         appendJournaled: async () => {
           throw new Error('unused');
@@ -251,7 +252,7 @@ function stubDeps(
     },
     now: () => new Date('2026-10-15T12:00:00.000Z'),
   };
-  return { deps, built, decisions };
+  return { deps, built, decisions, commandEvents };
 }
 
 describe('plan decision — the server builds the event and binds the decision record', () => {
@@ -327,12 +328,22 @@ describe('plan decision — founder.cancel binds to the room’s planner command
     }
   });
 
-  it('refuses while the planner command is pending or unresolved', async () => {
-    for (const outcome of ['pending', 'unresolved'] as const) {
-      const { deps, built } = stubDeps(room('PLANNING', [T1, T2]), null, { [ROUND_ONE]: outcome });
-      await assert.rejects(decidePlan(deps, ROOM, cancel()), PlannerCommandInFlightError);
-      assert.equal(built.length, 0);
-    }
+  it('Q6: a pending command is cancelled unconfirmed — recorded unresolved, bound to T22, in the same transaction', async () => {
+    const { deps, built, decisions, commandEvents } = stubDeps(room('PLANNING', [T1, T2]), null, { [ROUND_ONE]: 'pending' });
+    await decidePlan(deps, ROOM, cancel());
+    assert.deepEqual(built[0]!.facts, { unconfirmedCancelRecorded: true });
+    assert.deepEqual(commandEvents, [
+      { eventType: 'unresolved', commandId: ROUND_ONE, lifecycleEventRef: { roomId: ROOM, eventId: built[0]!.eventId }, evidenceRefs: ['unconfirmed-cancel'] },
+    ]);
+    assert.equal(decisions[0]?.commandId, ROUND_ONE);
+  });
+
+  it('Q6: an already unresolved command stays so; the cancel is unconfirmed and appends nothing to it', async () => {
+    const { deps, built, decisions, commandEvents } = stubDeps(room('PLANNING', [T1, T2]), null, { [ROUND_ONE]: 'unresolved' });
+    await decidePlan(deps, ROOM, cancel());
+    assert.deepEqual(built[0]!.facts, { unconfirmedCancelRecorded: true });
+    assert.deepEqual(commandEvents, []);
+    assert.equal(decisions[0]?.decision, 'founder.cancel');
   });
 
   it('in PLANNING after a failed command: no plan hash, bound to that command, G22 fact derived', async () => {
@@ -365,7 +376,7 @@ describe('plan decision — founder.cancel binds to the room’s planner command
     await assert.rejects(decidePlan(stubDeps(current, STORED, { [ROUND_ONE]: 'completed' }).deps, ROOM, cancel('b'.repeat(64))), PlanHashMismatchError);
   });
 
-  it('binds to the latest journaled round, and every round must be terminal', async () => {
+  it('binds to the latest journaled round; a running one makes the cancel unconfirmed', async () => {
     const t3 = { seq: 3, eventId: 'evt_t3', transition: 'T3', fromState: 'PLANNING', resultingState: 'PLAN_REVIEW' } as unknown as LedgerEntry;
     const t4 = { seq: 4, eventId: 'evt_t4', transition: 'T4', fromState: 'PLAN_REVIEW', resultingState: 'PLANNING' } as unknown as LedgerEntry;
     const roundTwo = plannerCommandIdFor(ROOM, 'evt_t4');
@@ -377,7 +388,9 @@ describe('plan decision — founder.cancel binds to the room’s planner command
     await decidePlan(done.deps, ROOM, cancel());
     assert.equal(done.decisions[0]?.commandId, roundTwo);
     const running = stubDeps(room('PLANNING', entries), null, { [ROUND_ONE]: 'completed', [roundTwo]: 'pending' });
-    await assert.rejects(decidePlan(running.deps, ROOM, cancel()), PlannerCommandInFlightError);
+    await decidePlan(running.deps, ROOM, cancel());
+    assert.equal(running.decisions[0]?.commandId, roundTwo);
+    assert.deepEqual(running.commandEvents.map((e) => [e.eventType, e.commandId]), [['unresolved', roundTwo]]);
   });
 
   it('a RECONCILING room records its prior state, and the plan rule follows that state', async () => {
