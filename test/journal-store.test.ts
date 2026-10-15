@@ -52,6 +52,11 @@ function alwaysRacingPool(): { pool: Pool; calls: { headReads: number; routineCa
         { code: '23000' },
       );
     }
+    // The append's own transaction: BEGIN, the append lock, its savepoint,
+    // the rollback to it after each lost race, and the final ROLLBACK.
+    if (/^(BEGIN|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK TO SAVEPOINT)\b/.test(sql) || /pg_advisory_xact_lock/.test(sql)) {
+      return { rows: [], rowCount: 0 };
+    }
     throw new Error('unexpected statement');
   };
   const client = { query, release: () => undefined };

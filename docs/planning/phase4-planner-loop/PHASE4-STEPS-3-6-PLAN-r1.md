@@ -43,7 +43,15 @@ Each slice lands as commits on the one branch, with its tests.
    rows; a variant that joins a caller's transaction, so that a decision
    record and its lifecycle event commit together (§1.4); row decoders,
    Postgres `verify()` and reconstruction. All in `journal-store.ts`, which
-   the sole-writer test requires.
+   the sole-writer test requires. Built: decoders and the cross-row rules
+   in `packages/journal` (`decode.ts`, `sequence.ts`); every append in one
+   transaction under a journal advisory lock, taken after the room lock;
+   the rules checked after the insert and before the commit; a decision
+   accepted only with a lifecycle event its own transaction wrote. A
+   `completed` needs an authorization resolver the store is given, and is
+   refused without one, so no `completed` can be written until slice 7
+   supplies the resolver. Tests: `test/journal-decode.test.ts` and
+   `test/journal-writer.storage.test.ts`.
 4. **The plan store.** Migration `0010` (an append-only plans table with
    `0008`-style grants) and `control-plane/src/plan-store.ts`. A migration
    means the merge's deployment refuses to boot until `0010` is applied;
@@ -74,7 +82,8 @@ Each slice lands as commits on the one branch, with its tests.
 
 ## Open questions for the Founder
 
-These change the build. Slices 1 to 5 do not depend on them.
+These change the build. Slices 1 to 5 do not depend on Q1, Q2 or Q4.
+Slice 5's cancel path depends on Q5.
 
 **Founder direction in session, 2026-10-15, verbatim: "GO".** Given in
 answer to the builder's request to approve, together: this work's own
@@ -110,6 +119,16 @@ proposed resolutions of Q1 and Q3 below. Q2 and Q4 stay open.
 - **Q4. The ceiling code correction.** Your ruling of 2026-08-29 left the
   inclusive-ceiling code fix as separate work it did not authorize; the
   planner admission path runs through the cost meter.
+- **Q5. A cancel with no planner command.** Raised by slice 3. Under Q3
+  a decision row carries the planner command's `command_id`. T22
+  (`founder.cancel`) also fires from `ROOM_CREATED` and `SCOPED`, before
+  any planner command exists, so that row has no `command_id` to carry,
+  and slice 1 already refuses T22 on the generic route. Until this is
+  ruled, a room can be cancelled only once a planner command exists. The
+  options are a governed cancel command journaled first, a sentinel-free
+  schema change that lets a decision row carry no `command_id`, or
+  leaving pre-planning cancel unavailable in Phase 4. This is a Founder
+  call; the builder has not chosen.
 
 ## Verification
 
