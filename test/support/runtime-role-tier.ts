@@ -40,6 +40,7 @@ export const RUNTIME_ROLE_SUITES: readonly string[] = [
   'phase3-run-events',
   'phase3-run-routes',
   'phase4-lifecycle',
+  'phase4-run-harness',
   'runtime-role-boot',
 ];
 

@@ -199,7 +199,30 @@ Each slice lands as commits on the one branch, with its tests.
      cites, and to the contract's 15 §10 rows.
 10. **Counted-run preparation (step 6).** A Phase 4 run harness under
     `packages/run-harness/src/phase4/`, and a proposed run unit for the act
-    C6 of the ruling calls for. No counted run executes.
+    C6 of the ruling calls for. No counted run executes. Built, on the same
+    direction:
+    - `PHASE4-RUN-UNIT-PROPOSAL-r1.md` (this directory): the proposed run
+      unit, set semantics, entry, evidence, what must exist before any run,
+      and questions Q9 to Q14.
+    - The harness:
+      - `run-set.ts` reads the act's terms as a closed shape;
+      - `entry.ts` reports every gap between the act and the live system,
+        against the pinned seat lanes and surface registry;
+      - `run-unit.ts` judges one run's record by the proposed unit;
+      - `run-sequence.ts` tracks the set's progress;
+      - `export-reader.ts` reads the existing room-export route;
+      - `runner.ts` drives one run through a driver that offers no way to
+        decide a plan.
+    - Entry refuses every set today: the T2 surface
+      `build-room-control-plane` is not in the vendored registry until
+      `DEC-20261015-01` is ratified and the fixture re-pinned. Nothing in
+      production implements the driver. Starting a round and reading the
+      journal need a control-plane surface (Q9).
+    - Tests:
+      - `test/phase4-run-harness.test.ts`, at unit level;
+      - `test/phase4-run-harness.storage.test.ts`: the runner over the real
+        assembly in the runtime-role tier, judging real persisted records,
+        with the test playing the Founder at the plan-decision route.
 
 ## Open questions for the Founder
 
