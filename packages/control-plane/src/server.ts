@@ -31,6 +31,8 @@ import { gateRunRouter } from './gate-run-routes.js';
 import { requiresGovernedPath } from './governed-events.js';
 import { journalRouter } from './journal-routes.js';
 import { JournalStore } from './journal-store.js';
+import { PlanStore } from './plan-store.js';
+import { planDecisionRouter } from './plan-decision.js';
 import { PostgresLedgerStore, RoomNotFoundError } from './store.js';
 import {
   ROOM_BODY_LIMIT,
@@ -60,6 +62,12 @@ export interface ServerDeps {
    * sequence in `main.ts` needs no change. Tests inject a stand-in here.
    */
   readonly journalStore?: Pick<JournalStore, 'appendJournaled'>;
+  /**
+   * The plan decision's collaborators (plan-decision.ts). Built from `pool`
+   * when absent, as `journalStore` is; tests inject stand-ins here.
+   */
+  readonly planStore?: Pick<PlanStore, 'inTransaction'>;
+  readonly decisionJournal?: Pick<JournalStore, 'inTransaction'>;
 }
 
 /** Errors that carry an HTTP status the client should see. */
@@ -314,7 +322,24 @@ export function createServer(deps: ServerDeps): Express {
    * of the append routine and `test/journal-sole-writer.test.ts` holds
    * that at the source.
    */
-  app.use(journalRouter({ store: deps.journalStore ?? new JournalStore(pool), requireToken }));
+  const journal = new JournalStore(pool);
+  app.use(journalRouter({ store: deps.journalStore ?? journal, requireToken }));
+  /*
+   * The Founder's plan decision (journal contract §8.2): behind the ruled
+   * `PHASE3_ADJUDICATION_TOKEN` and nothing else; refused outright when that
+   * token is unset. The decision and its lifecycle event commit together in
+   * the room's fenced append transaction.
+   */
+  app.use(
+    planDecisionRouter({
+      ledger: store,
+      plans: deps.planStore ?? new PlanStore(pool),
+      journal: deps.decisionJournal ?? journal,
+      requireAdjudicationToken:
+        config.phase3AdjudicationToken === null ? null : tokenGuard(config.phase3AdjudicationToken),
+      requireLeader: deps.gateway.leadership.requireLeader(),
+    }),
+  );
   app.use(
     phase3RunRouter({
       store: deps.gateway.phase3Runs,

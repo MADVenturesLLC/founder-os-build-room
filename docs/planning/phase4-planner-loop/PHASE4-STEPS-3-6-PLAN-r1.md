@@ -68,7 +68,15 @@ Each slice lands as commits on the one branch, with its tests.
    adjudication token, which becomes mandatory for this route (refuse if
    unset, §8.2). The server recomputes `plan_hash` from the stored plan and
    compares it with the submitted one; the decision row and the lifecycle
-   event commit in one transaction.
+   event commit in one transaction. Built for approve (T5) and revise
+   (T4) in `control-plane/src/plan-decision.ts`; cancel (T22) answers 501
+   until Q5 is ruled (Founder direction in session, 2026-10-15: "build
+   approve and revise now"). The plan under review is read inside the
+   room's fenced append transaction, after the room lock, so a concurrent
+   revision and resubmission cannot change what is being approved. The
+   ledger store gained `appendDerived` for that: the event is built from
+   the locked state and a further step runs before the commit. Tests:
+   `test/plan-decision.test.ts` and `test/plan-decision.storage.test.ts`.
 6. **Consumed capabilities (step 3).** See the open question Q1.
 7. **The governed planner loop.** `control-plane/src/planner-loop.ts`:
    journal `journaled`, then T2, then dispatch with the permit, then
@@ -130,8 +138,9 @@ proposed resolutions of Q1 and Q3 below. Q2 and Q4 stay open.
   (`founder.cancel`) also fires from `ROOM_CREATED` and `SCOPED`, before
   any planner command exists, so that row has no `command_id` to carry,
   and slice 1 already refuses T22 on the generic route. Until this is
-  ruled, a room can be cancelled only once a planner command exists. The
-  options are a governed cancel command journaled first, a sentinel-free
+  ruled, this branch cancels no room in any state: the generic route
+  refuses T22 and the plan-decision endpoint answers 501. The options
+  are a governed cancel command journaled first, a sentinel-free
   schema change that lets a decision row carry no `command_id`, or
   leaving pre-planning cancel unavailable in Phase 4. This is a Founder
   call; the builder has not chosen.

@@ -103,6 +103,34 @@ export type AppendResult =
    */
   | { readonly ok: false; readonly outcome: 'not_leader'; readonly committed: boolean };
 
+/**
+ * An append whose event is built from the room's state as it stands under
+ * the room lock, with one further step in the same transaction after a
+ * transition (the plan decision: `plan-decision.ts`).
+ *
+ * `build` reads the state the reducer will decide over, after L3, so what it
+ * derives (the plan under review, its hash) cannot change before the
+ * decision lands. `afterTransition` runs only when the reducer accepted a
+ * transition, before COMMIT, on the same client; a throw from it rolls the
+ * transition back with it, so the pair commits together or not at all
+ * (journal contract §1.4). A rejection or a replay runs no further step.
+ */
+export interface DerivedAppend<T> {
+  readonly build: (client: PoolClient, current: LedgerState) => Promise<LifecycleEvent>;
+  readonly afterTransition: (
+    client: PoolClient,
+    appended: { readonly event: LifecycleEvent; readonly seq: number; readonly entry: LedgerEntry; readonly state: LedgerState },
+  ) => Promise<T>;
+}
+
+export interface DerivedAppendResult<T> {
+  readonly result: AppendResult;
+  /** The event as built, or `null` when the room did not exist. */
+  readonly event: LifecycleEvent;
+  /** `afterTransition`'s value, present only after a committed transition. */
+  readonly after: T | null;
+}
+
 export interface RoomView {
   readonly roomId: string;
   readonly exists: boolean;
@@ -179,6 +207,69 @@ export class PostgresLedgerStore {
   }
 
   /**
+   * An append whose event is built under the room lock, with a further step
+   * in the same transaction (see `DerivedAppend`). Fenced exactly as
+   * `append` is when the store has a fence.
+   */
+  async appendDerived<T>(roomId: string, spec: DerivedAppend<T>): Promise<DerivedAppendResult<T>> {
+    if (this.fence === undefined) {
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const out = await this.runDerivedBody(client, roomId, spec, null);
+        await client.query('COMMIT');
+        return out;
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    let notFound = false;
+    let built: LifecycleEvent | null = null;
+    const outcome = await this.fence.runRoomAppend<DerivedAppendResult<T> | null>(async (client, derive) => {
+      try {
+        const out = await this.runDerivedBody(client, roomId, spec, derive);
+        built = out.event;
+        return { value: out, commit: true };
+      } catch (error) {
+        if (error instanceof RoomNotFoundError) {
+          notFound = true;
+          return { value: null, commit: false };
+        }
+        throw error;
+      }
+    });
+    if (notFound) throw new RoomNotFoundError(roomId);
+    if (outcome.status === 'not_leader') {
+      if (built === null) throw new Error('fenced derived append refused before its event was built');
+      return { result: { ok: false, outcome: 'not_leader', committed: outcome.committed }, event: built, after: null };
+    }
+    if (outcome.status === 'commit_failed') {
+      throw new Error(`room append commit failed: ${outcome.message}`);
+    }
+    if (outcome.value === null) throw new RoomNotFoundError(roomId);
+    return outcome.value;
+  }
+
+  private async runDerivedBody<T>(
+    client: PoolClient,
+    roomId: string,
+    spec: DerivedAppend<T>,
+    deriveGatewayOnline: (() => Promise<boolean>) | null,
+  ): Promise<DerivedAppendResult<T>> {
+    const { current, logLength } = await lockAndReplay(client, roomId);
+    const event = await spec.build(client, current);
+    const result = await this.decideAndRecord(client, roomId, event, current, logLength, deriveGatewayOnline);
+    if (result.ok && result.outcome === 'transition') {
+      const after = await spec.afterTransition(client, { event, seq: result.seq, entry: result.entry, state: result.state });
+      return { result, event, after };
+    }
+    return { result, event, after: null };
+  }
+
+  /**
    * The same append, inside the leader-dependent fenced transaction, with the
    * `gatewayOnline` overlay derived rather than believed (contract §10).
    */
@@ -224,92 +315,83 @@ export class PostgresLedgerStore {
     event: LifecycleEvent,
     deriveGatewayOnline: (() => Promise<boolean>) | null,
   ): Promise<AppendResult> {
-    {
-      // Serializes writers for this room. Also proves the room exists. This is
-      // L3, and it is taken last, after L0, L1 and L2 (contract §13).
-      const locked = await client.query('SELECT room_id FROM build_room_rooms WHERE room_id = $1 FOR UPDATE', [
-        roomId,
-      ]);
-      if (locked.rowCount === 0) {
-        throw new RoomNotFoundError(roomId);
-      }
+    const { current, logLength } = await lockAndReplay(client, roomId);
+    return this.decideAndRecord(client, roomId, event, current, logLength, deriveGatewayOnline);
+  }
 
-      /*
-       * Replay is UNBOUNDED, and that is a known Phase 2 limit rather than an
-       * oversight — see `docs/phase-2-known-limits.md` §1. Every append reads
-       * the whole log and re-reduces it, so N appends cost O(N²) in total, and
-       * a long enough log eventually exceeds `statement_timeout` and fails the
-       * write outright. Harmless at Phase 2 scale (one event, fresh room);
-       * not harmless once a room holds a real build's worth of events. Raised
-       * by CodeRabbit on PR #2.
-       */
-      const { state: current, logLength } = await replay(client, roomId);
+  /** The reducer's verdict on one event, and whatever it decided, persisted. */
+  private async decideAndRecord(
+    client: PoolClient,
+    roomId: string,
+    event: LifecycleEvent,
+    current: LedgerState,
+    logLength: number,
+    deriveGatewayOnline: (() => Promise<boolean>) | null,
+  ): Promise<AppendResult> {
+    /*
+     * The overlay is derived and OVERWRITES whatever the caller asserted
+     * (contract §10). `gatewayOnline` decides whether work may be dispatched
+     * to a machine; a caller asserting its own reachability is a caller
+     * marking its own homework. `@build-room/contracts` shapes are untouched
+     * — only this one fact's value is replaced.
+     *
+     * The DERIVED event is what gets reduced AND what gets persisted
+     * (correction B1, Rev 4.7 tester). The log is the input to every future
+     * replay, so a row carrying the caller's original value would commit a
+     * transition that replay refuses — write-time and read-time verdicts
+     * disagreeing. Only the rejection record keeps the submitted event, and
+     * deliberately: it is evidence of what the caller sent, never an input
+     * to a replay.
+     */
+    const offered =
+      deriveGatewayOnline === null
+        ? event
+        : {
+            ...event,
+            facts: { ...event.facts, gatewayOnline: await deriveGatewayOnline() },
+          };
 
-      /*
-       * The overlay is derived and OVERWRITES whatever the caller asserted
-       * (contract §10). `gatewayOnline` decides whether work may be dispatched
-       * to a machine; a caller asserting its own reachability is a caller
-       * marking its own homework. `@build-room/contracts` shapes are untouched
-       * — only this one fact's value is replaced.
-       *
-       * The DERIVED event is what gets reduced AND what gets persisted
-       * (correction B1, Rev 4.7 tester). The log is the input to every future
-       * replay, so a row carrying the caller's original value would commit a
-       * transition that replay refuses — write-time and read-time verdicts
-       * disagreeing. Only the rejection record keeps the submitted event, and
-       * deliberately: it is evidence of what the caller sent, never an input
-       * to a replay.
-       */
-      const offered =
-        deriveGatewayOnline === null
-          ? event
-          : {
-              ...event,
-              facts: { ...event.facts, gatewayOnline: await deriveGatewayOnline() },
-            };
+    const result: ApplyResult = apply(current, offered);
 
-      const result: ApplyResult = apply(current, offered);
+    if (!result.ok) {
+      await recordRejection(client, roomId, event, result.code, result.reason);
+      return { ok: false, outcome: 'rejected', code: result.code, reason: result.reason, state: current };
+    }
 
-      if (!result.ok) {
-        await recordRejection(client, roomId, event, result.code, result.reason);
-        return { ok: false, outcome: 'rejected', code: result.code, reason: result.reason, state: current };
-      }
+    if (result.kind === 'replay') {
+      // INV-4. Nothing is written; the log already holds this event.
+      return { ok: true, outcome: 'replay', entry: result.entry, state: result.state };
+    }
 
-      if (result.kind === 'replay') {
-        // INV-4. Nothing is written; the log already holds this event.
-        return { ok: true, outcome: 'replay', entry: result.entry, state: result.state };
-      }
+    const seq = logLength + 1;
 
-      const seq = logLength + 1;
-
-      if (result.kind === 'conjunction_pending') {
-        await insertEvent(client, {
-          roomId,
-          seq,
-          event: offered,
-          outcome: 'conjunction_pending',
-          entry: null,
-          state: result.state,
-        });
-        return {
-          ok: true,
-          outcome: 'conjunction_pending',
-          seq,
-          awaiting: result.awaiting,
-          state: result.state,
-        };
-      }
-
+    if (result.kind === 'conjunction_pending') {
       await insertEvent(client, {
         roomId,
         seq,
         event: offered,
-        outcome: 'transition',
-        entry: result.entry,
+        outcome: 'conjunction_pending',
+        entry: null,
         state: result.state,
       });
-      return { ok: true, outcome: 'transition', seq, entry: result.entry, state: result.state };
+      return {
+        ok: true,
+        outcome: 'conjunction_pending',
+        seq,
+        awaiting: result.awaiting,
+        state: result.state,
+      };
     }
+
+    await insertEvent(client, {
+      roomId,
+      seq,
+      event: offered,
+      outcome: 'transition',
+      entry: result.entry,
+      state: result.state,
+    });
+    return { ok: true, outcome: 'transition', seq, entry: result.entry, state: result.state };
   }
 
   /**
@@ -720,6 +802,34 @@ interface InsertArgs {
   readonly outcome: 'transition' | 'conjunction_pending';
   readonly entry: LedgerEntry | null;
   readonly state: LedgerState;
+}
+
+/**
+ * Take the room lock and replay the room's log: the state every append
+ * decides over.
+ */
+async function lockAndReplay(
+  client: PoolClient,
+  roomId: string,
+): Promise<{ readonly current: LedgerState; readonly logLength: number }> {
+  // Serializes writers for this room. Also proves the room exists. This is
+  // L3, and it is taken last, after L0, L1 and L2 (contract §13).
+  const locked = await client.query('SELECT room_id FROM build_room_rooms WHERE room_id = $1 FOR UPDATE', [roomId]);
+  if (locked.rowCount === 0) {
+    throw new RoomNotFoundError(roomId);
+  }
+
+  /*
+   * Replay is UNBOUNDED, and that is a known Phase 2 limit rather than an
+   * oversight — see `docs/phase-2-known-limits.md` §1. Every append reads
+   * the whole log and re-reduces it, so N appends cost O(N²) in total, and
+   * a long enough log eventually exceeds `statement_timeout` and fails the
+   * write outright. Harmless at Phase 2 scale (one event, fresh room);
+   * not harmless once a room holds a real build's worth of events. Raised
+   * by CodeRabbit on PR #2.
+   */
+  const { state: current, logLength } = await replay(client, roomId);
+  return { current, logLength };
 }
 
 async function insertEvent(client: PoolClient, args: InsertArgs): Promise<void> {
