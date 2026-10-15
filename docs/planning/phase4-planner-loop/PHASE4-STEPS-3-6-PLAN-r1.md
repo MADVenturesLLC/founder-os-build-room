@@ -78,7 +78,10 @@ Each slice lands as commits on the one branch, with its tests.
    the locked state and a further step runs before the commit. Tests:
    `test/plan-decision.test.ts` and `test/plan-decision.storage.test.ts`.
 6. **Consumed capabilities (step 3).** See the open question Q1.
-7. **The governed planner loop.** `control-plane/src/planner-loop.ts`:
+7. **The governed planner loop.** Also carries `founder.cancel` (T22)
+   under the Q5 ruling: bound to the room's planner command, G22's fact
+   derived from that command's journaled state, refused before a planner
+   command exists. `control-plane/src/planner-loop.ts`:
    journal `journaled`, then T2, then dispatch with the permit, then
    identity binding, then the plan back as T3 with its schema check and
    hash, then PLAN_REVIEW. Fail closed on every failure the authorization's
@@ -97,7 +100,8 @@ Each slice lands as commits on the one branch, with its tests.
 ## Open questions for the Founder
 
 These change the build. Slices 1 to 5 do not depend on Q1, Q2 or Q4.
-Slice 5's cancel path depends on Q5.
+Slice 5's cancel path depended on Q5, now ruled (below); cancel moves to
+slice 7.
 
 **Founder direction in session, 2026-10-15, verbatim: "GO".** Given in
 answer to the builder's request to approve, together: this work's own
@@ -142,8 +146,18 @@ proposed resolutions of Q1 and Q3 below. Q2 and Q4 stay open.
   refuses T22 and the plan-decision endpoint answers 501. The options
   are a governed cancel command journaled first, a sentinel-free
   schema change that lets a decision row carry no `command_id`, or
-  leaving pre-planning cancel unavailable in Phase 4. This is a Founder
-  call; the builder has not chosen.
+  leaving pre-planning cancel unavailable in Phase 4.
+  **Founder ruling in session, 2026-10-15, verbatim:** "Apprtoved: (d)
+  For Phase 4, allow cancel only once a planner command exists, and leave
+  pre-planning cancel unavailable. No migration and no stand-in values."
+  Builder's reading, for the record: a T22 decision row carries the
+  room's planner command id, as Q3 binds plan decisions; from
+  `ROOM_CREATED` and `SCOPED` cancel stays refused. Cancel is built in
+  slice 7, not slice 5, because G22 needs a fact the server must derive
+  rather than accept ("running tasks cancelled or recorded
+  unconfirmed_cancel"), and whether a planner command is still running is
+  the planner loop's state. Until slice 7 the endpoint answers 501 for
+  `founder.cancel`.
 
 ## Verification
 
