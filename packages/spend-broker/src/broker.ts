@@ -19,12 +19,16 @@
  *      ceiling, with this process's own reservations layered on by the port).
  *   2. On denial: emit an `InterruptFrame` to the `InterruptSink` and return
  *      `spend_ceiling_exceeded` with the limb reasons. No credential is
- *      requested, so no credential can leak past a breached ceiling.
+ *      requested, so no credential can leak past a breached ceiling. On a
+ *      permit (`api` only): record the reservation in the same synchronous
+ *      step, before any await, so a concurrent mint for ANOTHER run in the
+ *      room already sees it (the lock is per run, not per room).
  *   3. Ask the `GatewayPort` to mint. Gateway refusals map by kind; ANY other
- *      throw maps to `provider_unavailable` — fail-closed.
- *   4. On success (`api` only): record the reservation and return the handle
- *      with the post-mint budget figure. An `oauth` success returns the
- *      handle with no budget figure — none was consulted.
+ *      throw maps to `provider_unavailable` — fail-closed — and removes the
+ *      reservation step 2 recorded.
+ *   4. On success: return the handle with the post-mint budget figure. An
+ *      `oauth` success returns the handle with no budget figure — none was
+ *      consulted.
  *
  * `refresh` is the same flow with one difference, decided before the ceiling
  * check: the run's prior reservation is released, because a refresh re-mints
@@ -161,7 +165,9 @@ export class SpendBroker {
     // is the metered kind and stays gated.
     const isOauth = (request.credentialKind ?? 'api') === 'oauth';
 
+    const expiresAt = now + this.tokenTtlMs;
     let budgetRemaining: number | null = null;
+    let reservation: ReservationView | null = null;
     if (!isOauth) {
       const verdict = this.meter.checkCeiling({
         runId: request.runId,
@@ -182,12 +188,29 @@ export class SpendBroker {
         return denied('spend_ceiling_exceeded', verdict.reasons, frame);
       }
       budgetRemaining = verdict.remainingTokens;
+      /*
+       * Reserve in the same synchronous step as the check, before awaiting
+       * the gateway. The per-`runId` lock does not serialize different runs
+       * in one room, so a reservation recorded only after the mint would let
+       * two runs both pass the check against the same total, and each could
+       * then overshoot. With the reservation taken here, the next run's check
+       * already sees it, so a room overshoots by at most the one admission
+       * that crossed its ceiling. Undone below if no mint follows.
+       */
+      reservation = {
+        runId: request.runId,
+        ...(request.roomId === undefined ? {} : { roomId: request.roomId }),
+        tokens: request.estimatedCost ?? 0,
+        expiresAt,
+      };
+      this.reservations.record(reservation);
     }
 
     let token: OpaqueToken;
     try {
       token = await this.gateway.mintProviderAuth(request);
     } catch (error: unknown) {
+      if (reservation !== null) this.reservations.remove(reservation);
       if (error instanceof GatewayError && error.kind === 'not_authorized') {
         return denied('not_authorized', [error.message]);
       }
@@ -196,19 +219,9 @@ export class SpendBroker {
       return denied('provider_unavailable', [message]);
     }
 
-    const expiresAt = now + this.tokenTtlMs;
-    if (!isOauth) {
-      // Reservations exist to keep the ceiling honest between mints; an
-      // unlimited class holds none. Recording one would understate the room's
-      // available budget for subsequent api mints.
-      const reservation: ReservationView = {
-        runId: request.runId,
-        ...(request.roomId === undefined ? {} : { roomId: request.roomId }),
-        tokens: request.estimatedCost ?? 0,
-        expiresAt,
-      };
-      this.reservations.record(reservation);
-    }
+    // An oauth mint recorded nothing: reservations keep the ceiling honest
+    // between mints, and an unlimited class holds none, since one would
+    // understate the room's available budget for subsequent api mints.
 
     const minted: MintedResult = {
       ok: true,

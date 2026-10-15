@@ -86,7 +86,10 @@ The live meter's boundary semantics are used as-is:
   (`DEC-20260815-16` clause 2, inclusive as written, Founder ruling
   2026-08-29). The request is not added first, so a mint or refresh from
   below the ceiling is admitted and may overshoot by up to one run; the
-  per-run cap bounds its size, and `budgetRemaining` reads 0. Until the
+  per-run cap bounds its size, and `budgetRemaining` reads 0. Within one
+  broker process the bound holds across concurrent runs: the reservation
+  is recorded in the same step as the check, before the gateway is
+  awaited, so a second run's check already sees the first. Until the
   ruling's code correction the meter added the request first (exclusive);
   that reading is closed (`docs/phase-2-known-limits.md` §9). This package
   still asks the meter and re-implements nothing.

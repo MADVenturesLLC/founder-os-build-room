@@ -53,6 +53,19 @@ export class ReservationLedger {
     this.byRunId.set(view.runId, held === undefined ? [view] : [...held, view]);
   }
 
+  /**
+   * Drop exactly one recorded reservation (the same object `record` was
+   * given): the broker's undo when a reservation taken before the gateway
+   * call is not followed by a mint. A run's other reservations stay.
+   */
+  remove(view: ReservationView): void {
+    const held = this.byRunId.get(view.runId);
+    if (held === undefined) return;
+    const kept = held.filter((entry) => entry !== view);
+    if (kept.length === 0) this.byRunId.delete(view.runId);
+    else this.byRunId.set(view.runId, kept);
+  }
+
   /** Drop every reservation for a run, if any. No-op when none is held. */
   release(runId: string): void {
     this.byRunId.delete(runId);

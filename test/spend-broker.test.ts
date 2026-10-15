@@ -258,6 +258,43 @@ describe('SpendBroker.mint — single flight per runId', () => {
     assert.equal(expectMinted(mintedOutcomes[0] ?? outcomes[0]!).budgetRemaining, 0); // 1000 − (700 + 400), floored: the disclosed overshoot
   });
 
+  it('admits only one of two concurrent mints for DIFFERENT runs once the first crosses the ceiling', async () => {
+    // The lock is per run, so two runs race. The reservation is taken with the
+    // check, before the gateway is awaited, so the second run's check already
+    // sees the first: 700 + 400 = 1100 >= 1000, refused. Without that, both
+    // would pass against 700 and the room would reach 1500.
+    const h = harness({
+      budgets: [room({ tokensSpent: 700, perRunTokenCap: 500 })],
+      gateway: new FixtureGatewayPort({ delayMs: 10 }),
+    });
+
+    const outcomes = await Promise.all([
+      h.broker.mint(mintRequest({ runId: 'run-a', estimatedCost: 400 })),
+      h.broker.mint(mintRequest({ runId: 'run-b', estimatedCost: 400 })),
+    ]);
+
+    assert.equal(outcomes.filter((result) => result.ok).length, 1);
+    assert.equal(outcomes.filter((result) => !result.ok).length, 1);
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 400);
+    assert.equal(h.sink.frames.length, 1);
+  });
+
+  it('removes the reservation taken before a gateway call that fails, and only that one', async () => {
+    let calls = 0;
+    class SecondCallFails implements GatewayPort {
+      async mintProviderAuth(): Promise<OpaqueToken> {
+        calls += 1;
+        if (calls === 2) throw new Error('boom');
+        return 'fix_ok' as OpaqueToken;
+      }
+    }
+    const h = harness({ gateway: new SecondCallFails() });
+
+    expectMinted(await h.broker.mint(mintRequest({ estimatedCost: 100 })));
+    expectDenied(await h.broker.mint(mintRequest({ estimatedCost: 200 })));
+    assert.equal(h.ledger.activeTokens('room-1', h.now()), 100, 'the first mint still holds its reservation');
+  });
+
   it('lets two parallel mints both succeed when together they fit, and stacks them', async () => {
     const h = harness({ budgets: [room({ tokenCeiling: 1_000, perRunTokenCap: 500 })] });
 
