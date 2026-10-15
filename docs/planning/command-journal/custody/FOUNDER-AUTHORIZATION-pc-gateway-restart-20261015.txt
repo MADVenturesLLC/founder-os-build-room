@@ -1,0 +1,25 @@
+FOUNDER-ACT-20261015-BR-PC-GATEWAY-RESTART: the PC's Gateway daemon started again by hand, at the certified commit
+
+I, Michael Daley, Founder of MAD Ventures, act as follows. This act takes effect when I sign it in the builder's session.
+
+A1. Facts, read by me on the PC at 2026-10-15T01:09:56Z. The PC rebooted: the previous boot's last journal entry is at 2026-10-14T07:30:20Z and the current boot began at 07:31:46Z. Production's last Gateway heartbeat was at 07:31:22Z. The daemon was started on 2026-10-13 by the offer of buildroom enroll and nothing starts it again, so the reboot ended it. No daemon process runs. The Gateway directory holds custody/, state.json (last written 2026-10-13T10:48:09Z) and an ipc.sock left from 2026-10-13, which the daemon removes when it binds. The checkout ~/buildroom-gateway is at 750b6839090df90c7dcf0fa7fc7feee4f9045e1b with no local changes. node --version in my shell is v22.22.1; the enrollment record says the checkout was built under v22.23.2. buildroom status reports primary IDLE and staging INACTIVE from the last persisted state, daemon not running.
+
+A2. No update is needed. Between 750b6839 and Build Room main at 3f16f576a995e1068b08934eb383b31d306e3082, the only change in the Gateway packages is packages/gateway-daemon/src/custody.ts, the macOS Keychain inventory, which the PC does not use. The PC's key is held by systemd-creds. The daemon reads one setting, BUILDROOM_CONTROL_PLANE_URL.
+
+B1. Before. On the PC: ~/.nvm/versions/node/v22.23.2/bin/node --version prints v22.23.2; the checkout is still at 750b6839 with no local changes; no daemon process runs; and I read how the previous boot ended with journalctl -b -1 -n 25 --no-pager and give the builder its output. The builder reads /health 200 and Railway's serving deployment of rare-enjoyment SUCCESS with nothing building, within 15 minutes before B2. If any of these fails, I stop and nothing is started.
+
+B2. Start. In a terminal on the PC that I leave open, I run, from ~/buildroom-gateway:
+BUILDROOM_CONTROL_PLANE_URL=https://rare-enjoyment-production-0869.up.railway.app ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-daemon/src/main.js
+The daemon reads its own key from systemd-creds when it starts; that read is part of starting it.
+
+B3. After. Within 15 minutes of B2: ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-cli/src/bin.js status answers from the running daemon, not from its last persisted state, with primary HEARTBEATING; the builder reads Railway's logs and finds /gateway/heartbeat answered 200 after the start, and reads /health 200. If the daemon exits or the heartbeat is refused, I stop it with Ctrl-C and give the builder the terminal output.
+
+B4. Duration. The daemon runs only while that terminal stays open and the PC stays on. A reboot, sleep, logout or closed terminal ends it again.
+
+C1. Filing. The builder files this act, my readings and the builder's reads in the Build Room custody record, in one pull request that needs my separate authorization.
+
+C2. Not authorized. This act does not authorize: a systemd unit, user lingering, a restart policy or any other way to start the daemon again or keep it running beyond B4; any change to the checkout, a rebuild, or npm; buildroom enroll, doctor, or the revocation of any Gateway; any read or move of a key other than the daemon's own read in B2; any change to the hermes service on the PC; a counted run; any change to the control plane, the database, a migration, a Railway variable, a Neon role or any secret; or any deploy, redeploy or rollback. Each needs my separate act.
+
+Signed: Michael Daley
+Date: 2026-10-15 (UTC)
+Actor-Id: founder

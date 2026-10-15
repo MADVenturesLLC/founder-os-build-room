@@ -448,53 +448,44 @@ of the record.
 
 ---
 
-## 9. The per-room ceiling is enforced exclusively, and `-16` clause 2 reads inclusive — FOUNDER_DECISION_REQUIRED
+## 9. The per-room ceiling was enforced exclusively, where `-16` clause 2 reads inclusive — CLOSED
 
-**What it is.** `perRoomTokenLimb` refuses when `spent + reserved + requested
-≥ ceiling`. `DEC-20260815-16` clause 2 refuses when `spent + reserved ≥
-ceiling`. Those are not the same rule. The implementation makes the ceiling
-**exclusive**: a room at 700 of a 1000 ceiling asking for 300 tokens is
-refused, where the clause read literally permits it, since 700 is below 1000.
+**What it was.** `perRoomTokenLimb` refused when `spent + reserved +
+requested ≥ ceiling`. `DEC-20260815-16` clause 2 refuses when `spent +
+reserved ≥ ceiling`. Those are not the same rule: the implementation made the
+ceiling **exclusive**, so a room at 700 of a 1000 ceiling asking for 300 tokens
+was refused, where the clause read literally permits it.
 
-**Why the code reads the way it does.** It is admission control — the question
-asked is whether *granting* the request breaches the ceiling, rather than
-noticing after the fact that it did. It errs fail-closed, which is the
-direction §3.15 requires a spend meter to err in. That is a defensible reading
-and it may well be the intended one.
+**How it was settled.** The Founder ruled on 2026-08-29, recorded in
+`DEC-20260815-16` §Ceiling Inclusivity Clarified: clause 2 is inclusive as
+written and governs implementation. Verbatim: "Option A. I am not going to
+limit the build. As of now costs have been minimal for both build room and
+TUI. Unless it becomes an insane amount I can't afford, I am okay with going
+over the ceiling. Clause 2 stands as written — inclusive enforcement, one-run
+overshoot honest per clause 3." The ruling left the code correction as
+separate work. The Founder directed it on 2026-10-15 (Build Room plan r1 Q4,
+"Separate small PR").
 
-**Why that does not settle it.** "Stricter, in the safe direction" is not the
-same as "the ratified rule". A room can be paused that the clause as written
-permits, and a Founder reading the clause would not predict the refusal. The
-gap is semantic, not cosmetic, and it is not an agent's to close.
+**What the code does now.**
+- `perRoomTokenLimb` refuses when `spent + reserved ≥ ceiling`. The request
+  is not added first.
+- A room below its ceiling admits a request even if granting it overshoots.
+  The overshoot is bounded by the per-run cap and disclosed: the permit's
+  reason names it ("N over the ceiling"), and the spend broker reports
+  `budgetRemaining` 0.
+- The spend broker follows the meter, as it was built to. It refuses a mint,
+  and interrupts a refresh, only once the room is at or over its ceiling. A
+  refresh from below the ceiling is admitted even if it overshoots.
+- The `deny-demo` CLI shows all three steps: mint under the ceiling, refresh
+  that overshoots once, next turn refused at the ceiling.
 
-**What was done, and what was deliberately not done.** The `per_room_tokens`
-reason string was wrong in a separate and smaller way: it labelled its figure
-"spent + reserved" while reporting spent + reserved + the request, so an
-operator reconciling the message against the room's counters found a number
-matching neither. Both figures are now reported separately and the arithmetic
-in the message is checkable. **That is a message fix and nothing more.** The
-behaviour is unchanged, and the relabelling must not be read as having resolved
-the semantic question — a Founder ruling on 2026-08-21 named exactly that risk.
-
-**Pinned, not endorsed.** `test/cost-meter.test.ts` carries a test named
-*"admits on the projection, not after the fact — CURRENT BEHAVIOUR, semantics
-unresolved"*. It exists so the divergence stays visible and cannot drift while
-the question is open. A green test there is not a ruling.
-
-**What closing it takes.** A Founder ruling on which reading governs:
-
-- **Exclusive (current code).** `-16` clause 2 is amended, or a decision
-  records that admission control against the projected total is the intended
-  enforcement. Code unchanged; the test is renamed to state the settled rule.
-- **Inclusive (clause as written).** `perRoomTokenLimb` compares `spent +
-  reserved` against the ceiling and the request is checked only by the per-run
-  cap. The test changes with it, and the boundary tests at
-  `tokensSpent: 900, tokensReserved: 100` keep their current meaning either
-  way.
+**Pinned.** `test/cost-meter.test.ts` holds the ruled comparison (700 of 1000
+asking 300 is admitted), the reason strings, and the per-run cap as the bound
+on overshoot. The boundary tests at `tokensSpent: 900, tokensReserved: 100`
+keep their meaning: at the ceiling is refused.
 
 **Raised by** the Founder on 2026-08-21, reviewing the `HO-20260818-01`
-close-out. Recorded as open rather than absorbed into a comment that would have
-read as settled.
+close-out; ruled 2026-08-29; corrected 2026-10-15.
 
 ---
 

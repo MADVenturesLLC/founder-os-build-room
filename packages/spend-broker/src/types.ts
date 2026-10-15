@@ -102,7 +102,7 @@ export interface MintDeniedResult {
 export type MintResult = MintedResult | MintDeniedResult;
 
 /**
- * Emitted when a mint or refresh would breach the spend ceiling. The shape's
+ * Emitted when a mint or refresh is refused at or over the spend ceiling. The shape's
  * required fields are commissioned; `roomId` and `detail` are additive so the
  * frame is actionable without re-deriving which limb fired.
  */
@@ -127,4 +127,10 @@ export interface ReservationView {
   /** Tokens held against the room's ceiling until `expiresAt`. */
   readonly tokens: number;
   readonly expiresAt: number;
+  /**
+   * True while the gateway call it was taken for has not settled. A pending
+   * reservation counts whatever the clock says, so a slow gateway cannot let
+   * it lapse before the token it reserves for even exists.
+   */
+  readonly pending?: boolean;
 }

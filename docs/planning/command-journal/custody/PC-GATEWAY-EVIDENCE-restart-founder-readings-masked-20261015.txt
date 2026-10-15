@@ -1,0 +1,92 @@
+=== 1. Reading at 2026-10-15T01:09:56Z, before the act (the act's A1 facts) ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ date -u +%FT%TZ
+echo "--- boot"; uptime -s; journalctl --list-boots --no-pager 2>&1 | tail -3
+echo "--- around 07:31Z Oct 14"; TZ=UTC journalctl --since "2026-10-14 07:25" --until "2026-10-14 07:40" --no-pager -o short-iso 2>&1 | grep -i -E 'suspend|sleep|shutdown|logout|session|node|gateway' | tail -20
+echo "--- daemon"; pgrep -af 'gateway-daemon/src/main.js' || echo "no daemon process"
+echo "--- state dir"; ls -la --time-style=full-iso "$HOME/Library/Application Support/founder-os/gateway/"
+echo "--- checkout"; git -C ~/buildroom-gateway rev-parse HEAD; git -C ~/buildroom-gateway status --short | head; node --version
+echo "--- status"; node ~/buildroom-gateway/dist/packages/gateway-cli/src/bin.js status
+2026-10-15T01:09:56Z
+--- boot
+2026-10-14 03:31:46
+ -2 5f69394bcb674b83bb992638f4f63db5 Fri 2026-10-09 13:57:04 EDT Tue 2026-10-13 06:17:38 EDT
+ -1 1dc4db883af3494089b138c34b3e766a Tue 2026-10-13 06:18:00 EDT Wed 2026-10-14 03:30:20 EDT
+  0 36783790afbc4f06a98ed2a5434ee816 Wed 2026-10-14 03:31:48 EDT Wed 2026-10-14 21:09:48 EDT
+--- around 07:31Z Oct 14
+2026-10-14T07:33:47+00:00 michaeldaley-Z890-Pro-RS-WiFi-White hermes[2762]: 2026-10-14 03:33:47,454 WARNING gateway.run: ✗ photon failed to connect
+2026-10-14T07:33:50+00:00 michaeldaley-Z890-Pro-RS-WiFi-White hermes[2762]: 2026-10-14 03:33:50,147 WARNING gateway.run: whatsapp is enabled but no profile (default or secondary) provided a bot credential for it — the platform is not being served. Add its token to the profile that should own it, or disable the platform.
+2026-10-14T07:33:50+00:00 michaeldaley-Z890-Pro-RS-WiFi-White hermes[2762]: 2026-10-14 03:33:50,147 WARNING gateway.run: Gateway started with no connected platforms — 2 platform(s) queued for retry: telegram: telegram connect timed out after 45s; photon: failed to start Photon sidecar: Photon sidecar exited with code 1 before becoming ready
+2026-10-14T07:33:50+00:00 michaeldaley-Z890-Pro-RS-WiFi-White hermes[2762]: 2026-10-14 03:33:50,148 WARNING gateway.run: No adapter could be created for any of the 2 configured platform(s). Check that required dependencies are installed and credentials are set. Gateway will continue for cron job execution; platforms whose plugin may still register are queued for background retry.
+2026-10-14T07:34:39+00:00 michaeldaley-Z890-Pro-RS-WiFi-White hermes[2762]: 2026-10-14 03:34:39,948 WARNING gateway.run: Home-channel startup notification failed for photon:[masked: phone number]: Photon sidecar /send returned 500 (target_not_allowed, retryable=False): shared/free-tier Photon lines cannot initiate outbound sends to new targets — upgrade to a dedicated line or use another delivery channel
+2026-10-14T07:34:47+00:00 michaeldaley-Z890-Pro-RS-WiFi-White kernel: iwlwifi 0000:80:14.3: Not associated and the session protection is over already...
+2026-10-14T07:34:51+00:00 michaeldaley-Z890-Pro-RS-WiFi-White tailscaled[2427]: monitor: gateway and self IP changed: gw=10.0.0.1 self=10.0.0.69
+2026-10-14T07:34:51+00:00 michaeldaley-Z890-Pro-RS-WiFi-White kernel: iwlwifi 0000:80:14.3: Not associated and the session protection is over already...
+2026-10-14T07:34:53+00:00 michaeldaley-Z890-Pro-RS-WiFi-White kernel: iwlwifi 0000:80:14.3: Not associated and the session protection is over already...
+2026-10-14T07:34:55+00:00 michaeldaley-Z890-Pro-RS-WiFi-White kernel: iwlwifi 0000:80:14.3: Not associated and the session protection is over already...
+2026-10-14T07:35:10+00:00 michaeldaley-Z890-Pro-RS-WiFi-White tailscaled[2427]: control: RegisterReq: onode= node=[masked: Tailscale node key] fup=false nks=false
+2026-10-14T07:35:10+00:00 michaeldaley-Z890-Pro-RS-WiFi-White tailscaled[2427]: control: RegisterReq: got response; nodeKeyExpired=false, machineAuthorized=true; authURL=false
+2026-10-14T07:35:10+00:00 michaeldaley-Z890-Pro-RS-WiFi-White tailscaled[2427]: netmap: suggested exit node: no preferred DERP, try again later
+2026-10-14T07:35:10+00:00 michaeldaley-Z890-Pro-RS-WiFi-White tailscaled[2427]: wgengine: Reconfig: starting up network logger (node:[masked: Tailscale node id] tailnet:[masked: Tailscale tailnet id])
+2026-10-14T07:35:22+00:00 michaeldaley-Z890-Pro-RS-WiFi-White tailscaled[2427]: monitor: gateway and self IP changed: gw=10.0.0.1 self=10.0.0.121
+2026-10-14T07:37:34+00:00 michaeldaley-Z890-Pro-RS-WiFi-White ubuntu-insights[10219]:         "sessionName": "gnome-greeter",
+2026-10-14T07:37:34+00:00 michaeldaley-Z890-Pro-RS-WiFi-White ubuntu-insights[10219]:         "sessionType": "wayland"
+2026-10-14T07:37:54+00:00 michaeldaley-Z890-Pro-RS-WiFi-White whoopsie[9704]: [03:37:54] <html><body><h1>504 Gateway Time-out</h1>
+2026-10-14T07:39:54+00:00 michaeldaley-Z890-Pro-RS-WiFi-White hermes[2762]: 2026-10-14 03:39:54,670 WARNING tools.mcp_tool: MCP server 'neon': revived — session healthy again after parking (state: parked → connected)
+2026-10-14T07:39:54+00:00 michaeldaley-Z890-Pro-RS-WiFi-White hermes[2762]: 2026-10-14 03:39:54,814 WARNING tools.mcp_tool: MCP server 'railway': revived — session healthy again after parking (state: parked → connected)
+--- daemon
+no daemon process
+--- state dir
+total 16
+drwx------ 3 michaeldaley michaeldaley 4096 2026-10-13 06:48:09.203075123 -0400 .
+drwx------ 3 michaeldaley michaeldaley 4096 2026-10-13 06:39:15.196039818 -0400 ..
+drwx------ 2 michaeldaley michaeldaley 4096 2026-10-13 06:48:09.195074971 -0400 custody
+srw------- 1 michaeldaley michaeldaley    0 2026-10-13 06:39:17.454500287 -0400 ipc.sock
+-rw------- 1 michaeldaley michaeldaley  677 2026-10-13 06:48:09.200623125 -0400 state.json
+--- checkout
+750b6839090df90c7dcf0fa7fc7feee4f9045e1b
+v22.22.1
+--- status
+primary: IDLE
+staging: INACTIVE
+daemon not running — these are the last persisted lane states, not live ones
+
+=== 2. B1 reading at 2026-10-15T01:13:32Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ date -u +%FT%TZ
+~/.nvm/versions/node/v22.23.2/bin/node --version
+git -C ~/buildroom-gateway rev-parse HEAD; git -C ~/buildroom-gateway status --short | head
+pgrep -af 'gateway-daemon/src/main.js' || echo "no daemon process"
+journalctl -b -1 -n 25 --no-pager
+2026-10-15T01:13:32Z
+v22.23.2
+750b6839090df90c7dcf0fa7fc7feee4f9045e1b
+no daemon process
+Oct 14 03:23:22 michaeldaley-Z890-Pro-RS-WiFi-White hermes[2693]: 2026-10-14 03:23:22,163 WARNING tools.mcp_tool: MCP OAuth setup failed for 'cloudflare': MCP OAuth for 'cloudflare': non-interactive environment and no cached tokens found. Run `hermes mcp login cloudflare` interactively first to complete initial authorization.
+Oct 14 03:24:14 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Starting poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive...
+Oct 14 03:24:14 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Finished poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive.
+Oct 14 03:25:15 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Starting poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive...
+Oct 14 03:25:15 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Finished poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive.
+Oct 14 03:26:16 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Starting poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive...
+Oct 14 03:26:16 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Finished poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive.
+Oct 14 03:27:17 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Starting poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive...
+Oct 14 03:27:17 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Finished poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive.
+Oct 14 03:27:37 michaeldaley-Z890-Pro-RS-WiFi-White NetworkManager[2211]: <info>  [1791962857.2364] dhcp6 (enp129s0): state changed new lease, address=[masked: public IPv6 address]
+Oct 14 03:27:37 michaeldaley-Z890-Pro-RS-WiFi-White dbus-daemon[1930]: [system] Activating via systemd: service name='org.freedesktop.nm_dispatcher' unit='dbus-org.freedesktop.nm-dispatcher.service' requested by ':1.17' (uid=0 pid=2211 comm="/usr/sbin/NetworkManager --no-daemon" label="unconfined")
+Oct 14 03:27:37 michaeldaley-Z890-Pro-RS-WiFi-White systemd[1]: Starting NetworkManager-dispatcher.service - Network Manager Script Dispatcher Service...
+Oct 14 03:27:37 michaeldaley-Z890-Pro-RS-WiFi-White dbus-daemon[1930]: [system] Successfully activated service 'org.freedesktop.nm_dispatcher'
+Oct 14 03:27:37 michaeldaley-Z890-Pro-RS-WiFi-White systemd[1]: Started NetworkManager-dispatcher.service - Network Manager Script Dispatcher Service.
+Oct 14 03:27:47 michaeldaley-Z890-Pro-RS-WiFi-White systemd[1]: NetworkManager-dispatcher.service: Deactivated successfully.
+Oct 14 03:28:18 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Starting poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive...
+Oct 14 03:28:18 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Finished poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive.
+Oct 14 03:28:22 michaeldaley-Z890-Pro-RS-WiFi-White hermes[2693]: 2026-10-14 03:28:22,229 WARNING tools.mcp_tool: MCP OAuth setup failed for 'cloudflare': MCP OAuth for 'cloudflare': non-interactive environment and no cached tokens found. Run `hermes mcp login cloudflare` interactively first to complete initial authorization.
+Oct 14 03:29:19 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Starting poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive...
+Oct 14 03:29:19 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Finished poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive.
+Oct 14 03:30:06 michaeldaley-Z890-Pro-RS-WiFi-White systemd[1]: Starting sysstat-collect.service - system activity accounting tool...
+Oct 14 03:30:06 michaeldaley-Z890-Pro-RS-WiFi-White systemd[1]: sysstat-collect.service: Deactivated successfully.
+Oct 14 03:30:06 michaeldaley-Z890-Pro-RS-WiFi-White systemd[1]: Finished sysstat-collect.service - system activity accounting tool.
+Oct 14 03:30:20 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Starting poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive...
+Oct 14 03:30:20 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2399]: Finished poseidon-restore.service - Poseidon Fan Control - keep the hub lighting alive.
+
+=== 3. B3 reading, received at about 2026-10-15T01:22Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ cd ~/buildroom-gateway && ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-cli/src/bin.js status
+primary: HEARTBEATING
+staging: INACTIVE

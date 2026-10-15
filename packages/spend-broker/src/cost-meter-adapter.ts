@@ -9,12 +9,11 @@
  * - The USD 85 monthly limb pauses strictly ABOVE the ceiling
  *   (`DEC-20260815-09` clause 2).
  * - The per-room token limb refuses at spent + reserved **≥** ceiling
- *   (`DEC-20260815-16` clause 2, as the meter mechanizes it). The meter
- *   itself records, at `perRoomTokenLimb`, that its projected reading makes
- *   the ceiling exclusive relative to the clause as written, and marks that
- *   an open `FOUNDER_DECISION_REQUIRED` question (see the meter source and
- *   `docs/phase-2-known-limits.md` §9). This package does NOT settle that
- *   question and does not re-implement the comparison — it asks the meter.
+ *   (`DEC-20260815-16` clause 2, inclusive as written, Founder ruling
+ *   2026-08-29; `docs/phase-2-known-limits.md` §9, closed). This package
+ *   does not re-implement the comparison — it asks the meter. A permit can
+ *   take the room past the ceiling by up to one run; `remainingTokens` then
+ *   reads 0.
  * - UNKNOWN spend pauses; every limb is evaluated even after one pauses, so
  *   a denial here carries the full picture in its reasons.
  *

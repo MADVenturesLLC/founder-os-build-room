@@ -167,13 +167,12 @@ describe('cost meter — the per-room token limb boundary', () => {
     assert.equal(decision.permit, true);
   });
 
-  it('reports the request separately from spent + reserved, so the message reconciles', () => {
+  it('reports the request separately from spent + reserved, and discloses an overshoot', () => {
     /*
-     * The pause message named its figure "spent + reserved" while reporting
-     * spent + reserved + the request. An operator checking it against the
-     * room's counters would find a number matching neither and conclude the
-     * room was further along than it was. The arithmetic in the message has to
-     * be checkable against the inputs.
+     * The message names spent + reserved and the request separately, so its
+     * arithmetic is checkable against the room's counters. On a permit that
+     * takes the room past its ceiling it says by how much: clause 3's
+     * one-run overshoot is disclosed, not discovered afterwards.
      */
     const decision = evaluateDispatch({
       asOf: accountingInstant(2026, 8, 17),
@@ -183,31 +182,40 @@ describe('cost meter — the per-room token limb boundary', () => {
       priceTable: TABLE,
     });
 
-    assert.equal(decision.permit, false);
-    const limb = decision.pausedBy.find((entry) => entry.limb === 'per_room_tokens');
-    assert.ok(limb, 'the per-room limb must be the one pausing');
-    // 700 already committed, 400 requested, 1100 projected against a 1000 ceiling.
+    assert.equal(decision.permit, true);
+    const limb = decision.limbs.find((entry) => entry.limb === 'per_room_tokens');
+    assert.ok(limb);
+    // 700 already committed, 400 requested, 1100 after the request: 100 over.
     assert.match(limb.reason, /spent \+ reserved \(700\)/);
     assert.match(limb.reason, /this request \(400\)/);
-    assert.match(limb.reason, /1100/);
-    // And the old, wrong label must not come back: 1100 was reported AS
-    // "spent + reserved".
+    assert.match(limb.reason, /at 1100, 100 over the ceiling/);
     assert.doesNotMatch(limb.reason, /spent \+ reserved \(1100\)/);
   });
 
-  it('admits on the projection, not after the fact — CURRENT BEHAVIOUR, semantics unresolved', () => {
+  it('names spent + reserved, not the projection, when it pauses', () => {
+    const decision = evaluateDispatch({
+      asOf: accountingInstant(2026, 8, 17),
+      ledger: { infrastructure: [], runs: [] },
+      budget: budget({ tokenCeiling: 1_000, tokensSpent: 900, tokensReserved: 150 }),
+      requestedTokens: 50,
+      priceTable: TABLE,
+    });
+
+    assert.equal(decision.permit, false);
+    const limb = decision.pausedBy.find((entry) => entry.limb === 'per_room_tokens');
+    assert.ok(limb, 'the per-room limb must be the one pausing');
+    assert.match(limb.reason, /spent \+ reserved \(1050\) is at or above its token ceiling \(1000\)/);
+    assert.match(limb.reason, /this request \(50\) is not admitted/);
+  });
+
+  it('compares spent + reserved, not the projection — `-16` clause 2 as ruled 2026-08-29', () => {
     /*
-     * This pins WHAT THE CODE DOES, not what the rule is. Under `-16` clause 2
-     * read literally (spent + reserved >= ceiling) this case permits: 700 is
-     * below 1000. It pauses because granting 300 would reach the ceiling,
-     * which makes the ceiling exclusive — a different rule from the ratified
-     * one, not a stricter phrasing of it.
-     *
-     * FOUNDER_DECISION_REQUIRED (`docs/phase-2-known-limits.md` §9). The test
-     * exists so the divergence is visible and cannot drift further while the
-     * question is open; a green test here is NOT a ruling that this reading is
-     * correct. If the Founder rules for the literal clause, this test changes
-     * with it.
+     * The Founder's ruling of 2026-08-29 ("Ceiling Inclusivity Clarified"):
+     * clause 2 is inclusive as written, refusing when spent + reserved >=
+     * ceiling. A room at 700 of 1000 asking for 300 is permitted (700 < 1000).
+     * Until this correction the meter added the request first and refused
+     * here; that exclusive reading is closed (`docs/phase-2-known-limits.md`
+     * §9).
      */
     const decision = evaluateDispatch({
       asOf: accountingInstant(2026, 8, 17),
@@ -217,8 +225,29 @@ describe('cost meter — the per-room token limb boundary', () => {
       priceTable: TABLE,
     });
 
-    assert.equal(decision.permit, false);
-    assert.equal(decision.pausedBy[0]?.limb, 'per_room_tokens');
+    assert.equal(decision.permit, true);
+    assert.equal(decision.limbs.find((entry) => entry.limb === 'per_room_tokens')?.verdict, 'permit');
+  });
+
+  it('bounds the overshoot by the per-run cap, not the room ceiling', () => {
+    // 999 of 1000 committed still admits a request; the per-run cap is what limits its size.
+    const permitted = evaluateDispatch({
+      asOf: accountingInstant(2026, 8, 17),
+      ledger: { infrastructure: [], runs: [] },
+      budget: budget({ tokenCeiling: 1_000, tokensSpent: 999, tokensReserved: 0, perRunTokenCap: 500 }),
+      requestedTokens: 500,
+      priceTable: TABLE,
+    });
+    assert.equal(permitted.permit, true);
+    const capped = evaluateDispatch({
+      asOf: accountingInstant(2026, 8, 17),
+      ledger: { infrastructure: [], runs: [] },
+      budget: budget({ tokenCeiling: 1_000, tokensSpent: 999, tokensReserved: 0, perRunTokenCap: 500 }),
+      requestedTokens: 501,
+      priceTable: TABLE,
+    });
+    assert.equal(capped.permit, false);
+    assert.deepEqual(capped.pausedBy.map((limb) => limb.limb), ['per_run_cap']);
   });
 
   it('pauses a dispatch above the per-run hard cap', () => {
