@@ -50,7 +50,7 @@ under `packages/run-harness/src` except this fixture) — for runtime
 The detector is proven against a synthetic forbidden import (built under the
 OS temp dir) so an empty scan is not the only evidence it works.
 
-## Known cost-meter divergence (characterized, not fixed here)
+## Cost-meter ceiling comparison (corrected under the 2026-08-29 ruling)
 
 The real meter's per-room limb (`packages/cost-meter/src/meter.ts`,
 `perRoomTokenLimb`) refuses when `spent + reserved >= ceiling`, the
