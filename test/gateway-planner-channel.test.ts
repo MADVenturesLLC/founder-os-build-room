@@ -46,7 +46,13 @@ function recordsDir(): string {
   return root;
 }
 
-const TIMINGS = { answerTimeoutMs: 200, planTimeoutMs: 2_000, statusIntervalMs: 10 };
+/**
+ * Answered exchanges get a generous bound: a pumped round does disk work, and a
+ * loaded CI runner has taken over 200 ms to answer one. Only the tests that
+ * wait out a silence use the short bound, on a port of their own.
+ */
+const TIMINGS = { answerTimeoutMs: 10_000, planTimeoutMs: 60_000, statusIntervalMs: 10 };
+const QUIET_TIMINGS = { answerTimeoutMs: 2_000, planTimeoutMs: 4_000, statusIntervalMs: 10 };
 
 function work(commandId: string): PlannerWork {
   return {
@@ -98,6 +104,11 @@ beforeEach(() => {
   worker = new GatewayPlannerWorker({ executor, records });
   port = channel.port({ gatewayId: GATEWAY, role: 'architect', intended: SYNTHETIC_ROUTE, timings: TIMINGS });
 });
+
+/** A port for a test that waits out a silence: the short bound, so the wait is brief. */
+function quietPort(): PlannerPort {
+  return channel.port({ gatewayId: GATEWAY, role: 'architect', intended: SYNTHETIC_ROUTE, timings: QUIET_TIMINGS });
+}
 
 describe('gateway-planner-channel · a round over the channel', () => {
   it('attests, executes once, and returns the finished plan', async () => {
@@ -167,6 +178,7 @@ describe('gateway-planner-channel · not_sent is affirmative, never inferred', (
   });
 
   it('answers not_sent when the execute was withdrawn before any poll carried it', async () => {
+    const port = quietPort();
     const stop = pump(channel, GATEWAY, worker);
     await port.attest('cmd_w');
     stop();
@@ -179,6 +191,7 @@ describe('gateway-planner-channel · not_sent is affirmative, never inferred', (
   });
 
   it('throws when the execute was delivered and never answered: contact cannot be ruled out', async () => {
+    const port = quietPort();
     await (async () => {
       const stop = pump(channel, GATEWAY, worker);
       await port.attest('cmd_d');
@@ -193,6 +206,7 @@ describe('gateway-planner-channel · not_sent is affirmative, never inferred', (
   });
 
   it('throws on an attestation that never comes, or that failed', async () => {
+    const port = quietPort();
     await assert.rejects(port.attest('cmd_silent'), PlannerChannelUnansweredError);
     executor.reset({ attest: 'throw' });
     const stop = pump(channel, GATEWAY, worker);
