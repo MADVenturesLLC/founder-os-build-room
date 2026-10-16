@@ -468,6 +468,18 @@ describe('phase 4 lifecycle · a Gateway lost mid-round, then a restart', { skip
     // The PC finishes the work it holds, the daemon restarts, and so does the control plane's side: fresh stores.
     executor.release();
     startDriving();
+    // Recovery may ask only after the restarted daemon has exchanged the released
+    // execution's completion: on a `still running` answer recovery correctly writes
+    // nothing (§5.3), and the daemon's 10 ms tick is a race a slower host can lose.
+    // Wait for the worker's finished answer, as a later recovery pass would find it.
+    await waitFor(async () => {
+      try {
+        const reading = await port().reconcile(commandId);
+        return reading.kind === 'finished' ? true : undefined;
+      } catch {
+        return undefined; // unanswered while the restarted lane catches up
+      }
+    });
     const recovery = new PlannerRecovery({ ...freshStores(), planner: port(), route: ROUTE });
     const recovered = await recovery.recoverRoom(roomId);
     assert.equal(recovered.kind, 'plan_review', JSON.stringify(recovered));
