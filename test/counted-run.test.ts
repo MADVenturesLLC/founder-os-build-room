@@ -18,7 +18,11 @@ import { createGatewaySurface, type GatewaySurface } from '../packages/control-p
 import type { PostgresLedgerStore } from '../packages/control-plane/src/store.js';
 import { ConfigError, loadConfig } from '../packages/control-plane/src/config.js';
 import { CountedRunConfigError, parseCountedRunConfig, plannerLaneLabel } from '../packages/control-plane/src/counted-run-config.js';
-import { countedRunCompletionResolver, vendoredRegisteredSurfaces } from '../packages/control-plane/src/counted-run.js';
+import { COUNTED_RUN_REGISTRY, countedRunCompletionResolver, pinnedRegisteredSurfaces, vendoredRegisteredSurfaces } from '../packages/control-plane/src/counted-run.js';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { closeServer } from './support/close-server.js';
 
 const TOKEN = 'test-token-that-is-long-enough-to-pass';
@@ -162,10 +166,21 @@ describe('counted run · the act’s terms, read at boot', () => {
     assert.equal(await resolve({ ...query, intended: { ...route, executionSurface: 'claude-code' } }), 'does_not_cover');
   });
 
-  it('reads the vendored registry, which does not yet carry the control plane’s surface', () => {
+  it('reads the pinned copy at FounderOS 8146435, which carries the control plane’s surface', () => {
     const ids = vendoredRegisteredSurfaces();
-    assert.ok(ids.has('build-room-gateway'), 'the vendored registry was read');
-    assert.equal(ids.has('build-room-control-plane'), false);
+    assert.ok(ids.has('build-room-gateway'), 'the pinned copy was read');
+    assert.ok(ids.has('build-room-control-plane'), 'DEC-20261015-01 registered it');
+  });
+
+  it('holds the pinned copy byte for byte, and reads any other text as declaring nothing', () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const text = readFileSync(join(root, COUNTED_RUN_REGISTRY.fixturePath), 'utf8');
+    assert.equal(createHash('sha256').update(text, 'utf8').digest('hex'), COUNTED_RUN_REGISTRY.sha256);
+    assert.ok(pinnedRegisteredSurfaces(text).has('build-room-control-plane'));
+    assert.equal(pinnedRegisteredSurfaces(`${text} `).size, 0, 'one byte appended');
+    // The Seat Registry's r7 copy is a different text: it registers nothing here.
+    const r7 = readFileSync(join(root, 'packages', 'seat-registry', 'fixtures', 'execution-surface-registry.md'), 'utf8');
+    assert.equal(pinnedRegisteredSurfaces(r7).size, 0);
   });
 });
 
@@ -208,7 +223,7 @@ describe('counted run · the routes are inert until configured', () => {
     const a = await call(noDeployment, 'POST', `/control-plane/rooms/${ROOM}/planner-round`, COUNTED);
     assert.deepEqual([a.status, a.body['error']], [503, 'deployment_id_unknown']);
 
-    const unregistered = await start({ PHASE4_COUNTED_RUN: act, PHASE4_COUNTED_RUN_TOKEN: COUNTED, RAILWAY_DEPLOYMENT_ID: 'dep-1' });
+    const unregistered = await start({ PHASE4_COUNTED_RUN: act, PHASE4_COUNTED_RUN_TOKEN: COUNTED, RAILWAY_DEPLOYMENT_ID: 'dep-1' }, new Set(['build-room-gateway']));
     const b = await call(unregistered, 'POST', `/control-plane/rooms/${ROOM}/planner-round`, COUNTED);
     assert.deepEqual([b.status, b.body['error']], [503, 'dispatcher_surface_unregistered']);
   });
@@ -222,7 +237,7 @@ describe('counted run · the routes are inert until configured', () => {
       actId: ACT.actId,
       deploymentId: 'dep-1',
       gateway: { id: ACT.gatewayId, online: false },
-      dispatcherSurfaceRegistered: false,
+      dispatcherSurfaceRegistered: true,
       round: { status: 'idle' },
     });
     const bad = await call(url, 'GET', '/control-plane/rooms/not-a-room/planner-round', COUNTED);

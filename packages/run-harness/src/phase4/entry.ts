@@ -98,4 +98,4 @@ function onApprovedLane(
 }
 
 /** One reader of the registry's surfaces, the control plane's own (`counted-run.ts`). */
-export { registeredSurfaceIds } from '../../../control-plane/src/counted-run.js';
+export { COUNTED_RUN_REGISTRY, pinnedRegisteredSurfaces, registeredSurfaceIds } from '../../../control-plane/src/counted-run.js';

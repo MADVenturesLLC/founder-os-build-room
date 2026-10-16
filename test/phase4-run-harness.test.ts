@@ -4,12 +4,12 @@
  * and the runner over a scripted driver. No run executes, and nothing here
  * contacts a control plane, a Gateway or a provider.
  *
- * One finding is pinned as it stands, so a change to it is seen: the
- * vendored execution-surface registry carries no `build-room-control-plane`,
- * so every set is refused at entry (`dispatcher_surface_unregistered`) until
- * `DEC-20261015-01` is ratified and the fixture re-pinned. The cases that need
- * an entry to pass add that surface to the observation. The seat lanes are
- * the pinned registry's own throughout.
+ * Entry reads the copy of the execution-surface registry the counted run
+ * reads, pinned at FounderOS 8146435, where `DEC-20261015-01` registered
+ * `build-room-control-plane`. The Seat Registry's r7 copy, from before that
+ * registration, stands for a registry without it, and every set is refused
+ * against it (`dispatcher_surface_unregistered`). The seat lanes are the
+ * pinned registry's own throughout.
  */
 
 import { describe, it } from 'node:test';
@@ -37,7 +37,10 @@ import {
 } from '../packages/run-harness/src/phase4/index.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const REGISTRY_TEXT = readFileSync(join(REPO_ROOT, 'packages', 'seat-registry', 'fixtures', 'execution-surface-registry.md'), 'utf8');
+/** The copy the counted run reads, pinned at FounderOS 8146435 (DEC-20261015-01 registered). */
+const REGISTRY_TEXT = readFileSync(join(REPO_ROOT, 'packages', 'control-plane', 'fixtures', 'execution-surface-registry.md'), 'utf8');
+/** The Seat Registry's r7 copy, from before that registration: it carries no build-room-control-plane. */
+const R7_REGISTRY_TEXT = readFileSync(join(REPO_ROOT, 'packages', 'seat-registry', 'fixtures', 'execution-surface-registry.md'), 'utf8');
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -73,7 +76,7 @@ function observation(overrides: Partial<Phase4EntryObservation> = {}): Phase4Ent
     enrolledGateways: [GATEWAY, '2222132d-0000-4000-8000-000000000002'],
     gatewayOnline: true,
     executorAvailable: true,
-    registeredSurfaces: new Set([...registeredSurfaceIds(REGISTRY_TEXT), PHASE4_DISPATCHER.executionSurface]),
+    registeredSurfaces: registeredSurfaceIds(REGISTRY_TEXT),
     ...overrides,
   };
 }
@@ -179,9 +182,10 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
     }
   });
 
-  it('refuses every set while the vendored registry carries no build-room-control-plane', () => {
-    const verdict = evaluatePhase4Entry(set(), observation({ registeredSurfaces: registeredSurfaceIds(REGISTRY_TEXT) }));
+  it('refuses every set against a registry that carries no build-room-control-plane, and admits it on the pinned copy', () => {
+    const verdict = evaluatePhase4Entry(set(), observation({ registeredSurfaces: registeredSurfaceIds(R7_REGISTRY_TEXT) }));
     assert.deepEqual(verdict.failures, ['dispatcher_surface_unregistered']);
+    assert.deepEqual(evaluatePhase4Entry(set(), observation()).failures, []);
   });
 
   it('reports every failure together', () => {
@@ -212,8 +216,8 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
 
   it('reads the registry’s surfaces, leaving out an entry that is proposed and not active', () => {
     const ids = registeredSurfaceIds(REGISTRY_TEXT);
-    for (const id of ['claude-code', 'antigravity', 'build-room-gateway']) assert.ok(ids.has(id), id);
-    assert.equal(ids.has('build-room-control-plane'), false);
+    for (const id of ['claude-code', 'antigravity', 'build-room-gateway', 'build-room-control-plane']) assert.ok(ids.has(id), id);
+    assert.equal(registeredSurfaceIds(R7_REGISTRY_TEXT).has('build-room-control-plane'), false);
     const proposed = '```yaml\nsurface_id: build-room-control-plane\ncurrent_status: proposed-not-active\n```\n';
     const active = '```yaml\nsurface_id: build-room-control-plane\ncurrent_status: implemented-and-in-governed-use\n```\n';
     assert.equal(registeredSurfaceIds(proposed).has('build-room-control-plane'), false);

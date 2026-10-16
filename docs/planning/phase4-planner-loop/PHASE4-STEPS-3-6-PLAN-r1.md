@@ -213,11 +213,12 @@ Each slice lands as commits on the one branch, with its tests.
       - `export-reader.ts` reads the existing room-export route;
       - `runner.ts` drives one run through a driver that offers no way to
         decide a plan.
-    - Entry refuses every set today: the T2 surface
-      `build-room-control-plane` is not in the vendored registry until
-      `DEC-20261015-01` is ratified and the fixture re-pinned. Nothing in
-      production implements the driver. Starting a round and reading the
-      journal need a control-plane surface (Q9), built on the Founder's
+    - Entry reads the counted run's own copy of the registry, pinned at
+      FounderOS `8146435` where `DEC-20261015-01` registered
+      `build-room-control-plane` (the Founder's selection; run-unit
+      proposal §10). The Seat Registry's fixtures keep their r7 pin.
+    - Starting a round and reading the journal need a control-plane
+      surface (Q9), built on the Founder's
       answer: `control-plane/src/counted-run.ts`, inert unless
       `PHASE4_COUNTED_RUN` is set, behind `PHASE4_COUNTED_RUN_TOKEN` and no
       other token (the Founder's answer to the run-unit proposal's §9),

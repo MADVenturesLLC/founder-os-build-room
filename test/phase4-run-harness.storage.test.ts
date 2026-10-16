@@ -169,10 +169,9 @@ async function http(method: 'GET' | 'POST', path: string, token: string, body?: 
 
 /**
  * What a counted run needs of the deployed control plane, implemented over
- * the test assembly. `observeEntry` reports this instance truly, except that
- * it adds `build-room-control-plane` to the vendored registry's surfaces, as
- * the re-pin after `DEC-20261015-01`'s ratification would, and the test
- * instance, which has no commit, reports the set's. `runRound` builds
+ * the test assembly. `observeEntry` reports this instance truly, the
+ * registry's surfaces read from the copy the counted run reads, except that
+ * the test instance, which has no commit, reports the set's. `runRound` builds
  * the loop in process, which production cannot do yet (the plan's Q9).
  */
 class AssemblyDriver implements Phase4RunDriver {
@@ -180,14 +179,14 @@ class AssemblyDriver implements Phase4RunDriver {
 
   async observeEntry(): Promise<Phase4EntryObservation> {
     const health = await fetch(`${surface!.url}/health`);
-    const registry = readFileSync(join(REPO_ROOT, 'packages', 'seat-registry', 'fixtures', 'execution-surface-registry.md'), 'utf8');
+    const registry = readFileSync(join(REPO_ROOT, 'packages', 'control-plane', 'fixtures', 'execution-surface-registry.md'), 'utf8');
     return {
       controlPlane: { status: health.status, commit: this.set.buildRoomSha, deploymentId: DEPLOYMENT },
       founderOs: { sha: this.set.founderOsSha, clean: true },
       enrolledGateways: [gateway!.gatewayId],
       gatewayOnline: node!.session.livenessFor(gateway!.gatewayId) !== null,
       executorAvailable: true,
-      registeredSurfaces: new Set([...registeredSurfaceIds(registry), PHASE4_DISPATCHER.executionSurface]),
+      registeredSurfaces: registeredSurfaceIds(registry),
     };
   }
 
@@ -379,7 +378,7 @@ describe('phase 4 run harness · a run over the Q9 routes, as a counted run woul
     const set = runSet();
     // The control plane as an act would configure it (run-unit Q9): the same
     // node and Gateway surface, served with the act's terms and a deployment
-    // id, its vendored registry standing in for the re-pin.
+    // id, reading the pinned registry copy as production would.
     const app = createServer({
       config: {
         ...node!.config,
@@ -391,7 +390,6 @@ describe('phase 4 run harness · a run over the Q9 routes, as a counted run woul
       store: new PostgresLedgerStore(harness!.appPool, node!.surface.roomAppendFence),
       startedAt: Date.now(),
       gateway: node!.surface,
-      countedRunSurfaces: () => new Set([PHASE4_DISPATCHER.executionSurface]),
     });
     countedRunServer = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => countedRunServer!.once('listening', () => resolve()));

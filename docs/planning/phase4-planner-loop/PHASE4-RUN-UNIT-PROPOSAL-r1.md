@@ -123,9 +123,11 @@ are outside the Phase 4 authorization (§6).
 None of these is this pull request's to provide. Each needs its own act, or
 work under one:
 
-1. **`DEC-20261015-01` ratified**, FounderOS pull request 380 merged, and
-   Build Room's vendored registry re-pinned. Until then every set fails
-   entry with `dispatcher_surface_unregistered`.
+1. **`DEC-20261015-01` ratified and merged: met.** Ratified in comment
+   6205065988 and merged from FounderOS pull request 380 as `8146435`.
+   The counted run reads a copy of the registry pinned at that commit
+   (§10), which carries `build-room-control-plane`, so entry no longer
+   fails with `dispatcher_surface_unregistered`.
 2. **The PC Gateway as a supervised service** (C5's act), with its checkout
    carrying this branch's planner worker.
 3. **A planner executor on the Gateway.** The worker has none, and none
@@ -246,3 +248,33 @@ What the boot check proves, and what it does not: it refuses a value equal
 to either other token. It cannot tell whether a value was generated
 independently of them. Generating it independently is part of the act
 that sets it.
+
+## 10. Which registry the counted run reads
+
+The Seat Registry's ten fixtures are pinned together at FounderOS r7
+`bd0a9acb`, and the Founder retained that pin. That copy of the
+execution-surface registry predates `DEC-20261015-01`. Re-pinning it alone
+would split the set across two FounderOS commits.
+
+The Founder's selection of 2026-10-16, recorded as the option chosen,
+"Separate counted-run copy (Recommended)": "Vendor one copy of the
+execution-surface registry at FounderOS 8146435, hash-pinned, read only by
+the counted-run surface check. The Seat Registry's ten fixtures stay on r7
+bd0a9acb exactly as you ruled."
+
+Built:
+- `packages/control-plane/fixtures/execution-surface-registry.md`: FounderOS
+  `814643594ac21558a3a90626360efebd664a4bce`
+  `04-agents/execution-surface-registry.md`, byte for byte (blob
+  `474f7bf6`, SHA-256 `060a16a4…2055`).
+- `COUNTED_RUN_REGISTRY` in `counted-run.ts` names the commit, the path and
+  the hash. A text that is not that copy byte for byte declares no surfaces,
+  so an altered or missing file fails closed.
+- Entry and the round-start check read only this copy. The Seat Registry's
+  fixtures are unchanged.
+
+The copy publishes, in this public repository, the registry's current
+text: the r7 copy already here plus the surfaces registered since. It holds
+no secret; the only URLs are a provider's public API host and two
+home-relative log paths.
+

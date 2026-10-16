@@ -25,7 +25,8 @@
  * answers 503 `counted_run_not_configured`, and nothing here runs. With it,
  * starting a round also needs the platform's deployment id (T2's actor,
  * Q7b) and the control plane's surface in the execution-surface registry
- * Build Room vendors (`DEC-20261015-01`, re-pinned); either missing is 503.
+ * the counted run reads (`DEC-20261015-01`, `COUNTED_RUN_REGISTRY` below);
+ * either missing is 503.
  * The terms are checked at boot: a Planner off the architect seat's
  * Antigravity lane, a builder or reviewer off its seat's lanes, or a
  * reviewer on the builder's model refuses to boot.
@@ -41,6 +42,7 @@
  * the plan decision stays on `plan-decision.ts`, the Founder's route.
  */
 
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import express, { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
@@ -75,16 +77,39 @@ export function registeredSurfaceIds(registryMarkdown: string): ReadonlySet<stri
 }
 
 /**
- * The registry Build Room vendors, read where it lies: this module is at
+ * The execution-surface registry the counted run reads: FounderOS's copy at
+ * the merge of `DEC-20261015-01`, byte-captured and hash-pinned. It is the
+ * Founder's selection of 2026-10-16, recorded as the option chosen, "Separate
+ * counted-run copy (Recommended)": "Vendor one copy of the execution-surface
+ * registry at FounderOS 8146435, hash-pinned, read only by the counted-run
+ * surface check. The Seat Registry's ten fixtures stay on r7 bd0a9acb exactly
+ * as you ruled." So this copy is read here and nowhere else, and the Seat
+ * Registry's fixtures keep their own pin.
+ */
+export const COUNTED_RUN_REGISTRY = {
+  founderOsCommit: '814643594ac21558a3a90626360efebd664a4bce',
+  sourcePath: '04-agents/execution-surface-registry.md',
+  fixturePath: 'packages/control-plane/fixtures/execution-surface-registry.md',
+  sha256: '060a16a40abb58794cf960d33010bee006e06d4f699f32f61704d1ecd88e2055',
+} as const;
+
+/** The surfaces a registry text declares, if it is the pinned copy byte for byte; any other text declares none. */
+export function pinnedRegisteredSurfaces(registryMarkdown: string): ReadonlySet<string> {
+  const digest = createHash('sha256').update(registryMarkdown, 'utf8').digest('hex');
+  return digest === COUNTED_RUN_REGISTRY.sha256 ? registeredSurfaceIds(registryMarkdown) : new Set();
+}
+
+/**
+ * The pinned copy, read where it lies: this module is at
  * packages/control-plane/src in source and dist/packages/control-plane/src
  * after build, and the repository root is four levels up from the built file,
- * which is what runs. Unreadable is empty: fail closed.
+ * which is what runs. Unreadable or altered is empty: fail closed.
  */
 export function vendoredRegisteredSurfaces(): ReadonlySet<string> {
   try {
     const here = fileURLToPath(new URL('.', import.meta.url));
-    const path = new URL('../../../../packages/seat-registry/fixtures/execution-surface-registry.md', pathToFileURL(here)).pathname;
-    return registeredSurfaceIds(readFileSync(path, 'utf8'));
+    const path = new URL(`../../../../${COUNTED_RUN_REGISTRY.fixturePath}`, pathToFileURL(here)).pathname;
+    return pinnedRegisteredSurfaces(readFileSync(path, 'utf8'));
   } catch {
     return new Set();
   }
@@ -114,7 +139,7 @@ export interface CountedRunRouteDeps {
   /** `null` when `PHASE4_COUNTED_RUN_TOKEN` is unset: every route answers 503. */
   readonly requireCountedRunToken: RequestHandler | null;
   readonly requireLeader: RequestHandler;
-  /** Defaults to the vendored registry; a test supplies its own. */
+  /** Defaults to the pinned registry copy (`COUNTED_RUN_REGISTRY`); a test supplies its own. */
   readonly registeredSurfaces?: () => ReadonlySet<string>;
 }
 
