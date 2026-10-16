@@ -159,3 +159,42 @@ work under one:
   scope and goal from the act's text, attributed to the Founder with the act's
   relay surface. That is a relay of the Founder's words, not a Founder act,
   and the plan decisions remain the Founder's own at the control plane.
+
+## 8. Founder answers of 2026-10-16 (Q9 to Q14)
+
+Asked in session at the Founder's direction ("ask me Q9 through Q14 in
+the run-unit proposal"). The Founder chose an option for each question.
+Each answer is recorded as that option's label and text, as presented.
+These answer the questions. They do not define the run unit: under C6,
+the counted-run act defines it.
+
+- **Q9, how a counted run reaches the control plane.** Selected: "Two
+  inert routes (Recommended)". Option text: "Build two control-plane
+  routes in #121, behind the adjudication token: start a room's planning
+  round, and read its journal rows. Each answers 503 unless your
+  counted-run act's id is configured. Its merge deploys them inert."
+- **Q10, a cancel and the set.** Selected: "Cancel spends the set
+  (Recommended)". Option text: "A cancel is a recorded rejection, not a
+  pass. As with a failure, the next attempt needs a new act."
+- **Q11, a not_sent retry in a passing run.** Selected: "Allowed
+  (Recommended)". Option text: "A not_sent retry within the budget is
+  governed behaviour you ruled on, so it doesn't fail the run. Any other
+  failed or once-unresolved command still does."
+- **Q12, the round bound.** Selected: "Three (Recommended)". Option text:
+  "The first plan plus up to two revisions."
+- **Q13, spent or budget.** Selected: "Spent (Recommended)". Option text:
+  "The act authorizes three runs, not an open-ended series. After any
+  non-pass, the next attempt needs a new act from you."
+- **Q14, who relays T1.** Selected: "Harness relays the act
+  (Recommended)". Option text: "The harness captures each run's scope and
+  goal from your act's text, attributed to you through the act's relay
+  surface. It is a relay of your words, not a Founder act; plan decisions
+  stay yours, made at the control plane."
+
+The harness already implements Q10 to Q14 as answered:
+- `run-sequence.ts`: any non-pass spends the set;
+- `run-unit.ts`: a `not_sent` retry may precede a completed attempt;
+- `PHASE4_MAX_ROUNDS_PER_RUN` is 3;
+- `runner.ts`: `captureScope` relays the act's inputs.
+
+Q9's two routes are not built yet.
