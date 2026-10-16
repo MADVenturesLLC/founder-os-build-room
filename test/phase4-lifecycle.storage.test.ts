@@ -9,8 +9,9 @@
  * enrolled Gateway runs the daemon's real `PrimaryLane` and planner worker
  * against a synthetic executor (Phase 4 authorization §6: "fixtures and
  * synthetic provider behavior"). The planner loop and recovery are
- * constructed here, because nothing in `server.ts` constructs them: the
- * counted-run authorization that would is slice 10's proposal. Their stores
+ * constructed here the way the counted-run surface (slice 10) constructs
+ * them behind its gates; `server.ts` itself constructs none, and the
+ * entry act that would authorize a run is still not issued. Their stores
  * are the production classes over the application's pool.
  *
  * WHAT IS DRIVEN, AND WHERE IT ENTERS. The Founder goal enters on T1 through

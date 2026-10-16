@@ -127,10 +127,17 @@ more into the map than it holds.
   (§2). "Cannot progress into Builder execution" is shown as BUILDING being
   reachable only through the transition table, and dispatching nothing and
   opening no round once reached. Nothing carries the bindings past BUILDING.
-- **Nothing in production runs the loop.** `PlannerLoop` and
-  `PlannerRecovery` have no caller in `server.ts`. The lifecycle suite builds
-  them the way a caller would, over production's store classes. Wiring them
-  waits on the counted-run entry authorization (slice 10's proposal).
+- **The loop runs only behind the counted-run gate.** `PlannerLoop` and
+  `PlannerRecovery` have no caller in `server.ts`, and the store
+  `server.ts` builds carries no completion resolver. What constructs a
+  loop is the counted-run surface (slice 10, on this head): a request
+  that passes its token, act, deployment-id and registry checks builds a
+  `JournalStore` with the counted-run completion resolver and runs one
+  round (`control-plane/src/counted-run.ts`); with the token or act
+  unset every counted-run route answers 503 and no loop exists. The
+  counted-run entry act itself is still not issued, so no run is
+  authorized. The lifecycle suite builds the loop the way that caller
+  does, over production's store classes.
 - **The Planner is synthetic.** Every planner test runs a synthetic executor
   or Planner (§6 allows it). No provider is contacted, and no executor ships:
   `DEC-20260827-01` §3.4 authorizes no provider binding.

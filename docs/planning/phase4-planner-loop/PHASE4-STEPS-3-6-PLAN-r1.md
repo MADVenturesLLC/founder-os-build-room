@@ -492,9 +492,12 @@ pull channel":
 - **What is not built.** No executor ships. Q2a rules Antigravity on the
   active model, but `DEC-20260827-01` §3.4 authorizes no provider binding,
   and the two adapter classes remain deferred (`madbridge-consumed`). So
-  the daemon polls nothing unless an executor is injected. Nothing in
-  `server.ts` runs a loop either: the counted-run authorization that names
-  the model and the seats (Q2a, Q7a) is slice 10's. Cancelling a running
+  the daemon polls nothing unless an executor is injected. `server.ts`
+  constructs no loop; the counted-run surface (slice 10, built above)
+  constructs one per request once its token, act, deployment-id and
+  registry checks pass, and answers 503 without them — the entry act
+  that names the model and the seats (Q2a, Q7a) is still not issued.
+  Cancelling a running
   Gateway execution is not built: Q6's unconfirmed cancel stands, and the
   Gateway may keep running unseen.
 - **For the Founder.** The Gateway protocol was built from the Gateway
