@@ -18,12 +18,14 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { founderGoalDigest } from '../packages/control-plane/src/founder-goal.js';
+import { plannerCommandIdFor } from '../packages/control-plane/src/planner-loop.js';
 import {
   PHASE4_DISPATCHER,
   Phase4Runner,
   Phase4SetNotRunnableError,
   evaluatePhase4Entry,
   evaluatePhase4Run,
+  HttpPhase4Driver,
   phase4RecordDigest,
   phase4SetStatus,
   readPhase4Export,
@@ -109,6 +111,9 @@ function command(commandId: string, terminal: { eventType: string; failureClassi
 
 /** One round to approval; `revisions` adds that many revise-and-replan rounds first. */
 function passingRecord(revisions = 0): Phase4RunRecord {
+  const roomId = set().runs[0]!.roomId;
+  // A round's command id is derived from its opening event, as the loop derives it.
+  const openingCommand = (r: number) => plannerCommandIdFor(roomId, r === 0 ? 't2' : `t4-${r}`);
   const events: Phase4RecordedEvent[] = [
     event('t1', 'scope.captured', 'founder', attribution(null, 'founder', 'n/a (human Founder act)', 'claude-code'), {
       evidence: [{ kind: 'founder_goal', ref: 'goal', digest: founderGoalDigest(GOAL) }],
@@ -116,19 +121,19 @@ function passingRecord(revisions = 0): Phase4RunRecord {
     event('t2', 'task.dispatched.planner', 'control-plane', DISPATCHER_ATTRIBUTION),
     event('t3-0', 'plan.submitted', 'agent.planner', PLANNER_ATTRIBUTION, { planHash: 'h0'.padEnd(64, '0') }),
   ];
-  const commands = [command('cmd_0')];
+  const commands = [command(openingCommand(0))];
   const decisions: Phase4RunRecord['decisions'][number][] = [];
   for (let r = 1; r <= revisions; r += 1) {
     events.push(event(`t4-${r}`, 'plan.revision_requested', 'founder', FOUNDER_ATTRIBUTION));
-    decisions.push({ commandId: `cmd_${r - 1}`, decision: 'plan.revision_requested', planHash: `h${r - 1}`.padEnd(64, '0') });
+    decisions.push({ commandId: openingCommand(r - 1), decision: 'plan.revision_requested', planHash: `h${r - 1}`.padEnd(64, '0') });
     events.push(event(`t3-${r}`, 'plan.submitted', 'agent.planner', PLANNER_ATTRIBUTION, { planHash: `h${r}`.padEnd(64, '0') }));
-    commands.push(command(`cmd_${r}`));
+    commands.push(command(openingCommand(r)));
   }
   const reviewed = `h${revisions}`.padEnd(64, '0');
   events.push(event('t5', 'plan.approved', 'founder', FOUNDER_ATTRIBUTION, { planHash: reviewed }));
-  decisions.push({ commandId: `cmd_${revisions}`, decision: 'plan.approved', planHash: reviewed });
+  decisions.push({ commandId: openingCommand(revisions), decision: 'plan.approved', planHash: reviewed });
   return {
-    roomId: set().runs[0]!.roomId,
+    roomId,
     deploymentIdAtStart: DEPLOYMENT,
     deploymentIdAtEnd: DEPLOYMENT,
     finalState: 'BUILDING',
@@ -157,7 +162,9 @@ describe('phase 4 run set · read as a closed shape', () => {
     ['two runs', set({ runs: set().runs.slice(0, 2) }), 'runs_invalid'],
     ['labels out of order', set({ runs: [set().runs[1], set().runs[0], set().runs[2]] }), 'runs_invalid'],
     ['one room named twice', set({ runs: [set().runs[0], { ...set().runs[1]!, roomId: set().runs[0]!.roomId }, set().runs[2]] }), 'runs_invalid'],
-    ['a scope path climbing out', set({ runs: [{ ...set().runs[0]!, inputs: { ...set().runs[0]!.inputs, scopePaths: ['../etc'] } }, set().runs[1], set().runs[2]] }), 'runs_invalid'],
+    ['a scope path climbing out', set({ runs: [{ ...set().runs[0]!, inputs: { ...set().runs[0]!.inputs, scopePaths: ['../etc'] } }, set().runs[1], set().runs[2]] }), 'scope_paths_invalid'],
+    ['a scope path with a backslash', set({ runs: [{ ...set().runs[0]!, inputs: { ...set().runs[0]!.inputs, scopePaths: ['src\\test'] } }, set().runs[1], set().runs[2]] }), 'scope_paths_invalid'],
+    ['unsorted scope paths', set({ runs: [{ ...set().runs[0]!, inputs: { ...set().runs[0]!.inputs, scopePaths: ['test', 'src'] } }, set().runs[1], set().runs[2]] }), 'scope_paths_invalid'],
     ['a credential-shaped goal', set({ runs: [{ ...set().runs[0]!, inputs: { ...set().runs[0]!.inputs, goal: 'use password=hunter2-correct-horse' } }, set().runs[1], set().runs[2]] }), 'goal_invalid'],
   ];
   for (const [name, value, failure] of refusals) {
@@ -264,6 +271,8 @@ describe('phase 4 run unit · the proposed judgment of one record', () => {
     ['a command was once unresolved', (r) => ({ ...r, commands: [{ ...r.commands[0]!, rows: [...r.commands[0]!.rows.slice(0, 3), { eventType: 'unresolved' }, { eventType: 'resolved' }] }] }), 'command_not_clean'],
     ['the last attempt failed not_sent', (r) => ({ ...r, commands: [command('cmd_0', { eventType: 'failed', failureClassification: 'not_sent' })] }), 'command_not_clean'],
     ['the approval names another plan', (r) => ({ ...r, events: r.events.map((e) => (e.event === 'plan.approved' ? { ...e, planHash: 'e'.repeat(64) } : e)) }), 'plan_not_approved_as_reviewed'],
+    ['the approval is bound to a command other than the reviewed plan’s', (r) => ({ ...r, decisions: [...r.decisions.slice(0, -1), { ...r.decisions.at(-1)!, commandId: 'cmd_not_the_reviewed_one' }] }), 'plan_not_approved_as_reviewed'],
+    ['the rounds left no dispatch events', (r) => ({ ...r, events: r.events.filter((e) => e.event !== 'task.dispatched.planner' && e.event !== 'plan.revision_requested') }), 'round_dispatch_missing'],
     ['a decision is not the Founder’s', (r) => ({ ...r, events: r.events.map((e) => (e.event === 'plan.approved' ? { ...e, actor: 'agent.planner' } : e)) }), 'decision_not_founder'],
     ['something follows approval', (r) => ({ ...r, events: [...r.events, event('t6', 'task.dispatched.builder', 'control-plane', DISPATCHER_ATTRIBUTION)] }), 'activity_after_approval'],
   ];
@@ -452,5 +461,55 @@ describe('phase 4 export reader · the room export, read whole or refused', () =
     assert.throws(() => readPhase4Export({ ...body([]), roomId: 'other' }, roomId), /not this room/);
     assert.throws(() => readPhase4Export(body([row({ attribution: { actorId: 'x' } })]), roomId), /not readable whole/);
     assert.throws(() => readPhase4Export(body([row({ evidence: [{ kind: 1 }] })]), roomId), /unreadable evidence/);
+  });
+});
+
+describe('phase 4 http driver · bound to the act it drives', () => {
+  const ok201 = { status: 201, json: async () => ({}) } as unknown as Response;
+  const base = {
+    apiToken: 'api-token',
+    countedRunToken: 'counted-run-token',
+    founderOs: { sha: SHA_A, clean: true },
+    executorAvailable: true,
+  };
+  const fakeFetch = ok201 as unknown as typeof fetch;
+
+  it('refuses an entry whose act names another control plane', async () => {
+    const driver = new HttpPhase4Driver({ ...base, origin: 'https://other.example', fetch: fakeFetch });
+    await assert.rejects(driver.observeEntry(set()), /names control plane/);
+  });
+
+  it('refuses to capture scope without a remote-head observer', async () => {
+    const driver = new HttpPhase4Driver({ ...base, origin: 'https://control-plane.example', fetch: fakeFetch });
+    const run = set().runs[0]!;
+    await assert.rejects(driver.captureScope(run.roomId, run, set().founderRelay), /observer/);
+  });
+
+  it('refuses a remote head that is not the act’s base', async () => {
+    const driver = new HttpPhase4Driver({
+      ...base,
+      origin: 'https://control-plane.example',
+      observeRemoteHead: async () => SHA_B,
+      fetch: fakeFetch,
+    });
+    const run = set().runs[0]!;
+    await assert.rejects(driver.captureScope(run.roomId, run, set().founderRelay), /does not match/);
+  });
+
+  it('sends the observed head as T1’s remote-head fact, never the base asserted back', async () => {
+    let sent: { facts?: Record<string, unknown> } | undefined;
+    const recordingFetch = (async (_url: unknown, init?: RequestInit) => {
+      if (typeof init?.body === 'string') sent = JSON.parse(init.body) as { facts?: Record<string, unknown> };
+      return ok201 as unknown as Response;
+    }) as unknown as typeof fetch;
+    const driver = new HttpPhase4Driver({
+      ...base,
+      origin: 'https://control-plane.example',
+      observeRemoteHead: async () => SHA_A,
+      fetch: recordingFetch,
+    });
+    const run = set().runs[0]!;
+    await driver.captureScope(run.roomId, run, set().founderRelay);
+    assert.equal((sent?.facts as Record<string, string>)['remoteHeadSha'], SHA_A);
   });
 });

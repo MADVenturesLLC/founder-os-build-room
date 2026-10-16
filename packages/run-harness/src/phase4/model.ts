@@ -188,6 +188,7 @@ export type Phase4RunFailure =
   | 'goal_not_bound'
   | 'dispatcher_attribution_wrong'
   | 'planner_attribution_wrong'
+  | 'round_dispatch_missing'
   | 'command_authorization_wrong'
   | 'command_route_wrong'
   | 'command_not_clean'

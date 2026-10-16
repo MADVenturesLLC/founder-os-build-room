@@ -7,8 +7,8 @@
  * Founder's to state.
  */
 
-import { isAbsolute } from 'node:path';
 import { containsCredentialMaterial } from '../../../journal/src/index.js';
+import { checkScopePaths } from '../../../contracts/src/scope.js';
 import { FOUNDER_GOAL_MAX_LENGTH } from '../../../control-plane/src/founder-goal.js';
 import { PHASE4_RUN_LABELS, type Phase4RunSet } from './model.js';
 
@@ -22,6 +22,7 @@ export type Phase4RunSetFailure =
   | 'relay_invalid'
   | 'timeout_invalid'
   | 'runs_invalid'
+  | 'scope_paths_invalid'
   | 'goal_invalid';
 
 export type Phase4RunSetResult =
@@ -86,12 +87,10 @@ function runSetFailure(value: unknown): Phase4RunSetFailure | null {
     if (inputs === null || !exact(inputs, ['repository', 'baseSha', 'scopePaths', 'goal'])) return 'runs_invalid';
     if (!REPOSITORY_RE.test(text(inputs['repository'])) || !SHA_RE.test(text(inputs['baseSha']))) return 'runs_invalid';
     const paths = inputs['scopePaths'];
-    if (
-      !Array.isArray(paths) ||
-      paths.length === 0 ||
-      paths.some((p) => typeof p !== 'string' || p === '' || isAbsolute(p) || p.split('/').includes('..'))
-    ) {
-      return 'runs_invalid';
+    // The shared canonical check (G5's own), applied while the act is read:
+    // an act whose paths the planner loop would refuse never starts a room.
+    if (!Array.isArray(paths) || !checkScopePaths(paths as readonly string[]).ok) {
+      return 'scope_paths_invalid';
     }
     // The room route's own goal rule (founder-goal.ts), applied before anything is sent.
     const goal = inputs['goal'];

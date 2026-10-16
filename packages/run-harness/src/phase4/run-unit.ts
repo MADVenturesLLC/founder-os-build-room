@@ -22,6 +22,7 @@
  */
 
 import { founderGoalDigest } from '../../../control-plane/src/founder-goal.js';
+import { plannerCommandIdFor } from '../../../control-plane/src/planner-loop.js';
 import {
   PHASE4_DISPATCHER,
   PHASE4_MAX_ROUNDS_PER_RUN,
@@ -79,6 +80,18 @@ export function evaluatePhase4Run(
       break;
     }
   }
+  // Every round is opened by the control plane's own dispatch — the T2
+  // first, then each revision's T4 — and each opening's derived command must
+  // be one the journal holds (run-unit items 3 and 4): a record whose
+  // dispatch events were omitted does not pass on its command rows alone.
+  const openings = events.filter((e) => e.event === 'task.dispatched.planner' || e.event === 'plan.revision_requested');
+  if (openings.length === 0) failures.push('round_dispatch_missing');
+  for (const opening of openings) {
+    if (!record.commands.some((c) => c.commandId === plannerCommandIdFor(record.roomId, opening.eventId))) {
+      failures.push('round_dispatch_missing');
+      break;
+    }
+  }
   const t3s = events.filter((e) => e.event === 'plan.submitted');
   for (const t3 of t3s) {
     const a = t3.attribution;
@@ -93,7 +106,7 @@ export function evaluatePhase4Run(
   // The decisions: only the Founder's, revisions then one approval of the plan under review.
   const decisionEvents = events.filter((e) => ['plan.revision_requested', 'plan.approved', 'founder.cancel'].includes(e.event));
   if (decisionEvents.some((e) => e.actor !== 'founder')) failures.push('decision_not_founder');
-  const rounds = events.filter((e) => e.event === 'task.dispatched.planner' || e.event === 'plan.revision_requested').length;
+  const rounds = openings.length;
   if (rounds > PHASE4_MAX_ROUNDS_PER_RUN && !interrupted.includes('too_many_rounds')) interrupted.push('too_many_rounds');
 
   const cancelled = record.finalState === 'CLOSED_ABANDONED' && events.at(-1)?.event === 'founder.cancel';
@@ -102,6 +115,8 @@ export function evaluatePhase4Run(
     const t5 = events[t5Index];
     const reviewed = t3s.at(-1);
     const approvedDecision = record.decisions.at(-1);
+    // The approval binds (Q3) to the command whose plan is under review — the
+    // last round's completed command — not to any row carrying the same hash.
     if (
       t5 === undefined ||
       reviewed === undefined ||
@@ -109,6 +124,7 @@ export function evaluatePhase4Run(
       t5.planHash !== reviewed.planHash ||
       approvedDecision?.decision !== 'plan.approved' ||
       approvedDecision.planHash !== reviewed.planHash ||
+      approvedDecision?.commandId !== record.commands.at(-1)?.commandId ||
       record.decisions.slice(0, -1).some((d) => d.decision !== 'plan.revision_requested')
     ) {
       failures.push('plan_not_approved_as_reviewed');

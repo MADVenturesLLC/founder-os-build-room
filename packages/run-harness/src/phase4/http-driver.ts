@@ -18,8 +18,11 @@
  *
  * Two facts the control plane cannot see are the caller's to supply, read
  * where they live: FounderOS's checkout (commit and cleanliness) and whether
- * the PC's Gateway has a planner executor (its `doctor`). Tokens are held in
- * memory and never logged or echoed.
+ * the PC's Gateway has a planner executor (its `doctor`). The repository's
+ * live head is neither: the driver OBSERVES it (Copilot, 2026-10-16) and
+ * refuses to capture scope against a head it could not observe or that is
+ * not the act's base — it never asserts the fact it was going to check.
+ * Tokens are held in memory and never logged or echoed.
  */
 
 import { readPhase4Export } from './export-reader.js';
@@ -35,6 +38,12 @@ export interface HttpPhase4DriverOptions {
   readonly countedRunToken: string;
   readonly founderOs: { readonly sha: string; readonly clean: boolean };
   readonly executorAvailable: boolean;
+  /**
+   * Observes the repository's live head (the harness has egress; the control
+   * plane does not). Required: without it the driver refuses to capture
+   * scope rather than assert the remote head itself.
+   */
+  readonly observeRemoteHead?: (repository: string) => Promise<string | null>;
   /** How long one planning round may run before the driver stops waiting on it. */
   readonly roundTimeoutMs?: number;
   readonly pollMs?: number;
@@ -66,6 +75,14 @@ export class HttpPhase4Driver implements Phase4RunDriver {
   }
 
   async observeEntry(set: Phase4RunSet): Promise<Phase4EntryObservation> {
+    // Bound to the act it drives (Copilot, 2026-10-16): every request this
+    // driver makes goes to this origin, so an act naming another control
+    // plane is refused before anything is read or written.
+    const named = new URL(set.controlPlaneOrigin).origin;
+    const driven = new URL(this.options.origin).origin;
+    if (named !== driven) {
+      throw new Phase4DriverError(`the act names control plane ${named}; this driver is bound to ${driven}`);
+    }
     const version = await this.call('GET', '/version', null);
     const view = await this.roundView(set.runs[0]!.roomId).catch(() => null);
     const enrollments = await this.call('GET', '/control-plane/enrollments', this.options.apiToken).catch(() => null);
@@ -93,6 +110,19 @@ export class HttpPhase4Driver implements Phase4RunDriver {
   }
 
   async captureScope(roomId: string, run: Phase4PlannedRun, relay: Phase4RunSet['founderRelay']): Promise<void> {
+    const observer = this.options.observeRemoteHead;
+    if (observer === undefined) {
+      throw new Phase4DriverError('no remote-head observer: the driver observes the repository head instead of asserting it');
+    }
+    let observed: string | null;
+    try {
+      observed = await observer(run.inputs.repository);
+    } catch {
+      throw new Phase4DriverError(`remote head not observed for ${run.inputs.repository}`);
+    }
+    if (observed === null || observed !== run.inputs.baseSha) {
+      throw new Phase4DriverError(`remote head ${observed ?? 'unobserved'} does not match the act's base ${run.inputs.baseSha}`);
+    }
     const t1 = await this.call('POST', `/rooms/${roomId}/events`, this.options.apiToken, {
       eventId: `evt_t1_${roomId}`,
       event: 'scope.captured',
@@ -101,7 +131,7 @@ export class HttpPhase4Driver implements Phase4RunDriver {
       scope: { roomId, repo: run.inputs.repository, paths: [...run.inputs.scopePaths] },
       evidence: [],
       occurredAt: new Date(this.now()).toISOString(),
-      facts: { repoInAllowlist: true, baseSha: run.inputs.baseSha, remoteHeadSha: run.inputs.baseSha },
+      facts: { repoInAllowlist: true, baseSha: run.inputs.baseSha, remoteHeadSha: observed },
       goal: run.inputs.goal,
     });
     if (t1.status !== 201) throw new Phase4DriverError(`scope capture answered ${t1.status}`);

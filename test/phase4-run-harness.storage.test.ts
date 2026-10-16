@@ -401,12 +401,14 @@ describe('phase 4 run harness · a run over the Q9 routes, as a counted run woul
       countedRunToken: COUNTED_RUN_TOKEN,
       founderOs: { sha: set.founderOsSha, clean: true },
       executorAvailable: true,
+      observeRemoteHead: async () => set.runs[0]!.inputs.baseSha,
       pollMs: 20,
     });
     const deciding = founder(set.runs[0]!.roomId, ['approve']);
     const result = await new Phase4Runner(driver, { pollMs: 20, entry: { namedGatewayPrefix: gateway!.gatewayId.slice(0, 8) } }).runNext(
-      // The commit this test instance reports on /version, as an act would name the deployed one.
-      { ...set, buildRoomSha: node!.config.commitSha },
+      // The commit this test instance reports on /version, as an act would name the deployed one;
+      // and the origin the run actually drives, as the act must name (the driver is bound to it).
+      { ...set, buildRoomSha: node!.config.commitSha, controlPlaneOrigin: origin },
       [],
     );
     await deciding;
