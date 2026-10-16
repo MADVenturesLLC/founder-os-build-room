@@ -97,19 +97,5 @@ function onApprovedLane(
   return seat !== undefined && seat.routing.some((lane) => lane.binding_status === 'approved-binding' && matches(lane));
 }
 
-/**
- * The `surface_id`s an execution-surface registry declares, read from its
- * text: each YAML `surface_id:` line. A surface whose entry says it is
- * `proposed-not-active` is not registered for attribution and is left out.
- */
-export function registeredSurfaceIds(registryMarkdown: string): ReadonlySet<string> {
-  const ids = new Set<string>();
-  const blocks = registryMarkdown.split(/^```yaml$/m).slice(1).map((block) => block.split(/^```$/m)[0] ?? '');
-  for (const block of blocks) {
-    const id = /^surface_id:\s*([A-Za-z0-9._-]+)\s*$/m.exec(block)?.[1];
-    if (id === undefined) continue;
-    if (/^current_status:\s*proposed-not-active\b/m.test(block)) continue;
-    ids.add(id);
-  }
-  return ids;
-}
+/** One reader of the registry's surfaces, the control plane's own (`counted-run.ts`). */
+export { registeredSurfaceIds } from '../../../control-plane/src/counted-run.js';

@@ -131,8 +131,11 @@ work under one:
 3. **A planner executor on the Gateway.** The worker has none, and none
    ships. An Antigravity executor is a provider binding, which
    `DEC-20260827-01` §3.4 does not authorize.
-4. **A control-plane surface for the run (Q9 below).** Nothing in the
-   deployed control plane can start a planning round or read the journal.
+4. **The counted-run surface configured (Q9 below).** The routes are
+   built and deploy inert. A run needs `PHASE4_COUNTED_RUN` set to the
+   act's terms, `PHASE4_COUNTED_RUN_TOKEN` set (§9), and the platform's
+   `RAILWAY_DEPLOYMENT_ID`. Setting either variable is a production change
+   and is the Founder's act.
 5. **This pull request merged and deployed,** with migration `0010` applied
    as its merge authorization sequences it.
 6. **The act itself.**
@@ -197,4 +200,49 @@ The harness already implements Q10 to Q14 as answered:
 - `PHASE4_MAX_ROUNDS_PER_RUN` is 3;
 - `runner.ts`: `captureScope` relays the act's inputs.
 
-Q9's two routes are not built yet.
+Q9 is built, on the Founder's direction "go ahead with the Q9 routes":
+`control-plane/src/counted-run.ts` and `counted-run-config.ts`, and the
+harness's `http-driver.ts`, which drives a run through those routes and
+the existing room routes and never calls the plan-decision route. The
+builder's finding against its own recommendation is in §9.
+
+## 9. A finding against the Q9 answer
+
+The builder's own, raised after the answer and not acted on. The
+control plane's README records the adjudication token as "Founder-only
+... and never available to the counted-run harness". Phase 3 kept it
+from the harness so the harness could never adjudicate. As answered,
+Q9 puts the counted-run routes behind that same token. Whatever runs the
+harness therefore holds a credential that also posts plan decisions. The
+runner never calls that route, and its driver has no method for it, but
+that is a property of the code, not of the credential.
+
+That is harmless only if the Founder runs the harness in person. The
+alternative is a separate counted-run token, distinct from both existing
+tokens. With it, the harness can start rounds and read the journal but
+cannot decide a plan. This is a Founder call. The builder recommended
+the answer as given and did not see this when it did.
+
+### Founder answer, 2026-10-16
+
+Given in session at about 00:38Z, in the Founder's words: "Add a separate
+counted-run token. It would differ from both existing tokens and could
+start rounds and read the journal, but not decide a plan. It’s a small
+change, and I’d recommend it."
+
+This supersedes the token named in the Q9 answer (§8); the rest of that
+answer stands. Built:
+- `PHASE4_COUNTED_RUN_TOKEN` (`config.ts`): at least 32 characters, and
+  distinct from `CONTROL_PLANE_TOKEN` and `PHASE3_ADJUDICATION_TOKEN`, or
+  boot refuses. Unset, every counted-run route answers 503
+  `counted_run_disabled`.
+- The three counted-run routes take that token and no other. The API
+  token and the adjudication token are refused with 401 there, and the
+  counted-run token is refused with 401 at the plan decision.
+- The harness's `http-driver.ts` holds the API token and the counted-run
+  token, and no credential that opens the plan decision.
+
+What the boot check proves, and what it does not: it refuses a value equal
+to either other token. It cannot tell whether a value was generated
+independently of them. Generating it independently is part of the act
+that sets it.

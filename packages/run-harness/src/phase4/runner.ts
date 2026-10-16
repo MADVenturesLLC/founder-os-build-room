@@ -14,8 +14,9 @@
  * THE DRIVER is what a counted run needs the deployed control plane to
  * offer: an entry observation, room creation and scope capture (existing
  * routes), a way to start a planning round, the room's state, and the record
- * the run unit reads. Starting a round and reading the journal have no route
- * today; the plan's Q9 asks how a counted run reaches them.
+ * the run unit reads. `http-driver.ts` is that driver over the deployed
+ * routes, starting rounds and reading the journal through the run-unit Q9
+ * routes (`control-plane/src/counted-run.ts`).
  */
 
 import { createHash } from 'node:crypto';

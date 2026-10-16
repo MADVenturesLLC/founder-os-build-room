@@ -217,7 +217,11 @@ Each slice lands as commits on the one branch, with its tests.
       `build-room-control-plane` is not in the vendored registry until
       `DEC-20261015-01` is ratified and the fixture re-pinned. Nothing in
       production implements the driver. Starting a round and reading the
-      journal need a control-plane surface (Q9).
+      journal need a control-plane surface (Q9), built on the Founder's
+      answer: `control-plane/src/counted-run.ts`, inert unless
+      `PHASE4_COUNTED_RUN` is set, behind `PHASE4_COUNTED_RUN_TOKEN` and no
+      other token (the Founder's answer to the run-unit proposal's §9),
+      and the harness's `http-driver.ts`.
     - Tests:
       - `test/phase4-run-harness.test.ts`, at unit level;
       - `test/phase4-run-harness.storage.test.ts`: the runner over the real

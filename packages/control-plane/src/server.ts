@@ -33,6 +33,7 @@ import { journalRouter } from './journal-routes.js';
 import { JournalStore } from './journal-store.js';
 import { PlanStore } from './plan-store.js';
 import { planDecisionRouter } from './plan-decision.js';
+import { countedRunRouter } from './counted-run.js';
 import { FounderGoalRefusedError, prepareFounderGoal } from './founder-goal.js';
 import { PostgresLedgerStore, RoomNotFoundError } from './store.js';
 import {
@@ -69,6 +70,11 @@ export interface ServerDeps {
    */
   readonly planStore?: Pick<PlanStore, 'inTransaction'>;
   readonly decisionJournal?: Pick<JournalStore, 'inTransaction'>;
+  /**
+   * The execution-surface ids a counted run checks T2's surface against.
+   * Defaults to the registry Build Room vendors; tests supply their own.
+   */
+  readonly countedRunSurfaces?: () => ReadonlySet<string>;
 }
 
 /** Errors that carry an HTTP status the client should see. */
@@ -351,6 +357,33 @@ export function createServer(deps: ServerDeps): Express {
       requireAdjudicationToken:
         config.phase3AdjudicationToken === null ? null : tokenGuard(config.phase3AdjudicationToken),
       requireLeader: deps.gateway.leadership.requireLeader(),
+    }),
+  );
+  /*
+   * The counted-run routes (run-unit Q9): behind the counted-run token and
+   * nothing else, never the adjudication token (the Founder's §9 answer),
+   * and inert (503) unless the Founder's counted-run act is configured.
+   */
+  app.use(
+    countedRunRouter({
+      config: config.countedRun,
+      deploymentId: config.deploymentId,
+      pool,
+      ledger: store,
+      plannerPort: (run) =>
+        deps.gateway.planner.port({
+          gatewayId: run.gatewayId,
+          role: 'architect',
+          intended: { provider: run.planner.provider, model: run.planner.model, executionSurface: 'antigravity' },
+        }),
+      gatewayOnline: (gatewayId) => {
+        const liveness = deps.gateway.session.livenessFor(gatewayId);
+        if (liveness === null || !deps.gateway.clock.monotonicTrustworthy) return false;
+        return deps.gateway.clock.monotonicNow() - liveness.monoMs <= config.gatewayStalenessMs;
+      },
+      requireCountedRunToken: config.countedRunToken === null ? null : tokenGuard(config.countedRunToken),
+      requireLeader: deps.gateway.leadership.requireLeader(),
+      ...(deps.countedRunSurfaces === undefined ? {} : { registeredSurfaces: deps.countedRunSurfaces }),
     }),
   );
   app.use(

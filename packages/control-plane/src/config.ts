@@ -11,6 +11,8 @@
  * Phase 2 authorization).
  */
 
+import { parseCountedRunConfig, type CountedRunConfig } from './counted-run-config.js';
+
 export interface Config {
   /** Postgres connection string. Required — no default, no fallback. */
   readonly databaseUrl: string;
@@ -34,6 +36,13 @@ export interface Config {
   readonly apiToken: string;
   /** Founder-only Phase 3 adjudication credential; null keeps the route absent. */
   readonly phase3AdjudicationToken: string | null;
+  /**
+   * The counted-run credential (run-unit Q9, Founder's §9 answer): starts a
+   * planning round and reads the journal, and opens no other route. Distinct
+   * from both other tokens, so whatever drives a counted run cannot decide a
+   * plan. Null leaves the counted-run routes answering 503.
+   */
+  readonly countedRunToken: string | null;
   /** TCP port for the HTTP surface. */
   readonly port: number;
   /**
@@ -42,6 +51,17 @@ export interface Config {
    * guessed.
    */
   readonly commitSha: string;
+  /**
+   * The platform's id for this deployment (`RAILWAY_DEPLOYMENT_ID`), or null
+   * when it gave none. A counted run's T2 names it as its actor (Q7b), so a
+   * round never starts without it.
+   */
+  readonly deploymentId: string | null;
+  /**
+   * The Founder's counted-run act's terms (`PHASE4_COUNTED_RUN`, JSON), or
+   * null: the counted-run routes stay inert (`counted-run.ts`, run-unit Q9).
+   */
+  readonly countedRun: CountedRunConfig | null;
   /** Deployment environment label, for evidence records. */
   readonly environment: string;
   /** Milliseconds a readiness database probe may take before it is failed. */
@@ -286,6 +306,18 @@ export function loadConfig(env: Env): Config {
     }
     phase3AdjudicationToken = candidate;
   }
+  const rawCountedRunToken = env['PHASE4_COUNTED_RUN_TOKEN'];
+  let countedRunToken: string | null = null;
+  if (rawCountedRunToken !== undefined) {
+    const candidate = rawCountedRunToken.trim();
+    if (candidate.length < 32 || candidate === apiToken || candidate === phase3AdjudicationToken) {
+      throw new ConfigError(
+        'PHASE4_COUNTED_RUN_TOKEN must be at least 32 characters and distinct from ' +
+          'CONTROL_PLANE_TOKEN and PHASE3_ADJUDICATION_TOKEN. No credential is echoed.',
+      );
+    }
+    countedRunToken = candidate;
+  }
 
   /* ---- Gateway timing, bounds first, then the cross-field relations ---- */
 
@@ -315,6 +347,14 @@ export function loadConfig(env: Env): Config {
   atMost('GATEWAY_TIMESTAMP_WINDOW_MS', gatewayTimestampWindowMs, 300_000, 'end-to-end, skew included');
 
   const gatewayAwaitingApprovalTtlMs = safeInteger(env, 'GATEWAY_AWAITING_APPROVAL_TTL_MS', 3_600_000);
+
+  let countedRun: CountedRunConfig | null;
+  try {
+    countedRun = parseCountedRunConfig(env['PHASE4_COUNTED_RUN']);
+  } catch (error) {
+    // The message names the rule broken, never the value.
+    throw new ConfigError(`PHASE4_COUNTED_RUN: ${error instanceof Error ? error.message : 'unreadable'}`);
+  }
 
   const leaderHeartbeatMs = safeInteger(env, 'LEADER_HEARTBEAT_MS', 10_000);
   const leaderLeaseTtlMs = safeInteger(env, 'LEADER_LEASE_TTL_MS', 30_000);
@@ -370,8 +410,11 @@ export function loadConfig(env: Env): Config {
     databaseUrl,
     apiToken,
     phase3AdjudicationToken,
+    countedRunToken,
     port: integer(env, 'PORT', 8080),
     commitSha: (env['RAILWAY_GIT_COMMIT_SHA'] ?? env['COMMIT_SHA'] ?? 'unknown').trim() || 'unknown',
+    deploymentId: (env['RAILWAY_DEPLOYMENT_ID'] ?? '').trim() || null,
+    countedRun,
     environment: (env['RAILWAY_ENVIRONMENT_NAME'] ?? env['NODE_ENV'] ?? 'unknown').trim() || 'unknown',
     readyProbeTimeoutMs: integer(env, 'READY_PROBE_TIMEOUT_MS', 2_000),
     statementTimeoutMs: integer(env, 'STATEMENT_TIMEOUT_MS', 10_000),

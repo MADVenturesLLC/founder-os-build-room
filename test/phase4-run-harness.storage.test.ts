@@ -55,6 +55,11 @@ import {
 import { createGatewayHarness, destroyGatewayHarness, RUNTIME_ROLE_MODE, STORAGE_SKIP, type GatewayHarness } from './gateway-storage-helpers.js';
 import { enrollGateway, makeSessionNode, promoteNode, startNodeServer, type EnrolledGateway, type SessionNode } from './gateway-session-helpers.js';
 import { SyntheticExecutor } from './support/synthetic-executor.js';
+import { closeServer } from './support/close-server.js';
+import { createServer } from '../packages/control-plane/src/server.js';
+import { HttpPhase4Driver } from '../packages/run-harness/src/phase4/index.js';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 const SKIP =
   STORAGE_SKIP !== false
@@ -65,6 +70,8 @@ const SKIP =
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ADJUDICATION_TOKEN = 'phase4-harness-adjudication-token-long-enough';
+/** The driver's credential: rounds and the journal, never the plan decision. */
+const COUNTED_RUN_TOKEN = 'phase4-harness-counted-run-token-long-enough';
 const DEPLOYMENT = 'test-deployment-0001';
 const SET_ID = 'FOUNDER-ACT-EXAMPLE-PHASE4-COUNTED-RUNS';
 const PLANNER = { provider: 'google', model: 'gemini-3.1-pro' };
@@ -115,8 +122,11 @@ before(async () => {
   }
 });
 
+let countedRunServer: Server | undefined;
+
 after(async () => {
   await stopDriving?.();
+  if (countedRunServer !== undefined) await closeServer(countedRunServer);
   await surface?.close();
   await destroyGatewayHarness(harness);
   if (recordsRoot !== undefined) rmSync(recordsRoot, { recursive: true, force: true });
@@ -361,5 +371,60 @@ describe('phase 4 run harness · the runner over the real assembly', { skip: SKI
     assert.equal(result.record!.finalState, 'CLOSED_ABANDONED');
     attempts.push(result);
     assert.deepEqual(phase4SetStatus(attempts), { consecutivePasses: 0, nextLabel: null, spent: true, satisfied: false });
+  });
+});
+
+describe('phase 4 run harness · a run over the Q9 routes, as a counted run would make it', { skip: SKIP }, () => {
+  it('passes a run driven only through HTTP: the routes start the round and read the journal; the Founder decides at the plan-decision route', async () => {
+    const set = runSet();
+    // The control plane as an act would configure it (run-unit Q9): the same
+    // node and Gateway surface, served with the act's terms and a deployment
+    // id, its vendored registry standing in for the re-pin.
+    const app = createServer({
+      config: {
+        ...node!.config,
+        deploymentId: DEPLOYMENT,
+        countedRunToken: COUNTED_RUN_TOKEN,
+        countedRun: { actId: set.setId, gatewayId: set.gatewayId, planner: set.planner, seats: set.seats },
+      },
+      pool: harness!.appPool,
+      store: new PostgresLedgerStore(harness!.appPool, node!.surface.roomAppendFence),
+      startedAt: Date.now(),
+      gateway: node!.surface,
+      countedRunSurfaces: () => new Set([PHASE4_DISPATCHER.executionSurface]),
+    });
+    countedRunServer = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => countedRunServer!.once('listening', () => resolve()));
+    const origin = `http://127.0.0.1:${(countedRunServer.address() as AddressInfo).port}`;
+
+    const driver = new HttpPhase4Driver({
+      origin,
+      apiToken: node!.config.apiToken,
+      countedRunToken: COUNTED_RUN_TOKEN,
+      founderOs: { sha: set.founderOsSha, clean: true },
+      executorAvailable: true,
+      pollMs: 20,
+    });
+    const deciding = founder(set.runs[0]!.roomId, ['approve']);
+    const result = await new Phase4Runner(driver, { pollMs: 20, entry: { namedGatewayPrefix: gateway!.gatewayId.slice(0, 8) } }).runNext(
+      // The commit this test instance reports on /version, as an act would name the deployed one.
+      { ...set, buildRoomSha: node!.config.commitSha },
+      [],
+    );
+    await deciding;
+    assert.equal(result.outcome, 'passed', JSON.stringify({ entry: result.entryFailures, failures: result.failures }));
+    const record = result.record!;
+    const t2 = record.events.find((e) => e.event === 'task.dispatched.planner')!;
+    assert.deepEqual(t2.attribution, {
+      roleId: 'builder',
+      actorId: `control-plane:${DEPLOYMENT}`,
+      actualModel: 'n/a (deterministic control-plane act)',
+      executionSurface: 'build-room-control-plane',
+    });
+    const journaled = record.commands[0]!.rows.find((r) => r.eventType === 'journaled')!;
+    assert.deepEqual([journaled.authorizationRef, journaled.intendedModel, journaled.intendedSurface], [set.setId, 'gemini-3.1-pro', 'antigravity']);
+    assert.deepEqual(record.commands[0]!.rows.map((r) => r.eventType), ['journaled', 'identity_bound', 'dispatched', 'completed']);
+    assert.equal(record.journalVerified, true);
+    assert.equal(record.deploymentIdAtEnd, DEPLOYMENT);
   });
 });

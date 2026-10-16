@@ -39,9 +39,12 @@ same value as `CONTROL_PLANE_TOKEN`, or every room request answers 401.
 | Variable | Default | What it is |
 |---|---|---|
 | `PHASE3_ADJUDICATION_TOKEN` | route absent | Founder-only credential for Phase 3 pass/fail adjudication. At least 32 characters, distinct from `CONTROL_PLANE_TOKEN`, and never available to the counted-run harness. |
+| `PHASE4_COUNTED_RUN_TOKEN` | routes 503 | The counted-run credential (run-unit proposal §9): opens the three counted-run routes and nothing else, the plan decision included. At least 32 characters, distinct from `CONTROL_PLANE_TOKEN` and `PHASE3_ADJUDICATION_TOKEN`, or boot refuses. It is the one credential besides the API token that the Phase 4 harness holds. |
+| `PHASE4_COUNTED_RUN` | routes inert | The Founder's counted-run act's terms, as JSON `{ actId, gatewayId, planner: { provider, model }, seats: { builder, reviewer } }` (run-unit Q9). Absent, every counted-run route answers 503. Present, it must be exactly that shape, the Planner on the architect seat's Antigravity lane, the builder and reviewer on their seats' lanes and on different models, or boot refuses. Setting it is the Founder's act. |
 | `PORT` | `8080` | TCP port for the HTTP surface. |
 | `RAILWAY_GIT_COMMIT_SHA` / `COMMIT_SHA` | `unknown` | The commit `/version` reports. Reported as `unknown` rather than guessed — evidence bound to a wrong SHA is worse than evidence bound to none. |
 | `RAILWAY_ENVIRONMENT_NAME` / `NODE_ENV` | `unknown` | Environment label, for evidence records. |
+| `RAILWAY_DEPLOYMENT_ID` | none | The deployment a counted run's T2 names as its actor (`control-plane:<deployment id>`, Q7b). A round never starts without it. |
 | `READY_PROBE_TIMEOUT_MS` | `2000` | How long a `/ready` database probe may take before it fails. |
 | `STATEMENT_TIMEOUT_MS` | `10000` | Postgres `statement_timeout` on pooled connections. Lifted for the migration session only — see `migrations.ts`. |
 | `PG_POOL_MAX` | `4` | Maximum pooled connections. Neon's small computes are the constraint. |
@@ -63,6 +66,9 @@ same value as `CONTROL_PLANE_TOKEN`, or every room request answers 401.
 | `POST /control-plane/phase3/run-attempts/:runAttemptId/events` | **token** | Append a closed lifecycle stage or technical completion event. Heartbeat and pass claims are refused. |
 | `POST /control-plane/phase3/run-attempts/:runAttemptId/adjudication` | **adjudication token** | Record a fenced, idempotent Tier 2 and Founder pass/fail decision. The route is absent when `PHASE3_ADJUDICATION_TOKEN` is unset. |
 | `GET /control-plane/phase3/run-attempts/:runAttemptId/export` | **token** | Snapshot-consistent, redacted run evidence. |
+| `POST /control-plane/rooms/:roomId/planner-round` | **counted-run token** | Start one Phase 4 planning round for the room, under the configured counted-run act; 202, then the round runs. One round at a time. 503 unless `PHASE4_COUNTED_RUN`, `PHASE4_COUNTED_RUN_TOKEN`, `RAILWAY_DEPLOYMENT_ID` and the vendored registry's `build-room-control-plane` entry are all present. |
+| `GET /control-plane/rooms/:roomId/planner-round` | **counted-run token** | That round's state, with the act, the deployment and the Gateway's liveness. 503 unless `PHASE4_COUNTED_RUN` and `PHASE4_COUNTED_RUN_TOKEN` are set. |
+| `GET /control-plane/rooms/:roomId/journal` | **counted-run token** | The room's planner commands, their decision rows, and the journal's verification from genesis. 503 unless `PHASE4_COUNTED_RUN` and `PHASE4_COUNTED_RUN_TOKEN` are set. |
 
 The three open routes stay open because Railway's health check presents no
 credential and would fail the deploy if `/health` were guarded, and because the

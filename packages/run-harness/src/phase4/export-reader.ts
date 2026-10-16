@@ -1,7 +1,7 @@
 /**
  * A run record's lifecycle half, read from the control plane's existing
- * `GET /rooms/:roomId/export` (plan r1 slice 10). The journal half has no
- * route; the plan's Q9 asks how a counted run reads it.
+ * `GET /rooms/:roomId/export` (plan r1 slice 10). The journal half comes from
+ * the run-unit Q9 route, `GET /control-plane/rooms/:roomId/journal`.
  *
  * Only applied transitions are kept, in ledger order. A row the reader
  * cannot read whole is refused, never skipped: a record with a hole in it is
