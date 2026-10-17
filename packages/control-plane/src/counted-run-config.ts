@@ -6,7 +6,9 @@
  * The act's terms name SURFACES only (`BR-PHASE4-SURFACE-KEYED-SEATS-R1`,
  * 2026-10-17: "just surfaces, because models are always changing"): the
  * shape is `{ actId, gatewayId, planner, seats }`, where `planner` is the
- * Planner's execution surface (today `antigravity`) and `seats` carries the
+ * Planner's execution surface — which must be the counted run's adapter
+ * surface (`COUNTED_RUN_PLANNER_SURFACE`, `antigravity`; any other surface
+ * is refused at boot with its own string) — and `seats` carries the
  * builder's and the reviewer's execution-surface ids. No provider, no
  * model in the act's terms. Provider and model remain in the seat registry
  * as routing detail: each check below reads `surface_id` and
@@ -51,8 +53,9 @@ export class CountedRunConfigError extends Error {
 /**
  * Read `PHASE4_COUNTED_RUN`. Absent or empty is `null`: the routes stay
  * inert. Anything present must be the exact shape — surfaces only, each on
- * an approved lane of its seat — or boot refuses; a counted run never
- * starts on terms the registry does not carry.
+ * an approved lane of its seat, the planner's equal to the counted run's
+ * adapter surface — or boot refuses; a counted run never starts on terms
+ * the registry does not carry or the adapter cannot run.
  */
 export function parseCountedRunConfig(raw: string | undefined, seats: readonly SeatRegistrationV1[] = RATIFIED_SEATS): CountedRunConfig | null {
   if (raw === undefined || raw.trim() === '') return null;
@@ -78,6 +81,13 @@ export function parseCountedRunConfig(raw: string | undefined, seats: readonly S
   }
   const lane = plannerLane(seats, plannerSurface);
   if (lane === null) throw new CountedRunConfigError('the planner surface is not on an approved architect lane');
+  // F3 (r1 correction): the runtime names only the adapter's surface as the
+  // planner's execution surface, so an act naming any other surface — even an
+  // approved architect lane like `claude-code` — would be authorized
+  // synthetically and fail late at attestation. Boot refuses it here.
+  if (plannerSurface !== COUNTED_RUN_PLANNER_SURFACE) {
+    throw new CountedRunConfigError("the planner surface is not the counted run's adapter surface");
+  }
   if (!onApprovedLane(seats, 'builder', (l) => l.surface_id === text(seatSurfaces['builder']))) {
     throw new CountedRunConfigError('the builder surface is not on an approved builder lane');
   }

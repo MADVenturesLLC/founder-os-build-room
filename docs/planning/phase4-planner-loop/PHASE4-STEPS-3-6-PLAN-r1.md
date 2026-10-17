@@ -497,7 +497,9 @@ pull channel":
   constructs one per request once its token, act, deployment-id and
   registry checks pass, and answers 503 without them — the entry act
   that names the planner's and the seats' surfaces (Q2a, Q7a, keyed to
-  surfaces by BR-PHASE4-SURFACE-KEYED-SEATS-R1) is still not issued.
+  surfaces by BR-PHASE4-SURFACE-KEYED-SEATS-R1: the planner's surface is
+  the counted run's adapter surface, its provider and model resolved from
+  the approved lane as routing detail) is still not issued.
   Cancelling a running
   Gateway execution is not built: Q6's unconfirmed cancel stands, and the
   Gateway may keep running unseen.

@@ -32,11 +32,16 @@ or is the act's to state:
 
 At Build Room's pinned seat registry the architect seat's one Antigravity
 lane is `google` / `gemini-3.1-pro`. The act names surfaces, not models
-(`BR-PHASE4-SURFACE-KEYED-SEATS-R1`): each entry check reads `surface_id`
-and `binding_status` only, so a seat may re-pin its lanes' models without
-the act changing. Two surfaces that resolve to the same model are the
-Founder's call, not a check; the reviewer's surface must differ from the
-builder's.
+(`BR-PHASE4-SURFACE-KEYED-SEATS-R1`): the act's planner names the counted
+run's adapter surface (`antigravity`), the one surface the runtime can run,
+and its provider and model are resolved from that surface's approved lane
+as routing detail — the entry check requires the set's resolved route to be
+that lane, so a route resolved off the Antigravity lane is refused, and
+boot refuses a planner surface the adapter cannot run outright. The seats'
+checks read `surface_id` and `binding_status` only, so a seat may re-pin
+its lanes' models without the act changing. Two surfaces that resolve to
+the same model are the Founder's call, not a check; the reviewer's surface
+must differ from the builder's.
 
 ## 2. The run unit (proposed)
 

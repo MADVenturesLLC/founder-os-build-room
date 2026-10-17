@@ -157,6 +157,24 @@ describe('counted run · the act’s terms, read at boot', () => {
     });
   }
 
+  it('refuses at boot a planner surface the counted run’s adapter cannot run, naming it exactly', () => {
+    // F3 (r1 correction): `claude-code` is an approved architect lane, so it
+    // once parsed — but the runtime names only the Antigravity adapter as the
+    // planner's execution surface, so such a round was authorized synthetically
+    // and failed late. Boot now refuses it with its own honest string.
+    const offAdapter = JSON.stringify({ ...ACT, planner: 'claude-code' });
+    assert.throws(
+      () => parseCountedRunConfig(offAdapter),
+      (error: unknown) => error instanceof CountedRunConfigError && error.message === "the planner surface is not the counted run's adapter surface",
+    );
+    assert.throws(
+      () => loadConfig({ ...BASE_ENV, PHASE4_COUNTED_RUN: offAdapter }),
+      (error: unknown) => error instanceof ConfigError && error.message === "PHASE4_COUNTED_RUN: the planner surface is not the counted run's adapter surface",
+    );
+    // The adapter's own surface is the accepted one at boot.
+    assert.deepEqual(loadConfig({ ...BASE_ENV, PHASE4_COUNTED_RUN: JSON.stringify(ACT) }).countedRun, parseCountedRunConfig(JSON.stringify(ACT)));
+  });
+
   it('refuses a lane that is not an approved binding, for each of the three seats', () => {
     const rebind = (seatId: string, surface: string): readonly SeatRegistrationV1[] =>
       RATIFIED_SEATS.map((seat) =>

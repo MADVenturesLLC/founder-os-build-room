@@ -182,8 +182,10 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
 
   it('refuses a Planner when the architect seat has no approved Antigravity lane', () => {
     // The mirror planner check is surface-keyed (BR-PHASE4-SURFACE-KEYED-SEATS-R1):
-    // the act's planner surface today is the Antigravity adapter, and the check
-    // reads surface_id and binding_status only — never a provider or a model.
+    // the act's planner surface today is the Antigravity adapter. The r1
+    // correction re-keys the check to the set's resolved route: it requires an
+    // approved Antigravity lane whose provider and model are the set's planner,
+    // so a seat with no approved Antigravity lane at all is refused too.
     const withoutApprovedAntigravity: readonly SeatRegistrationV1[] = RATIFIED_SEATS.map((seat) =>
       seat.seat_id === 'architect'
         ? {
@@ -193,6 +195,20 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
         : seat,
     );
     assert.deepEqual(evaluatePhase4Entry(set(), observation(), { seats: withoutApprovedAntigravity }).failures, ['planner_lane_not_approved']);
+  });
+
+  it('refuses a Planner whose resolved route is off the Antigravity lane (Q2a)', () => {
+    // The r1 correction restores the deleted Q2A case: `claude-code` is an
+    // approved architect lane (the bounded-reconciliation binding), but the
+    // counted run's adapter runs the Antigravity lane, and the set's resolved
+    // route must be that lane — an approved lane elsewhere is still refused.
+    assert.deepEqual(
+      evaluatePhase4Entry(set({ planner: { provider: 'anthropic', model: 'opus-4.7' } }), observation()).failures,
+      ['planner_lane_not_approved'],
+    );
+    // The resolved Antigravity route itself is accepted (the passing case
+    // above carries google/gemini-3.1-pro, the pinned Antigravity lane).
+    assert.deepEqual(evaluatePhase4Entry(set(), observation()).failures, []);
   });
 
   it('refuses a seat surface that is not an approved lane of that seat, and a reviewer on the builder’s surface', () => {
