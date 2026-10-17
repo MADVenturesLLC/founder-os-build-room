@@ -168,7 +168,7 @@ function runSet(): Phase4RunSet {
     controlPlaneOrigin: surface!.url,
     gatewayId: gateway!.gatewayId,
     planner: PLANNER,
-    seats: { builder: 'gpt-5.6-sol', reviewer: 'grok-4.5' },
+    seats: { builder: 'codex', reviewer: 'grok-build' },
     founderRelay: { actualModel: 'n/a (human Founder act)', executionSurface: 'claude-code' },
     decisionTimeoutMs: 60_000,
     runs: [run('Phase4-CR1'), run('Phase4-CR2'), run('Phase4-CR3')],
@@ -436,7 +436,15 @@ describe('phase 4 run harness · a run over the Q9 routes, as a counted run woul
         ...node!.config,
         deploymentId: DEPLOYMENT,
         countedRunToken: COUNTED_RUN_TOKEN,
-        countedRun: { actId: set.setId, gatewayId: set.gatewayId, planner: set.planner, seats: set.seats },
+        // The act's terms as the control plane parses them: surfaces only,
+        // with the planner's provider and model resolved from the approved
+        // Antigravity lane as routing detail (BR-PHASE4-SURFACE-KEYED-SEATS-R1).
+        countedRun: {
+          actId: set.setId,
+          gatewayId: set.gatewayId,
+          planner: { surface: 'antigravity', provider: PLANNER.provider, model: PLANNER.model },
+          seats: set.seats,
+        },
       },
       pool: harness!.appPool,
       store: new PostgresLedgerStore(harness!.appPool, node!.surface.roomAppendFence),

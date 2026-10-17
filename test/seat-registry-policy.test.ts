@@ -208,7 +208,8 @@ describe('Test 9 — resolveSeat fail-closed (r7 §9.1 test 9)', () => {
     assert.equal(res.refusal, 'lane_not_standing');
     assert.ok(res.registration !== null);
     assert.equal(res.registration?.seat_id, 'independent-reviewer');
-    assert.equal(res.readiness.length, 5, 'independent-reviewer has 5 readiness results');
+    // Six since BR-PHASE4-SURFACE-KEYED-SEATS-R1 added the claude-code tier-2 lane.
+    assert.equal(res.readiness.length, 6, 'independent-reviewer has 6 readiness results');
     assert.match(res.reason, /per-run Founder act/);
     assert.ok(res.requirement !== null);
     assert.match(res.requirement!, /per-run Founder act/);
