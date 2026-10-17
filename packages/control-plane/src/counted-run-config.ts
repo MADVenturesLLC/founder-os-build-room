@@ -2,11 +2,25 @@
  * The counted-run act's terms as the control plane is configured with them
  * (`PHASE4_COUNTED_RUN`; plan r1 run-unit Q9). Kept apart from the routes
  * so `config.ts` reads it without importing the planner loop.
+ *
+ * The act's terms name SURFACES only (`BR-PHASE4-SURFACE-KEYED-SEATS-R1`,
+ * 2026-10-17: "just surfaces, because models are always changing"): the
+ * shape is `{ actId, gatewayId, planner, seats }`, where `planner` is the
+ * Planner's execution surface (today `antigravity`) and `seats` carries the
+ * builder's and the reviewer's execution-surface ids. No provider, no
+ * model in the act's terms. Provider and model remain in the seat registry
+ * as routing detail: each check below reads `surface_id` and
+ * `binding_status` only, and the parsed config carries the planner's
+ * provider and model RESOLVED from the approved lane, so the routes
+ * journal the same intended route they always did. Two surfaces that
+ * resolve to the same model are the Founder's call, not a check; the one
+ * distinctness rule is surface-level — the reviewer's surface differs from
+ * the builder's (the issuance receipt's settled decision).
  */
 
 import { RATIFIED_SEATS, type SeatRegistrationV1 } from '../../seat-registry/src/index.js';
 
-/** Q2a: the Planner runs on the Antigravity adapter. */
+/** Q2a: the Planner runs on the Antigravity adapter — the act's planner surface today. */
 export const COUNTED_RUN_PLANNER_SURFACE = 'antigravity';
 
 /** Q7b, as `DEC-20261015-01` registers it. */
@@ -20,7 +34,13 @@ export const COUNTED_RUN_DISPATCHER = {
 export interface CountedRunConfig {
   readonly actId: string;
   readonly gatewayId: string;
-  readonly planner: { readonly provider: string; readonly model: string };
+  /**
+   * The Planner's execution surface, as the act names it, with the provider
+   * and model of the approved architect lane it resolves to — routing
+   * detail from the registry, never part of the act's terms or of a check.
+   */
+  readonly planner: { readonly surface: string; readonly provider: string; readonly model: string };
+  /** The builder's and the reviewer's execution-surface ids, as the act names them. */
   readonly seats: { readonly builder: string; readonly reviewer: string };
 }
 
@@ -30,9 +50,9 @@ export class CountedRunConfigError extends Error {
 
 /**
  * Read `PHASE4_COUNTED_RUN`. Absent or empty is `null`: the routes stay
- * inert. Anything present must be the exact shape, on approved lanes, or
- * boot refuses; a counted run never starts on terms the registry does not
- * carry.
+ * inert. Anything present must be the exact shape — surfaces only, each on
+ * an approved lane of its seat — or boot refuses; a counted run never
+ * starts on terms the registry does not carry.
  */
 export function parseCountedRunConfig(raw: string | undefined, seats: readonly SeatRegistrationV1[] = RATIFIED_SEATS): CountedRunConfig | null {
   if (raw === undefined || raw.trim() === '') return null;
@@ -46,40 +66,51 @@ export function parseCountedRunConfig(raw: string | undefined, seats: readonly S
   if (root === null || !exact(root, ['actId', 'gatewayId', 'planner', 'seats'])) {
     throw new CountedRunConfigError('PHASE4_COUNTED_RUN must be exactly { actId, gatewayId, planner, seats }');
   }
-  const planner = record(root['planner']);
-  const seatModels = record(root['seats']);
+  const plannerSurface = root['planner'];
+  const seatSurfaces = record(root['seats']);
   if (!SAFE_ID_RE.test(text(root['actId']))) throw new CountedRunConfigError('actId must be a safe identifier');
   if (!UUID_RE.test(text(root['gatewayId']))) throw new CountedRunConfigError('gatewayId must be a lowercase UUID');
-  if (planner === null || !exact(planner, ['provider', 'model']) || !LABEL_RE.test(text(planner['provider'])) || !LABEL_RE.test(text(planner['model']))) {
-    throw new CountedRunConfigError('planner must be exactly { provider, model }');
+  if (typeof plannerSurface !== 'string' || !LABEL_RE.test(plannerSurface)) {
+    throw new CountedRunConfigError('planner must be exactly a surface');
   }
-  if (seatModels === null || !exact(seatModels, ['builder', 'reviewer']) || !LABEL_RE.test(text(seatModels['builder'])) || !LABEL_RE.test(text(seatModels['reviewer']))) {
+  if (seatSurfaces === null || !exact(seatSurfaces, ['builder', 'reviewer']) || !LABEL_RE.test(text(seatSurfaces['builder'])) || !LABEL_RE.test(text(seatSurfaces['reviewer']))) {
     throw new CountedRunConfigError('seats must be exactly { builder, reviewer }');
   }
-  const config: CountedRunConfig = {
+  const lane = plannerLane(seats, plannerSurface);
+  if (lane === null) throw new CountedRunConfigError('the planner surface is not on an approved architect lane');
+  if (!onApprovedLane(seats, 'builder', (l) => l.surface_id === text(seatSurfaces['builder']))) {
+    throw new CountedRunConfigError('the builder surface is not on an approved builder lane');
+  }
+  if (!onApprovedLane(seats, 'independent-reviewer', (l) => l.surface_id === text(seatSurfaces['reviewer']))) {
+    throw new CountedRunConfigError('the reviewer surface is not on an approved independent-reviewer lane');
+  }
+  if (text(seatSurfaces['reviewer']) === text(seatSurfaces['builder'])) {
+    throw new CountedRunConfigError('the reviewer surface must differ from the builder surface');
+  }
+  return {
     actId: text(root['actId']),
     gatewayId: text(root['gatewayId']),
-    planner: { provider: text(planner['provider']), model: text(planner['model']) },
-    seats: { builder: text(seatModels['builder']), reviewer: text(seatModels['reviewer']) },
+    planner: { surface: plannerSurface, provider: lane.provider, model: lane.model_id },
+    seats: { builder: text(seatSurfaces['builder']), reviewer: text(seatSurfaces['reviewer']) },
   };
-  if (!onApprovedLane(seats, 'architect', (l) => l.surface_id === COUNTED_RUN_PLANNER_SURFACE && l.provider === config.planner.provider && l.model_id === config.planner.model)) {
-    throw new CountedRunConfigError('the Planner is not on an approved Antigravity lane of the architect seat');
-  }
-  if (!onApprovedLane(seats, 'builder', (l) => l.model_id === config.seats.builder)) throw new CountedRunConfigError('the builder model is not on an approved builder lane');
-  if (!onApprovedLane(seats, 'independent-reviewer', (l) => l.model_id === config.seats.reviewer)) {
-    throw new CountedRunConfigError('the reviewer model is not on an approved independent-reviewer lane');
-  }
-  if (config.seats.reviewer === config.seats.builder) throw new CountedRunConfigError('the reviewer must run a different model from the builder');
-  return config;
 }
 
-/** The architect lane the configured Planner runs on: the retry budget keys its buckets by this label. */
+/**
+ * The architect lane the configured Planner runs on: the seat's first
+ * approved lane on the act's planner surface. The retry budget keys its
+ * buckets by this label; the parsed config resolves its provider and model
+ * from the same lane, so the two never disagree.
+ */
 export function plannerLaneLabel(config: CountedRunConfig, seats: readonly SeatRegistrationV1[] = RATIFIED_SEATS): string {
-  const lane = seats
-    .find((s) => s.seat_id === 'architect')
-    ?.routing.find((l) => l.binding_status === 'approved-binding' && l.surface_id === COUNTED_RUN_PLANNER_SURFACE && l.provider === config.planner.provider && l.model_id === config.planner.model);
-  if (lane === undefined) throw new CountedRunConfigError('the Planner is not on an approved Antigravity lane of the architect seat');
+  const lane = plannerLane(seats, config.planner.surface);
+  if (lane === null) throw new CountedRunConfigError('the planner surface is not on an approved architect lane');
   return lane.lane_label;
+}
+
+function plannerLane(seats: readonly SeatRegistrationV1[], surface: string): SeatRegistrationV1['routing'][number] | null {
+  return seats
+    .find((s) => s.seat_id === 'architect')
+    ?.routing.find((l) => l.binding_status === 'approved-binding' && l.surface_id === surface) ?? null;
 }
 
 export function onApprovedLane(

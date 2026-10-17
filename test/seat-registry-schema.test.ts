@@ -29,6 +29,7 @@ import {
   INDEPENDENT_REVIEWER_CONTRACT_SHA256,
   SEAT_IDS,
   SEAT_TERMINAL_STATUSES,
+  TIER2_ROSTER_ATTESTATION_IDS,
   isDisplayName,
   isSeatId,
   isTerminalStatusFor,
@@ -312,6 +313,27 @@ describe('Test 11 — toAttentionState (r7 §9.1 test 11)', () => {
     assert.throws(
       () => toAttentionState('independent-reviewer', 'PLAN_READY_FOR_FOUNDER_APPROVAL'),
       RangeError,
+    );
+  });
+});
+
+describe('BR-PHASE4-SURFACE-KEYED-SEATS-R1 — the claude-code reviewer lane', () => {
+  it('carries claude-code as an approved tier-2 reviewer lane, attested by its surface token', () => {
+    const reviewer = RATIFIED_SEATS.find((s) => s.seat_id === 'independent-reviewer') as SeatRegistrationV1;
+    const lane = reviewer.routing.find((l) => l.surface_id === 'claude-code');
+    assert.ok(lane !== undefined, 'the reviewer seat carries a claude-code lane');
+    assert.equal(lane.binding_status, 'approved-binding');
+    assert.equal(lane.binding_class, 'tier-2');
+    assert.equal(lane.tier2_attestation_id, 'claude-code');
+    assert.ok(TIER2_ROSTER_ATTESTATION_IDS.includes(lane.tier2_attestation_id as never), 'the attestation token is on the Tier-2 roster');
+  });
+
+  it('retired the claude-code-tier2 absent lane the derivation act anticipated', () => {
+    const reviewer = RATIFIED_SEATS.find((s) => s.seat_id === 'independent-reviewer') as SeatRegistrationV1;
+    assert.equal(
+      reviewer.absent_lanes.some((l) => l.label === 'claude-code-tier2'),
+      false,
+      'the absent lane is consumed by BR-PHASE4-SURFACE-KEYED-SEATS-R1',
     );
   });
 });

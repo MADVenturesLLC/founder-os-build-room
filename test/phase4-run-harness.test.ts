@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { founderGoalDigest } from '../packages/control-plane/src/founder-goal.js';
 import { plannerCommandIdFor } from '../packages/control-plane/src/planner-loop.js';
+import { RATIFIED_SEATS, type SeatRegistrationV1, type SeatRoutingLane } from '../packages/seat-registry/src/index.js';
 import {
   PHASE4_DISPATCHER,
   Phase4Runner,
@@ -63,7 +64,7 @@ function set(overrides: Record<string, unknown> = {}): Phase4RunSet {
     controlPlaneOrigin: 'https://control-plane.example',
     gatewayId: GATEWAY,
     planner: { provider: 'google', model: 'gemini-3.1-pro' },
-    seats: { builder: 'gpt-5.6-sol', reviewer: 'grok-4.5' },
+    seats: { builder: 'codex', reviewer: 'grok-build' },
     founderRelay: { actualModel: 'n/a (human Founder act)', executionSurface: 'claude-code' },
     decisionTimeoutMs: 3_600_000,
     runs: [run('Phase4-CR1', 1), run('Phase4-CR2', 2), run('Phase4-CR3', 3)],
@@ -179,14 +180,32 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
     assert.deepEqual(evaluatePhase4Entry(set(), observation()), { ok: true, failures: [] });
   });
 
-  it('refuses a Planner model, provider or surface that is not an approved architect lane', () => {
-    for (const planner of [
-      { provider: 'google', model: 'gemini-3.6-flash' },
-      { provider: 'anthropic', model: 'gemini-3.1-pro' },
-      { provider: 'anthropic', model: 'opus-4.7' }, // an approved architect lane, but on claude-code, not Antigravity (Q2a)
-    ]) {
-      assert.deepEqual(evaluatePhase4Entry(set({ planner }), observation()).failures, ['planner_lane_not_approved'], JSON.stringify(planner));
-    }
+  it('refuses a Planner when the architect seat has no approved Antigravity lane', () => {
+    // The mirror planner check is surface-keyed (BR-PHASE4-SURFACE-KEYED-SEATS-R1):
+    // the act's planner surface today is the Antigravity adapter, and the check
+    // reads surface_id and binding_status only — never a provider or a model.
+    const withoutApprovedAntigravity: readonly SeatRegistrationV1[] = RATIFIED_SEATS.map((seat) =>
+      seat.seat_id === 'architect'
+        ? {
+            ...seat,
+            routing: seat.routing.map((lane) => (lane.surface_id === 'antigravity' ? { ...lane, binding_status: 'proposed-binding' as SeatRoutingLane['binding_status'] } : lane)),
+          }
+        : seat,
+    );
+    assert.deepEqual(evaluatePhase4Entry(set(), observation(), { seats: withoutApprovedAntigravity }).failures, ['planner_lane_not_approved']);
+  });
+
+  it('refuses a seat surface that is not an approved lane of that seat, and a reviewer on the builder’s surface', () => {
+    // 'antigravity' is an architect and reviewer surface, never a builder lane.
+    assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'antigravity', reviewer: 'grok-build' } }), observation()).failures, ['builder_lane_not_approved']);
+    // 'hermes-local-code' is a builder surface, never a reviewer lane.
+    assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'codex', reviewer: 'hermes-local-code' } }), observation()).failures, ['reviewer_lane_not_approved']);
+    // Distinctness is surface-level: 'codex' carries both seats' lanes, and the
+    // reviewer still may not share the builder's surface (the receipt's settled
+    // decision; that the two may resolve to one model is the Founder's call).
+    assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'codex', reviewer: 'codex' } }), observation()).failures, ['reviewer_same_as_builder']);
+    // claude-code is now an approved reviewer surface.
+    assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'codex', reviewer: 'claude-code' } }), observation()).failures, []);
   });
 
   it('refuses every set against a registry that carries no build-room-control-plane, and admits it on the pinned copy', () => {
@@ -197,7 +216,10 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
 
   it('reports every failure together', () => {
     const verdict = evaluatePhase4Entry(
-      set({ gatewayId: '2222132d-0000-4000-8000-000000000002', seats: { builder: 'gpt-5.6-luna', reviewer: 'gpt-5.6-luna' } }),
+      // 'antigravity' is an approved reviewer lane (the gemini tier-2) but no
+      // builder lane, and naming it twice is the surface-level sameness the
+      // distinctness check refuses.
+      set({ gatewayId: '2222132d-0000-4000-8000-000000000002', seats: { builder: 'antigravity', reviewer: 'antigravity' } }),
       observation({
         controlPlane: { status: 200, commit: SHA_A, deploymentId: DEPLOYMENT },
         founderOs: { sha: SHA_A, clean: false },

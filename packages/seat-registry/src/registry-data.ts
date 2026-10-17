@@ -74,13 +74,9 @@ const ABSENT_REASON_SUPPLEMENTAL =
   'replace CodeRabbit Tier-1 or satisfy binding Tier-2"; a supplemental/advisory binding is never authority to issue ' +
   'the binding Tier-2 verdict';
 
-const ABSENT_REASON_CLAUDE_CODE_TIER2 =
-  'Superseded by DEC-20261001-01 (2026-10-01): the roster is re-based to ' +
-  'execution-surface attestation tokens and claude-code is re-admitted at ' +
-  'surface level, so this absent lane no longer reflects the governing ' +
-  'roster. Retained until the claude-code reviewer lane is added by a ' +
-  'separate derivation act (model_id pin + conditions), which this V1 ' +
-  'frozen tranche does not perform.';
+// The claude-code-tier2 absent lane is retired: BR-PHASE4-SURFACE-KEYED-SEATS-R1
+// (issued 2026-10-17) is the derivation act that entry anticipated, and the
+// claude-code reviewer lane now lives in the routing set above.
 
 /* ------------------------------------------------------------------ */
 /* researcher — ABSENT routing set (§2.5.1) — a valid V1 outcome        */
@@ -425,6 +421,35 @@ const TIER2_GROK: SeatRoutingLane = {
   derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260815-05', 'DEC-20260719-02 v1.1', 'DEC-20260815-04', 'model-registry.md grok-4.5'],
 };
 
+/**
+ * The claude-code reviewer lane `BR-PHASE4-SURFACE-KEYED-SEATS-R1` (issued
+ * 2026-10-17) adds: the derivation act the retired absent-lane entry
+ * anticipated. Identity is the surface (DEC-20261001-01 roster token
+ * `claude-code`); the model_id is dispatch pinning only — the registry's
+ * own claude-code review association (`model-registry.md` sonnet-5: "Sonnet
+ * for routine review"; anthropic, P1, ZDR-eligible) — and the act's checks
+ * never read it.
+ */
+const TIER2_CLAUDE_CODE: SeatRoutingLane = {
+  lane_label: 'tier-2',
+  provider: 'anthropic',
+  surface_id: 'claude-code',
+  model_id: 'sonnet-5',
+  binding_status: 'approved-binding',
+  binding_class: 'tier-2',
+  mode: 'invoked',
+  tier2_attestation_id: 'claude-code', // DEC-20261001-01: surface token; on TIER2_ROSTER_ATTESTATION_IDS
+  provider_class: 'P1', // deployment_channel: P1 (model-registry, sonnet-5)
+  data_eligibility: ['public', 'internal'], // sonnet-5 is ZDR-eligible (model-registry); no data-boundary condition recorded
+  conditions: [],
+  derivation: [
+    'BR-PHASE4-SURFACE-KEYED-SEATS-R1 (2026-10-17) claude-code admitted as an independent-reviewer surface',
+    'DEC-20261001-01 (roster re-based to surface attestation tokens; claude-code re-admitted at surface level)',
+    'DEC-20260815-05',
+    'model-registry.md sonnet-5 (dispatch pin; anthropic; P1; ZDR-eligible)',
+  ],
+};
+
 const INDEPENDENT_REVIEWER: SeatRegistrationV1 = {
   seat_id: 'independent-reviewer',
   display_name: 'Argus',
@@ -435,9 +460,8 @@ const INDEPENDENT_REVIEWER: SeatRegistrationV1 = {
   contract_ref: 'contracts/seats/independent-reviewer.md',
   contract_sha256: '10992c6feb5d047d6d922b1bf8d73c15d70c639758dd5fd6e3c9aa6fede32996',
   default_surface: null,
-  routing: [TIER2_GEMINI, TIER2_SOL, TIER2_TERRA, TIER2_LUNA, TIER2_GROK],
+  routing: [TIER2_GEMINI, TIER2_SOL, TIER2_TERRA, TIER2_LUNA, TIER2_GROK, TIER2_CLAUDE_CODE],
   absent_lanes: [
-    { label: 'claude-code-tier2', reason: ABSENT_REASON_CLAUDE_CODE_TIER2 },
     { label: 'restricted-local-hermes-4-14b', reason: ABSENT_REASON_RESTRICTED_LOCAL },
     { label: 'restricted-local-tencent-hy3', reason: ABSENT_REASON_RESTRICTED_LOCAL },
     { label: 'supplemental-gemini-3.6-flash', reason: ABSENT_REASON_SUPPLEMENTAL },
