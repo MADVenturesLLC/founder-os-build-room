@@ -19,6 +19,8 @@ import {
 import {
   encodeBase64,
   heartbeatSignedBytes,
+  plannerPollSignedBytes,
+  plannerReportSignedBytes,
   sessionStartSignedBytes,
   type Clock,
 } from '../../gateway-protocol/src/index.js';
@@ -128,6 +130,69 @@ export function buildHeartbeat(
     pubkey: identity.pubkeyBase64,
     signature: encodeBase64(
       new Uint8Array(sign(null, Buffer.from(heartbeatSignedBytes(canonical)), identity.privateKey)),
+    ),
+  };
+}
+
+/** A signed `planner_poll`: the heartbeat's members under the poll's purpose (plan r1 Q2b). */
+export function buildPlannerPoll(
+  identity: GatewayIdentity,
+  epoch: string,
+  sequence: number,
+  clock: Clock,
+): Record<string, unknown> {
+  const canonical = {
+    gatewayId: identity.gatewayId,
+    keyId: identity.keyId,
+    epoch,
+    sequence,
+    nonce: nonce(),
+    timestampMs: clock.wallNow(),
+  };
+  return {
+    protocol: 'founder-os.gateway-protocol',
+    version: 1,
+    purpose: 'planner_poll',
+    ...canonical,
+    pubkey: identity.pubkeyBase64,
+    signature: encodeBase64(
+      new Uint8Array(sign(null, Buffer.from(plannerPollSignedBytes(canonical)), identity.privateKey)),
+    ),
+  };
+}
+
+/**
+ * A signed `planner_report` answering `requestId`. The payload is sent as the
+ * exact JSON text whose SHA-256 is signed, so the receiver checks the bytes
+ * it got rather than a re-serialization of them.
+ */
+export function buildPlannerReport(
+  identity: GatewayIdentity,
+  epoch: string,
+  sequence: number,
+  requestId: string,
+  payload: string,
+  clock: Clock,
+): Record<string, unknown> {
+  const canonical = {
+    gatewayId: identity.gatewayId,
+    keyId: identity.keyId,
+    epoch,
+    sequence,
+    nonce: nonce(),
+    timestampMs: clock.wallNow(),
+    requestId,
+    payloadDigest: createHash('sha256').update(payload, 'utf8').digest('hex'),
+  };
+  return {
+    protocol: 'founder-os.gateway-protocol',
+    version: 1,
+    purpose: 'planner_report',
+    ...canonical,
+    payload,
+    pubkey: identity.pubkeyBase64,
+    signature: encodeBase64(
+      new Uint8Array(sign(null, Buffer.from(plannerReportSignedBytes(canonical)), identity.privateKey)),
     ),
   };
 }

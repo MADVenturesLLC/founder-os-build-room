@@ -446,7 +446,7 @@ describe('gateway-invariants · migration 0009 leaves every existing row valid',
         `INSERT INTO gateway_enrollment_refusals (kind, detail) VALUES ('another_gateway_enrolled', '{}')`,
       );
 
-      const result = await migrate(pool);
+      const result = await migrate(pool, { through: '0009_two_enrolled_gateways' });
       assert.deepEqual(result.applied, ['0009_two_enrolled_gateways']);
 
       const { rows: after } = await pool.query<{ gateway_id: string; enrollment_slot: number | null }>(

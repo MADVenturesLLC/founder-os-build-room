@@ -24,7 +24,9 @@
  * append, promotion reconciliation, staleness sweep). They differ in which
  * locks they take and in one verification detail, not in the discipline — and
  * writing the discipline six times is how five of them would end up subtly
- * different.
+ * different. The Phase 3 run pipeline and the planner pull channel's poll and
+ * report (plan r1 Q2b) run through it too; the planner pair takes exactly the
+ * heartbeat's locks, because they advance the same session cursor.
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -85,7 +87,9 @@ export type PipelineName =
   | 'reconciliation'
   | 'stalenessSweep'
   | 'roomAppend'
-  | 'phase3Run';
+  | 'phase3Run'
+  | 'plannerPoll'
+  | 'plannerReport';
 
 export interface FencedOptions {
   readonly pipeline: PipelineName;

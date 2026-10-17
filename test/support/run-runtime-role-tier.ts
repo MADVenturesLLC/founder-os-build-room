@@ -22,6 +22,9 @@ import { resolveServerBinaries } from './owned-postgres.js';
 import { RUNTIME_ROLE_SUITES, readSpecSummary, tierVerdict } from './runtime-role-tier.js';
 
 const TEST_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
+const DEFAULT_WATCHDOG_MS = 180_000;
+const rawTimeout = Number(process.env['BUILDROOM_RUNTIME_ROLE_TIMEOUT_MS']);
+const watchdogMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : DEFAULT_WATCHDOG_MS;
 
 function fail(message: string): never {
   process.stderr.write(`test:storage:runtime-role — ${message}\n`);
@@ -58,7 +61,32 @@ child.stdout.on('data', (chunk: Buffer) => {
   process.stdout.write(text);
 });
 
+let timedOut = false;
+let forceKill: NodeJS.Timeout | undefined;
+
+function failOnWatchdog(): never {
+  const collected = output.trimEnd();
+  process.stderr.write(
+    `test:storage:runtime-role — spec output collected before ${watchdogMs}ms watchdog:\n` +
+      `${collected.length > 0 ? collected : '(none)'}\n`,
+  );
+  fail(`NOT a pass: timed out after ${watchdogMs}ms (child killed by watchdog)`);
+}
+
+const watchdog = setTimeout(() => {
+  timedOut = true;
+  child.kill('SIGTERM');
+  forceKill = setTimeout(() => {
+    child.kill('SIGKILL');
+    child.stdout.destroy();
+    failOnWatchdog();
+  }, 1_000);
+}, watchdogMs);
+
 child.on('close', (code) => {
+  clearTimeout(watchdog);
+  if (forceKill !== undefined) clearTimeout(forceKill);
+  if (timedOut) failOnWatchdog();
   const verdict = tierVerdict(code, readSpecSummary(output));
   if (verdict !== null) fail(`NOT a pass: ${verdict}`);
   process.stdout.write(

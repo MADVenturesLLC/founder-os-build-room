@@ -41,7 +41,7 @@ afterEach(async () => {
 describe('0005_phase3_run_evidence — additive migration contract', () => {
   it('is registered exactly once after every existing migration', () => {
     const ids = MIGRATIONS.map((migration) => migration.id);
-    assert.equal(ids.at(-1), '0009_two_enrolled_gateways');
+    assert.equal(ids.at(-1), '0010_plan_store');
     assert.equal(ids.filter((id) => id === '0005_phase3_run_evidence').length, 1);
   });
 

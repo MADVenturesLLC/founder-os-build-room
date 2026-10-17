@@ -32,12 +32,15 @@ export const RUNTIME_ROLE_SUITES: readonly string[] = [
   'gateway-lanes',
   'gateway-leadership',
   'gateway-online',
+  'gateway-planner-pull',
   'gateway-projection',
   'gateway-retention',
   'gateway-session',
   'phase3-heartbeat-evidence',
   'phase3-run-events',
   'phase3-run-routes',
+  'phase4-lifecycle',
+  'phase4-run-harness',
   'runtime-role-boot',
 ];
 
@@ -59,6 +62,16 @@ export const RUNTIME_ROLE_EXCLUDED: Readonly<Record<string, string>> = {
     'proves the canonical sequence applies for a plain non-superuser administrative login on three throwaway clusters; it never runs the application',
   'journal-store':
     'already builds the journal store on a genuine br_app_runtime login on its own owned instance, and manages the cluster-wide roles itself',
+  'journal-writer':
+    'already builds the complete journal writer on a genuine br_app_runtime login on its own owned instance, including the decision path\'s lifecycle insert, and destroys that instance at teardown',
+  'plan-decision':
+    'already drives the plan decision end to end on a genuine br_app_runtime login on its own owned instance, the fenced HTTP route included, and destroys that instance at teardown',
+  'plan-store':
+    'already builds the plan store on a genuine br_app_runtime login on its own owned instance, including the T3 insert the plan is bound to, and destroys that instance at teardown',
+  'planner-loop':
+    'already drives the planner loop end to end on a genuine br_app_runtime login on its own owned instance — T2 with its journaled command, the round\'s command events, T3 with its plan and completion, and the Founder\'s cancel — and destroys that instance at teardown',
+  'planner-recovery':
+    'already drives planner-command recovery end to end on a genuine br_app_runtime login on its own owned instance — every reconciliation append and the T3 a recovered round commits — and destroys that instance at teardown',
   'room-runtime-phase1-c2':
     'uses no database: its storage suffix marks the proof-runtime gate (Bun worker over a supervised transport), not a data-access identity',
   'schema-preflight':

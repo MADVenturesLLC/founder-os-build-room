@@ -18,7 +18,8 @@ import type { Clock } from '../../gateway-protocol/src/index.js';
 import type { ControlPlaneClient, ControlPlaneResponse } from './client.js';
 import { disposition, vocabularyKey, type Disposition } from './disposition.js';
 import type { GatewayIdentity } from './signing.js';
-import { buildHeartbeat, buildSessionStart } from './signing.js';
+import { buildHeartbeat, buildPlannerPoll, buildPlannerReport, buildSessionStart } from './signing.js';
+import type { PlannerReportPayload } from '../../gateway-protocol/src/index.js';
 import type { PrimaryLaneState, StagingLaneState } from './state.js';
 
 /** The bounded retry horizon for a redemption (contract §14, §15). */
@@ -27,6 +28,14 @@ export const REDEEM_RETRY_HORIZON_MS = 24 * 60 * 60 * 1_000;
 /** Lane-local transport backoff, 5 s to a 30 s cap. */
 export const BACKOFF_MIN_MS = 5_000;
 export const BACKOFF_MAX_MS = 30_000;
+
+/** Planner exchanges per tick at most: each is one poll and, when answered, one report. */
+export const MAX_PLANNER_EXCHANGES_PER_TICK = 4;
+
+/** What the lane needs of the planner worker: an answer per request, or `null`. */
+export interface PlannerRequestHandler {
+  handle(request: unknown): Promise<PlannerReportPayload | null>;
+}
 
 export interface LaneObservation {
   readonly at: number;
@@ -122,6 +131,52 @@ export class PrimaryLane {
       this.state = 'HEARTBEATING';
       return true;
     });
+  }
+
+  /**
+   * The planner pull channel's exchanges for this tick (plan r1 Q2b): poll,
+   * answer, report, up to `maxExchanges` times, while the session holds.
+   *
+   * Only on an established session, after the tick's heartbeat: the poll
+   * and the report are session-bound and take the next sequence numbers of
+   * the same counter, one request at a time, so they can never race a
+   * heartbeat for a sequence. Every response goes through the primary
+   * table, exactly as a heartbeat's: a resync drops the session, a
+   * protocol-integrity refusal halts the lane. Returns the requests handled.
+   */
+  async exchangePlanner(
+    worker: PlannerRequestHandler,
+    maxExchanges: number = MAX_PLANNER_EXCHANGES_PER_TICK,
+  ): Promise<number> {
+    let handled = 0;
+    while (handled < maxExchanges) {
+      if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return handled;
+      if (this.clock.monotonicNow() < this.nextAttemptAt) return handled;
+
+      let request: unknown = null;
+      const poll = buildPlannerPoll(this.identity, this.epoch, this.sequence + 1, this.clock);
+      const polled = this.apply(await this.client.plannerPoll(poll), (response) => {
+        this.sequence += 1;
+        request = response.body?.['request'] ?? null;
+        return true;
+      });
+      if (polled !== 'retain_and_continue' || request === null) return handled;
+      handled += 1;
+
+      const payload = await worker.handle(request);
+      if (payload === null) continue;
+      const requestId = (request as Record<string, unknown>)['requestId'];
+      if (typeof requestId !== 'string') continue;
+      if (this.epoch === null || this.state !== 'HEARTBEATING') return handled;
+
+      const report = buildPlannerReport(this.identity, this.epoch, this.sequence + 1, requestId, JSON.stringify(payload), this.clock);
+      const reported = this.apply(await this.client.plannerReport(report), () => {
+        this.sequence += 1;
+        return true;
+      });
+      if (reported !== 'retain_and_continue') return handled;
+    }
+    return handled;
   }
 
   private apply(

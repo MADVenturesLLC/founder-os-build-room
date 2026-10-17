@@ -28,8 +28,13 @@ import type { Config } from './config.js';
 import { probe } from './db.js';
 import { phase3RunRouter } from './phase3-run-routes.js';
 import { gateRunRouter } from './gate-run-routes.js';
+import { requiresGovernedPath } from './governed-events.js';
 import { journalRouter } from './journal-routes.js';
 import { JournalStore } from './journal-store.js';
+import { PlanStore } from './plan-store.js';
+import { planDecisionRouter } from './plan-decision.js';
+import { countedRunRouter } from './counted-run.js';
+import { FounderGoalRefusedError, prepareFounderGoal } from './founder-goal.js';
 import { PostgresLedgerStore, RoomNotFoundError } from './store.js';
 import {
   ROOM_BODY_LIMIT,
@@ -59,6 +64,17 @@ export interface ServerDeps {
    * sequence in `main.ts` needs no change. Tests inject a stand-in here.
    */
   readonly journalStore?: Pick<JournalStore, 'appendJournaled'>;
+  /**
+   * The plan decision's collaborators (plan-decision.ts). Built from `pool`
+   * when absent, as `journalStore` is; tests inject stand-ins here.
+   */
+  readonly planStore?: Pick<PlanStore, 'inTransaction'>;
+  readonly decisionJournal?: Pick<JournalStore, 'inTransaction'>;
+  /**
+   * The execution-surface ids a counted run checks T2's surface against.
+   * Defaults to the registry Build Room vendors; tests supply their own.
+   */
+  readonly countedRunSurfaces?: () => ReadonlySet<string>;
 }
 
 /** Errors that carry an HTTP status the client should see. */
@@ -207,7 +223,29 @@ export function createServer(deps: ServerDeps): Express {
     deps.gateway.leadership.requireLeader(),
     asyncRoute(async (req: Request, res: Response) => {
       const roomId = requireUuid(req.params.roomId, 'roomId');
-      const event = requireEvent(req.body);
+      const offered = requireEvent(req.body);
+      /*
+       * The planner path's events are not this route's to accept: the
+       * governed planner loop and the Founder's plan decision write them
+       * (see governed-events.ts). Refused before the ledger, unrecorded, as
+       * an authorization refusal.
+       */
+      if (requiresGovernedPath(offered.event)) {
+        res.status(403).json({ error: 'governed_path_required', event: offered.event });
+        return;
+      }
+      // The Founder goal rides on T1 only, checked, with its digest the
+      // server's evidence (founder-goal.ts; plan r1 Q7c).
+      let event: LifecycleEvent;
+      try {
+        event = prepareFounderGoal(offered);
+      } catch (error) {
+        if (error instanceof FounderGoalRefusedError) {
+          res.status(400).json({ error: error.code, kind: error.kind, message: error.message });
+          return;
+        }
+        throw error;
+      }
       const result = await store.append(roomId, event);
 
       /*
@@ -303,7 +341,51 @@ export function createServer(deps: ServerDeps): Express {
    * of the append routine and `test/journal-sole-writer.test.ts` holds
    * that at the source.
    */
-  app.use(journalRouter({ store: deps.journalStore ?? new JournalStore(pool), requireToken }));
+  const journal = new JournalStore(pool);
+  app.use(journalRouter({ store: deps.journalStore ?? journal, requireToken }));
+  /*
+   * The Founder's plan decision (journal contract §8.2): behind the ruled
+   * `PHASE3_ADJUDICATION_TOKEN` and nothing else; refused outright when that
+   * token is unset. The decision and its lifecycle event commit together in
+   * the room's fenced append transaction.
+   */
+  app.use(
+    planDecisionRouter({
+      ledger: store,
+      plans: deps.planStore ?? new PlanStore(pool),
+      journal: deps.decisionJournal ?? journal,
+      requireAdjudicationToken:
+        config.phase3AdjudicationToken === null ? null : tokenGuard(config.phase3AdjudicationToken),
+      requireLeader: deps.gateway.leadership.requireLeader(),
+    }),
+  );
+  /*
+   * The counted-run routes (run-unit Q9): behind the counted-run token and
+   * nothing else, never the adjudication token (the Founder's §9 answer),
+   * and inert (503) unless the Founder's counted-run act is configured.
+   */
+  app.use(
+    countedRunRouter({
+      config: config.countedRun,
+      deploymentId: config.deploymentId,
+      pool,
+      ledger: store,
+      plannerPort: (run) =>
+        deps.gateway.planner.port({
+          gatewayId: run.gatewayId,
+          role: 'architect',
+          intended: { provider: run.planner.provider, model: run.planner.model, executionSurface: 'antigravity' },
+        }),
+      gatewayOnline: (gatewayId) => {
+        const liveness = deps.gateway.session.livenessFor(gatewayId);
+        if (liveness === null || !deps.gateway.clock.monotonicTrustworthy) return false;
+        return deps.gateway.clock.monotonicNow() - liveness.monoMs <= config.gatewayStalenessMs;
+      },
+      requireCountedRunToken: config.countedRunToken === null ? null : tokenGuard(config.countedRunToken),
+      requireLeader: deps.gateway.leadership.requireLeader(),
+      ...(deps.countedRunSurfaces === undefined ? {} : { registeredSurfaces: deps.countedRunSurfaces }),
+    }),
+  );
   app.use(
     phase3RunRouter({
       store: deps.gateway.phase3Runs,

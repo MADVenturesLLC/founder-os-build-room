@@ -80,6 +80,7 @@ const DATABASE = 'rr_boot';
 const EXPECTED_TABLE_PRIVILEGES: Readonly<Record<string, readonly string[]>> = {
   build_room_events: ['INSERT', 'SELECT'],
   build_room_gate_runs: ['INSERT', 'SELECT'],
+  build_room_plans: ['INSERT', 'SELECT'],
   build_room_rejections: ['INSERT', 'SELECT'],
   build_room_rooms: ['INSERT', 'SELECT'],
   command_journal_chain_head: ['SELECT'],

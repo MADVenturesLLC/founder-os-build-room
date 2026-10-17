@@ -12,6 +12,7 @@ export {
   DOMAIN_SEPARATOR_BYTE,
   DOMAIN_TAG_PREFIX,
   HEX32_LENGTH,
+  MAX_PLANNER_PAYLOAD_BYTES,
   MAX_SEQUENCE,
   MIN_GENERATION,
   MIN_SEQUENCE,
@@ -44,14 +45,20 @@ export {
   isValidGeneration,
   isValidHex32,
   isValidKeyId,
+  isValidPlannerPayload,
+  isValidRequestId,
   isValidSequence,
   isValidTimestampMs,
   validateHeartbeat,
+  validatePlannerPoll,
+  validatePlannerReport,
   validateSessionStart,
   type Envelope,
   type EnvelopeErrorCode,
   type EnvelopeResult,
   type HeartbeatEnvelope,
+  type PlannerPollEnvelope,
+  type PlannerReportEnvelope,
   type SessionStartEnvelope,
 } from './envelope.js';
 
@@ -59,11 +66,17 @@ export {
   CanonicalInputError,
   heartbeatCanonicalArray,
   heartbeatSignedBytes,
+  plannerPollCanonicalArray,
+  plannerPollSignedBytes,
+  plannerReportCanonicalArray,
+  plannerReportSignedBytes,
   sessionStartCanonicalArray,
   sessionStartSignedBytes,
   signedBytesFor,
   type CanonicalElement,
   type HeartbeatCanonicalInput,
+  type PlannerPollCanonicalInput,
+  type PlannerReportCanonicalInput,
   type SessionStartCanonicalInput,
 } from './canonical.js';
 
@@ -151,3 +164,20 @@ export {
   type ViewerFact,
   type VtPatchPayload,
 } from './ipc-v2.js';
+
+/** The planner pull channel's request and report shapes (plan r1 Q2b). */
+export {
+  PLANNER_ANSWERS,
+  PLANNER_SURFACES,
+  answersRequest,
+  validatePlannerReportPayload,
+  validatePlannerRequest,
+  type PlannerIdentityWire,
+  type PlannerReportPayload,
+  type PlannerRequestKind,
+  type PlannerRequestWire,
+  type PlannerResultWire,
+  type PlannerRouteWire,
+  type PlannerSurface,
+  type PlannerWorkWire,
+} from './planner.js';

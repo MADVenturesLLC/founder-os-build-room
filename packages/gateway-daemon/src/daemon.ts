@@ -23,6 +23,7 @@ import { RingBuffer } from './ring-buffer.js';
 import { IpcServer } from './ipc.js';
 import { RoomRuntime } from './room-runtime.js';
 import { GatewayStateStore, type GatewayState } from './state.js';
+import { GatewayPlannerWorker, PlannerRecordStore, plannerRecordsDirectory, type PlannerExecutor } from './planner-worker.js';
 import { privateKeyFromSecret, publicMembersOf, type GatewayIdentity } from './signing.js';
 
 export interface GatewayDaemonDeps {
@@ -31,6 +32,12 @@ export interface GatewayDaemonDeps {
   readonly custody: GatewayCustody;
   readonly client: ControlPlaneClient;
   readonly heartbeatCadenceMs: number;
+  /**
+   * The Planner's executor (plan r1 Q2b). Absent, the daemon never polls for
+   * planner work: no executor ships, because `DEC-20260827-01` §3.4
+   * authorizes no provider binding.
+   */
+  readonly plannerExecutor?: PlannerExecutor;
 }
 
 export class GatewayDaemon {
@@ -44,6 +51,8 @@ export class GatewayDaemon {
   readonly rooms: RoomRuntime;
   readonly primary: PrimaryLane;
   readonly staging: StagingLane;
+  /** Present only when an executor is injected. */
+  readonly planner: GatewayPlannerWorker | null;
   private readonly state: GatewayStateStore;
   private readonly ipc: IpcServer;
   private cadence: NodeJS.Timeout | null = null;
@@ -55,6 +64,14 @@ export class GatewayDaemon {
     this.primary = new PrimaryLane(deps.client, deps.clock, null);
     this.staging = new StagingLane(deps.client, deps.clock);
     this.state = new GatewayStateStore(deps.paths);
+    this.planner =
+      deps.plannerExecutor === undefined
+        ? null
+        : new GatewayPlannerWorker({
+            executor: deps.plannerExecutor,
+            records: new PlannerRecordStore(plannerRecordsDirectory(deps.paths.directory)),
+            log: (level, at, fields) => this.log(level, at, fields),
+          });
     this.rooms = new RoomRuntime({ newId: () => randomUUID() });
     this.ipc = new IpcServer(deps.paths, {
       status: () => ({
@@ -87,6 +104,9 @@ export class GatewayDaemon {
     // (correction B5, Rev 4.7 tester) — otherwise stale persisted state blocks
     // the enrolment guard forever.
     await this.completeInterruptedStaging(persisted);
+
+    // Executions a previous process held are unknowable here, before any poll.
+    await this.planner?.boot();
 
     await this.ipc.start();
     this.log('info', 'daemon.booted', {
@@ -127,6 +147,11 @@ export class GatewayDaemon {
 
     const primaryVerdict = await this.primary.step();
     if (primaryVerdict !== null) this.log('info', 'primary.step', { verdict: primaryVerdict });
+
+    if (this.planner !== null) {
+      const handled = await this.primary.exchangePlanner(this.planner);
+      if (handled > 0) this.log('info', 'planner.exchanged', { handled });
+    }
 
     const stagingOutcome = await this.staging.probe();
     if (stagingOutcome.disposition !== null) {

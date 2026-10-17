@@ -29,6 +29,7 @@
     "packages/room-status/src/**/*.ts",
     "packages/redaction/src/**/*.ts",
     "packages/completion-gate/src/**/*.ts",
+    "packages/madbridge-consumed/src/**/*.ts",
     "test/**/*.ts"
   ]
 }

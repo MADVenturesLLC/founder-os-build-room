@@ -1,0 +1,255 @@
+{
+  "repository": "MADVenturesLLC/madventures-tui",
+  "commit": "7d37a61dcaeaef77c55013c7620deb8445726788",
+  "authority": [
+    "DEC-20260827-01 \u00a74 and \u00a75",
+    "DEC-20260815-17 Phase 4 authorization \u00a74",
+    "Founder direction \"GO\" 2026-10-15 (plan r1 Q1)",
+    "Founder ruling 2026-10-15: \"Consume the unpinned dependencies at 7d37a61, blob ids recorded\""
+  ],
+  "files": [
+    {
+      "source": "packages/broker/src/ownership-machine.ts",
+      "blob": "f563f24c46487e4d5cd83d583773ae84a87b4669",
+      "pinned": true,
+      "status": "consumed",
+      "file": "src/broker/ownership-machine.ts"
+    },
+    {
+      "source": "packages/policy/src/path-policy.ts",
+      "blob": "8284c5431789e3f3449b8f1c058c3d89706a24d5",
+      "pinned": true,
+      "status": "consumed",
+      "file": "src/policy/path-policy.ts"
+    },
+    {
+      "source": "packages/policy/src/engine.ts",
+      "blob": "bac4a816a17b8f82df1164a6f0f4d1efd9136b95",
+      "pinned": true,
+      "status": "deferred",
+      "reason": "evaluateAction and the egress, review and command policies govern Builder actions (Phase 5); the planner path does not call them; consumed when a slice needs them"
+    },
+    {
+      "source": "packages/artifact-store/src/index.ts",
+      "blob": "67c37313816705ea5d317cfddc2a259765d13d5d",
+      "pinned": true,
+      "status": "consumed",
+      "file": "src/artifact-store/index.ts"
+    },
+    {
+      "source": "packages/artifact-store/src/store.ts",
+      "blob": "dac84ab9f82f5e7c1b2d88952ea03142705060a5",
+      "pinned": true,
+      "status": "consumed",
+      "file": "src/artifact-store/store.ts"
+    },
+    {
+      "source": "packages/artifact-store/src/manifest.ts",
+      "blob": "9d8c1269d8a1e9ed51754739957c09d7437cbbb8",
+      "pinned": true,
+      "status": "consumed",
+      "file": "src/artifact-store/manifest.ts"
+    },
+    {
+      "source": "packages/ledger/src/index.ts",
+      "blob": "867f02654b5306767cb85335499123c657e91133",
+      "pinned": true,
+      "status": "adapted",
+      "file": "src/ledger/index.ts",
+      "change": "SCHEMA_SQL export left out with schema.ts"
+    },
+    {
+      "source": "packages/ledger/src/ledger.ts",
+      "blob": "54bc3e512670cca28ec0ce03c87aad0fa593d4f4",
+      "pinned": true,
+      "status": "adapted",
+      "file": "src/ledger/ledger.ts",
+      "change": "bun:sqlite storage replaced by in-memory rows; the medium is not consumed (DEC-20260827-01 \u00a73.5 scope firewall)"
+    },
+    {
+      "source": "packages/protocol/src/adapter-registry.ts",
+      "blob": "9c8a33eac268d3032bb3ecc4fe36ca151382461f",
+      "pinned": true,
+      "status": "consumed",
+      "file": "src/protocol/adapter-registry.ts"
+    },
+    {
+      "source": "packages/adapter-claude-code/src/adapter.ts",
+      "blob": "121bbd04e386c59c371cce06c37bb97eaf053757",
+      "pinned": true,
+      "status": "adapted",
+      "file": "src/adapter/adapter-v1.ts",
+      "change": "AdapterV1 contract only (lines 10-52); the class waits on Q2"
+    },
+    {
+      "source": "packages/adapter-antigravity/src/adapter.ts",
+      "blob": "5d1cc5eafac0fed3cfb25c08ec7b12f1033169fd",
+      "pinned": true,
+      "status": "adapted",
+      "file": "src/adapter/adapter-v1.ts",
+      "change": "AdapterV1 contract only (lines 10-50); the class waits on Q2"
+    },
+    {
+      "source": "packages/ledger/src/rebuild.ts",
+      "blob": "edff7e5af270075053717aa820e4134c74c2271d",
+      "pinned": true,
+      "status": "consumed",
+      "file": "src/ledger/rebuild.ts"
+    },
+    {
+      "source": "packages/broker/src/reconciliation.ts",
+      "blob": "974639a1230e42b975aa010f9e9c04741efaf5cb",
+      "pinned": true,
+      "status": "consumed",
+      "file": "src/broker/reconciliation.ts"
+    },
+    {
+      "source": "packages/protocol/src/index.ts",
+      "blob": "e4ca1e819dcb34326c6c35c672fbd4b3c48bd1a4",
+      "pinned": false,
+      "status": "consumed",
+      "file": "src/protocol/index.ts"
+    },
+    {
+      "source": "packages/policy/src/egress-policy.ts",
+      "blob": "f0794e6be1c68ec021caa52f7582a19b19e6a312",
+      "pinned": false,
+      "status": "deferred",
+      "reason": "evaluateAction and the egress, review and command policies govern Builder actions (Phase 5); the planner path does not call them; consumed when a slice needs them"
+    },
+    {
+      "source": "packages/policy/src/review-policy.ts",
+      "blob": "fcabf8ab7e3e8540bd1a2db0c1e5bf9fc91770fd",
+      "pinned": false,
+      "status": "deferred",
+      "reason": "evaluateAction and the egress, review and command policies govern Builder actions (Phase 5); the planner path does not call them; consumed when a slice needs them"
+    },
+    {
+      "source": "packages/policy/src/command-policy.ts",
+      "blob": "352acd73b1267f363cd410c00308d2338466893e",
+      "pinned": false,
+      "status": "deferred",
+      "reason": "evaluateAction and the egress, review and command policies govern Builder actions (Phase 5); the planner path does not call them; consumed when a slice needs them"
+    },
+    {
+      "source": "packages/ledger/src/hash-chain.ts",
+      "blob": "1fa4302ca3b0e60326dab7a22dcf8c2c6c96744a",
+      "pinned": false,
+      "status": "consumed",
+      "file": "src/ledger/hash-chain.ts"
+    },
+    {
+      "source": "packages/ledger/src/schema.ts",
+      "blob": "46897e804a5f3e1fe59690d7c3fc5b638efb30d7",
+      "pinned": false,
+      "status": "excluded",
+      "reason": "the SQLite schema is the storage medium, which DEC-20260827-01 \u00a73.5 does not consume; evidence custody stays with DEC-20260815-02"
+    },
+    {
+      "source": "packages/protocol/src/surface-id.ts",
+      "blob": "17d65c77be8c55073492b4d0d3f9ed0d7c7b87d8",
+      "pinned": false,
+      "status": "consumed",
+      "file": "src/protocol/surface-id.ts"
+    },
+    {
+      "source": "packages/protocol/src/normalization.ts",
+      "blob": "3408f90a058c36cf543af95f2a45cc019519167a",
+      "pinned": false,
+      "status": "consumed",
+      "file": "src/protocol/normalization.ts"
+    },
+    {
+      "source": "packages/adapter-claude-code/src/shell.ts",
+      "blob": "8621229312309edee30e3c27b442b30a2cacc742",
+      "pinned": false,
+      "status": "deferred",
+      "reason": "binds a provider adapter; waits on the Founder Q2 ruling (which adapter runs the Planner); DEC-20260827-01 \u00a73.4 authorizes no provider binding"
+    },
+    {
+      "source": "packages/adapter-claude-code/src/attestation.ts",
+      "blob": "5dfcfae7f07f60995031eb48ebaa1c7635d578b4",
+      "pinned": false,
+      "status": "deferred",
+      "reason": "binds a provider adapter; waits on the Founder Q2 ruling (which adapter runs the Planner); DEC-20260827-01 \u00a73.4 authorizes no provider binding"
+    },
+    {
+      "source": "packages/adapter-claude-code/src/mcp-config.ts",
+      "blob": "787f8788e8d65a2badb5b81d055cd6c17fafe0c0",
+      "pinned": false,
+      "status": "deferred",
+      "reason": "binds a provider adapter; waits on the Founder Q2 ruling (which adapter runs the Planner); DEC-20260827-01 \u00a73.4 authorizes no provider binding"
+    },
+    {
+      "source": "packages/adapter-antigravity/src/shell.ts",
+      "blob": "37c0549cd5f2de9cea4ec5a78270af6a3738a3d7",
+      "pinned": false,
+      "status": "deferred",
+      "reason": "binds a provider adapter; waits on the Founder Q2 ruling (which adapter runs the Planner); DEC-20260827-01 \u00a73.4 authorizes no provider binding"
+    },
+    {
+      "source": "packages/adapter-antigravity/src/attestation.ts",
+      "blob": "031fa60f08b2cffc56aea7ff33d2c69bb0aee274",
+      "pinned": false,
+      "status": "deferred",
+      "reason": "binds a provider adapter; waits on the Founder Q2 ruling (which adapter runs the Planner); DEC-20260827-01 \u00a73.4 authorizes no provider binding"
+    },
+    {
+      "source": "packages/adapter-antigravity/src/mcp-config.ts",
+      "blob": "ee259dbdef14ac1276e044cfa334c0d9947e80e3",
+      "pinned": false,
+      "status": "deferred",
+      "reason": "binds a provider adapter; waits on the Founder Q2 ruling (which adapter runs the Planner); DEC-20260827-01 \u00a73.4 authorizes no provider binding"
+    },
+    {
+      "source": "packages/broker/src/session-machine.ts",
+      "blob": "e1757383611b9062e9f4f5bb2d2bd79bf723aba9",
+      "pinned": false,
+      "status": "consumed",
+      "file": "src/broker/session-machine.ts"
+    },
+    {
+      "source": "packages/protocol/src/events.ts",
+      "blob": "0d55ce973e804d58498d4a92cbcfb020a9c75d8b",
+      "pinned": false,
+      "status": "consumed",
+      "file": "src/protocol/events.ts"
+    },
+    {
+      "source": "packages/protocol/src/task-envelope.ts",
+      "blob": "2daa99418e247c3648a5bc09e4edc3e83d6b894e",
+      "pinned": false,
+      "status": "consumed",
+      "file": "src/protocol/task-envelope.ts"
+    },
+    {
+      "source": "packages/protocol/src/canonical-json.ts",
+      "blob": "ae610e3022a8c5546667acfdf71e4cfced5a3542",
+      "pinned": false,
+      "status": "consumed",
+      "file": "src/protocol/canonical-json.ts"
+    },
+    {
+      "source": "packages/protocol/src/crypto.ts",
+      "blob": "0b81b1b5ff24507c132f5cadfd7ea600373fe677",
+      "pinned": false,
+      "status": "adapted",
+      "file": "src/protocol/crypto.ts",
+      "change": "Bun.CryptoHasher replaced by node:crypto createHash; same digest"
+    },
+    {
+      "source": "packages/protocol/src/ids.ts",
+      "blob": "831811be83d2e46b16e0fda9ac08b4f29811be95",
+      "pinned": false,
+      "status": "consumed",
+      "file": "src/protocol/ids.ts"
+    },
+    {
+      "source": "packages/protocol/src/wire.ts",
+      "blob": "ccf03d3647f97d7072675d5743cb2cee5ec8b5c8",
+      "pinned": false,
+      "status": "consumed",
+      "file": "src/protocol/wire.ts"
+    }
+  ]
+}

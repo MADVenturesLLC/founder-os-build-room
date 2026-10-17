@@ -104,6 +104,17 @@ function recordingJournalPool(identity = 'br_app_runtime'): { pool: Pool; append
       appendParams.push(params);
       return { rows: [{ seq: '1', chain_hash: 'e'.repeat(64) }], rowCount: 1 };
     }
+    // The append's transaction and savepoint, and its cross-row check, which
+    // reads back the one row this double has accepted.
+    if (/^(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT|ROLLBACK TO SAVEPOINT)\b/.test(sql) || /pg_advisory_xact_lock/.test(sql)) {
+      return { rows: [], rowCount: 0 };
+    }
+    if (/FROM public\.command_journal_events AS e WHERE e\.command_id = \$1/.test(sql)) {
+      const rows = appendParams
+        .filter((p) => p[1] === params[0])
+        .map((p) => ({ seq: p[3], record_class: p[0], command_id: p[1], event_type: p[2], chain_hash: 'e'.repeat(64), row_bytes: p[4] }));
+      return { rows, rowCount: rows.length };
+    }
     throw new Error('the store issued a statement this test does not expect');
   };
   const client = { query, release: () => undefined };

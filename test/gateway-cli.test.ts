@@ -682,6 +682,45 @@ describe('gateway-cli · staging-response-disposition-table', () => {
       '503 clock_unreliable',
       '5xx',
     ],
+    // The planner pull channel (plan r1 Q2b): the heartbeat's session vocabulary.
+    'POST /gateway/planner/poll': [
+      '200',
+      '400 invalid_request',
+      '401 unknown_key',
+      '401 bad_signature',
+      '401 purpose_mismatch',
+      '403 revoked',
+      '403 awaiting_approval',
+      '403 denied',
+      '403 expired',
+      '409 session_required',
+      '409 stale_sequence',
+      '409 stale_timestamp',
+      '413 payload_too_large',
+      '429 rate_limited',
+      '503 not_leader',
+      '503 clock_unreliable',
+      '5xx',
+    ],
+    'POST /gateway/planner/report': [
+      '200',
+      '400 invalid_request',
+      '401 unknown_key',
+      '401 bad_signature',
+      '401 purpose_mismatch',
+      '403 revoked',
+      '403 awaiting_approval',
+      '403 denied',
+      '403 expired',
+      '409 session_required',
+      '409 stale_sequence',
+      '409 stale_timestamp',
+      '413 payload_too_large',
+      '429 rate_limited',
+      '503 not_leader',
+      '503 clock_unreliable',
+      '5xx',
+    ],
   };
 
   it('the implementation emits exactly the declared vocabulary', () => {
@@ -715,6 +754,8 @@ describe('gateway-cli · staging-response-disposition-table', () => {
       { endpoint: 'POST /gateway/session-start', table: STAGING_PROBE_TABLE, name: 'stagingProbe' },
       { endpoint: 'POST /gateway/session-start', table: PRIMARY_TABLE, name: 'primary(session-start)' },
       { endpoint: 'POST /gateway/heartbeat', table: PRIMARY_TABLE, name: 'primary(heartbeat)' },
+      { endpoint: 'POST /gateway/planner/poll', table: PRIMARY_TABLE, name: 'primary(planner poll)' },
+      { endpoint: 'POST /gateway/planner/report', table: PRIMARY_TABLE, name: 'primary(planner report)' },
     ];
 
     for (const { endpoint, table, name } of cases) {

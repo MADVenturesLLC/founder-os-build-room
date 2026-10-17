@@ -89,6 +89,8 @@ export {
 
 export {
   buildHeartbeat,
+  buildPlannerPoll,
+  buildPlannerReport,
   buildSessionStart,
   generateGatewayKeypair,
   privateKeyFromSecret,
@@ -100,16 +102,28 @@ export {
 export {
   BACKOFF_MAX_MS,
   BACKOFF_MIN_MS,
+  MAX_PLANNER_EXCHANGES_PER_TICK,
   PrimaryLane,
   REDEEM_RETRY_HORIZON_MS,
   StagingLane,
   type AcceptedRedemption,
   type LaneObservation,
+  type PlannerRequestHandler,
   type StagingOutcome,
   type StagingRedeemRequest,
 } from './lanes.js';
 
 export { RING_CAPACITY, RingBuffer, type RingEntry } from './ring-buffer.js';
+
+export {
+  GatewayPlannerWorker,
+  PlannerRecordStore,
+  plannerRecordsDirectory,
+  type PlannerExecutor,
+  type PlannerRecord,
+  type PlannerStart,
+  type PlannerWorkerDeps,
+} from './planner-worker.js';
 
 /**
  * Room Runtime Phase 1 (fixture occupancy only) — the Gateway-side room

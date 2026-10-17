@@ -26,6 +26,7 @@ import {
   isValidGeneration,
   isValidHex32,
   isValidKeyId,
+  isValidRequestId,
   isValidSequence,
   isValidTimestampMs,
 } from './envelope.js';
@@ -46,6 +47,15 @@ export interface HeartbeatCanonicalInput {
   readonly sequence: number;
   readonly nonce: string;
   readonly timestampMs: number;
+}
+
+/** A planner poll signs exactly what a heartbeat signs, under its own purpose. */
+export type PlannerPollCanonicalInput = HeartbeatCanonicalInput;
+
+export interface PlannerReportCanonicalInput extends HeartbeatCanonicalInput {
+  readonly requestId: string;
+  /** SHA-256 of the report's payload text, 64 lowercase hex. */
+  readonly payloadDigest: string;
 }
 
 /** Every element of a canonical array is one of exactly these two kinds. */
@@ -109,6 +119,56 @@ export function heartbeatCanonicalArray(
   ];
 }
 
+export function plannerPollCanonicalArray(
+  input: PlannerPollCanonicalInput,
+): readonly CanonicalElement[] {
+  require(isValidGatewayId(input.gatewayId), 'gatewayId');
+  require(isValidKeyId(input.keyId), 'keyId');
+  require(isValidHex32(input.epoch), 'epoch');
+  require(isValidSequence(input.sequence), 'sequence');
+  require(isValidHex32(input.nonce), 'nonce');
+  require(isValidTimestampMs(input.timestampMs), 'timestampMs');
+
+  return [
+    PROTOCOL_ID,
+    VERSION,
+    'planner_poll',
+    input.gatewayId,
+    input.keyId,
+    input.epoch,
+    input.sequence,
+    input.nonce,
+    input.timestampMs,
+  ];
+}
+
+export function plannerReportCanonicalArray(
+  input: PlannerReportCanonicalInput,
+): readonly CanonicalElement[] {
+  require(isValidGatewayId(input.gatewayId), 'gatewayId');
+  require(isValidKeyId(input.keyId), 'keyId');
+  require(isValidHex32(input.epoch), 'epoch');
+  require(isValidSequence(input.sequence), 'sequence');
+  require(isValidHex32(input.nonce), 'nonce');
+  require(isValidTimestampMs(input.timestampMs), 'timestampMs');
+  require(isValidRequestId(input.requestId), 'requestId');
+  require(isValidHex32(input.payloadDigest), 'payloadDigest');
+
+  return [
+    PROTOCOL_ID,
+    VERSION,
+    'planner_report',
+    input.gatewayId,
+    input.keyId,
+    input.epoch,
+    input.sequence,
+    input.nonce,
+    input.timestampMs,
+    input.requestId,
+    input.payloadDigest,
+  ];
+}
+
 /**
  * `utf8(domain tag) || 0x00 || utf8(JSON.stringify(array))`.
  *
@@ -133,4 +193,12 @@ export function sessionStartSignedBytes(input: SessionStartCanonicalInput): Uint
 
 export function heartbeatSignedBytes(input: HeartbeatCanonicalInput): Uint8Array {
   return signedBytesFor('heartbeat', heartbeatCanonicalArray(input));
+}
+
+export function plannerPollSignedBytes(input: PlannerPollCanonicalInput): Uint8Array {
+  return signedBytesFor('planner_poll', plannerPollCanonicalArray(input));
+}
+
+export function plannerReportSignedBytes(input: PlannerReportCanonicalInput): Uint8Array {
+  return signedBytesFor('planner_report', plannerReportCanonicalArray(input));
 }
