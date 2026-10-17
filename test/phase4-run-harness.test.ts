@@ -512,4 +512,100 @@ describe('phase 4 http driver · bound to the act it drives', () => {
     await driver.captureScope(run.roomId, run, set().founderRelay);
     assert.equal((sent?.facts as Record<string, string>)['remoteHeadSha'], SHA_A);
   });
+
+  it('names the refusal when the observer throws, a route rejects, or a round settles refused, errored, or timed out', async () => {
+    const run = set().runs[0]!;
+    const respond = (status: number, body: Record<string, unknown>): typeof fetch =>
+      (async () => ({ status, json: async () => body }) as unknown as Response) as unknown as typeof fetch;
+
+    const throwingObserver = new HttpPhase4Driver({
+      ...base,
+      origin: 'https://control-plane.example',
+      observeRemoteHead: async () => {
+        throw new Error('git ls-remote failed');
+      },
+      fetch: fakeFetch,
+    });
+    await assert.rejects(
+      throwingObserver.captureScope(run.roomId, run, set().founderRelay),
+      /remote head not observed for example-org\/example-repo: git ls-remote failed/,
+    );
+
+    const guardRejected = new HttpPhase4Driver({
+      ...base,
+      origin: 'https://control-plane.example',
+      observeRemoteHead: async () => SHA_A,
+      fetch: respond(409, { outcome: 'rejected', code: 'GUARD_FAILED', reason: 'Guard G1 failed for T1 (scope.captured)' }),
+    });
+    await assert.rejects(
+      guardRejected.captureScope(run.roomId, run, set().founderRelay),
+      /scope capture answered 409: GUARD_FAILED — Guard G1 failed for T1 \(scope\.captured\)/,
+    );
+
+    const startRefused = new HttpPhase4Driver({
+      ...base,
+      origin: 'https://control-plane.example',
+      fetch: respond(503, { error: 'dispatcher_surface_unregistered', message: 'not in registry' }),
+    });
+    await assert.rejects(
+      startRefused.runRound(run.roomId),
+      /planner-round start answered 503: dispatcher_surface_unregistered — not in registry/,
+    );
+
+    const settledOutcome = (outcome: Record<string, unknown>): typeof fetch =>
+      (async (_url: unknown, init?: RequestInit) => {
+        if (init?.method === 'POST') return { status: 202, json: async () => ({ status: 'running' }) } as unknown as Response;
+        return {
+          status: 200,
+          json: async () => ({
+            deploymentId: DEPLOYMENT,
+            gateway: { id: GATEWAY, online: true },
+            dispatcherSurfaceRegistered: true,
+            round: { status: 'settled', roomId: run.roomId, outcome },
+          }),
+        } as unknown as Response;
+      }) as unknown as typeof fetch;
+
+    const roundRefused = new HttpPhase4Driver({
+      ...base,
+      origin: 'https://control-plane.example',
+      fetch: settledOutcome({ kind: 'refused', code: 'guard_failed', reason: 'Gateway offline' }),
+    });
+    await assert.rejects(roundRefused.runRound(run.roomId), /planner-round refused: guard_failed — Gateway offline/);
+
+    const roundErrored = new HttpPhase4Driver({
+      ...base,
+      origin: 'https://control-plane.example',
+      fetch: settledOutcome({ kind: 'error', reason: 'PlannerLoopUnfencedError' }),
+    });
+    await assert.rejects(roundErrored.runRound(run.roomId), /planner-round error: PlannerLoopUnfencedError/);
+
+    let clock = 0;
+    const roundTimedOut = new HttpPhase4Driver({
+      ...base,
+      origin: 'https://control-plane.example',
+      roundTimeoutMs: 100,
+      pollMs: 50,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      fetch: (async (_url: unknown, init?: RequestInit) => {
+        if (init?.method === 'POST') return { status: 202, json: async () => ({ status: 'running' }) } as unknown as Response;
+        return {
+          status: 200,
+          json: async () => ({
+            deploymentId: DEPLOYMENT,
+            gateway: { id: GATEWAY, online: true },
+            dispatcherSurfaceRegistered: true,
+            round: { status: 'running', roomId: run.roomId },
+          }),
+        } as unknown as Response;
+      }) as unknown as typeof fetch,
+    });
+    await assert.rejects(
+      roundTimedOut.runRound(run.roomId),
+      /planner-round timed out after 100ms in room 00000000-0000-4000-8000-000000000001 \(status: running\)/,
+    );
+  });
 });

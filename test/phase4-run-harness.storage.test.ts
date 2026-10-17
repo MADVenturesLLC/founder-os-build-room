@@ -40,11 +40,14 @@ import { PlanStore } from '../packages/control-plane/src/plan-store.js';
 import { PostgresLedgerStore } from '../packages/control-plane/src/store.js';
 import { PlannerLoop, plannerCommandIdFor } from '../packages/control-plane/src/planner-loop.js';
 import {
+  HttpPhase4Driver,
   PHASE4_DISPATCHER,
+  Phase4DriverError,
   Phase4Runner,
   phase4SetStatus,
   readPhase4Export,
   registeredSurfaceIds,
+  type Phase4AttemptResult,
   type Phase4AttemptSummary,
   type Phase4EntryObservation,
   type Phase4RecordedCommand,
@@ -57,7 +60,6 @@ import { enrollGateway, makeSessionNode, promoteNode, startNodeServer, type Enro
 import { SyntheticExecutor } from './support/synthetic-executor.js';
 import { closeServer } from './support/close-server.js';
 import { createServer } from '../packages/control-plane/src/server.js';
-import { HttpPhase4Driver } from '../packages/run-harness/src/phase4/index.js';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -97,35 +99,54 @@ before(async () => {
   // The Gateway attests and runs on the Q2a route.
   executor.reset({ attest: { surface: 'antigravity', provider: PLANNER.provider }, observed: PLANNER_ROUTE });
   const worker = new GatewayPlannerWorker({ executor, records: new PlannerRecordStore(recordsRoot) });
+  // Wait for the worker's async settle write before reporting `execute` back
+  // to the control plane, so the first `status` poll always sees `finished`
+  // rather than racing disk persistence and triggering the 10 s production
+  // status interval on `countedRunServer`.
+  const settledWorker = {
+    handle: async (request: Parameters<GatewayPlannerWorker['handle']>[0]) => {
+      const response = await worker.handle(request);
+      await worker.settled();
+      return response;
+    },
+  };
   const lane = new PrimaryLane(new ControlPlaneClient(surface.url), createDaemonClock(), {
     gatewayId: gateway.gatewayId,
     keyId: gateway.key.keyId,
     pubkeyBase64: gateway.key.pubkeyBase64,
     privateKey: gateway.key.privateKey,
   });
+  const deadline = Date.now() + 8_000;
+  while (node.session.livenessFor(gateway.gatewayId) === null) {
+    if (Date.now() > deadline) throw new Error('the Gateway never came online');
+    await lane.step();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  // `node.clock` is a `ScriptedClock`, so its rate-limit buckets do not advance
+  // on wall time: once liveness is established, exchange planner questions only
+  // when the channel holds one, rather than exhausting the 60-request window on
+  // idle polls.
   let running = true;
   const loop = (async () => {
     while (running) {
-      await lane.step();
-      await lane.exchangePlanner(worker);
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      if (node!.surface.planner.openCount > 0) {
+        await lane.exchangePlanner(settledWorker, 1);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
     }
   })();
   stopDriving = async () => {
     running = false;
     await loop;
   };
-  const deadline = Date.now() + 8_000;
-  while (node.session.livenessFor(gateway.gatewayId) === null) {
-    if (Date.now() > deadline) throw new Error('the Gateway never came online');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
 });
 
 let countedRunServer: Server | undefined;
 
 after(async () => {
   await stopDriving?.();
+  node?.clock.advance(60 * 60_000);
   if (countedRunServer !== undefined) await closeServer(countedRunServer);
   await surface?.close();
   await destroyGatewayHarness(harness);
@@ -285,19 +306,43 @@ function stores() {
   };
 }
 
+function describeAttempt(result: Phase4AttemptResult): string {
+  return JSON.stringify({
+    label: result.label,
+    roomId: result.roomId,
+    outcome: result.outcome,
+    entry: result.entryFailures,
+    failures: result.failures,
+    finalState: result.record?.finalState ?? null,
+  });
+}
+
 /**
  * The Founder, in the test: watches the run's room and decides at the
- * plan-decision route. `script` is the decisions to make, in order.
+ * plan-decision route while `drive` runs. Stops as soon as `drive` settles so
+ * a refused or early-stopped run reaches its assertion immediately instead of
+ * waiting on the Founder's deadline.
  */
-function founder(roomId: string, script: ('revise' | 'approve' | 'cancel')[]): Promise<void> {
-  return (async () => {
-    const remaining = [...script];
-    const deadline = Date.now() + 30_000;
+async function driveWithFounder<T>(
+  roomId: string,
+  script: ('revise' | 'approve' | 'cancel')[],
+  drive: () => Promise<T>,
+): Promise<T> {
+  let active = true;
+  const remaining = [...script];
+  const deciding = (async () => {
+    const deadline = Date.now() + 10_000;
     let reviewed: string | null = null;
-    while (remaining.length > 0) {
-      if (Date.now() > deadline) throw new Error('the scripted Founder timed out');
+    let lastState: string | null = null;
+    while (active && remaining.length > 0) {
+      if (Date.now() > deadline) {
+        throw new Error(
+          `the scripted Founder timed out waiting for PLAN_REVIEW in room ${roomId} (last state: ${lastState ?? 'unobserved'}, remaining: ${remaining.join(',')})`,
+        );
+      }
       const view = await http('GET', `/rooms/${roomId}`, node!.config.apiToken).catch(() => null);
       const state = view?.status === 200 ? (view.body['snapshot'] as { state: string }).state : null;
+      lastState = state;
       if (state === 'PLAN_REVIEW') {
         const exported = await http('GET', `/rooms/${roomId}/export`, node!.config.apiToken);
         const planHash = readPhase4Export(exported.body, roomId).events.filter((e) => e.event === 'plan.submitted').at(-1)?.planHash ?? null;
@@ -314,12 +359,21 @@ function founder(roomId: string, script: ('revise' | 'approve' | 'cancel')[]): P
             ...body,
             attribution: { actualModel: 'n/a (human Founder decision)', executionSurface: 'claude-code' },
           });
-          assert.equal(decided.status, 201, JSON.stringify(decided.body));
+          assert.equal(decided.status, 201, `plan-decision answered ${decided.status}: ${JSON.stringify(decided.body)}`);
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
   })();
+  try {
+    return await Promise.race([
+      drive(),
+      deciding.then(() => new Promise<never>(() => {})),
+    ]);
+  } finally {
+    active = false;
+    await deciding.catch(() => {});
+  }
 }
 
 const runner = (set: Phase4RunSet) =>
@@ -334,10 +388,8 @@ describe('phase 4 run harness · the runner over the real assembly', { skip: SKI
 
   it('passes a run the Founder approves, judging what was persisted, with the Q7b attribution on T2', async () => {
     shared = runSet();
-    const deciding = founder(set().runs[0]!.roomId, ['approve']);
-    const result = await runner(set()).runNext(set(), attempts);
-    await deciding;
-    assert.equal(result.outcome, 'passed', JSON.stringify({ failures: result.failures, entry: result.entryFailures }));
+    const result = await driveWithFounder(set().runs[0]!.roomId, ['approve'], () => runner(set()).runNext(set(), attempts));
+    assert.equal(result.outcome, 'passed', describeAttempt(result));
     attempts.push(result);
     const t2 = result.record!.events.find((e) => e.event === 'task.dispatched.planner')!;
     assert.deepEqual(t2.attribution, {
@@ -352,10 +404,8 @@ describe('phase 4 run harness · the runner over the real assembly', { skip: SKI
   });
 
   it('passes a run the Founder revises and then approves, in two rounds', async () => {
-    const deciding = founder(set().runs[1]!.roomId, ['revise', 'approve']);
-    const result = await runner(set()).runNext(set(), attempts);
-    await deciding;
-    assert.equal(result.outcome, 'passed', JSON.stringify(result.failures));
+    const result = await driveWithFounder(set().runs[1]!.roomId, ['revise', 'approve'], () => runner(set()).runNext(set(), attempts));
+    assert.equal(result.outcome, 'passed', describeAttempt(result));
     attempts.push(result);
     assert.equal(result.record!.commands.length, 2);
     assert.deepEqual(result.record!.decisions.map((d) => d.decision), ['plan.revision_requested', 'plan.approved']);
@@ -363,10 +413,8 @@ describe('phase 4 run harness · the runner over the real assembly', { skip: SKI
   });
 
   it('rejects a run the Founder cancels, and the set is spent', async () => {
-    const deciding = founder(set().runs[2]!.roomId, ['cancel']);
-    const result = await runner(set()).runNext(set(), attempts);
-    await deciding;
-    assert.deepEqual([result.outcome, result.failures], ['rejected', []]);
+    const result = await driveWithFounder(set().runs[2]!.roomId, ['cancel'], () => runner(set()).runNext(set(), attempts));
+    assert.deepEqual([result.outcome, result.failures], ['rejected', []], describeAttempt(result));
     assert.equal(result.record!.finalState, 'CLOSED_ABANDONED');
     attempts.push(result);
     assert.deepEqual(phase4SetStatus(attempts), { consecutivePasses: 0, nextLabel: null, spent: true, satisfied: false });
@@ -374,8 +422,12 @@ describe('phase 4 run harness · the runner over the real assembly', { skip: SKI
 });
 
 describe('phase 4 run harness · a run over the Q9 routes, as a counted run would make it', { skip: SKIP }, () => {
-  it('passes a run driven only through HTTP: the routes start the round and read the journal; the Founder decides at the plan-decision route', async () => {
-    const set = runSet();
+  let set: Phase4RunSet;
+  let origin: string;
+
+  before(async () => {
+    if (SKIP !== false) return;
+    set = runSet();
     // The control plane as an act would configure it (run-unit Q9): the same
     // node and Gateway surface, served with the act's terms and a deployment
     // id, reading the pinned registry copy as production would.
@@ -393,8 +445,10 @@ describe('phase 4 run harness · a run over the Q9 routes, as a counted run woul
     });
     countedRunServer = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => countedRunServer!.once('listening', () => resolve()));
-    const origin = `http://127.0.0.1:${(countedRunServer.address() as AddressInfo).port}`;
+    origin = `http://127.0.0.1:${(countedRunServer.address() as AddressInfo).port}`;
+  });
 
+  it('passes a run driven only through HTTP: the routes start the round and read the journal; the Founder decides at the plan-decision route', async () => {
     const driver = new HttpPhase4Driver({
       origin,
       apiToken: node!.config.apiToken,
@@ -402,17 +456,18 @@ describe('phase 4 run harness · a run over the Q9 routes, as a counted run woul
       founderOs: { sha: set.founderOsSha, clean: true },
       executorAvailable: true,
       observeRemoteHead: async () => set.runs[0]!.inputs.baseSha,
+      roundTimeoutMs: 5_000,
       pollMs: 20,
     });
-    const deciding = founder(set.runs[0]!.roomId, ['approve']);
-    const result = await new Phase4Runner(driver, { pollMs: 20, entry: { namedGatewayPrefix: gateway!.gatewayId.slice(0, 8) } }).runNext(
-      // The commit this test instance reports on /version, as an act would name the deployed one;
-      // and the origin the run actually drives, as the act must name (the driver is bound to it).
-      { ...set, buildRoomSha: node!.config.commitSha, controlPlaneOrigin: origin },
-      [],
+    const result = await driveWithFounder(set.runs[0]!.roomId, ['approve'], () =>
+      new Phase4Runner(driver, { pollMs: 20, entry: { namedGatewayPrefix: gateway!.gatewayId.slice(0, 8) } }).runNext(
+        // The commit this test instance reports on /version, as an act would name the deployed one;
+        // and the origin the run actually drives, as the act must name (the driver is bound to it).
+        { ...set, buildRoomSha: node!.config.commitSha, controlPlaneOrigin: origin },
+        [],
+      ),
     );
-    await deciding;
-    assert.equal(result.outcome, 'passed', JSON.stringify({ entry: result.entryFailures, failures: result.failures }));
+    assert.equal(result.outcome, 'passed', describeAttempt(result));
     const record = result.record!;
     const t2 = record.events.find((e) => e.event === 'task.dispatched.planner')!;
     assert.deepEqual(t2.attribution, {
@@ -426,5 +481,71 @@ describe('phase 4 run harness · a run over the Q9 routes, as a counted run woul
     assert.deepEqual(record.commands[0]!.rows.map((r) => r.eventType), ['journaled', 'identity_bound', 'dispatched', 'completed']);
     assert.equal(record.journalVerified, true);
     assert.equal(record.deploymentIdAtEnd, DEPLOYMENT);
+  });
+
+  it('names the refusal when entry observation, scope capture, a Q9 route, or the record judgment refuses a run', async () => {
+    const fresh = runSet();
+    const act = { ...fresh, buildRoomSha: node!.config.commitSha, controlPlaneOrigin: origin };
+    const makeDriver = (overrides: Partial<ConstructorParameters<typeof HttpPhase4Driver>[0]> = {}) =>
+      new HttpPhase4Driver({
+        origin,
+        apiToken: node!.config.apiToken,
+        countedRunToken: COUNTED_RUN_TOKEN,
+        founderOs: { sha: act.founderOsSha, clean: true },
+        executorAvailable: true,
+        observeRemoteHead: async () => act.runs[0]!.inputs.baseSha,
+        roundTimeoutMs: 5_000,
+        pollMs: 20,
+        ...overrides,
+      });
+    const makeRunner = (driver: HttpPhase4Driver) =>
+      new Phase4Runner(driver, { pollMs: 20, entry: { namedGatewayPrefix: gateway!.gatewayId.slice(0, 8) } });
+
+    // 1. Entry observation refusal: returns immediately with the named entry failure, without waiting on the Founder.
+    const entryRefused = await driveWithFounder(act.runs[0]!.roomId, ['approve'], () =>
+      makeRunner(makeDriver()).runNext({ ...act, buildRoomSha: 'd'.repeat(40) }, []),
+    );
+    assert.equal(entryRefused.outcome, 'not_started', describeAttempt(entryRefused));
+    assert.deepEqual(entryRefused.entryFailures, ['build_sha_mismatch']);
+
+    // 2. Scope capture refusal: remote-head mismatch and route rejection name the refusal.
+    await assert.rejects(
+      driveWithFounder(act.runs[0]!.roomId, ['approve'], () =>
+        makeRunner(makeDriver({ observeRemoteHead: async () => 'e'.repeat(40) })).runNext(act, []),
+      ),
+      (err: unknown) => err instanceof Phase4DriverError && /remote head e{40} does not match/.test(err.message),
+    );
+    await assert.rejects(
+      makeDriver().captureScope(act.runs[1]!.roomId, act.runs[1]!, act.founderRelay),
+      (err: unknown) => err instanceof Phase4DriverError && /scope capture answered 404: not_found/.test(err.message),
+    );
+
+    // 3. Q9 route refusal: bad counted-run token (401) and unplannable room (settled `refused`) name the refusal.
+    await assert.rejects(
+      makeDriver({ countedRunToken: 'wrong-counted-run-token' }).runRound(act.runs[1]!.roomId),
+      (err: unknown) => err instanceof Phase4DriverError && /planner-round start answered 401: unauthorized/.test(err.message),
+    );
+    await assert.rejects(
+      makeDriver().runRound(act.runs[1]!.roomId),
+      (err: unknown) => err instanceof Phase4DriverError && /planner-round refused: not_plannable/.test(err.message),
+    );
+
+    // 4. Strict record judgment refusal: an observed route off the act's model fails completion and names the record failures.
+    executor.reset({
+      attest: { surface: 'antigravity', provider: PLANNER.provider },
+      observed: { ...PLANNER_ROUTE, model: 'gemini-3.6-flash' },
+    });
+    try {
+      const judged = await driveWithFounder(act.runs[2]!.roomId, ['approve'], () =>
+        makeRunner(makeDriver()).runNext(act, [
+          { label: 'Phase4-CR1', outcome: 'passed' },
+          { label: 'Phase4-CR2', outcome: 'passed' },
+        ]),
+      );
+      assert.equal(judged.outcome, 'interrupted', describeAttempt(judged));
+      assert.deepEqual(judged.failures, ['lifecycle_incomplete', 'command_route_wrong', 'command_not_clean']);
+    } finally {
+      executor.reset({ attest: { surface: 'antigravity', provider: PLANNER.provider }, observed: PLANNER_ROUTE });
+    }
   });
 });
