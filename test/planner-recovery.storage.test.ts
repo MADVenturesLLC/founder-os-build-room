@@ -115,9 +115,9 @@ function loopDeps(overrides: Partial<PlannerLoopDeps> = {}): PlannerLoopDeps {
     route,
     dispatcher: { roleId: 'builder', actorId: 'control-plane:test', actualModel: 'n/a (control-plane act)', executionSurface: 'claude-code' },
     roomRoles: async () => ({
-      planner: { roleId: 'architect', model: SYNTHETIC_ROUTE.model },
-      builder: { roleId: 'builder', model: 'example-builder-model' },
-      reviewer: { roleId: 'independent-reviewer', model: 'example-reviewer-model' },
+      planner: { roleId: 'architect', surface: SYNTHETIC_ROUTE.executionSurface, model: SYNTHETIC_ROUTE.model },
+      builder: { roleId: 'builder', surface: 'example-builder-surface', model: null },
+      reviewer: { roleId: 'independent-reviewer', surface: 'example-reviewer-surface', model: null },
     }),
     authorizeRoute: async () => 'covers',
     now,

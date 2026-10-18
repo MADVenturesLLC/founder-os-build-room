@@ -226,9 +226,9 @@ export function countedRunRouter(deps: CountedRunRouteDeps): Router {
             executionSurface: COUNTED_RUN_DISPATCHER.executionSurface,
           },
           roomRoles: async () => ({
-            planner: { roleId: 'architect', model: config.planner.model },
-            builder: { roleId: 'builder', model: config.seats.builder },
-            reviewer: { roleId: 'independent-reviewer', model: config.seats.reviewer },
+            planner: { roleId: 'architect', surface: config.planner.surface, model: config.planner.model },
+            builder: { roleId: 'builder', surface: config.seats.builder, model: null },
+            reviewer: { roleId: 'independent-reviewer', surface: config.seats.reviewer, model: null },
           }),
           authorizeRoute: countedRunCompletionResolver(config),
         });

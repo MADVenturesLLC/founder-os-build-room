@@ -250,9 +250,9 @@ class AssemblyDriver implements Phase4RunDriver {
         executionSurface: PHASE4_DISPATCHER.executionSurface,
       },
       roomRoles: async () => ({
-        planner: { roleId: 'architect', model: PLANNER.model },
-        builder: { roleId: 'builder', model: this.set.seats.builder },
-        reviewer: { roleId: 'independent-reviewer', model: this.set.seats.reviewer },
+        planner: { roleId: 'architect', surface: PLANNER_ROUTE.executionSurface, model: PLANNER.model },
+        builder: { roleId: 'builder', surface: this.set.seats.builder, model: null },
+        reviewer: { roleId: 'independent-reviewer', surface: this.set.seats.reviewer, model: null },
       }),
       authorizeRoute: async () => 'covers',
     }).runRound(roomId);

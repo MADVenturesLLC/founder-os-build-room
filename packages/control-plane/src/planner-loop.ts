@@ -14,7 +14,12 @@
  *        `journaled` row commit in ONE transaction (journal contract §1.4),
  *        the row bound to its room and to the T2 event. G2's facts:
  *        `rolesAssigned` and `reviewerIsNotBuilder` from the room's role
- *        assignment, read through `roomRoles`; `gatewayOnline` derived by
+ *        assignment, read through `roomRoles` — each seat `{ roleId,
+ *        surface, model }`, `surface` an execution-surface id and `model` a
+ *        model id or `null` (null: not bound by the act; the seat's
+ *        approved lane decides at execution), the reviewer/builder
+ *        distinctness read at the surface, never the model;
+ *        `gatewayOnline` derived by
  *        the fence, which overwrites anything asserted (contract §10). A
  *        refused T2 is the store's recorded rejection, and no command exists.
  *      - From PLANNING after T4: no transition opens a revision round, so the
@@ -229,10 +234,25 @@ export interface PlannerRoute {
 /** One assigned seat. */
 export interface SeatAssignment {
   readonly roleId: string;
-  readonly model: string;
+  /** The seat's execution surface: an execution-surface id, never a model. */
+  readonly surface: string;
+  /**
+   * The seat's model id, or `null` when the assigning act binds no model.
+   * `null` means "not bound by the act — the seat's approved lane decides at
+   * execution", and the value is never a surface id.
+   */
+  readonly model: string | null;
 }
 
-/** A room's role assignment, as G2 reads it. Who assigns it is not ruled (plan r1 Q2). */
+/**
+ * A room's role assignment, as G2 reads it. Who assigns it is not ruled
+ * (plan r1 Q2). Each seat is a `SeatAssignment`: a role id, an
+ * execution-surface id, and a model id or `null` (not bound by the act —
+ * the seat's approved lane decides at execution). `reviewerIsNotBuilder`
+ * reads the two seats' surfaces — two surfaces that resolve to the same
+ * model are still distinct — while `rolesAssigned` still reads the
+ * planner's model against the route's intended model.
+ */
 export interface RoomRoleAssignment {
   readonly planner: SeatAssignment;
   readonly builder: SeatAssignment;
@@ -409,7 +429,7 @@ export class PlannerLoop {
           // gatewayOnline is not set here: the fence derives it and overwrites.
           facts: {
             rolesAssigned: rolesAssigned(roles, this.deps.route),
-            reviewerIsNotBuilder: roles !== null && roles.reviewer.model !== roles.builder.model,
+            reviewerIsNotBuilder: roles !== null && roles.reviewer.surface !== roles.builder.surface,
           },
         } as LifecycleEvent;
         return event;
