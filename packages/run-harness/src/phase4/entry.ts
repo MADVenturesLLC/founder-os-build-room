@@ -12,15 +12,22 @@
  *     planner executor (none ships; see the plan's "What is not built").
  *   - The control plane's T2 surface (Q7b) is registered in the execution
  *     surface registry Build Room reads.
- *   - Each seat's model is on an approved lane of that seat (Q7a): the
- *     Planner on the architect seat's Antigravity lane for the act's model
- *     (Q2a), and the builder and reviewer on theirs; the reviewer's model
- *     differs from the builder's (`DEC-20260815-05`).
+ *   - Each seat's surface is on an approved lane of that seat (Q7a as
+ *     `BR-PHASE4-SURFACE-KEYED-SEATS-R1` re-keys it): the Planner must
+ *     resolve to the architect seat's approved Antigravity lane (Q2a) —
+ *     the set's planner provider and model must be that lane's, and a
+ *     resolved route off that lane is refused — and the builder and
+ *     reviewer are on theirs; the reviewer's surface differs from the
+ *     builder's (surface-level distinctness, the issuance receipt's
+ *     settled decision — two surfaces that resolve to the same model are
+ *     the Founder's call, not a check).
  *
  * The seat lanes are Build Room's ratified registrations
  * (`@build-room/seat-registry`, `RATIFIED_SEATS`), and the named Gateway is
- * C5's, unless a test supplies others. At the pinned registry the architect seat's Antigravity lane is
- * `gemini-3.1-pro`, so a Q2a Planner passes only on that model.
+ * C5's, unless a test supplies others. The Planner check reads the set's
+ * resolved route: it passes only when that route is the architect seat's
+ * approved Antigravity lane (`PHASE4_PLANNER_SURFACE`), and a route
+ * resolved off that lane is refused.
  */
 
 import { RATIFIED_SEATS, type SeatRegistrationV1 } from '../../../seat-registry/src/index.js';
@@ -78,11 +85,17 @@ export function evaluatePhase4Entry(
 
   if (!observation.registeredSurfaces.has(PHASE4_DISPATCHER.executionSurface)) failures.push('dispatcher_surface_unregistered');
 
-  if (!onApprovedLane(seats, 'architect', (lane) => lane.surface_id === PHASE4_PLANNER_SURFACE && lane.provider === set.planner.provider && lane.model_id === set.planner.model)) {
+  if (
+    !onApprovedLane(
+      seats,
+      'architect',
+      (lane) => lane.surface_id === PHASE4_PLANNER_SURFACE && lane.provider === set.planner.provider && lane.model_id === set.planner.model,
+    )
+  ) {
     failures.push('planner_lane_not_approved');
   }
-  if (!onApprovedLane(seats, 'builder', (lane) => lane.model_id === set.seats.builder)) failures.push('builder_lane_not_approved');
-  if (!onApprovedLane(seats, 'independent-reviewer', (lane) => lane.model_id === set.seats.reviewer)) failures.push('reviewer_lane_not_approved');
+  if (!onApprovedLane(seats, 'builder', (lane) => lane.surface_id === set.seats.builder)) failures.push('builder_lane_not_approved');
+  if (!onApprovedLane(seats, 'independent-reviewer', (lane) => lane.surface_id === set.seats.reviewer)) failures.push('reviewer_lane_not_approved');
   if (set.seats.reviewer === set.seats.builder) failures.push('reviewer_same_as_builder');
 
   return { ok: failures.length === 0, failures };

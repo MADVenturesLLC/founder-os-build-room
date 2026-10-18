@@ -14,9 +14,11 @@
  *   - the Gateway for the counted runs is 1880c12d, on the PC (C5);
  *   - the Planner runs on the Antigravity adapter, on the active model the
  *     run's authorization names (Q2a);
- *   - every seat's model is named in that authorization and checked against
- *     the seat's approved lanes; the reviewer runs a different model from
- *     the builder (Q7a);
+ *   - every seat's SURFACE is named in that authorization and checked
+ *     against the seat's approved lanes; the reviewer's surface differs
+ *     from the builder's (Q7a, surface-keyed per
+ *     `BR-PHASE4-SURFACE-KEYED-SEATS-R1`; two surfaces resolving to one
+ *     model are the Founder's call, not a check);
  *   - the control plane's T2 is attributed to `build-room-control-plane`,
  *     role `builder`, actor `control-plane:<deployment id>`, model
  *     `n/a (deterministic control-plane act)` (Q7b). That surface is
@@ -79,9 +81,15 @@ export interface Phase4RunSet {
   readonly buildRoomSha: string;
   readonly controlPlaneOrigin: string;
   readonly gatewayId: string;
-  /** Q2a: the active model, named by the act. */
+  /**
+   * Q2a as surface-keyed: the act names the Planner's execution surface
+   * (`PHASE4_PLANNER_SURFACE` today); this transcription carries the
+   * provider and model of the approved lane it resolves to — registry
+   * routing detail the run unit's judgment pins (`run-unit.ts`), never
+   * part of the act's terms or of a check.
+   */
   readonly planner: { readonly provider: string; readonly model: string };
-  /** Q7a: the other seats' models, named by the act. */
+  /** Q7a as surface-keyed: the other seats' execution-surface ids, each on an approved lane of its seat, the two different. */
   readonly seats: { readonly builder: string; readonly reviewer: string };
   /** The surface relaying the Founder's T1, recorded in its attribution. */
   readonly founderRelay: { readonly actualModel: string; readonly executionSurface: string };

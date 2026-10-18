@@ -18,6 +18,7 @@ import { createGatewaySurface, type GatewaySurface } from '../packages/control-p
 import type { PostgresLedgerStore } from '../packages/control-plane/src/store.js';
 import { ConfigError, loadConfig } from '../packages/control-plane/src/config.js';
 import { CountedRunConfigError, parseCountedRunConfig, plannerLaneLabel } from '../packages/control-plane/src/counted-run-config.js';
+import { RATIFIED_SEATS, type SeatRegistrationV1, type SeatRoutingLane } from '../packages/seat-registry/src/index.js';
 import { COUNTED_RUN_REGISTRY, countedRunCompletionResolver, pinnedRegisteredSurfaces, vendoredRegisteredSurfaces } from '../packages/control-plane/src/counted-run.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -29,11 +30,12 @@ const TOKEN = 'test-token-that-is-long-enough-to-pass';
 const ADJUDICATION = 'adjudication-token-that-is-long-enough';
 const COUNTED = 'counted-run-token-that-is-long-enough';
 const ROOM = '11111111-2222-4333-8444-555555555555';
+/** The act's terms name surfaces only (BR-PHASE4-SURFACE-KEYED-SEATS-R1): no provider, no model. */
 const ACT = {
   actId: 'FOUNDER-ACT-EXAMPLE-PHASE4-COUNTED-RUNS',
   gatewayId: '1880c12d-0000-4000-8000-000000000001',
-  planner: { provider: 'google', model: 'gemini-3.1-pro' },
-  seats: { builder: 'gpt-5.6-sol', reviewer: 'grok-4.5' },
+  planner: 'antigravity',
+  seats: { builder: 'codex', reviewer: 'grok-build' },
 };
 const BASE_ENV = {
   DATABASE_URL: 'postgresql://user:secret@host.neon.tech/db?sslmode=require',
@@ -118,7 +120,21 @@ describe('counted run · the act’s terms, read at boot', () => {
 
   it('reads well-formed terms on approved lanes, and names the Planner’s lane', () => {
     const config = parseCountedRunConfig(JSON.stringify(ACT))!;
-    assert.deepEqual(config, ACT);
+    // The act's terms are the surfaces; the parsed planner carries the approved
+    // lane's provider and model as routing detail (google/gemini-3.1-pro, the
+    // architect seat's one Antigravity lane at the pinned registry).
+    assert.deepEqual(config, {
+      actId: ACT.actId,
+      gatewayId: ACT.gatewayId,
+      planner: { surface: 'antigravity', provider: 'google', model: 'gemini-3.1-pro' },
+      seats: ACT.seats,
+    });
+    assert.equal(plannerLaneLabel(config), 'primary');
+  });
+
+  it('accepts claude-code as the reviewer surface, on the lane the registry now carries', () => {
+    const config = parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'codex', reviewer: 'claude-code' } }))!;
+    assert.equal(config.seats.reviewer, 'claude-code');
     assert.equal(plannerLaneLabel(config), 'primary');
   });
 
@@ -126,10 +142,12 @@ describe('counted run · the act’s terms, read at boot', () => {
     ['not JSON', '{', /not JSON/],
     ['an extra field', { ...ACT, note: 'x' }, /exactly/],
     ['a non-UUID Gateway', { ...ACT, gatewayId: '1880c12d' }, /gatewayId/],
-    ['a Planner off the architect seat’s Antigravity lane', { ...ACT, planner: { provider: 'anthropic', model: 'opus-4.7' } }, /Antigravity lane/],
-    ['a builder off the builder lanes', { ...ACT, seats: { builder: 'gpt-5.6-luna', reviewer: 'grok-4.5' } }, /builder model/],
-    ['a reviewer off the reviewer lanes', { ...ACT, seats: { builder: 'gpt-5.6-sol', reviewer: 'opus-4.7' } }, /reviewer model/],
-    ['a reviewer on the builder’s model', { ...ACT, seats: { builder: 'grok-4.5', reviewer: 'grok-4.5' } }, /different model/],
+    ['a Planner stated as provider and model', { ...ACT, planner: { provider: 'google', model: 'gemini-3.1-pro' } }, /planner must be exactly a surface/],
+    ['a Planner surface with no approved architect lane', { ...ACT, planner: 'gemini-3.6-flash' }, /planner surface/],
+    ['a builder model id where a surface belongs', { ...ACT, seats: { builder: 'gpt-5.6-sol', reviewer: 'grok-build' } }, /builder surface/],
+    ['a reviewer model id where a surface belongs', { ...ACT, seats: { builder: 'codex', reviewer: 'opus-4.7' } }, /reviewer surface/],
+    ['an unknown reviewer surface string', { ...ACT, seats: { builder: 'codex', reviewer: 'not-a-surface' } }, /reviewer surface/],
+    ['a reviewer on the builder’s surface', { ...ACT, seats: { builder: 'grok-build', reviewer: 'grok-build' } }, /reviewer surface must differ/],
   ];
   for (const [name, value, message] of refusals) {
     it(`refuses ${name}, and the boot with it`, () => {
@@ -138,6 +156,43 @@ describe('counted run · the act’s terms, read at boot', () => {
       assert.throws(() => loadConfig({ ...BASE_ENV, PHASE4_COUNTED_RUN: raw }), ConfigError);
     });
   }
+
+  it('refuses at boot a planner surface the counted run’s adapter cannot run, naming it exactly', () => {
+    // F3 (r1 correction): `claude-code` is an approved architect lane, so it
+    // once parsed — but the runtime names only the Antigravity adapter as the
+    // planner's execution surface, so such a round was authorized synthetically
+    // and failed late. Boot now refuses it with its own honest string.
+    const offAdapter = JSON.stringify({ ...ACT, planner: 'claude-code' });
+    assert.throws(
+      () => parseCountedRunConfig(offAdapter),
+      (error: unknown) => error instanceof CountedRunConfigError && error.message === "the planner surface is not the counted run's adapter surface",
+    );
+    assert.throws(
+      () => loadConfig({ ...BASE_ENV, PHASE4_COUNTED_RUN: offAdapter }),
+      (error: unknown) => error instanceof ConfigError && error.message === "PHASE4_COUNTED_RUN: the planner surface is not the counted run's adapter surface",
+    );
+    // The adapter's own surface is the accepted one at boot.
+    assert.deepEqual(loadConfig({ ...BASE_ENV, PHASE4_COUNTED_RUN: JSON.stringify(ACT) }).countedRun, parseCountedRunConfig(JSON.stringify(ACT)));
+  });
+
+  it('refuses a lane that is not an approved binding, for each of the three seats', () => {
+    const rebind = (seatId: string, surface: string): readonly SeatRegistrationV1[] =>
+      RATIFIED_SEATS.map((seat) =>
+        seat.seat_id === seatId
+          ? {
+              ...seat,
+              routing: seat.routing.map((lane) => (lane.surface_id === surface ? { ...lane, binding_status: 'proposed-binding' as SeatRoutingLane['binding_status'] } : lane)),
+            }
+          : seat,
+      );
+    const plannerAct = JSON.stringify(ACT);
+    assert.throws(() => parseCountedRunConfig(plannerAct, rebind('architect', 'antigravity')), /planner surface/);
+    assert.throws(() => parseCountedRunConfig(plannerAct, rebind('builder', 'codex')), /builder surface/);
+    assert.throws(
+      () => parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'codex', reviewer: 'claude-code' } }), rebind('independent-reviewer', 'claude-code')),
+      /reviewer surface/,
+    );
+  });
 
   it('reads the counted-run token, distinct from both other tokens, and none as null', () => {
     assert.equal(loadConfig(BASE_ENV).countedRunToken, null);
@@ -157,7 +212,7 @@ describe('counted run · the act’s terms, read at boot', () => {
   });
 
   it('covers a completion only under the act, on the act’s route, intended and observed', async () => {
-    const resolve = countedRunCompletionResolver(ACT);
+    const resolve = countedRunCompletionResolver(parseCountedRunConfig(JSON.stringify(ACT))!);
     const route = { provider: 'google', model: 'gemini-3.1-pro', executionSurface: 'antigravity' };
     const query = { commandId: 'cmd_x', authorizationRef: ACT.actId, repository: 'o/r', scopeRef: 's', intended: route, observed: route };
     assert.equal(await resolve(query), 'covers');

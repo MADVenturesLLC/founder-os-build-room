@@ -24,15 +24,24 @@ or is the act's to state:
 | The FounderOS commit, and the Build Room commit the control plane must serve | the act |
 | The control plane's origin | the act |
 | The Gateway: `1880c12d`, on the PC | C5 |
-| The Planner's provider and active model, on the Antigravity adapter; no Auto mode | Q2a |
-| The builder's and the reviewer's models, each on an approved lane of its seat, the two different | Q7a, `DEC-20260815-05` |
+| The Planner's execution surface, today the Antigravity adapter; no Auto mode | Q2a, keyed to surfaces by `BR-PHASE4-SURFACE-KEYED-SEATS-R1` |
+| The builder's and the reviewer's execution surfaces, each on an approved lane of its seat, the two different | Q7a, `DEC-20260815-05`, keyed to surfaces by `BR-PHASE4-SURFACE-KEYED-SEATS-R1` |
 | Per run: a fresh room id, the repository, base commit, scope paths and the goal text | Q7c, the act |
 | The surface relaying the Founder's T1 | the act |
 | How long a run waits for the Founder's plan decision | the act |
 
 At Build Room's pinned seat registry the architect seat's one Antigravity
-lane is `google` / `gemini-3.1-pro`, so a Q2a Planner passes entry on that
-model only. Any other active model needs a registry change first.
+lane is `google` / `gemini-3.1-pro`. The act names surfaces, not models
+(`BR-PHASE4-SURFACE-KEYED-SEATS-R1`): the act's planner names the counted
+run's adapter surface (`antigravity`), the one surface the runtime can run,
+and its provider and model are resolved from that surface's approved lane
+as routing detail — the entry check requires the set's resolved route to be
+that lane, so a route resolved off the Antigravity lane is refused, and
+boot refuses a planner surface the adapter cannot run outright. The seats'
+checks read `surface_id` and `binding_status` only, so a seat may re-pin
+its lanes' models without the act changing. Two surfaces that resolve to
+the same model are the Founder's call, not a check; the reviewer's surface
+must differ from the builder's.
 
 ## 2. The run unit (proposed)
 
@@ -48,14 +57,15 @@ one against the run's record, never against a caller's summary of it:
    model `n/a (deterministic control-plane act)`, surface
    `build-room-control-plane`.
 4. **Each planner command** was journaled under the act's identifier, with
-   the act's provider, model and the Antigravity surface as its intended
-   route, and was dispatched on that route.
+   the provider, model and Antigravity surface of the act's planner
+   surface's approved lane as its intended route, and was dispatched on
+   that route.
 5. **Each command completed.** The one exception is an earlier attempt of a
    round that failed `not_sent` and was retried, which is Q8's governed
    retry. A command with an `unresolved` or `resolved` row fails the run: its
    outcome was once unknown.
-6. **Each T3** is attributed to the architect role, on the act's model and
-   the Antigravity surface.
+6. **Each T3** is attributed to the architect role, on the model the
+   act's planner surface resolves to and the Antigravity surface.
 7. **Every plan decision is the Founder's**, made at the control plane. The
    decisions are zero or more revisions and then one approval (T5) of the
    plan under review: the approval's hash is the last plan's hash.
