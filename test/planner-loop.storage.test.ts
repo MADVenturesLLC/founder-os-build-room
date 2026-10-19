@@ -96,9 +96,9 @@ const planner = new SyntheticPlanner();
 const minted: string[] = [];
 
 const DEFAULT_ROLES: RoomRoleAssignment = {
-  planner: { roleId: 'architect', model: SYNTHETIC_ROUTE.model },
-  builder: { roleId: 'builder', model: 'example-builder-model' },
-  reviewer: { roleId: 'independent-reviewer', model: 'example-reviewer-model' },
+  planner: { roleId: 'architect', surface: SYNTHETIC_ROUTE.executionSurface, model: SYNTHETIC_ROUTE.model },
+  builder: { roleId: 'builder', surface: 'example-builder-surface', model: null },
+  reviewer: { roleId: 'independent-reviewer', surface: 'example-reviewer-surface', model: null },
 };
 
 function loopDeps(overrides: Partial<PlannerLoopDeps> = {}): PlannerLoopDeps {
@@ -381,14 +381,43 @@ describe('planner loop on PostgreSQL', { skip: SKIP_REASON }, () => {
     assert.equal(await stateOf(roomId), 'SCOPED');
   });
 
-  it('roles unassigned, or a reviewer on the builder’s model: T2 is refused', async () => {
+  it('roles unassigned, a reviewer on the builder’s surface, or a planner off the route’s model: T2 is refused', async () => {
     roles = null;
     const unassigned = await roundOne();
     assert.match(unassigned.outcome.kind === 'refused' ? unassigned.outcome.reason : '', /roles not assigned/);
-    roles = { ...DEFAULT_ROLES, reviewer: { roleId: 'independent-reviewer', model: DEFAULT_ROLES.builder.model } };
+    roles = {
+      ...DEFAULT_ROLES,
+      reviewer: { roleId: 'independent-reviewer', surface: DEFAULT_ROLES.builder.surface, model: null },
+    };
     const same = await roundOne();
     assert.match(same.outcome.kind === 'refused' ? same.outcome.reason : '', /reviewer is the builder/);
     assert.deepEqual(await eventTypes(same.commandId), []);
+    // The planner seat is still read against the route's intended model.
+    roles = {
+      ...DEFAULT_ROLES,
+      planner: { roleId: 'architect', surface: SYNTHETIC_ROUTE.executionSurface, model: 'example-another-model' },
+    };
+    const mismatched = await roundOne();
+    assert.match(mismatched.outcome.kind === 'refused' ? mismatched.outcome.reason : '', /roles not assigned/);
+  });
+
+  it('distinctness reads surfaces: one model on two surfaces passes, and null models are accepted', async () => {
+    // Both seats' surfaces resolve to the same model: distinctness is the surfaces' alone, never the models'.
+    roles = {
+      planner: DEFAULT_ROLES.planner,
+      builder: { roleId: 'builder', surface: 'example-builder-surface', model: 'example-shared-model' },
+      reviewer: { roleId: 'independent-reviewer', surface: 'example-reviewer-surface', model: 'example-shared-model' },
+    };
+    const sharedModel = await roundOne();
+    assert.equal(sharedModel.outcome.kind, 'plan_review', JSON.stringify(sharedModel.outcome));
+    const sharedFacts = (await eventsOf(sharedModel.roomId, 'task.dispatched.planner'))[0]!['facts'] as Record<string, unknown>;
+    assert.equal(sharedFacts['reviewerIsNotBuilder'], true);
+    // The act names no model for the builder and reviewer: null changes neither fact.
+    roles = DEFAULT_ROLES;
+    const nullModels = await roundOne();
+    assert.equal(nullModels.outcome.kind, 'plan_review', JSON.stringify(nullModels.outcome));
+    const nullFacts = (await eventsOf(nullModels.roomId, 'task.dispatched.planner'))[0]!['facts'] as Record<string, unknown>;
+    assert.deepEqual(nullFacts, { rolesAssigned: true, reviewerIsNotBuilder: true, gatewayOnline: true });
   });
 
   it('before contact: an uncovered or indeterminate route, a failed attestation or a mismatched identity is a pre-send failed', async () => {

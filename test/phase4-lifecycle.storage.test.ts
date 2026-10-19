@@ -91,9 +91,9 @@ const REPO = 'example-org/example-repo';
 const GOAL = 'Add a health detail field to the status route.';
 const TIMINGS = { answerTimeoutMs: 2_000, planTimeoutMs: 5_000, statusIntervalMs: 20 };
 const ROLES: RoomRoleAssignment = {
-  planner: { roleId: 'architect', model: SYNTHETIC_ROUTE.model },
-  builder: { roleId: 'builder', model: 'example-builder-model' },
-  reviewer: { roleId: 'independent-reviewer', model: 'example-reviewer-model' },
+  planner: { roleId: 'architect', surface: SYNTHETIC_ROUTE.executionSurface, model: SYNTHETIC_ROUTE.model },
+  builder: { roleId: 'builder', surface: 'example-builder-surface', model: null },
+  reviewer: { roleId: 'independent-reviewer', surface: 'example-reviewer-surface', model: null },
 };
 const ROUTE = {
   actorId: 'session:test/phase4-lifecycle',
