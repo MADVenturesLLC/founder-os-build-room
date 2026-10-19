@@ -69,39 +69,39 @@ export function parseCountedRunConfig(raw: string | undefined, seats: readonly S
   if (root === null || !exact(root, ['actId', 'gatewayId', 'planner', 'seats'])) {
     throw new CountedRunConfigError('PHASE4_COUNTED_RUN must be exactly { actId, gatewayId, planner, seats }');
   }
-  const plannerSurface = root['planner'];
+  const plannerToken = parseLaneToken(root['planner']);
   const seatSurfaces = record(root['seats']);
   if (!SAFE_ID_RE.test(text(root['actId']))) throw new CountedRunConfigError('actId must be a safe identifier');
   if (!UUID_RE.test(text(root['gatewayId']))) throw new CountedRunConfigError('gatewayId must be a lowercase UUID');
-  if (typeof plannerSurface !== 'string' || !LABEL_RE.test(plannerSurface)) {
+  if (plannerToken === null) {
     throw new CountedRunConfigError('planner must be exactly a surface');
   }
-  if (seatSurfaces === null || !exact(seatSurfaces, ['builder', 'reviewer']) || !LABEL_RE.test(text(seatSurfaces['builder'])) || !LABEL_RE.test(text(seatSurfaces['reviewer']))) {
+  if (seatSurfaces === null || !exact(seatSurfaces, ['builder', 'reviewer'])) {
     throw new CountedRunConfigError('seats must be exactly { builder, reviewer }');
   }
-  const lane = plannerLane(seats, plannerSurface);
-  if (lane === null) throw new CountedRunConfigError('the planner surface is not on an approved architect lane');
+  const builderToken = parseLaneToken(seatSurfaces['builder']);
+  const reviewerToken = parseLaneToken(seatSurfaces['reviewer']);
+  if (builderToken === null || reviewerToken === null) {
+    throw new CountedRunConfigError('seats must be exactly { builder, reviewer }');
+  }
+  const lane = resolveLane(seats, 'architect', plannerToken, 'the planner surface is not on an approved architect lane');
   // F3 (r1 correction): the runtime names only the adapter's surface as the
   // planner's execution surface, so an act naming any other surface — even an
   // approved architect lane like `claude-code` — would be authorized
   // synthetically and fail late at attestation. Boot refuses it here.
-  if (plannerSurface !== COUNTED_RUN_PLANNER_SURFACE) {
+  if (plannerToken.surface !== COUNTED_RUN_PLANNER_SURFACE) {
     throw new CountedRunConfigError("the planner surface is not the counted run's adapter surface");
   }
-  if (!onApprovedLane(seats, 'builder', (l) => l.surface_id === text(seatSurfaces['builder']))) {
-    throw new CountedRunConfigError('the builder surface is not on an approved builder lane');
-  }
-  if (!onApprovedLane(seats, 'independent-reviewer', (l) => l.surface_id === text(seatSurfaces['reviewer']))) {
-    throw new CountedRunConfigError('the reviewer surface is not on an approved independent-reviewer lane');
-  }
-  if (text(seatSurfaces['reviewer']) === text(seatSurfaces['builder'])) {
+  resolveLane(seats, 'builder', builderToken, 'the builder surface is not on an approved builder lane');
+  resolveLane(seats, 'independent-reviewer', reviewerToken, 'the reviewer surface is not on an approved independent-reviewer lane');
+  if (reviewerToken.surface === builderToken.surface) {
     throw new CountedRunConfigError('the reviewer surface must differ from the builder surface');
   }
   return {
     actId: text(root['actId']),
     gatewayId: text(root['gatewayId']),
-    planner: { surface: plannerSurface, provider: lane.provider, model: lane.model_id },
-    seats: { builder: text(seatSurfaces['builder']), reviewer: text(seatSurfaces['reviewer']) },
+    planner: { surface: plannerToken.surface, provider: lane.provider, model: lane.model_id },
+    seats: { builder: builderToken.surface, reviewer: reviewerToken.surface },
   };
 }
 
@@ -121,6 +121,56 @@ function plannerLane(seats: readonly SeatRegistrationV1[], surface: string): Sea
   return seats
     .find((s) => s.seat_id === 'architect')
     ?.routing.find((l) => l.binding_status === 'approved-binding' && l.surface_id === surface) ?? null;
+}
+
+/** A lane token: `surface` or `surface:provider` — never a model id (`DEC-20261019-01` Clause D). */
+export interface LaneToken {
+  readonly surface: string;
+  readonly provider: string | null;
+}
+
+export function parseLaneToken(raw: unknown): LaneToken | null {
+  if (typeof raw !== 'string' || !LABEL_RE.test(raw)) return null;
+  const parts = raw.split(':');
+  if (parts.length > 2) return null;
+  const surface = parts[0]!.trim();
+  if (surface === '') return null;
+  if (parts.length === 1) return { surface, provider: null };
+  const provider = parts[1]!.trim();
+  if (provider === '') return null;
+  return { surface, provider };
+}
+
+/**
+ * Resolve a lane token to the approved lane it names.
+ *
+ * A bare surface resolves only when every approved lane it carries belongs to
+ * one provider. If the surface spans more than one family, boot refuses rather
+ * than picking the lane that happens to sit first — that is the ambiguity that
+ * would otherwise let an act say `antigravity` and get Gemini or Claude
+ * depending on registry order. Within one family the first lane stands: the
+ * model is routing detail (`DEC-20261001-01`), journaled and attested, never an
+ * act-level term.
+ */
+function resolveLane(
+  seats: readonly SeatRegistrationV1[],
+  seatId: string,
+  token: LaneToken,
+  unknownMessage: string,
+): SeatRegistrationV1['routing'][number] {
+  const candidates = (seats.find((s) => s.seat_id === seatId)?.routing ?? [])
+    .filter((l) => l.binding_status === 'approved-binding' && l.surface_id === token.surface);
+  if (candidates.length === 0) throw new CountedRunConfigError(unknownMessage);
+  if (token.provider === null) {
+    const providers = new Set(candidates.map((l) => l.provider));
+    if (providers.size > 1) {
+      throw new CountedRunConfigError('the surface carries more than one approved lane; name the provider');
+    }
+    return candidates[0]!;
+  }
+  const matched = candidates.filter((l) => l.provider === token.provider);
+  if (matched.length === 0) throw new CountedRunConfigError(unknownMessage);
+  return matched[0]!;
 }
 
 export function onApprovedLane(
