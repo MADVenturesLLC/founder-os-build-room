@@ -68,16 +68,16 @@ describe('Test 4 — Per-run model distinctness (r7 §9.1 test 4)', () => {
     const reviewer = RATIFIED_SEATS.find((s) => s.seat_id === 'independent-reviewer') as SeatRegistrationV1;
     const builder = RATIFIED_SEATS.find((s) => s.seat_id === 'builder') as SeatRegistrationV1;
 
-    // Positive pairing: sonnet-5 builder with gemini-3.1-pro reviewer
-    const geminiLane = reviewer.routing.find((l) => l.model_id === 'gemini-3.1-pro')!;
+    // Positive pairing: sonnet-5 builder with gemini-4-argon reviewer
+    const geminiLane = reviewer.routing.find((l) => l.model_id === 'gemini-4-argon')!;
     assert.ok(
       isDistinctReviewLane('sonnet-5', geminiLane),
-      'sonnet-5 builder + gemini-3.1-pro reviewer is a distinct valid pairing',
+      'sonnet-5 builder + gemini-4-argon reviewer is a distinct valid pairing',
     );
 
-    // Negative pairing 1: same model (gemini-3.1-pro builder with gemini-3.1-pro reviewer)
+    // Negative pairing 1: same model (gemini-4-argon builder with gemini-4-argon reviewer)
     assert.ok(
-      !isDistinctReviewLane('gemini-3.1-pro', geminiLane),
+      !isDistinctReviewLane('gemini-4-argon', geminiLane),
       'same implementation and review model must be rejected',
     );
 

@@ -130,13 +130,13 @@ const ARCHITECT_PRIMARY: SeatRoutingLane = {
   lane_label: 'primary',
   provider: 'google',
   surface_id: 'antigravity',
-  model_id: 'gemini-3.1-pro',
+  model_id: 'gemini-4-argon',
   binding_status: 'approved-binding',
   binding_class: 'primary', // DEC-20260715-14
   provider_class: 'P1', // deployment_channel: P1 (model-registry, at the pin)
   data_eligibility: ['public', 'internal'],
   conditions: [ANTIGRAVITY_MODEL_SELECTION, ANTIGRAVITY_APPROVAL, ANTIGRAVITY_PROHIBITED],
-  derivation: ['DEC-20260815-04 Naming Act', 'DEC-20260807-01 §3.3', 'DEC-20260715-14', 'model-registry.md gemini-3.1-pro'],
+  derivation: ['DEC-20260815-04 Naming Act', 'DEC-20260807-01 §3.3', 'DEC-20260715-14', 'model-registry.md gemini-4-argon', 'DEC-20261019-01 Clause A'],
 };
 
 const ARCHITECT_BOUNDED_RECONCILIATION: SeatRoutingLane = {
@@ -255,26 +255,26 @@ const BUILDER_CODEX_COMPLEX: SeatRoutingLane = {
   lane_label: 'Codex complex / high-risk',
   provider: 'openai',
   surface_id: 'codex',
-  model_id: 'gpt-5.6-sol',
+  model_id: 'gpt-6.1-sol',
   binding_status: 'approved-binding',
   binding_class: 'codex-complex-analysis-planning-and-surgical-fixes', // DEC-20260807-01; max mode requires exact Founder authorization
   provider_class: 'NOT_RECORDED', // deployment_channel: codex-founder-operated, a surface descriptor (§2.2)
   data_eligibility: ['public'],
   conditions: ['active data-boundary policy and exact task scope'],
-  derivation: ['DEC-20260807-01', 'model-registry.md gpt-5.6-sol'],
+  derivation: ['DEC-20260807-01', 'model-registry.md gpt-6.1-sol', 'DEC-20261019-01 Clause B'],
 };
 
 const BUILDER_CODEX_ROUTINE: SeatRoutingLane = {
   lane_label: 'Codex routine / bounded',
   provider: 'openai',
   surface_id: 'codex',
-  model_id: 'gpt-5.6-terra',
+  model_id: 'gpt-6-astra',
   binding_status: 'approved-binding',
   binding_class: 'routine-verification-and-bounded-fixes', // DEC-20260807-01
   provider_class: 'NOT_RECORDED', // deployment_channel: codex-founder-operated
   data_eligibility: ['public'],
   conditions: ['active data-boundary policy and exact task scope'],
-  derivation: ['DEC-20260807-01', 'model-registry.md gpt-5.6-terra'],
+  derivation: ['DEC-20260807-01', 'model-registry.md gpt-6-astra', 'DEC-20261019-01 Clause B'],
 };
 
 const BUILDER_HERMES_LOCAL: SeatRoutingLane = {
@@ -350,7 +350,7 @@ const TIER2_GEMINI: SeatRoutingLane = {
   lane_label: 'tier-2',
   provider: 'google',
   surface_id: 'antigravity',
-  model_id: 'gemini-3.1-pro',
+  model_id: 'gemini-4-argon',
   binding_status: 'approved-binding',
   binding_class: 'tier-2', // DEC-20260719-02
   mode: 'invoked',
@@ -358,14 +358,14 @@ const TIER2_GEMINI: SeatRoutingLane = {
   provider_class: 'P1', // deployment_channel: P1
   data_eligibility: ['public', 'internal'],
   conditions: [ANTIGRAVITY_MODEL_SELECTION, ANTIGRAVITY_APPROVAL, ANTIGRAVITY_PROHIBITED, REVIEWER_CLAUSE_3],
-  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260815-05', 'DEC-20260719-02 v1.1', 'DEC-20260807-01 §3.3', 'model-registry.md gemini-3.1-pro'],
+  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260815-05', 'DEC-20260719-02 v1.1', 'DEC-20260807-01 §3.3', 'model-registry.md gemini-4-argon', 'DEC-20261019-01 Clause A'],
 };
 
 const TIER2_SOL: SeatRoutingLane = {
   lane_label: 'tier-2',
   provider: 'openai',
   surface_id: 'codex',
-  model_id: 'gpt-5.6-sol',
+  model_id: 'gpt-6.1-sol',
   binding_status: 'approved-binding',
   binding_class: 'tier-2-full-roster', // DEC-20260719-02 v1.1
   mode: 'xhigh',
@@ -373,14 +373,14 @@ const TIER2_SOL: SeatRoutingLane = {
   provider_class: 'NOT_RECORDED', // deployment_channel: codex-founder-operated
   data_eligibility: ['public'],
   conditions: [],
-  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-5.6-sol'],
+  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-6.1-sol', 'DEC-20261019-01 Clause B'],
 };
 
 const TIER2_TERRA: SeatRoutingLane = {
   lane_label: 'tier-2',
   provider: 'openai',
   surface_id: 'codex',
-  model_id: 'gpt-5.6-terra',
+  model_id: 'gpt-6-astra',
   binding_status: 'approved-binding',
   binding_class: 'tier-2-full-roster', // DEC-20260719-02 v1.1 (supersedes the DEC-20260807-01 not-Tier-2 line, §2.5.4 hazard 2)
   mode: 'high',
@@ -388,14 +388,14 @@ const TIER2_TERRA: SeatRoutingLane = {
   provider_class: 'NOT_RECORDED',
   data_eligibility: ['public'],
   conditions: [],
-  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-5.6-terra'],
+  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-6-astra', 'DEC-20261019-01 Clause B'],
 };
 
 const TIER2_LUNA: SeatRoutingLane = {
   lane_label: 'tier-2',
   provider: 'openai',
   surface_id: 'codex',
-  model_id: 'gpt-5.6-luna',
+  model_id: 'gpt-6-luna',
   binding_status: 'approved-binding',
   binding_class: 'tier-2-full-roster', // DEC-20260719-02 v1.1
   mode: 'invoked',

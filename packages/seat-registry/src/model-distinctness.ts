@@ -18,7 +18,7 @@ import type { SeatRoutingLane } from './schema.js';
  * model ids to EXECUTION-SURFACE ATTESTATION TOKENS — model ids churn
  * (provider retirement, HTTP 404, unserved tiers) and the churn failure mode
  * is a review that ran but could not be attested. Prior model-id roster
- * entries map: gemini-3.1-pro → gemini; chatgpt-5.6-sol/terra/luna → codex;
+ * entries map: gemini-4-argon → gemini; gpt-6.1-sol/gpt-6-astra/gpt-6-luna → openai;
  * grok-4.5 → grok. The exact served model is recorded — never gated — in the
  * Tier2-Reviewer-Model: evidence line (DEC-20261001-01 clause 3).
  */
