@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-07-15
-updated: 2026-08-15
-version: 0.21
+updated: 2026-10-11
+version: 0.23
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -59,7 +59,7 @@ On-change; adding, renaming, retiring a role, or changing a binding status requi
 Active — promoted by the G2 activation package executing `DEC-20260715-17` item 16. `migration_status: governance-activated`. `activation_status: active`. Active workflows, handoff templates, and the `04-agents/roles/*` files target these role IDs. Binding statuses: the `architect` tier (`DEC-20260715-14`), the Chief of Staff stack (`DEC-20260717-01`), and the Deputy primary (`DEC-20260717-02`) are the approved governance bindings — the latter two ratified by the durable Founder authorization of 2026-07-17. **Runtime activation is now uniform:** Chief of Staff is `runtime_activation: active` under `DEC-20260801-08` (env vars provisioned; live operation gated by COS_INTELLIGENT_ROUTING_ENABLED + kill switch). Deputy primary is `runtime_activation: active` under `DEC-20260801-01` v1.1 (P3 Z.ai international channel + founder activation clarification; live `/deputy` still requires Railway `DEPUTY_DELEGATION_ENABLED=true`, `ZAI_API_KEY`, and `ZAI_DEPUTY_MODEL=glm-5.2`). Package MP-1 (`DEC-20260716-01`, `DEC-20260716-02`) corrected the `architect` tier's secondary binding in naming only and gave `hermes` an owning role; its former CoS proposal is preserved as dated binding history — see `/00-system/model-portfolio-and-routing-strategy.md` for the governing policy and `/00-system/data-boundary-policy.md` for the privacy classes any future routing implementation must respect. Unassigned roles remain visibly unassigned.
 
 
-**Roster expanded to thirty roles — `DEC-20260812-03` ratified by the Founder 2026-08-12** at reviewed head `b2a741c53f0c79fddc3de19fc649b639b12cc4d1`, after Tier-2 independent review (`gemini-3.1-pro`) returned APPROVAL bound to that exact commit. It adds thirteen role IDs, executing OA-1, the first workstream of the organizational architecture plan: five executive roles (`chief-strategy-officer`, `chief-operating-officer`, `chief-financial-officer`, `chief-marketing-creative-officer`, `chief-compliance-officer`) and eight functional leads (`security-lead`, `data-intelligence-lead`, `reliability-lead`, `portfolio-venture-lead`, `growth-commercial-lead`, `innovation-futures-lead`, `program-execution-lead`, `investment-acquisition-lead`). **All thirteen are `binding_status: unassigned` and carry no model binding** — `DEC-20260812-03` creates none, and automatic fail-closed routing to any of them additionally requires MP-1 activation, which remains a separate later Founder ruling. Each new role's authority boundary against every adjacent role is stated in `/01-constitution/oa-1-authority-decision-rights-escalation-charter.md` §10.3. The seventeen pre-existing roles are unchanged: none is renamed, retired, re-homed, or narrowed, and none gained an `activation_status` field.
+**Roster expanded to thirty roles — `DEC-20260812-03` ratified by the Founder 2026-08-12** at reviewed head `b2a741c53f0c79fddc3de19fc649b639b12cc4d1`, after Tier-2 independent review (`gemini-3.1-pro`) returned APPROVAL bound to that exact commit. It adds thirteen role IDs, executing OA-1, the first workstream of the organizational architecture plan: five executive roles (`chief-strategy-officer`, `chief-operating-officer`, `chief-financial-officer`, `chief-marketing-creative-officer`, `chief-compliance-officer`) and eight functional leads (`security-lead`, `data-intelligence-lead`, `reliability-lead`, `portfolio-venture-lead`, `growth-commercial-lead`, `innovation-futures-lead`, `program-execution-lead`, `investment-acquisition-lead`). **All thirteen landed `binding_status: unassigned` and carried no model binding at ratification** (eighteen of the seats in scope were later bound by `DEC-20261005-01`, 2026-10-05 — see the 2026-10-05 note below) — `DEC-20260812-03` creates none, and automatic fail-closed routing to any of them additionally requires MP-1 activation, which remains a separate later Founder ruling. Each new role's authority boundary against every adjacent role is stated in `/01-constitution/oa-1-authority-decision-rights-escalation-charter.md` §10.3. The seventeen pre-existing roles are unchanged: none is renamed, retired, re-homed, or narrowed, and none gained an `activation_status` field.
 
 > **⚠ Thirty roles registered, twenty-nine attributable — deliberate.**
 > Founder ruling 2026-08-12 separates **taxonomy state** from **activation
@@ -83,8 +83,12 @@ Active — promoted by the G2 activation package executing `DEC-20260715-17` ite
 
 **Separately, 2026-08-12:** `DEC-20260812-02` (active) assigned first bindings to `product-lead` (`gpt-5.5`), `marketing-lead` (`gemini-3.6-flash`), and `pre-mortem-reviewer` (`gemini-3.5-flash`).
 
+**Separately, 2026-10-05:** `DEC-20261005-01` (active, ratified by the Founder 2026-10-05) assigned primary model bindings to the remaining eighteen bindable seats — the five executives, the seven bindable functional leads (`investment-acquisition-lead` stays activation-deferred and excluded), and six of the seven older seats. `founder-mirror` remains `binding_status: unassigned` by explicit ruling of that act (no local hosting). The same act reconciled the detailed `product-lead`, `marketing-lead`, and `pre-mortem-reviewer` blocks below with `DEC-20260812-02` and flipped their `binding_status` to `approved` — a recording correction; `DEC-20260812-02` itself is unchanged.
+
 ## Next Action
 Remaining model-binding assignments for the unassigned roles, and any future routing implementation, follow `/00-system/model-portfolio-and-routing-strategy.md`'s staged evaluation track and `/04-agents/temporary-task-assignment-policy.md`'s lifecycle. Routing enforcement remains gated by its own implementation package.
+
+**2026-10-05:** `DEC-20261005-01` closed the eighteen bindable seats. Remaining unbound: `builder` (permanent binding pending; the Temporary Task-Assignment Policy governs), `founder-mirror` (no local hosting — explicit in that act), `investment-acquisition-lead` (`activation_status: deferred`), and `researcher` model bindings (pending the routing-strategy §8 pipeline-redesign). Routing enforcement remains gated by MP-1.
 
 ## Done Criteria
 Every role below has a unique, taxonomy-compliant `role_id`; purpose and responsibilities traceable to cited evidence (not invented); every binding carries an explicit typed status; every compatibility alias is same-class and resolves to exactly one canonical role.
@@ -329,11 +333,15 @@ display_name: Experience Architect
 roster_status: approved-for-future-taxonomy
 underlying_contract_status: draft   # 04-agents/roles/experience-architect.md — created at G2, held draft pending Founder review
 runtime_routable: yes               # frozen `fable` capability (/fable), currently a stub adapter
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: claude-fable-5.1              # provider: anthropic
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []   # the `fable` capability has no live provider configured (StubAdapter)
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers:
   - fable-5                          # model whose operator file currently carries this lane — not a role alias
@@ -361,8 +369,12 @@ approved_bindings:
   tier-2:
     # Closed roster per DEC-20260719-02 v1.1. No "equivalent model" escape hatch.
     model_ids_full: [gemini-3.1-pro, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, grok-4.5]
-    # Tier2-Reviewer-Id attestation ids differ from model_id for the Codex models:
-    # chatgpt-5.6-sol | chatgpt-5.6-terra | chatgpt-5.6-luna. See /04-agents/model-registry.md.
+    # Superseded for FounderOS, kept as history (2026-10-11): "Tier2-Reviewer-Id attestation
+    # ids differ from model_id for the Codex models: chatgpt-5.6-sol | chatgpt-5.6-terra |
+    # chatgpt-5.6-luna. See /04-agents/model-registry.md."
+    # FounderOS now attests by surface (antigravity | codex | chatgpt | grok-build) plus a
+    # Tier2-Reviewer-Model line, per FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION; this
+    # model list stays the Build Room roster (DEC-20260815-05).
     model_ids_full_removed: [opus-4.8, gpt-5.6]        # removed 2026-08-15, founder-directed (v1.1)
     model_ids_restricted: [hermes-4-14b, tencent-hy3]
     # clause 5 (v0.9): paired, NON-BINDING findings only; cannot independently satisfy
@@ -384,6 +396,7 @@ historical_identifiers:
 - **Known authority:** Review and critique; no implementation or final architecture authority.
 - **Owned capabilities:** none verified.
 - **Tier 2 roster (DEC-20260719-02 v1.1, 2026-08-15):** **full** — `gemini-3.1-pro`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `grok-4.5` (`opus-4.8` and `gpt-5.6` removed 2026-08-15, founder-directed); **restricted (local)** — `hermes-4-14b`, `tencent-hy3`, which provide paired, **non-binding** Tier-2 findings only and **cannot independently satisfy the binding Tier-2 verdict on any artifact** — not merely on doctrine packages — unless the Founder grants the exact one-task / one-repository / one-committed-SHA local-only exception. *(Corrected 2026-08-15: this line previously scoped the restriction to `07-decisions/` / `01-constitution/` / `00-system/` packages, clause 5's superseded v0.8 wording.)* Any **one** full-roster model independently satisfies the role for in-scope work; dual full-roster review encouraged for high stakes. Author of the PR cannot serve Tier 2 for that PR.
+- **FounderOS Tier-2 attestation (2026-10-11, `FOUNDER-ACT-20261011-TIER2-SURFACE-CONSUMERS` B1 item 4):** In FounderOS, from the merge of the pull request implementing `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` (recorded in `DEC-20260719-02` v1.2), a binding Tier-2 verdict is attested by surface: the marker is `Tier2-Reviewer-Id:` naming the surface the review ran on (`antigravity`, `codex`, `chatgpt` or `grok-build`), then `Tier2-Reviewer-Model:` (the model the reviewer reports, or `unavailable-from-current-harness`), `Tier2-Head-Sha:` and `Tier2-Verdict:`, in that order, and the reviewer's surface must differ from every `Execution-Surface` in the attribution. The model roster stays the roster for Build Room reviews (`DEC-20260815-05`) and is dated history for FounderOS; the restricted-roster rule and each model's data-boundary condition still bind whatever the surface. The roster line above was written for the model-id marker; for FounderOS its attestation role is dated history.
 - **Evidence sources:** `01-constitution/agent-rules.md` (Opus lane); `04-agents/opus.md`; `05-workflows/wf-13-code-review.md` (reviewer-routing guidance); `07-decisions/DEC-20260719-02-independent-reviewer-two-tier-binding.md` (two-tier binding; v0.8 restricted roster; v1.1 full-roster reconciliation 2026-08-15).
 
 ## 7. `product-lead`
@@ -394,11 +407,15 @@ display_name: Product Lead
 roster_status: approved-for-future-taxonomy
 underlying_contract_status: active  # 04-agents/roles/product-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: gpt-5.5                       # provider: openai
+    mode: standard
+    binding_status: approved         # DEC-20260812-02 (ratified 2026-08-12); detailed-block reconciliation recorded by DEC-20261005-01
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20260812-02 (ratified 2026-08-12); YAML reconciled by DEC-20261005-01
 role_compatibility_aliases:
   - product-agent                    # prior role-prompt label ("Product Agent")
 historical_identifiers: []
@@ -418,11 +435,15 @@ display_name: Brand Lead
 roster_status: approved-for-future-taxonomy
 underlying_contract_status: active  # 04-agents/roles/brand-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: qwen3.8-max                   # provider: alibaba
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases:
   - brand-agent                      # prior role-prompt label ("Brand Agent")
 historical_identifiers: []
@@ -442,11 +463,15 @@ display_name: Marketing Lead
 roster_status: approved-for-future-taxonomy
 underlying_contract_status: active  # 04-agents/roles/marketing-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: gemini-3.6-flash              # provider: google
+    mode: standard
+    binding_status: approved         # DEC-20260812-02 (ratified 2026-08-12); detailed-block reconciliation recorded by DEC-20261005-01
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20260812-02 (ratified 2026-08-12); YAML reconciled by DEC-20261005-01
 role_compatibility_aliases:
   - marketing-agent                  # prior role-prompt label ("Marketing Agent")
 historical_identifiers: []
@@ -466,11 +491,15 @@ display_name: Operations Lead
 roster_status: approved-for-future-taxonomy
 underlying_contract_status: active  # 04-agents/roles/operations-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: nemotron-3.5-lightning        # provider: nvidia
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases:
   - operations-agent                 # prior role-prompt label ("Operations Agent")
 historical_identifiers: []
@@ -490,11 +519,15 @@ display_name: Finance Lead
 roster_status: approved-for-future-taxonomy
 underlying_contract_status: active  # 04-agents/roles/finance-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: gpt-5.6-terra                 # provider: openai
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases:
   - finance-agent                    # prior role-prompt label ("Finance Agent")
 historical_identifiers: []
@@ -514,11 +547,15 @@ display_name: Legal & Risk
 roster_status: approved-for-future-taxonomy
 underlying_contract_status: active  # 04-agents/roles/legal-risk.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: muse-spark-1.3                # provider: meta
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases:
   - legal-risk-agent                 # prior role-prompt label ("Legal/Risk Agent")
 historical_identifiers: []
@@ -538,11 +575,15 @@ display_name: QA Lead
 roster_status: approved-for-future-taxonomy
 underlying_contract_status: active  # 04-agents/roles/qa-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: qwen3.7-flash                 # provider: alibaba
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases:
   - qa-agent                         # prior role-prompt label ("QA Agent")
 historical_identifiers: []
@@ -562,11 +603,15 @@ display_name: Pre-Mortem Reviewer
 roster_status: approved-for-future-taxonomy
 underlying_contract_status: active  # 04-agents/roles/pre-mortem-reviewer.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: gemini-3.5-flash              # provider: google
+    mode: standard
+    binding_status: approved         # DEC-20260812-02 (ratified 2026-08-12); detailed-block reconciliation recorded by DEC-20261005-01
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20260812-02 (ratified 2026-08-12); YAML reconciled by DEC-20261005-01
 role_compatibility_aliases:
   - pre-mortem-agent                 # prior role-prompt label ("Pre-Mortem Agent")
 historical_identifiers: []
@@ -698,11 +743,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/chief-strategy-officer.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: kimi-k3                       # provider: moonshotai
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -725,11 +774,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/chief-operating-officer.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: gemini-3.8-flash              # provider: google
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -752,11 +805,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/chief-financial-officer.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: gpt-6.1-sol                   # provider: openai
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -779,11 +836,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/chief-marketing-creative-officer.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: minimax-m3                    # provider: minimax
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -806,11 +867,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/chief-compliance-officer.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: claude-opus-5.5               # provider: anthropic
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -833,11 +898,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/security-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: claude-sonnet-5.5             # provider: anthropic
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -860,11 +929,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/data-intelligence-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: deepseek-v4.1-flash           # provider: deepseek
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -887,11 +960,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/reliability-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: mimo-v2.6-pro                 # provider: xiaomi
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -914,11 +991,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/portfolio-venture-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: qwen3.7-max                   # provider: alibaba
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -941,11 +1022,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/growth-commercial-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: minimax-m2.7                  # provider: minimax
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -968,11 +1053,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/innovation-futures-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: step-3.7-flash                # provider: stepfun
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -995,11 +1084,15 @@ roster_status: approved-for-future-taxonomy  # DEC-20260812-03, ratified 2026-08
 activation_status: active                    # may operate; assignability derives from THIS field
 underlying_contract_status: active    # 04-agents/roles/program-execution-lead.md
 runtime_routable: no
-approved_bindings: []
+approved_bindings:
+  primary:
+    model_id: glm-5.3                       # provider: zai
+    mode: standard
+    binding_status: approved         # DEC-20261005-01 (ratified 2026-10-05); runtime routing gated by MP-1
 proposed_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-binding_status: unassigned
+binding_status: approved              # DEC-20261005-01 (ratified 2026-10-05)
 role_compatibility_aliases: []
 historical_identifiers: []
 ```
@@ -1049,31 +1142,31 @@ historical_identifiers: []
 | architect | Architect | approved (4-tier) | yes | active |
 | builder | Builder | unassigned (temporary fable-5 task assignment only) | yes | active |
 | researcher | Researcher | accountability-approved (DEC-20260721-04): accountable for `research` only (`hermes` explicitly excluded by founder ruling — own future decision); no fallback; model bindings unassigned pending §8 pipeline-redesign | yes | draft |
-| experience-architect | Experience Architect | unassigned | yes | draft (created at G2) |
+| experience-architect | Experience Architect | approved (primary, DEC-20261005-01): claude-fable-5.1 | yes | draft (created at G2) |
 | independent-reviewer | Independent Reviewer | active (two-tier, DEC-20260719-02 v1.1): CodeRabbit (Tier 1); full gemini-3.1-pro / gpt-5.6-sol / gpt-5.6-terra / gpt-5.6-luna / grok-4.5; restricted hermes-4-14b / tencent-hy3 | no | active (2026-07-19; roster 2026-07-26, reconciled 2026-08-15) |
 | product-lead | Product Lead | approved (primary, DEC-20260812-02): gpt-5.5 | no | active |
-| brand-lead | Brand Lead | unassigned | no | active |
+| brand-lead | Brand Lead | approved (primary, DEC-20261005-01): qwen3.8-max | no | active |
 | marketing-lead | Marketing Lead | approved (primary, DEC-20260812-02): gemini-3.6-flash | no | active |
-| operations-lead | Operations Lead | unassigned | no | active |
-| finance-lead | Finance Lead | unassigned | no | active |
-| legal-risk | Legal & Risk | unassigned | no | active |
-| qa-lead | QA Lead | unassigned | no | active |
+| operations-lead | Operations Lead | approved (primary, DEC-20261005-01): nemotron-3.5-lightning | no | active |
+| finance-lead | Finance Lead | approved (primary, DEC-20261005-01): gpt-5.6-terra | no | active |
+| legal-risk | Legal & Risk | approved (primary, DEC-20261005-01): muse-spark-1.3 | no | active |
+| qa-lead | QA Lead | approved (primary, DEC-20261005-01): qwen3.7-flash | no | active |
 | pre-mortem-reviewer | Pre-Mortem Reviewer | approved (primary, DEC-20260812-02): gemini-3.5-flash | no | active |
 | chief-of-staff | Chief of Staff | approved (governance; runtime activation active DEC-20260801-08) | yes | active |
 | deputy-chief-of-staff | Deputy Chief of Staff | approved (governance; P3 channel + runtime activation active DEC-20260801-01 v1.1) | yes | draft |
 | founder-mirror | Founder Mirror | unassigned | no | active |
-| chief-strategy-officer | Chief Strategy Officer | unassigned (proposed, DEC-20260812-03) | no | proposed |
-| chief-operating-officer | Chief Operating Officer | unassigned (proposed, DEC-20260812-03) | no | proposed |
-| chief-financial-officer | Chief Financial Officer | unassigned (proposed, DEC-20260812-03) | no | proposed |
-| chief-marketing-creative-officer | Chief Marketing and Creative Officer | unassigned (proposed, DEC-20260812-03) | no | proposed |
-| chief-compliance-officer | Chief Compliance Officer | unassigned (proposed, DEC-20260812-03) | no | proposed |
-| security-lead | Security Lead | unassigned (proposed, DEC-20260812-03) | no | proposed |
-| data-intelligence-lead | Data & Intelligence Lead | unassigned (proposed, DEC-20260812-03) | no | proposed |
-| reliability-lead | Reliability / SRE Lead | unassigned (proposed, DEC-20260812-03) | no | proposed |
-| portfolio-venture-lead | Portfolio & Venture Lead | unassigned (proposed, DEC-20260812-03) | no | proposed |
-| growth-commercial-lead | Growth & Commercial Lead | unassigned (proposed, DEC-20260812-03) | no | proposed |
-| innovation-futures-lead | Innovation & Futures Lead | unassigned (proposed, DEC-20260812-03) | no | proposed |
-| program-execution-lead | Program & Execution Lead | unassigned (proposed, DEC-20260812-03) | no | proposed |
+| chief-strategy-officer | Chief Strategy Officer | approved (primary, DEC-20261005-01): kimi-k3 | no | proposed |
+| chief-operating-officer | Chief Operating Officer | approved (primary, DEC-20261005-01): gemini-3.8-flash | no | proposed |
+| chief-financial-officer | Chief Financial Officer | approved (primary, DEC-20261005-01): gpt-6.1-sol | no | proposed |
+| chief-marketing-creative-officer | Chief Marketing and Creative Officer | approved (primary, DEC-20261005-01): minimax-m3 | no | proposed |
+| chief-compliance-officer | Chief Compliance Officer | approved (primary, DEC-20261005-01): claude-opus-5.5 | no | proposed |
+| security-lead | Security Lead | approved (primary, DEC-20261005-01): claude-sonnet-5.5 | no | proposed |
+| data-intelligence-lead | Data & Intelligence Lead | approved (primary, DEC-20261005-01): deepseek-v4.1-flash | no | proposed |
+| reliability-lead | Reliability / SRE Lead | approved (primary, DEC-20261005-01): mimo-v2.6-pro | no | proposed |
+| portfolio-venture-lead | Portfolio & Venture Lead | approved (primary, DEC-20261005-01): qwen3.7-max | no | proposed |
+| growth-commercial-lead | Growth & Commercial Lead | approved (primary, DEC-20261005-01): minimax-m2.7 | no | proposed |
+| innovation-futures-lead | Innovation & Futures Lead | approved (primary, DEC-20261005-01): step-3.7-flash | no | proposed |
+| program-execution-lead | Program & Execution Lead | approved (primary, DEC-20261005-01): glm-5.3 | no | proposed |
 | investment-acquisition-lead | Investment & Acquisition Lead | unassigned (proposed, DEC-20260812-03; **activation-deferred**) | no | proposed |
 
 ## Cross-references

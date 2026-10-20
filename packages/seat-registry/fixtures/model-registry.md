@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-07-15
-updated: 2026-08-15
-version: 0.18
+updated: 2026-10-16
+version: 0.23
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -23,6 +23,7 @@ related_decisions:
   - DEC-20260801-01-deputy-p3-channel-approval
   - DEC-20260807-01-g3-slice-b-plus-coding-execution-surface-governance
   - DEC-20260814-02-tier2-shape-check-gate
+  - DEC-20261016-01-gemini-4-argon-architect-antigravity-lane
 related_workflows: []
 used_by:
   - builder
@@ -62,8 +63,17 @@ Active — promoted by the G2 activation package executing `DEC-20260715-16` ite
 
 **Tier-2 roster reconciled 2026-08-15** (`DEC-20260719-02` v1.1, founder-directed): full roster is now `gemini-3.1-pro`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `grok-4.5`. `gpt-5.6-terra` gains a Tier-2 binding (superseding its `DEC-20260807-01` not-Tier-2 status); `gpt-5.6-luna` is created as a new entry; `opus-4.8` and `gpt-5.6` are removed. This aligns the registry with the roster the `tier2-shape` gate has enforced since 2026-08-14. See *Tier-2 full roster* at the end of this file for the `model_id` / attestation-id variance.
 
+**Tier-2 attestation by surface, 2026-10-11** (`FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION`, recorded in `DEC-20260719-02` v1.2): in FounderOS a binding Tier-2 verdict now names the execution surface the review ran on (`antigravity`, `codex`, `chatgpt` or `grok-build`) and records the model in a `Tier2-Reviewer-Model:` line without binding it. A model's entry in this registry is no longer a condition of a binding FounderOS verdict. Two model rules still bind whatever the surface: a restricted-roster model never issues a binding verdict, and a model's data-boundary condition binds any review it performs. The per-model Tier-2 bindings below stay in force as the roster for Build Room reviews (`DEC-20260815-05`); for FounderOS they, and their `tier2_attestation_id` fields, are dated history. Build Room and `madventures-tui` keep their own review rules.
+
+
+**Tier-2 roster reconciled 2026-10-19 — Antigravity** (`DEC-20261019-01` Clause A, founder-directed): `gemini-3.1-pro` is replaced by `gemini-4-argon` on the architect primary lane and the independent-reviewer Tier-2 lane. The surface no longer serves `gemini-3.1-pro` at any effort (catalog read 2026-10-19 with `agy models`). Prior bindings are retired, not erased; verdicts issued while they were active remain valid for the work they reviewed.
+
+**Tier-2 roster reconciled 2026-10-19 — GPT-6 and Claude 5.5** (`DEC-20261019-01` Clauses B and D, founder-directed): `gpt-5.6-sol`, `gpt-5.6-terra` and `gpt-5.6-luna` are replaced by `gpt-6.1-sol`, `gpt-6-astra` and `gpt-6-luna`. `gpt-5.6-terra` → `gpt-6-astra` is an **explicit substitution, not a rename**. `claude-opus-5.5` and `claude-sonnet-5.5`, already registered to executive seats, gain Build Room builder and Tier-2 bindings and are served on the `antigravity` surface. The roster is now `gemini-4-argon`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-luna`, `grok-4.5`, plus the Claude 5.5 pair as `antigravity`-served lanes.
+
 ## Next Action
 Permanent binding assignments for unassigned roles follow `/00-system/model-portfolio-and-routing-strategy.md`'s staged evaluation track; routing enforcement remains gated by its own implementation package.
+
+**2026-10-05:** `DEC-20261005-01` (ratified by the Founder 2026-10-05) added the sixteen entries below and amended two, binding eighteen seats. Routing enforcement remains gated by MP-1. **2026-10-05 (later):** `DEC-20261005-03` recorded the complete-route records and the sensitive-seat boundary records on seven of the entries below (fields `route_record` / `boundary_record`).
 
 ## Done Criteria
 Every model referenced by an approved or proposed role binding (per `/04-agents/role-registry.md`) resolves to an entry here; no entry claims a binding status stronger than its governing decision supports.
@@ -101,6 +111,8 @@ deployment_channel: P1      # google paid API / Vertex tier, per /00-system/data
 - **Current implementation use:** the architecture tier's PRIMARY adapter is implemented in `founder-os-telegram` (`adapters/architecture-pipeline-adapter.ts`, Increment 1, merged 2026-07-18 via PR #27 per `DEC-20260715-14`'s Implementation note), env-backed via `GEMINI_ARCHITECT_PRIMARY_MODEL` (ships empty) behind `ARCHITECTURE_TIER_ENABLED` (default off). The fallback transport (Azure channel, `DEC-20260720-01`/`-02`) and the advisor increment (2026-07-23, merged to `main` at `b4265d49`) are likewise implemented behind their own default-off switches. Nothing is live: no model value is committed and the switches are off; an earlier revision of this entry ("tier is doctrine-only; adapters deferred") described the pre-Increment-1 state and is superseded by this dated correction. **Tier 2 independent-reviewer:** invoked outside Telegram (e.g. Gemini app / API / coding surface) per `DEC-20260719-02` v0.7 — no runtime review capability required.
 - **Authority statement:** owns no independent governance authority; executes on behalf of the bound role.
 - **Evidence sources:** `04-agents/architecture/technical-architect-tier.yaml` (active), `07-decisions/DEC-20260715-14-technical-architect-agent-tier.md` (active), `07-decisions/DEC-20260719-02-independent-reviewer-two-tier-binding.md` (v0.7).
+
+- **Bindings retired 2026-10-19** (`DEC-20261019-01` Clause A). The Antigravity surface no longer offers this model at any effort (catalog read 2026-10-19). The architect primary and independent-reviewer bindings move to `gemini-4-argon`. Verdicts issued while the binding was active remain valid for the work they reviewed.
 
 ### `deepseek-v4-pro`
 
@@ -613,6 +625,8 @@ exact Founder authorization and a recorded reason.
 Tier-2 roster membership reconfirmed 2026-08-15 by `DEC-20260719-02` v1.1;
 this entry's binding is unchanged by that amendment.
 
+- **Bindings retired 2026-10-19** (`DEC-20261019-01` Clause B). The 6-family successor is `gpt-6.1-sol`. Verdicts issued while the binding was active remain valid for the work they reviewed.
+
 ### `gpt-5.6-terra`
 
 ```yaml
@@ -629,6 +643,9 @@ approved_role_bindings:
     binding_class: tier-2-full-roster
     mode: high
     decision: DEC-20260719-02   # v1.1 amendment, 2026-08-15; founder ratification of 2026-08-14
+  - role_id: finance-lead
+    binding_class: primary
+    decision: DEC-20261005-01
 tier2_attestation_id: chatgpt-5.6-terra   # the Tier2-Reviewer-Id token the tier2-shape gate accepts — NOT the model_id
 governance_status: approved-g3-slice-b-plus-tier-2-full-roster
 portfolio_classification: approved-binding
@@ -637,6 +654,7 @@ source: https://developers.openai.com/api/docs/models/gpt-5.6-terra
 deployment_channel: codex-founder-operated
 data_class_boundary: active data-boundary policy and exact task scope
 surface_availability: [codex]
+boundary_record: recorded 2026-10-05 (`DEC-20261005-03`) — seat `finance-lead` ("Make cost, pricing, and financial-exposure implications explicit before decisions are approved"); provider OpenAI, US first-party; paid-API retention is no-training with a 30-day default; ZDR by arrangement (developers.openai.com data controls).
 ```
 
 **Tier-2 status corrected (2026-08-15).** This entry previously read
@@ -652,6 +670,8 @@ entry still denied the binding.
 
 This model's only declared mode is `high`; unlike `gpt-5.6-sol` it has no
 `xhigh`, so Tier-2 review here runs at `high`.
+
+- **Bindings retired 2026-10-19** (`DEC-20261019-01` Clause B). The successor is `gpt-6-astra` — an explicit substitution, not a rename: no terra exists in the 6 family.
 
 ### `deepseek-v4-flash`
 
@@ -677,6 +697,37 @@ surface_availability: [hermes-local-code]
 Only a registered, Founder-approved local model may replace this selection.
 The actual model is recorded per execution. This entry does not rename or
 retire `hermes-4-14b`.
+
+### `deepseek-v4.1-flash`
+
+```yaml
+model_id: deepseek-v4.1-flash
+display_name: DeepSeek V4.1 Flash
+provider: ollama-cloud
+provider_identifier: deepseek-v4.1-flash
+modes: [standard]
+approved_role_bindings:
+  - role_id: architect
+    binding_class: br-architect-primary
+    decision: DEC-20260912-01
+  - role_id: data-intelligence-lead
+    binding_class: primary
+    decision: DEC-20261005-01
+    note: complete-route classification record owed at execution (DEC-20261005-01)
+governance_status: approved-binding
+portfolio_classification: approved-binding
+last_verified: 2026-09-12
+source: https://ollama.com/v1/models
+deployment_channel: P3-ollama-cloud
+data_class_boundary: public and ordinary internal FounderOS only; no confidential-or-higher material
+surface_availability: [hermes-local-code]
+route_record: complete-route classification recorded 2026-10-05 (`DEC-20261005-03`) — US-hosted `ollama-cloud` channel (P3 posture per `DEC-20260912-01`); transient processing, no training (ollama.com/privacy); public + ordinary-internal only; no confidential-or-higher.
+```
+
+**Ratified `approved-binding` by the Founder 2026-09-12** (`DEC-20260912-01`,
+v0.2), recording the br-architect primary binding. The 2026-09-11 draft
+proposition of this model as br-architect fallback (`DEC-20260911-02`, not
+merged) is superseded by this record where the two conflict.
 
 ### `gemini-3.6-flash`
 
@@ -729,6 +780,400 @@ surface_availability: [antigravity, google-ai-studio-api]
 ```
 
 This model cannot replace CodeRabbit Tier-1 or satisfy binding Tier-2.
+
+
+## Bindings added by `DEC-20261005-01` (ratified 2026-10-05) — 16 new entries; two existing entries amended above (18 seats total)
+
+### `kimi-k3`
+
+```yaml
+model_id: kimi-k3
+display_name: Kimi K3
+provider: moonshotai
+provider_identifier: kimi-k3
+modes: [standard]
+approved_role_bindings:
+  - role_id: chief-strategy-officer
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-chief-strategy-officer-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://www.cnbc.com/2026/07/17/moonshot-ai-kimi-k3-model-openai-anthropic-china.html
+deployment_channel: moonshotai-first-party
+data_class_boundary: China-class: public and ordinary internal FounderOS only; no confidential-or-higher, no secrets, credentials, personal or production data
+```
+
+- **Binding:** `chief-strategy-officer` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Press record of the 2026-07-16/17 release; first-party Moonshot release blog referenced by press, catalog-resolved.
+- **Authority statement:** owns no independent governance authority; the `chief-strategy-officer` role remains accountable.
+
+### `gemini-3.8-flash`
+
+```yaml
+model_id: gemini-3.8-flash
+display_name: Gemini 3.8 Flash
+provider: google
+provider_identifier: gemini-3.8-flash
+modes: [standard]
+approved_role_bindings:
+  - role_id: chief-operating-officer
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-chief-operating-officer-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://blog.google/innovation-and-ai/models-and-research/gemini-models/3-8-flash-and-3-8-flash-cyber/
+deployment_channel: gemini-direct-lane
+data_class_boundary: US-domiciled first-party; active data-boundary policy; US-domiciled first-party
+```
+
+- **Binding:** `chief-operating-officer` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Released 2026-09-02. Gemini 3.8 ships as Flash only — no 3.8 Pro exists (recorded in DEC-20261005-01).
+- **Authority statement:** owns no independent governance authority; the `chief-operating-officer` role remains accountable.
+
+### `gpt-6.1-sol`
+
+```yaml
+model_id: gpt-6.1-sol
+display_name: GPT-6.1 Sol
+provider: openai
+provider_identifier: gpt-6.1-sol
+modes: [standard]
+approved_role_bindings:
+  - role_id: chief-financial-officer
+    binding_class: primary
+    decision: DEC-20261005-01
+  - role_id: builder
+    binding_class: large-implementation-primary-task-scoped
+    decision: DEC-20261019-01   # Clause B: 6-family replacement for gpt-5.6-sol
+  - role_id: independent-reviewer
+    binding_class: tier-2
+    decision: DEC-20261019-01
+tier2_attestation_id: codex   # DEC-20261001-01 surface token
+governance_status: active-cfo-primary-and-build-room-builder-and-tier-2-reviewer
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://openai.com/index/introducing-gpt-6-1-sol/
+deployment_channel: openai-first-party-api
+data_class_boundary: sensitive-seat row (DEC-20260813-03 item 9): US-domiciled first-party; exact task-scope, channel and retention posture recorded at execution
+boundary_record: recorded 2026-10-05 (`DEC-20261005-03`) — seat `chief-financial-officer` ("Own financial intelligence and control recommendations at portfolio scope — forecasts, budgets, cost tracking, and threshold monitoring"); provider OpenAI, US first-party; paid-API retention is no-training with a 30-day default; ZDR by arrangement (developers.openai.com data controls).
+```
+
+- **Binding:** `chief-financial-officer` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Released 2026-09-29; near-Astra at a fifth of Astra pricing.
+- **Authority statement:** owns no independent governance authority; the `chief-financial-officer` role remains accountable.
+
+### `minimax-m3`
+
+```yaml
+model_id: minimax-m3
+display_name: MiniMax-M3
+provider: minimax
+provider_identifier: minimax-m3
+modes: [standard]
+approved_role_bindings:
+  - role_id: chief-marketing-creative-officer
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-chief-marketing-creative-officer-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://platform.minimax.io/docs/release-notes/models
+deployment_channel: minimax-first-party
+data_class_boundary: China-class: public and ordinary internal FounderOS only; no confidential-or-higher, no secrets, credentials, personal or production data
+```
+
+- **Binding:** `chief-marketing-creative-officer` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Released 2026-06-01; frontier coding / 1M context / native multimodality.
+- **Authority statement:** owns no independent governance authority; the `chief-marketing-creative-officer` role remains accountable.
+
+### `claude-opus-5.5`
+
+```yaml
+model_id: claude-opus-5.5
+display_name: Claude Opus 5.5
+provider: anthropic
+provider_identifier: claude-opus-5.5
+modes: [standard]
+approved_role_bindings:
+  - role_id: chief-compliance-officer
+    binding_class: primary
+    decision: DEC-20261005-01
+  - role_id: builder
+    binding_class: large-implementation-primary-task-scoped
+    decision: DEC-20261019-01   # Clause D: served on the antigravity surface
+  - role_id: independent-reviewer
+    binding_class: tier-2
+    decision: DEC-20261019-01
+tier2_attestation_id: claude-code   # DEC-20261001-01 surface token; served on antigravity
+governance_status: active-compliance-primary-and-build-room-builder-and-tier-2-reviewer
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://support.claude.com/en/articles/12138966-release-notes
+deployment_channel: P1
+data_class_boundary: sensitive-seat row (DEC-20260813-03 item 9): US-domiciled first-party; exact task-scope, channel and retention posture recorded at execution
+boundary_record: recorded 2026-10-05 (`DEC-20261005-03`) — seat `chief-compliance-officer` ("Hold the immediate documented stop right over work presenting a plausible governance, privacy, security, legal, credential, or evidence-integrity concern"); provider Anthropic, US; ZDR available to qualified accounts (platform.claude.com API and data retention).
+```
+
+- **Binding:** `chief-compliance-officer` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Released 2026-09-22, first of the Claude 5.5 family; the stop-right seat takes the top current brain.
+- **Authority statement:** owns no independent governance authority; the `chief-compliance-officer` role remains accountable.
+
+### `claude-sonnet-5.5`
+
+```yaml
+model_id: claude-sonnet-5.5
+display_name: Claude Sonnet 5.5
+provider: anthropic
+provider_identifier: claude-sonnet-5.5
+modes: [standard]
+approved_role_bindings:
+  - role_id: security-lead
+    binding_class: primary
+    decision: DEC-20261005-01
+  - role_id: independent-reviewer
+    binding_class: tier-2
+    decision: DEC-20261019-01   # Clause D: served on the antigravity surface
+tier2_attestation_id: claude-code   # DEC-20261001-01 surface token; served on antigravity
+governance_status: active-security-lead-primary-and-tier-2-reviewer
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://support.claude.com/en/articles/12138966-release-notes
+deployment_channel: P1
+data_class_boundary: sensitive-seat row (DEC-20260813-03 item 9): US-domiciled first-party; exact task-scope, channel and retention posture recorded at execution
+boundary_record: recorded 2026-10-05 (`DEC-20261005-03`) — seat `security-lead` ("Own security posture and security-risk recommendations independently of the roles implementing the systems"); provider Anthropic, US; ZDR available to qualified accounts (platform.claude.com API and data retention).
+```
+
+- **Binding:** `security-lead` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Released 2026-09-28. Chosen over a retention-gated provider for this seat; the grok path re-opens only when xAI retention is verified.
+- **Authority statement:** owns no independent governance authority; the `security-lead` role remains accountable.
+
+### `mimo-v2.6-pro`
+
+```yaml
+model_id: mimo-v2.6-pro
+display_name: Xiaomi MiMo-V2.6-Pro
+provider: xiaomi
+provider_identifier: mimo-v2.6-pro
+modes: [standard]
+approved_role_bindings:
+  - role_id: reliability-lead
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-reliability-lead-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://mimo.mi.com/models/en-US/mimo-v2.6-pro
+deployment_channel: xiaomi-first-party
+data_class_boundary: China-class: public and ordinary internal FounderOS only; no confidential-or-higher, no secrets, credentials, personal or production data; complete-route classification record owed (DEC-20261005-01)
+route_record: complete-route classification recorded 2026-10-05 (`DEC-20261005-03`) — first-party Xiaomi channel (mimo.mi.com); PRC-parented provider family; public + ordinary-internal only; no confidential-or-higher, no secrets, credentials, personal or production data.
+```
+
+- **Binding:** `reliability-lead` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Officially released and open-sourced; flagship reasoning model, omni-modal.
+- **Authority statement:** owns no independent governance authority; the `reliability-lead` role remains accountable.
+
+### `qwen3.7-max`
+
+```yaml
+model_id: qwen3.7-max
+display_name: Qwen3.7-Max
+provider: alibaba
+provider_identifier: qwen3.7-max
+modes: [standard]
+approved_role_bindings:
+  - role_id: portfolio-venture-lead
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-portfolio-venture-lead-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://modelstudio.console.alibabacloud.com
+deployment_channel: alibaba-model-studio
+data_class_boundary: China-class: public and ordinary internal FounderOS only; no confidential-or-higher, no secrets, credentials, personal or production data
+```
+
+- **Binding:** `portfolio-venture-lead` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model.
+- **Authority statement:** owns no independent governance authority; the `portfolio-venture-lead` role remains accountable.
+
+### `qwen3.8-max`
+
+```yaml
+model_id: qwen3.8-max
+display_name: Qwen3.8-Max
+provider: alibaba
+provider_identifier: qwen3.8-max
+modes: [standard]
+approved_role_bindings:
+  - role_id: brand-lead
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-brand-lead-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://modelstudio.console.alibabacloud.com
+deployment_channel: alibaba-model-studio
+data_class_boundary: China-class: public and ordinary internal FounderOS only; no confidential-or-higher, no secrets, credentials, personal or production data
+```
+
+- **Binding:** `brand-lead` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Latest `qwen3.8-max-0902` per Model Studio; 2.4T-parameter MoE flagship.
+- **Authority statement:** owns no independent governance authority; the `brand-lead` role remains accountable.
+
+### `minimax-m2.7`
+
+```yaml
+model_id: minimax-m2.7
+display_name: MiniMax-M2.7
+provider: minimax
+provider_identifier: minimax-m2.7
+modes: [standard]
+approved_role_bindings:
+  - role_id: growth-commercial-lead
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-growth-commercial-lead-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://platform.minimax.io/docs/release-notes/models
+deployment_channel: minimax-first-party
+data_class_boundary: China-class: public and ordinary internal FounderOS only; no confidential-or-higher, no secrets, credentials, personal or production data
+```
+
+- **Binding:** `growth-commercial-lead` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model.
+- **Authority statement:** owns no independent governance authority; the `growth-commercial-lead` role remains accountable.
+
+### `step-3.7-flash`
+
+```yaml
+model_id: step-3.7-flash
+display_name: Step 3.7 Flash
+provider: stepfun
+provider_identifier: step-3.7-flash
+modes: [standard]
+approved_role_bindings:
+  - role_id: innovation-futures-lead
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-innovation-futures-lead-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://platform.stepfun.ai/docs/en/guides/models/step-3.7-flash
+deployment_channel: stepfun-first-party
+data_class_boundary: China-class: public and ordinary internal FounderOS only; no confidential-or-higher, no secrets, credentials, personal or production data
+```
+
+- **Binding:** `innovation-futures-lead` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. 198B/11B sparse MoE vision-language model; 256K context.
+- **Authority statement:** owns no independent governance authority; the `innovation-futures-lead` role remains accountable.
+
+### `glm-5.3`
+
+```yaml
+model_id: glm-5.3
+display_name: GLM-5.3
+provider: zai
+provider_identifier: glm-5.3
+modes: [standard]
+approved_role_bindings:
+  - role_id: program-execution-lead
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-program-execution-lead-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://docs.z.ai/guides/llm/glm-5.3
+deployment_channel: P3-zai-international
+data_class_boundary: P3 Z.ai international posture (deputy precedent, DEC-20260801-01): public + ordinary internal FounderOS only; no confidential-or-higher; the `madc` D-FS-1 no-GLM ruling stands untouched
+```
+
+- **Binding:** `program-execution-lead` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. FounderOS-side binding only; any `madc` use requires its own amendment act there. Released 2026-08-18; 1M ctx; reasoning always on.
+- **Authority statement:** owns no independent governance authority; the `program-execution-lead` role remains accountable.
+
+### `nemotron-3.5-lightning`
+
+```yaml
+model_id: nemotron-3.5-lightning
+display_name: Nemotron 3.5 Lightning
+provider: nvidia
+provider_identifier: nemotron-3.5-lightning
+modes: [standard]
+approved_role_bindings:
+  - role_id: operations-lead
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-operations-lead-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://developer.nvidia.com/blog/nvidia-nemotron-3-5-lightning-delivers-fast-accurate-specialized-task-execution-for-long-running-agents/
+deployment_channel: nvidia-first-party
+data_class_boundary: active data-boundary policy; US-domiciled first-party
+```
+
+- **Binding:** `operations-lead` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. 30B MoE with 3B active; built for high-volume, low-latency agent work.
+- **Authority statement:** owns no independent governance authority; the `operations-lead` role remains accountable.
+
+### `muse-spark-1.3`
+
+```yaml
+model_id: muse-spark-1.3
+display_name: Muse Spark 1.3
+provider: meta
+provider_identifier: muse-spark-1.3
+modes: [max-reasoning]
+approved_role_bindings:
+  - role_id: legal-risk
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-legal-risk-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://research.meta.ai/blog/introducing-muse-spark-1-3
+deployment_channel: meta-first-party
+data_class_boundary: sensitive-seat row (DEC-20260813-03 item 9): US-domiciled first-party; exact task-scope, channel and retention posture recorded at execution
+boundary_record: recorded 2026-10-05 (`DEC-20261005-03`) — seat `legal-risk` ("Surface legal, privacy, regulatory, and reputation risk before it ships"); provider Meta, US first-party (dev.meta.ai); **retention posture not independently verified → public-class only** until verified (`data-boundary-policy.md` §4 item 4); max-reasoning pin per `DEC-20261005-01`.
+```
+
+- **Binding:** `legal-risk` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Binding pins the max-reasoning configuration (DEC-20261005-01 item 5): top of the Vals Legal Research Bench at 55.29% all-pass only at max reasoning; xhigh scores 40.87%, below claude-sonnet-5.5. Released 2026-09-02.
+- **Authority statement:** owns no independent governance authority; the `legal-risk` role remains accountable.
+
+### `claude-fable-5.1`
+
+```yaml
+model_id: claude-fable-5.1
+display_name: Claude Fable 5.1
+provider: anthropic
+provider_identifier: claude-fable-5.1
+modes: [standard]
+approved_role_bindings:
+  - role_id: experience-architect
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-experience-architect-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://docs.anthropic.com/en/release-notes/api
+deployment_channel: P1
+data_class_boundary: active data-boundary policy; US-domiciled first-party
+```
+
+- **Binding:** `experience-architect` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Current Fable; `fable-5.5` is not released (parked in DEC-20261005-01).
+- **Authority statement:** owns no independent governance authority; the `experience-architect` role remains accountable.
+
+### `qwen3.7-flash`
+
+```yaml
+model_id: qwen3.7-flash
+display_name: Qwen3.7-Flash
+provider: alibaba
+provider_identifier: qwen3.7-flash
+modes: [standard]
+approved_role_bindings:
+  - role_id: qa-lead
+    binding_class: primary
+    decision: DEC-20261005-01
+governance_status: active-qa-lead-primary-binding
+portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
+last_verified: 2026-10-05
+source: https://modelstudio.console.alibabacloud.com
+deployment_channel: alibaba-model-studio
+data_class_boundary: China-class: public and ordinary internal FounderOS only; no confidential-or-higher, no secrets, credentials, personal or production data
+```
+
+- **Binding:** `qa-lead` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model.
+- **Authority statement:** owns no independent governance authority; the `qa-lead` role remains accountable.
 
 ### G3 Slice B+ Builder bindings for existing registered IDs — applied
 
@@ -826,12 +1271,28 @@ surface_availability: [codex]
   pattern the `gpt-5.6` entry used at creation. Resolve at the next
   catalog verification pass.
 - **Authority statement:** owns no independent governance authority.
-- **Evidence sources:** `07-decisions/DEC-20260719-02-independent-reviewer-two-tier-binding.md` (v1.1 amendment); `07-decisions/DEC-20260814-03-governance-change-freeze.md` (Founder Ratification section, verbatim statement); `00-system/scripts/tier2-shape-check.sh` (`REVIEWER_ROSTER_REGEX`).
+- **Evidence sources:** `07-decisions/DEC-20260719-02-independent-reviewer-two-tier-binding.md` (v1.1 amendment); `07-decisions/DEC-20260814-03-governance-change-freeze.md` (Founder Ratification section, verbatim statement); `00-system/scripts/tier2-shape-check.sh` (`REVIEWER_ROSTER_REGEX` until 2026-10-11; since `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION`'s implementation, `REVIEWER_SURFACE_REGEX`, which accepts surface ids only).
+
+- **Bindings retired 2026-10-19** (`DEC-20261019-01` Clause B). The 6-family successor is `gpt-6-luna`.
 
 ### Tier-2 full roster — current, and the `model_id` / attestation-id variance
 
+*Dated history for the FounderOS gate from 2026-10-11.* Under
+`FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` (recorded in
+`DEC-20260719-02` v1.2), once its implementing pull request merges the
+FounderOS `tier2-shape` gate accepts only the surface ids `antigravity`,
+`codex`, `chatgpt` and `grok-build` in `Tier2-Reviewer-Id:`, and records the
+model in `Tier2-Reviewer-Model:` as the reviewer reports it. The table and
+the variance below describe the gate from 2026-08-14 until that merge, and
+the roster as it still applies outside FounderOS (Build Room reviews under
+`DEC-20260815-05`). The open item at the end of the variance note is closed
+for FounderOS by the same act: the gate no longer matches model ids, so the
+trap no longer exists there.
+
 Cross-reference only; the authority is `DEC-20260719-02` clause 2 (v1.1,
 2026-08-15) and the binding lives on each model's own entry above.
+
+**Superseded 2026-10-19** (`DEC-20261019-01`): the live roster is `gemini-4-argon`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-luna`, `grok-4.5`, plus the Claude 5.5 pair; every attestation id is a surface token per `DEC-20261001-01`. The table below is retained as the record of the variance as it stood.
 
 | `model_id` (this registry) | `Tier2-Reviewer-Id` (the gate accepts) | Same string? |
 |---|---|---|
@@ -841,13 +1302,15 @@ Cross-reference only; the authority is `DEC-20260719-02` clause 2 (v1.1,
 | `gpt-5.6-luna` | `chatgpt-5.6-luna` | **no** |
 | `grok-4.5` | `grok-4.5` | yes |
 
-**The variance is live and it bites.** `00-system/scripts/tier2-shape-check.sh`
-matches `Tier2-Reviewer-Id:` against a fixed regex that spells the three Codex
+**The variance was live in the FounderOS gate, and it bit** (2026-08-14 until
+the surface act's implementation merged). `00-system/scripts/tier2-shape-check.sh`
+matched `Tier2-Reviewer-Id:` against a fixed regex that spelled the three Codex
 models with a `chatgpt-` prefix, while this registry — following
 `DEC-20260807-01` — spells them `gpt-`. A marker written with the `model_id`
-form (`Tier2-Reviewer-Id: gpt-5.6-sol`) **fails** the gate with *"not on the
-founder-ratified roster"*, even though the model is genuinely on the roster.
-Write the attestation id.
+form (`Tier2-Reviewer-Id: gpt-5.6-sol`) **failed** the gate with *"not on the
+founder-ratified roster"*, even though the model was genuinely on the roster.
+In that period, the attestation id was the token to write. A FounderOS marker
+now names a surface and records the model in `Tier2-Reviewer-Model:`.
 
 Neither spelling is renamed here: changing the `model_id` would break
 `DEC-20260807-01`'s references, and changing the regex would edit a gate
@@ -860,3 +1323,96 @@ founder-directed): `opus-4.8` and `gpt-5.6`. Their entries above are retained
 with `retired_role_bindings` and are not deleted. The restricted local roster
 (`hermes-4-14b`, `tencent-hy3`) is unchanged and remains non-binding per
 clause 5.
+
+## Binding added by `DEC-20261016-01` (ratified 2026-10-16)
+
+### `gemini-4-argon`
+
+```yaml
+model_id: gemini-4-argon
+display_name: Gemini 4 Argon
+provider: google
+provider_identifier: gemini-4-argon
+modes: [high]   # the one effort DEC-20261016-01 binds; Google documents LOW, MEDIUM (default) and HIGH
+approved_role_bindings:
+  - role_id: architect
+    binding_class: primary   # Build Room Seat Registry V1 architect `primary` lane only; surface antigravity, effort high
+    decision: DEC-20261016-01   # active
+    limits: public-class data only; invoked on Antigravity as `gemini-4-argon-high`; recorded as model gemini-4-argon, effort high
+  - role_id: independent-reviewer
+    binding_class: tier-2
+    decision: DEC-20261019-01   # Clause A: Tier-2 reviewer lane on the antigravity surface
+    limits: public-class review material only, inheriting this entry's data boundary
+proposed_role_bindings: []
+implementation_observed_bindings: []
+temporary_task_assignments: []
+tier2_attestation_id: gemini   # DEC-20261001-01 surface token
+governance_status: approved-binding-architect-primary-and-tier-2-reviewer
+portfolio_classification: approved-binding   # per DEC-20260716-02 §3 classification ladder; DEC-20261016-01, ratified 2026-10-16
+last_verified: 2026-10-16   # Google Cloud model page: "Launch stage: GA", "Release date: October 13, 2026", thinking levels LOW, MEDIUM (default), HIGH; listed by `agy models` (agy 1.3.5) on the Founder's PC
+source: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon
+deployment_channel: unverified   # Antigravity on the Founder's Google sign-in; its no-training and retention terms are unverified, and nothing here classifies it P1
+data_class_boundary: public-class only; internal-or-higher prohibited until a Founder decision cites written no-training terms for the exact Antigravity access path, or amends the data-boundary policy
+```
+
+- **Binding:** the Build Room Seat Registry V1 `architect` seat's `primary` lane, replacing `gemini-3.1-pro`, which `agy` 1.3.5 no longer lists. `DEC-20261016-01`, ratified by the Founder 2026-10-16 (comment 6207273443 on FounderOS pull request 381). The Seat Registry code change lands in Build Room under its own review. `gemini-3.1-pro`'s entry and bindings are unchanged.
+- **Authority statement:** owns no independent governance authority; the `architect` role remains accountable.
+
+## Bindings added by `DEC-20261019-01` (ratified 2026-10-19)
+
+### `gpt-6-astra`
+
+```yaml
+model_id: gpt-6-astra
+display_name: GPT-6 Astra
+provider: openai
+provider_identifier: gpt-6-astra
+modes: [standard]
+approved_role_bindings:
+  - role_id: builder
+    binding_class: large-implementation-primary-task-scoped
+    decision: DEC-20261019-01   # Clause B: explicit substitution for gpt-5.6-terra
+  - role_id: independent-reviewer
+    binding_class: tier-2
+    decision: DEC-20261019-01
+proposed_role_bindings: []
+implementation_observed_bindings: []
+temporary_task_assignments: []
+tier2_attestation_id: codex   # DEC-20261001-01 surface token
+governance_status: active-build-room-builder-and-tier-2-reviewer
+portfolio_classification: approved-binding
+last_verified: 2026-10-19   # configured model of the codex surface (`~/.codex/config.toml`); provider pricing/limits not re-verified
+source: ~/.codex/config.toml (model = gpt-6-astra)
+surface_availability: [codex]
+deployment_channel: verification-pending
+```
+
+- **Binding:** `DEC-20261019-01` Clause B. `gpt-5.6-terra` has **no** 6-family successor; this is an explicit substitution, not a rename. Astra's capability must never be quoted as terra's.
+- **Authority statement:** owns no independent governance authority; the roles it serves remain accountable.
+
+### `gpt-6-luna`
+
+```yaml
+model_id: gpt-6-luna
+display_name: GPT-6 Luna
+provider: openai
+provider_identifier: gpt-6-luna
+modes: [invoked]   # tier-2 review is invoked per-case, never automatic
+approved_role_bindings:
+  - role_id: independent-reviewer
+    binding_class: tier-2
+    decision: DEC-20261019-01   # Clause B: 6-family replacement for gpt-5.6-luna
+proposed_role_bindings: []
+implementation_observed_bindings: []
+temporary_task_assignments: []
+tier2_attestation_id: codex   # DEC-20261001-01 surface token
+governance_status: active-independent-reviewer-tier-2-binding
+portfolio_classification: approved-binding
+last_verified: 2026-10-19   # runtime catalog presence; provider pricing/limits not re-verified
+source: hermes models_catalog_static.py
+surface_availability: [codex]
+deployment_channel: verification-pending
+```
+
+- **Binding:** `DEC-20261019-01` Clause B, replacing `gpt-5.6-luna` on the Tier-2 roster.
+- **Authority statement:** owns no independent governance authority; the `independent-reviewer` role remains accountable.

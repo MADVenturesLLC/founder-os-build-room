@@ -6,7 +6,7 @@
  * Ratified plan: docs/planning/seat-registry-v1/seat-registry-v1-implementation-plan-r7-DRAFT.md
  * (sha256 b1bc4159b8cdb1ce6c342d84b4be3650a340abfc467624154ea5ba2a54815b60).
  * Governing decision: DEC-20260902-02 (active, source_of_truth: true, version 0.2).
- * Doctrine pin: FounderOS bd0a9acbdcbcb7e01644feff0e86927bd7dd0dda.
+ * Doctrine pin: FounderOS 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694.
  *
  * Requirements:
  * - imports only the public entry point (../packages/seat-registry/src/index.js)
@@ -44,8 +44,8 @@ function fixtureLines(filename: string): string[] {
 }
 
 describe('Test 14 — Fixture integrity (doctrine pin) (r7 §9.1 test 14)', () => {
-  it('recorded doctrine pin is the full 40-character bd0a9acbdcbcb7e01644feff0e86927bd7dd0dda', () => {
-    assert.equal(DOCTRINE_PIN, 'bd0a9acbdcbcb7e01644feff0e86927bd7dd0dda');
+  it('recorded doctrine pin is the full 40-character 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694', () => {
+    assert.equal(DOCTRINE_PIN, '8d09e7ed36dcb2a67df2b45daa81c8ad7d170694');
     assert.match(DOCTRINE_PIN, /^[0-9a-f]{40}$/);
   });
 
@@ -244,10 +244,15 @@ describe('Test 10 — Data eligibility, carried conditions, and provider-class p
     assert.ok(builderHermes.conditions.includes(hermesBullet1), 'builder hermes carries bullet1 byte-exact');
     assert.ok(builderHermes.conditions.includes(hermesBullet2), 'builder hermes carries bullet2 byte-exact');
 
-    // (c) antigravity conditions: execution-surface-registry lines 312, 314, 316
-    const antiModel = surfLines[311]!;
-    const antiApproval = surfLines[313]!;
-    const antiProhibited = surfLines[315]!;
+    // (c) antigravity conditions: locate the block by heading, then the exact
+    // yaml lines, so the assertion survives a doctrine re-vendor.
+    const antiStart = surfLines.findIndex((l) => l.trim() === '### `antigravity`');
+    assert.ok(antiStart !== -1, 'found the antigravity block in execution-surface-registry.md');
+    const antiBlock = surfLines.slice(antiStart, antiStart + 40);
+    const antiModel = antiBlock.find((l) => l.startsWith('underlying_model_selection:'))!;
+    const antiApproval = antiBlock.find((l) => l.startsWith('approval_requirements:'))!;
+    const antiProhibited = antiBlock.find((l) => l.startsWith('prohibited_actions:'))!;
+    assert.ok(antiModel && antiApproval && antiProhibited, 'found the three antigravity condition lines');
     const reviewerClause3 = dec05Lines.slice(68, 71).join('\n');
 
     const architect = RATIFIED_SEATS.find((s) => s.seat_id === 'architect') as SeatRegistrationV1;
@@ -256,7 +261,7 @@ describe('Test 10 — Data eligibility, carried conditions, and provider-class p
     assert.ok(archPrimary.conditions.includes(antiApproval), 'architect primary carries antiApproval byte-exact');
     assert.ok(archPrimary.conditions.includes(antiProhibited), 'architect primary carries antiProhibited byte-exact');
 
-    const reviewerGemini = reviewer.routing.find((l) => l.model_id === 'gemini-3.1-pro')!;
+    const reviewerGemini = reviewer.routing.find((l) => l.surface_id === 'antigravity')!;
     assert.ok(reviewerGemini.conditions.includes(antiModel), 'reviewer gemini carries antiModel byte-exact');
     assert.ok(reviewerGemini.conditions.includes(antiApproval), 'reviewer gemini carries antiApproval byte-exact');
     assert.ok(reviewerGemini.conditions.includes(antiProhibited), 'reviewer gemini carries antiProhibited byte-exact');

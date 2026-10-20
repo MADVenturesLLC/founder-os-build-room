@@ -2,7 +2,7 @@
  * Seat Registry V1 — verbatim condition strings, byte-captured from the
  * pinned fixtures (r7 test 10 compares each lane's conditions against these).
  *
- * Source windows (doctrine pin bd0a9acbdcbcb7e01644feff0e86927bd7dd0dda):
+ * Source windows (doctrine pin 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694):
  *   - GROK_BULLET_1/2, HERMES_BULLET_1/2: DEC-20260815-04, "Conditions carried
  *     by two of the five" (lines 59–62, 63–67, 76–77, 78–80).
  *   - GROK_ITEM: DEC-20260716-02 amendment, grok-build item (lines 152–160).

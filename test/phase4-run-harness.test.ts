@@ -42,8 +42,11 @@ import {
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 /** The copy the counted run reads, pinned at FounderOS 8146435 (DEC-20261015-01 registered). */
 const REGISTRY_TEXT = readFileSync(join(REPO_ROOT, 'packages', 'control-plane', 'fixtures', 'execution-surface-registry.md'), 'utf8');
-/** The Seat Registry's r7 copy, from before that registration: it carries no build-room-control-plane. */
+/** The Seat Registry's copy now pins the same doctrine text as the counted-run copy. */
 const R7_REGISTRY_TEXT = readFileSync(join(REPO_ROOT, 'packages', 'seat-registry', 'fixtures', 'execution-surface-registry.md'), 'utf8');
+/** A minimal registry text that omits the control-plane surface; the seat-registry
+ *  copy can no longer serve that role now that both copies pin 060a16a4. */
+const WITHOUT_CONTROL_PLANE = '```yaml\nsurface_id: antigravity\ncurrent_status: implemented-and-in-governed-use\n```\n';
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
@@ -63,7 +66,7 @@ function set(overrides: Record<string, unknown> = {}): Phase4RunSet {
     buildRoomSha: SHA_B,
     controlPlaneOrigin: 'https://control-plane.example',
     gatewayId: GATEWAY,
-    planner: { provider: 'google', model: 'gemini-3.1-pro' },
+    planner: { provider: 'google', model: 'gemini-4-argon' },
     seats: { builder: 'codex', reviewer: 'grok-build' },
     founderRelay: { actualModel: 'n/a (human Founder act)', executionSurface: 'claude-code' },
     decisionTimeoutMs: 3_600_000,
@@ -87,7 +90,7 @@ function observation(overrides: Partial<Phase4EntryObservation> = {}): Phase4Ent
 /* ---------------- a run record, as a passing run leaves it ---------------- */
 
 const attribution = (roleId: string | null, actorId: string, actualModel: string, executionSurface: string) => ({ roleId, actorId, actualModel, executionSurface });
-const PLANNER_ATTRIBUTION = attribution('architect', 'session:planner', 'gemini-3.1-pro', 'antigravity');
+const PLANNER_ATTRIBUTION = attribution('architect', 'session:planner', 'gemini-4-argon', 'antigravity');
 const DISPATCHER_ATTRIBUTION = attribution('builder', `control-plane:${DEPLOYMENT}`, PHASE4_DISPATCHER.actualModel, PHASE4_DISPATCHER.executionSurface);
 const FOUNDER_ATTRIBUTION = attribution(null, 'founder', 'n/a (human Founder decision)', 'claude-code');
 
@@ -96,12 +99,12 @@ function event(eventId: string, name: string, actor: string, a: Phase4RecordedEv
 }
 
 function command(commandId: string, terminal: { eventType: string; failureClassification?: string } = { eventType: 'completed' }) {
-  const route = { provider: 'google', model: 'gemini-3.1-pro', executionSurface: 'antigravity' };
+  const route = { provider: 'google', model: 'gemini-4-argon', executionSurface: 'antigravity' };
   const journaled = {
     eventType: 'journaled',
     authorizationRef: 'FOUNDER-ACT-EXAMPLE-PHASE4-COUNTED-RUNS',
     intendedProvider: 'google',
-    intendedModel: 'gemini-3.1-pro',
+    intendedModel: 'gemini-4-argon',
     intendedSurface: 'antigravity',
   };
   const rows = terminal.eventType === 'failed' && terminal.failureClassification === 'not_sent'
@@ -207,7 +210,7 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
       ['planner_lane_not_approved'],
     );
     // The resolved Antigravity route itself is accepted (the passing case
-    // above carries google/gemini-3.1-pro, the pinned Antigravity lane).
+    // above carries google/gemini-4-argon, the pinned Antigravity lane).
     assert.deepEqual(evaluatePhase4Entry(set(), observation()).failures, []);
   });
 
@@ -225,7 +228,7 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
   });
 
   it('refuses every set against a registry that carries no build-room-control-plane, and admits it on the pinned copy', () => {
-    const verdict = evaluatePhase4Entry(set(), observation({ registeredSurfaces: registeredSurfaceIds(R7_REGISTRY_TEXT) }));
+    const verdict = evaluatePhase4Entry(set(), observation({ registeredSurfaces: registeredSurfaceIds(WITHOUT_CONTROL_PLANE) }));
     assert.deepEqual(verdict.failures, ['dispatcher_surface_unregistered']);
     assert.deepEqual(evaluatePhase4Entry(set(), observation()).failures, []);
   });
@@ -262,7 +265,11 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
   it('reads the registry’s surfaces, leaving out an entry that is proposed and not active', () => {
     const ids = registeredSurfaceIds(REGISTRY_TEXT);
     for (const id of ['claude-code', 'antigravity', 'build-room-gateway', 'build-room-control-plane']) assert.ok(ids.has(id), id);
-    assert.equal(registeredSurfaceIds(R7_REGISTRY_TEXT).has('build-room-control-plane'), false);
+    assert.equal(
+      registeredSurfaceIds(R7_REGISTRY_TEXT).has('build-room-control-plane'),
+      true,
+      'the seat-registry copy now pins the same doctrine text as the counted-run copy (060a16a4)',
+    );
     const proposed = '```yaml\nsurface_id: build-room-control-plane\ncurrent_status: proposed-not-active\n```\n';
     const active = '```yaml\nsurface_id: build-room-control-plane\ncurrent_status: implemented-and-in-governed-use\n```\n';
     assert.equal(registeredSurfaceIds(proposed).has('build-room-control-plane'), false);

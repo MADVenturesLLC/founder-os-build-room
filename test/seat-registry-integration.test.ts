@@ -25,6 +25,7 @@ import {
   classifyTransportFailure,
   contractEventForOutcome,
   isDistinctReviewLane,
+  TIER2_ROSTER_ATTESTATION_IDS,
   type DeploymentBucket,
   type ResolvedSeat,
   type RetryBudgetState,
@@ -546,11 +547,18 @@ describe('T10 — Builder/reviewer model distinctness (predicate only)', () => {
     let distinctSeen = 0;
     let sameModelSeen = 0;
     let distinctModelOffRosterSeen = 0;
+    let offRosterLaneSeen = 0;
     for (const implLane of builder.routing) {
       for (const reviewLane of reviewer.routing) {
         const expected = isDistinctReviewLane(implLane.model_id, reviewLane);
         const actual = gate.assertReviewDistinctness(implLane.model_id, reviewLane);
         assert.equal(actual, expected, `gate echoes the predicate for ${implLane.model_id} × ${reviewLane.model_id}`);
+        const rosterEligible = TIER2_ROSTER_ATTESTATION_IDS.includes(reviewLane.tier2_attestation_id ?? '');
+        if (!rosterEligible) {
+          assert.equal(actual, false, `off-roster reviewer lane ${reviewLane.surface_id} is refused`);
+          offRosterLaneSeen += 1;
+          continue;
+        }
         if (implLane.model_id === reviewLane.model_id) {
           assert.equal(actual, false, 'same-model pairing is never distinct');
           sameModelSeen += 1;
@@ -572,13 +580,23 @@ describe('T10 — Builder/reviewer model distinctness (predicate only)', () => {
         }
       }
     }
-    // Corpus evidence at the doctrine pin: every reviewer lane is
-    // roster-eligible, so all distinct-model pairings satisfy BOTH conditions
-    // (differing model AND roster attestation); the roster-eligibility
-    // condition is independently covered by the off-roster test below.
+    // Corpus evidence at the doctrine pin: every roster-eligible reviewer
+    // lane satisfies BOTH conditions (differing model AND roster attestation).
+    // FOUNDER-ACT-20261011 B2 limits binding Tier-2 verdicts to four surfaces;
+    // the retained claude-code lane is deliberately off-roster until
+    // DEC-20261019-01 Clause D moves it to antigravity (Slice 2).
     assert.ok(distinctSeen > 0, 'at least one pairing satisfies distinct-model AND roster-eligibility');
     assert.ok(sameModelSeen > 0, 'same-model pairings exist and are refused');
-    assert.equal(distinctModelOffRosterSeen, 0, 'no reviewer lane at the doctrine pin is off-roster');
+    assert.equal(distinctModelOffRosterSeen, 0, 'every roster-eligible reviewer lane is roster-eligible');
+    const offRosterReviewerLanes = reviewer.routing.filter(
+      (lane) => !TIER2_ROSTER_ATTESTATION_IDS.includes(lane.tier2_attestation_id ?? ''),
+    );
+    assert.deepEqual(
+      offRosterReviewerLanes.map((lane) => lane.surface_id),
+      ['claude-code'],
+      'the retained claude-code reviewer lane is the only off-roster reviewer lane',
+    );
+    assert.ok(offRosterLaneSeen > 0, 'the off-roster reviewer lane is exercised');
   });
 
   it('the same-model case rejects', () => {

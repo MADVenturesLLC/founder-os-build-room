@@ -121,12 +121,12 @@ describe('counted run · the act’s terms, read at boot', () => {
   it('reads well-formed terms on approved lanes, and names the Planner’s lane', () => {
     const config = parseCountedRunConfig(JSON.stringify(ACT))!;
     // The act's terms are the surfaces; the parsed planner carries the approved
-    // lane's provider and model as routing detail (google/gemini-3.1-pro, the
-    // architect seat's one Antigravity lane at the pinned registry).
+    // lane's provider and model as routing detail (google/gemini-4-argon, the
+    // architect seat's one Antigravity lane since DEC-20261019-01 Clause A).
     assert.deepEqual(config, {
       actId: ACT.actId,
       gatewayId: ACT.gatewayId,
-      planner: { surface: 'antigravity', provider: 'google', model: 'gemini-3.1-pro' },
+      planner: { surface: 'antigravity', provider: 'google', model: 'gemini-4-argon' },
       seats: ACT.seats,
     });
     assert.equal(plannerLaneLabel(config), 'primary');
@@ -138,11 +138,47 @@ describe('counted run · the act’s terms, read at boot', () => {
     assert.equal(plannerLaneLabel(config), 'primary');
   });
 
+  it('resolves a provider-qualified token to its lane, and keeps the surface as the term', () => {
+    const config = parseCountedRunConfig(
+      JSON.stringify({ ...ACT, seats: { builder: 'codex:openai', reviewer: 'grok-build:xai' } }),
+    )!;
+    assert.equal(config.seats.builder, 'codex');
+    assert.equal(config.seats.reviewer, 'grok-build');
+  });
+
+  it('accepts a provider-qualified planner on the adapter surface', () => {
+    const config = parseCountedRunConfig(JSON.stringify({ ...ACT, planner: 'antigravity:google' }))!;
+    assert.deepEqual(config.planner, { surface: 'antigravity', provider: 'google', model: 'gemini-4-argon' });
+  });
+
+  it('refuses a bare surface that spans two families, naming the ambiguity', () => {
+    // A surface that carries both google and anthropic lanes cannot be named
+    // without its provider: boot must refuse rather than take the first lane.
+    const twoFamilies: readonly SeatRegistrationV1[] = RATIFIED_SEATS.map((seat) => {
+      if (seat.seat_id !== 'builder') return seat;
+      const base = seat.routing[0] as SeatRoutingLane;
+      return {
+        ...seat,
+        routing: [
+          ...seat.routing,
+          { ...base, lane_label: 'test-second-family', surface_id: 'codex', provider: 'google', model_id: 'gemini-4-argon' },
+        ],
+      };
+    });
+    assert.throws(
+      () => parseCountedRunConfig(JSON.stringify(ACT), twoFamilies),
+      (error: unknown) =>
+        error instanceof CountedRunConfigError && /more than one approved lane; name the provider/.test(error.message),
+    );
+    // The qualified form resolves it, proving the refusal is about ambiguity only.
+    assert.ok(parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'codex:openai', reviewer: 'grok-build' } }), twoFamilies));
+  });
+
   const refusals: [string, unknown, RegExp][] = [
     ['not JSON', '{', /not JSON/],
     ['an extra field', { ...ACT, note: 'x' }, /exactly/],
     ['a non-UUID Gateway', { ...ACT, gatewayId: '1880c12d' }, /gatewayId/],
-    ['a Planner stated as provider and model', { ...ACT, planner: { provider: 'google', model: 'gemini-3.1-pro' } }, /planner must be exactly a surface/],
+    ['a Planner stated as provider and model', { ...ACT, planner: { provider: 'google', model: 'gemini-4-argon' } }, /planner must be exactly a surface/],
     ['a Planner surface with no approved architect lane', { ...ACT, planner: 'gemini-3.6-flash' }, /planner surface/],
     ['a builder model id where a surface belongs', { ...ACT, seats: { builder: 'gpt-5.6-sol', reviewer: 'grok-build' } }, /builder surface/],
     ['a reviewer model id where a surface belongs', { ...ACT, seats: { builder: 'codex', reviewer: 'opus-4.7' } }, /reviewer surface/],
@@ -213,7 +249,7 @@ describe('counted run · the act’s terms, read at boot', () => {
 
   it('covers a completion only under the act, on the act’s route, intended and observed', async () => {
     const resolve = countedRunCompletionResolver(parseCountedRunConfig(JSON.stringify(ACT))!);
-    const route = { provider: 'google', model: 'gemini-3.1-pro', executionSurface: 'antigravity' };
+    const route = { provider: 'google', model: 'gemini-4-argon', executionSurface: 'antigravity' };
     const query = { commandId: 'cmd_x', authorizationRef: ACT.actId, repository: 'o/r', scopeRef: 's', intended: route, observed: route };
     assert.equal(await resolve(query), 'covers');
     assert.equal(await resolve({ ...query, authorizationRef: 'other' }), 'does_not_cover');
@@ -233,9 +269,12 @@ describe('counted run · the act’s terms, read at boot', () => {
     assert.equal(createHash('sha256').update(text, 'utf8').digest('hex'), COUNTED_RUN_REGISTRY.sha256);
     assert.ok(pinnedRegisteredSurfaces(text).has('build-room-control-plane'));
     assert.equal(pinnedRegisteredSurfaces(`${text} `).size, 0, 'one byte appended');
-    // The Seat Registry's r7 copy is a different text: it registers nothing here.
-    const r7 = readFileSync(join(root, 'packages', 'seat-registry', 'fixtures', 'execution-surface-registry.md'), 'utf8');
-    assert.equal(pinnedRegisteredSurfaces(r7).size, 0);
+    // The Seat Registry's copy now pins the same doctrine text as this one
+    // (8bc4c55 and 8146435 both carry sha256 060a16a4...), so it declares the
+    // same surfaces. The appended-byte case above is the zero case.
+    const seatRegistryCopy = readFileSync(join(root, 'packages', 'seat-registry', 'fixtures', 'execution-surface-registry.md'), 'utf8');
+    assert.equal(createHash('sha256').update(seatRegistryCopy, 'utf8').digest('hex'), COUNTED_RUN_REGISTRY.sha256);
+    assert.ok(pinnedRegisteredSurfaces(seatRegistryCopy).has('build-room-control-plane'));
   });
 });
 

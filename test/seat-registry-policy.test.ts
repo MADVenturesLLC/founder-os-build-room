@@ -50,10 +50,10 @@ function fixtureContent(filename: string): string {
 
 describe('Test 4 — Per-run model distinctness (r7 §9.1 test 4)', () => {
   it('reviewing model must differ from implementation model and be on the Tier-2 roster fixture', () => {
-    // Read the Tier-2 roster regex from the vendored tier2-shape-check.sh fixture
+    // Read the Tier-2 surface roster from the vendored tier2-shape-check.sh fixture
     const tier2Script = fixtureContent('tier2-shape-check.sh');
-    const rosterMatch = /REVIEWER_ROSTER_REGEX='[^']*\(([^)]+)\)[^']*'/.exec(tier2Script);
-    assert.ok(rosterMatch && rosterMatch[1], 'extracted REVIEWER_ROSTER_REGEX from fixture');
+    const rosterMatch = /REVIEWER_SURFACE_REGEX='[^']*\(([^)]+)\)[^']*'/.exec(tier2Script);
+    assert.ok(rosterMatch && rosterMatch[1], 'extracted REVIEWER_SURFACE_REGEX from fixture');
     const rosterFromFixture = rosterMatch[1]
       .split('|')
       .map((s) => s.replace(/\\/g, '').trim());
@@ -62,22 +62,22 @@ describe('Test 4 — Per-run model distinctness (r7 §9.1 test 4)', () => {
     assert.deepEqual(
       new Set(TIER2_ROSTER_ATTESTATION_IDS),
       new Set(rosterFromFixture),
-      'TIER2_ROSTER_ATTESTATION_IDS matches REVIEWER_ROSTER_REGEX in tier2-shape-check.sh',
+      'TIER2_ROSTER_ATTESTATION_IDS matches REVIEWER_SURFACE_REGEX in tier2-shape-check.sh',
     );
 
     const reviewer = RATIFIED_SEATS.find((s) => s.seat_id === 'independent-reviewer') as SeatRegistrationV1;
     const builder = RATIFIED_SEATS.find((s) => s.seat_id === 'builder') as SeatRegistrationV1;
 
-    // Positive pairing: sonnet-5 builder with gemini-3.1-pro reviewer
-    const geminiLane = reviewer.routing.find((l) => l.model_id === 'gemini-3.1-pro')!;
+    // Positive pairing: sonnet-5 builder with gemini-4-argon reviewer
+    const geminiLane = reviewer.routing.find((l) => l.model_id === 'gemini-4-argon')!;
     assert.ok(
       isDistinctReviewLane('sonnet-5', geminiLane),
-      'sonnet-5 builder + gemini-3.1-pro reviewer is a distinct valid pairing',
+      'sonnet-5 builder + gemini-4-argon reviewer is a distinct valid pairing',
     );
 
-    // Negative pairing 1: same model (gemini-3.1-pro builder with gemini-3.1-pro reviewer)
+    // Negative pairing 1: same model (gemini-4-argon builder with gemini-4-argon reviewer)
     assert.ok(
-      !isDistinctReviewLane('gemini-3.1-pro', geminiLane),
+      !isDistinctReviewLane('gemini-4-argon', geminiLane),
       'same implementation and review model must be rejected',
     );
 
@@ -85,7 +85,7 @@ describe('Test 4 — Per-run model distinctness (r7 §9.1 test 4)', () => {
     const mockOffRosterLane = {
       ...geminiLane,
       model_id: 'claude-haiku-4-5',
-      tier2_attestation_id: 'claude-haiku-4-5',
+      tier2_attestation_id: 'minimax',
     };
     assert.ok(
       !isDistinctReviewLane('sonnet-5', mockOffRosterLane),
