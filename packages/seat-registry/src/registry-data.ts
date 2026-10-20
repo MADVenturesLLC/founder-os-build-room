@@ -2,7 +2,7 @@
  * Seat Registry V1 — registry data and derived lane data (§2.5, §2.7).
  *
  * Every lane mirrors the controlling registries and decisions read at the
- * doctrine pin bd0a9acbdcbcb7e01644feff0e86927bd7dd0dda. No lane, model
+ * doctrine pin 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694. No lane, model
  * identifier, provider class, surface, or binding status is asserted,
  * inferred from a nearby value, or carried forward from prior drafts.
  * Where the corpus establishes no lawful lane, the row is an
@@ -133,10 +133,10 @@ const ARCHITECT_PRIMARY: SeatRoutingLane = {
   model_id: 'gemini-4-argon',
   binding_status: 'approved-binding',
   binding_class: 'primary', // DEC-20260715-14
-  provider_class: 'P1', // deployment_channel: P1 (model-registry, at the pin)
-  data_eligibility: ['public', 'internal'],
+  provider_class: 'NOT_RECORDED', // model-registry: deployment_channel `unverified`; nothing there classifies it P1
+  data_eligibility: ['public'], // model-registry data_class_boundary: "public-class only; internal-or-higher prohibited"
   conditions: [ANTIGRAVITY_MODEL_SELECTION, ANTIGRAVITY_APPROVAL, ANTIGRAVITY_PROHIBITED],
-  derivation: ['DEC-20260815-04 Naming Act', 'DEC-20260807-01 §3.3', 'DEC-20260715-14', 'model-registry.md gemini-4-argon', 'DEC-20261019-01 Clause A'],
+  derivation: ['DEC-20260815-04 Naming Act', 'DEC-20260807-01 §3.3', 'DEC-20260715-14', 'model-registry.md gemini-4-argon', 'model-registry.md gemini-4-argon data_class_boundary', 'DEC-20261019-01 Clause A'],
 };
 
 const ARCHITECT_BOUNDED_RECONCILIATION: SeatRoutingLane = {
@@ -355,10 +355,10 @@ const TIER2_GEMINI: SeatRoutingLane = {
   binding_class: 'tier-2', // DEC-20260719-02
   mode: 'invoked',
   tier2_attestation_id: 'antigravity', // DEC-20261001-01 surface token; FOUNDER-ACT-20261011 B2 binding surface
-  provider_class: 'P1', // deployment_channel: P1
-  data_eligibility: ['public', 'internal'],
+  provider_class: 'NOT_RECORDED', // model-registry: deployment_channel `unverified`; nothing there classifies it P1
+  data_eligibility: ['public'], // model-registry data_class_boundary: "public-class only; internal-or-higher prohibited"
   conditions: [ANTIGRAVITY_MODEL_SELECTION, ANTIGRAVITY_APPROVAL, ANTIGRAVITY_PROHIBITED, REVIEWER_CLAUSE_3],
-  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260815-05', 'DEC-20260719-02 v1.1', 'DEC-20260807-01 §3.3', 'model-registry.md gemini-4-argon', 'DEC-20261019-01 Clause A'],
+  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260815-05', 'DEC-20260719-02 v1.1', 'DEC-20260807-01 §3.3', 'model-registry.md gemini-4-argon', 'model-registry.md gemini-4-argon data_class_boundary', 'DEC-20261019-01 Clause A'],
 };
 
 const TIER2_SOL: SeatRoutingLane = {

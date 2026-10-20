@@ -11,9 +11,12 @@ What it does, and only this:
      assertion in test/seat-registry-fixtures.test.ts;
   4. prints a per-file table and the new pin.
 
-It refuses to run when the working tree has uncommitted changes to the fixture
-directory or to fixtures.ts, so a re-vendor cannot silently mix old and new
-copies. It never edits a fixture's content: the bytes come from the doctrine repo.
+It refuses to WRITE when the working tree has uncommitted changes to the fixture
+directory, fixtures.ts, or the assertion test, so a re-vendor cannot silently
+destroy an edit or mix old and new copies. It resolves and hashes all ten source
+blobs BEFORE the first write, so a missing path at the target commit exits 2 with
+nothing modified. It never edits a fixture's content: the bytes come from the
+doctrine repo.
 
 Exit codes: 0 clean, 1 refused, 2 missing source path at that commit.
 """
@@ -42,6 +45,17 @@ def sh(*args: str) -> str:
     return subprocess.run(args, check=True, capture_output=True, text=True).stdout
 
 
+def dirty_targets() -> list[str]:
+    """Uncommitted paths among the files this tool would overwrite."""
+    out = sh(
+        "git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=all", "--",
+        "packages/seat-registry/fixtures",
+        "packages/seat-registry/src/fixtures.ts",
+        "test/seat-registry-fixtures.test.ts",
+    )
+    return [line for line in out.splitlines() if line.strip()]
+
+
 def main() -> int:
     if len(sys.argv) < 3:
         print("usage: revendor-doctrine-fixtures.py <founderOS-repo> <commit-sha> [--dry-run]", file=sys.stderr)
@@ -65,8 +79,9 @@ def main() -> int:
         print(f"refused: could not resolve {commit} in {repo}", file=sys.stderr)
         return 1
 
-    rows, changed = [], 0
-    new_ts = ts
+    # Resolve and hash every source blob BEFORE writing anything: a missing path at
+    # the target commit must leave the checkout untouched, never half-vendored.
+    resolved: list[tuple[str, str, str, bytes]] = []
     for source_path, filename, old_sha in entries:
         try:
             blob = subprocess.run(
@@ -75,8 +90,22 @@ def main() -> int:
             ).stdout
         except subprocess.CalledProcessError:
             print(f"missing at {new_pin[:8]}: {source_path}", file=sys.stderr)
+            print("nothing was written", file=sys.stderr)
             return 2
-        new_sha = hashlib.sha256(blob).hexdigest()
+        resolved.append((filename, old_sha, hashlib.sha256(blob).hexdigest(), blob))
+
+    if not dry:
+        dirty = dirty_targets()
+        if dirty:
+            print("refused: the vendored targets have uncommitted changes; commit or restore them first:", file=sys.stderr)
+            for line in dirty:
+                print(f"  {line}", file=sys.stderr)
+            print("nothing was written", file=sys.stderr)
+            return 1
+
+    rows, changed = [], 0
+    new_ts = ts
+    for filename, old_sha, new_sha, blob in resolved:
         if new_sha != old_sha:
             changed += 1
         rows.append((filename, old_sha, new_sha))

@@ -3,7 +3,7 @@
  *
  * Ratified plan: seat-registry-v1-implementation-plan-r7-DRAFT.md
  * (sha256 b1bc4159b8cdb1ce6c342d84b4be3650a340abfc467624154ea5ba2a54815b60),
- * governing DEC-20260902-02, doctrine/fixture pin FounderOS bd0a9acbdcbcb7e01644feff0e86927bd7dd0dda.
+ * governing DEC-20260902-02, doctrine/fixture pin FounderOS 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694.
  *
  * These interfaces reproduce the plan's §2.7 declarations. `routing` is an array,
  * not a `{ primary, fallback }` pair, because an empty routing set and a

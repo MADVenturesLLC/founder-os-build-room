@@ -112,15 +112,23 @@ export function parseCountedRunConfig(raw: string | undefined, seats: readonly S
  * from the same lane, so the two never disagree.
  */
 export function plannerLaneLabel(config: CountedRunConfig, seats: readonly SeatRegistrationV1[] = RATIFIED_SEATS): string {
-  const lane = plannerLane(seats, config.planner.surface);
+  // Resolve on surface AND provider: a surface may carry more than one provider's lane,
+  // and re-resolving by surface alone can label the journal with a lane the act never selected.
+  const lane = plannerLane(seats, config.planner.surface, config.planner.provider);
   if (lane === null) throw new CountedRunConfigError('the planner surface is not on an approved architect lane');
   return lane.lane_label;
 }
 
-function plannerLane(seats: readonly SeatRegistrationV1[], surface: string): SeatRegistrationV1['routing'][number] | null {
+function plannerLane(
+  seats: readonly SeatRegistrationV1[],
+  surface: string,
+  provider: string,
+): SeatRegistrationV1['routing'][number] | null {
   return seats
     .find((s) => s.seat_id === 'architect')
-    ?.routing.find((l) => l.binding_status === 'approved-binding' && l.surface_id === surface) ?? null;
+    ?.routing.find(
+      (l) => l.binding_status === 'approved-binding' && l.surface_id === surface && l.provider === provider,
+    ) ?? null;
 }
 
 /** A lane token: `surface` or `surface:provider` — never a model id (`DEC-20261019-01` Clause D). */
