@@ -2,7 +2,7 @@
  * Seat Registry V1 — vendored doctrine fixtures (test 14).
  *
  * Each fixture is byte-captured from FounderOS at the doctrine pin
- * 8bc4c55c3e189eb4e020a7cc8e83bd315c14732c and its SHA-256 recorded here and
+ * 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694 and its SHA-256 recorded here and
  * asserted by the fixture-integrity test. No fixture is vendored without its
  * hash; the hashes are recomputed and compared at test time.
  *
@@ -16,7 +16,7 @@ export interface FixtureEntry {
   readonly sha256: string;
 }
 
-export const DOCTRINE_PIN = '8bc4c55c3e189eb4e020a7cc8e83bd315c14732c';
+export const DOCTRINE_PIN = '8d09e7ed36dcb2a67df2b45daa81c8ad7d170694';
 
 export const FIXTURES: readonly FixtureEntry[] = [
   {
