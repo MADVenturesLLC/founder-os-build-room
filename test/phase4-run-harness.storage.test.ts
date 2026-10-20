@@ -76,7 +76,7 @@ const ADJUDICATION_TOKEN = 'phase4-harness-adjudication-token-long-enough';
 const COUNTED_RUN_TOKEN = 'phase4-harness-counted-run-token-long-enough';
 const DEPLOYMENT = 'test-deployment-0001';
 const SET_ID = 'FOUNDER-ACT-EXAMPLE-PHASE4-COUNTED-RUNS';
-const PLANNER = { provider: 'google', model: 'gemini-3.1-pro' };
+const PLANNER = { provider: 'google', model: 'gemini-4-argon' };
 const PLANNER_ROUTE = { provider: PLANNER.provider, model: PLANNER.model, executionSurface: 'antigravity' };
 const TIMINGS = { answerTimeoutMs: 2_000, planTimeoutMs: 5_000, statusIntervalMs: 20 };
 
@@ -485,7 +485,7 @@ describe('phase 4 run harness · a run over the Q9 routes, as a counted run woul
       executionSurface: 'build-room-control-plane',
     });
     const journaled = record.commands[0]!.rows.find((r) => r.eventType === 'journaled')!;
-    assert.deepEqual([journaled.authorizationRef, journaled.intendedModel, journaled.intendedSurface], [set.setId, 'gemini-3.1-pro', 'antigravity']);
+    assert.deepEqual([journaled.authorizationRef, journaled.intendedModel, journaled.intendedSurface], [set.setId, 'gemini-4-argon', 'antigravity']);
     assert.deepEqual(record.commands[0]!.rows.map((r) => r.eventType), ['journaled', 'identity_bound', 'dispatched', 'completed']);
     assert.equal(record.journalVerified, true);
     assert.equal(record.deploymentIdAtEnd, DEPLOYMENT);
