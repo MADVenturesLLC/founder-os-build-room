@@ -269,9 +269,12 @@ describe('counted run · the act’s terms, read at boot', () => {
     assert.equal(createHash('sha256').update(text, 'utf8').digest('hex'), COUNTED_RUN_REGISTRY.sha256);
     assert.ok(pinnedRegisteredSurfaces(text).has('build-room-control-plane'));
     assert.equal(pinnedRegisteredSurfaces(`${text} `).size, 0, 'one byte appended');
-    // The Seat Registry's r7 copy is a different text: it registers nothing here.
-    const r7 = readFileSync(join(root, 'packages', 'seat-registry', 'fixtures', 'execution-surface-registry.md'), 'utf8');
-    assert.equal(pinnedRegisteredSurfaces(r7).size, 0);
+    // The Seat Registry's copy now pins the same doctrine text as this one
+    // (8bc4c55 and 8146435 both carry sha256 060a16a4...), so it declares the
+    // same surfaces. The appended-byte case above is the zero case.
+    const seatRegistryCopy = readFileSync(join(root, 'packages', 'seat-registry', 'fixtures', 'execution-surface-registry.md'), 'utf8');
+    assert.equal(createHash('sha256').update(seatRegistryCopy, 'utf8').digest('hex'), COUNTED_RUN_REGISTRY.sha256);
+    assert.ok(pinnedRegisteredSurfaces(seatRegistryCopy).has('build-room-control-plane'));
   });
 });
 

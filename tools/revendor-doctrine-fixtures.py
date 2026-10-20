@@ -94,11 +94,14 @@ def main() -> int:
         FIXTURES_TS.write_text(new_ts)
         TEST_TS.write_text(test_ts)
 
-    print(f"doctrine pin: {old_pin} -> {new_pin}{'  (dry run)' if dry else ''}")
+    print(f"doctrine pin: {old_pin} -> {new_pin}   {'DRY RUN — nothing written' if dry else 'WRITING'}")
     print(f"{'fixture':58s} {'changed':7s} sha256")
     for filename, old_sha, new_sha in rows:
         print(f"{filename:58s} {'YES' if new_sha != old_sha else 'no':7s} {new_sha[:16]}…")
-    print(f"\n{changed} of {len(rows)} fixture(s) would change.")
+    if dry:
+        print(f"\n{changed} of {len(rows)} fixture(s) would change. Nothing was written.")
+    else:
+        print(f"\n{changed} of {len(rows)} fixture(s) written; DOCTRINE_PIN and the test assertion updated.")
     if changed == 0 and old_pin == new_pin:
         print("idempotent: this is the pin the fixtures already carry.")
     return 0

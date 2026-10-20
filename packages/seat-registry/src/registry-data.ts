@@ -354,7 +354,7 @@ const TIER2_GEMINI: SeatRoutingLane = {
   binding_status: 'approved-binding',
   binding_class: 'tier-2', // DEC-20260719-02
   mode: 'invoked',
-  tier2_attestation_id: 'gemini', // DEC-20261001-01: surface token (model_id kept for dispatch pinning)
+  tier2_attestation_id: 'antigravity', // DEC-20261001-01 surface token; FOUNDER-ACT-20261011 B2 binding surface
   provider_class: 'P1', // deployment_channel: P1
   data_eligibility: ['public', 'internal'],
   conditions: [ANTIGRAVITY_MODEL_SELECTION, ANTIGRAVITY_APPROVAL, ANTIGRAVITY_PROHIBITED, REVIEWER_CLAUSE_3],
@@ -414,7 +414,7 @@ const TIER2_GROK: SeatRoutingLane = {
   binding_status: 'approved-binding',
   binding_class: 'tier-2', // DEC-20260719-02 v1.1
   mode: 'invoked',
-  tier2_attestation_id: 'grok', // DEC-20261001-01: surface token (model_id kept for dispatch pinning)
+  tier2_attestation_id: 'grok-build', // DEC-20261001-01 surface token; FOUNDER-ACT-20261011 B2 binding surface
   provider_class: 'NOT_RECORDED', // deployment_channel: unverified
   data_eligibility: ['public'], // public-class only by default (§2.4.2)
   conditions: [GROK_BULLET_1, GROK_BULLET_2],
@@ -438,7 +438,7 @@ const TIER2_CLAUDE_CODE: SeatRoutingLane = {
   binding_status: 'approved-binding',
   binding_class: 'tier-2',
   mode: 'invoked',
-  tier2_attestation_id: 'claude-code', // DEC-20261001-01: surface token; on TIER2_ROSTER_ATTESTATION_IDS
+  tier2_attestation_id: 'claude-code', // NOT on the FOUNDER-ACT-20261011 B2 binding surface roster (antigravity|codex|chatgpt|grok-build); retained for the surface-keyed seat act, with the binding Claude lane moving to antigravity under DEC-20261019-01 Clause D in Slice 2
   provider_class: 'P1', // deployment_channel: P1 (model-registry, sonnet-5)
   data_eligibility: ['public', 'internal'], // sonnet-5 is ZDR-eligible (model-registry); no data-boundary condition recorded
   conditions: [],

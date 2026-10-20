@@ -2,7 +2,7 @@
  * Seat Registry V1 — vendored doctrine fixtures (test 14).
  *
  * Each fixture is byte-captured from FounderOS at the doctrine pin
- * bd0a9acbdcbcb7e01644feff0e86927bd7dd0dda and its SHA-256 recorded here and
+ * 8bc4c55c3e189eb4e020a7cc8e83bd315c14732c and its SHA-256 recorded here and
  * asserted by the fixture-integrity test. No fixture is vendored without its
  * hash; the hashes are recomputed and compared at test time.
  *
@@ -16,23 +16,23 @@ export interface FixtureEntry {
   readonly sha256: string;
 }
 
-export const DOCTRINE_PIN = 'bd0a9acbdcbcb7e01644feff0e86927bd7dd0dda';
+export const DOCTRINE_PIN = '8bc4c55c3e189eb4e020a7cc8e83bd315c14732c';
 
 export const FIXTURES: readonly FixtureEntry[] = [
   {
     source_path: '04-agents/role-registry.md',
     filename: 'role-registry.md',
-    sha256: '100bb73f1364a92dad072587cb5f51eb6ccb77aea6a0033fc08abc83eb5b936b',
+    sha256: '2233971a66fe8ef9c085fe12b4058d0a4977b6ea17fbc2b23d015d7c4447064d',
   },
   {
     source_path: '04-agents/model-registry.md',
     filename: 'model-registry.md',
-    sha256: '7e45438a5c17f6765a6842df6e17bd0d1c0898576839ae1e66c6dd14de03fe0b',
+    sha256: 'e0bebd9dacbf00c79d6d4d0b8586fb2ffafc8f40918fd01c185665dac2f55372',
   },
   {
     source_path: '04-agents/execution-surface-registry.md',
     filename: 'execution-surface-registry.md',
-    sha256: '4054e58dd0f5e053436cfacfa09ed779a668a822cfe435f4a4038cd16417b060',
+    sha256: '060a16a40abb58794cf960d33010bee006e06d4f699f32f61704d1ecd88e2055',
   },
   {
     source_path: '07-decisions/DEC-20260815-05-reviewer-eligibility-roster.md',
@@ -42,7 +42,7 @@ export const FIXTURES: readonly FixtureEntry[] = [
   {
     source_path: '00-system/scripts/tier2-shape-check.sh',
     filename: 'tier2-shape-check.sh',
-    sha256: 'bf46e5a20ab0af14615146ea978ed28b0559be73fc41014b2fd6ff777a98eb94',
+    sha256: 'fcaa4d3514903cfa2e230f7d3f44f764bdc0ca748337d95f7af7de6051b7783b',
   },
   {
     source_path: '07-decisions/DEC-20260716-02-model-portfolio-and-routing-strategy.md',
@@ -67,7 +67,7 @@ export const FIXTURES: readonly FixtureEntry[] = [
   {
     source_path: '07-decisions/decision-log.md',
     filename: 'decision-log.md',
-    sha256: 'fdb2b4f37fca5eba7351dd30c867fa1875239d27df915c181d1c058d5000a706',
+    sha256: '30a54633f45b5b95b4e3074e93aaaf71d9b082f370673ac554f022006ac6de09',
   },
 ] as const;
 

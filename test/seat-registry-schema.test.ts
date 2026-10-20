@@ -318,14 +318,18 @@ describe('Test 11 — toAttentionState (r7 §9.1 test 11)', () => {
 });
 
 describe('BR-PHASE4-SURFACE-KEYED-SEATS-R1 — the claude-code reviewer lane', () => {
-  it('carries claude-code as an approved tier-2 reviewer lane, attested by its surface token', () => {
+  it('carries claude-code as an approved tier-2 reviewer lane, but its surface token is not on the binding roster', () => {
     const reviewer = RATIFIED_SEATS.find((s) => s.seat_id === 'independent-reviewer') as SeatRegistrationV1;
     const lane = reviewer.routing.find((l) => l.surface_id === 'claude-code');
     assert.ok(lane !== undefined, 'the reviewer seat carries a claude-code lane');
     assert.equal(lane.binding_status, 'approved-binding');
     assert.equal(lane.binding_class, 'tier-2');
     assert.equal(lane.tier2_attestation_id, 'claude-code');
-    assert.ok(TIER2_ROSTER_ATTESTATION_IDS.includes(lane.tier2_attestation_id as never), 'the attestation token is on the Tier-2 roster');
+    assert.equal(
+      TIER2_ROSTER_ATTESTATION_IDS.includes(lane.tier2_attestation_id as never),
+      false,
+      'FOUNDER-ACT-20261011 B2 limits binding Tier-2 verdicts to antigravity|codex|chatgpt|grok-build; the claude-code lane is non-binding until DEC-20261019-01 Clause D moves it to antigravity',
+    );
   });
 
   it('retired the claude-code-tier2 absent lane the derivation act anticipated', () => {

@@ -12,22 +12,22 @@
 import type { SeatRoutingLane } from './schema.js';
 
 /**
- * The closed Tier-2 roster as the vendored `tier2-shape-check.sh` fixture
- * records it (`REVIEWER_ROSTER_REGEX`): the Tier2-Reviewer-Id tokens accepted
- * by the gate. DEC-20261001-01 (ratified 2026-10-01) re-bases the roster from
- * model ids to EXECUTION-SURFACE ATTESTATION TOKENS — model ids churn
- * (provider retirement, HTTP 404, unserved tiers) and the churn failure mode
- * is a review that ran but could not be attested. Prior model-id roster
- * entries map: gemini-4-argon → gemini; gpt-6.1-sol/gpt-6-astra/gpt-6-luna → openai;
- * grok-4.5 → grok. The exact served model is recorded — never gated — in the
- * Tier2-Reviewer-Model: evidence line (DEC-20261001-01 clause 3).
+ * The closed Tier-2 surface roster as the vendored `tier2-shape-check.sh`
+ * fixture records it (`REVIEWER_SURFACE_REGEX`): the Tier2-Reviewer-Id tokens
+ * accepted by the gate. DEC-20261001-01 (ratified 2026-10-01) re-bases the
+ * roster from model ids to EXECUTION-SURFACE ATTESTATION TOKENS — model ids
+ * churn (provider retirement, HTTP 404, unserved tiers) and the churn failure
+ * mode is a review that ran but could not be attested. The exact served model
+ * is recorded — never gated — in the Tier2-Reviewer-Model: evidence line
+ * (DEC-20261001-01 clause 3). FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION
+ * B2 fixes the surface set to the four tokens below; a reviewer on any other
+ * surface cannot issue a binding Tier-2 verdict.
  */
 export const TIER2_ROSTER_ATTESTATION_IDS: readonly string[] = [
-  'claude-code',
+  'antigravity',
   'codex',
-  'grok',
-  'gemini',
-  'minimax',
+  'chatgpt',
+  'grok-build',
 ] as const;
 
 /**
