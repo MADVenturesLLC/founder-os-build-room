@@ -117,7 +117,7 @@ async function readOneLine(socketPath: string, timeoutMs = 5_000): Promise<strin
 
 describe(
   'phase0 occupancy lock (AT-R4-22, r4 §7.13)',
-  { skip: platform() !== 'darwin' },
+  { skip: platform() !== 'darwin' ? 'macOS only: the occupancy-lock proof uses the macOS O_EXLOCK kernel lock' : false },
   () => {
     let dir: string;
 
