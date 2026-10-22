@@ -16,12 +16,22 @@
 # UNTRUSTED INPUT. The PR body reaches the checker through an env mapping
 # only, never shell interpolation; no `${{ }}` expression appears inside a
 # run: script. On pull requests the checker and its data file are taken from
-# the base revision when the base has them, so a PR cannot weaken the gate or
-# the allowlists that judge it. A PR that adds or changes them is judged by
+# the base revision when the base has them, so a PR cannot weaken the script
+# or the allowlists that judge it without changing this workflow (see WHAT
+# THIS DOES NOT PROTECT). A PR that adds or changes them is judged by
 # the base copy, or by its own copy only when the base has none.
 #
 # SHAPE ONLY. The surface, the trailer and the body line are self-attested;
 # the check validates their form, never their truth.
+#
+# WHAT THIS DOES NOT PROTECT. This workflow runs on `pull_request`, so a pull
+# request can edit or replace it, as it can attribution-shape.yml; and, as
+# founder-authorization.yml records for its own status, a pull request can
+# also add a workflow that reports a `served-model` result of its own. Both
+# are deliberate circumvention through a workflow change, visible in the diff
+# and requiring founder approval (below), not accidents. The Founder chose
+# this design over a `pull_request_target` workflow on 2026-10-22, after
+# Copilot review 5617495238, since that design leaves the second route open.
 #
 # Changes to this workflow's triggers, permissions, or steps require founder
 # approval before merge (same rule class as DEC-20260718-02 clause 4).

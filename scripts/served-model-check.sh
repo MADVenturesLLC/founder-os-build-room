@@ -64,7 +64,8 @@ base="$1"
 head="$2"
 [[ "$base" =~ ^[0-9a-f]{40}$ ]] || refuse "base SHA is not 40 lowercase hex"
 [[ "$head" =~ ^[0-9a-f]{40}$ ]] || refuse "head SHA is not 40 lowercase hex"
-[[ -v PR_BODY ]] || refuse "PR_BODY is unset"
+# `${PR_BODY+set}`, not `-v`: macOS runners ship bash 3.2, which lacks `-v`.
+[[ -n "${PR_BODY+set}" ]] || refuse "PR_BODY is unset"
 
 lanes_file="${LANES_FILE:-$(dirname "$0")/served-model-lanes.json}"
 [[ -r "$lanes_file" ]] || refuse "lanes file $lanes_file is not readable"

@@ -243,6 +243,26 @@ describe('served-model check — coverage fails closed', () => {
     assert.equal(res.status, 0, res.out);
   });
 
+  it('covers a merge commit that adds content of its own, and not a clean merge', () => {
+    const r = repo();
+    git(r.dir, ['checkout', '-q', '-b', 'side']);
+    r.commit([...CLAUDE, OPUS]);
+    git(r.dir, ['checkout', '-q', '-']);
+    r.commit([...CLAUDE, OPUS]);
+    git(r.dir, ['merge', '-q', '--no-edit', 'side', '-m', `clean merge\n\n${CLAUDE.join('\n')}`]);
+    const clean = run(r.dir, r.base, git(r.dir, ['rev-parse', 'HEAD']), '', FROM);
+    git(r.dir, ['reset', '-q', '--hard', 'HEAD~1']);
+    git(r.dir, ['merge', '-q', '--no-commit', 'side']);
+    writeFileSync(join(r.dir, 'added-in-merge.txt'), 'x\n');
+    git(r.dir, ['add', '.']);
+    git(r.dir, ['commit', '-q', '-m', `merge adding a file\n\n${CLAUDE.join('\n')}`]);
+    const evil = run(r.dir, r.base, git(r.dir, ['rev-parse', 'HEAD']), '', FROM);
+    r.done();
+    assert.equal(clean.status, 0, clean.out);
+    assert.equal(evil.status, 1, evil.out);
+    assert.match(evil.out, /no Co-Authored-By trailer that maps/);
+  });
+
   it('reads trailers as git does, so trailer-shaped text above the block does not count', () => {
     const r = repo();
     const head = r.commit(['Execution-Surface: claude-code', OPUS, '', 'Body text after.']);
