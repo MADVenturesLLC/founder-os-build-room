@@ -1,15 +1,22 @@
 /**
  * `npm run test:strict` is a claim: "every test in the suite ran, except the
- * platform-bound skips it names". These cases keep the claim honest.
+ * platform-bound and opt-in skips it names". These cases keep the claim honest.
  *
  * WHY THE SKIP MARKERS AND NOT THE COUNTER. Node's `skipped` total counts a
  * skipped TEST but not a skipped GROUP: a `describe(..., { skip })` registers
  * none of its children, so they appear in no counter at all. The storage
  * suites skip at group level, so a run with no database reports `skipped 0`.
  * The reporter does print a skip marker (U+FE63) for every skipped group and
- * every skipped test, so the strict verdict counts those. The first case below
- * runs a real child `node --test` to pin that behaviour of Node itself, so a
+ * every skipped test, so the strict verdict counts those. The first cases below
+ * run a real child `node --test` to pin that behaviour of Node itself, so a
  * Node release that changes it fails here instead of passing quietly.
+ *
+ * WHY TWO PASSES. Some storage suites run only with the application connected
+ * as `br_app_runtime` (`BUILDROOM_RUNTIME_ROLE=1`) and skip otherwise. The
+ * strict command runs every file in ordinary mode, then the runtime-role suites
+ * in that mode. The ordinary pass may skip with the runtime-role reason only
+ * because the second pass runs those suites, and the second pass may skip
+ * nothing.
  */
 
 import { after, describe, it } from 'node:test';
@@ -19,8 +26,9 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readSpecSummary } from './support/runtime-role-tier.js';
+import { RUNTIME_ROLE_SUITES, readSpecSummary } from './support/runtime-role-tier.js';
 import {
+  RUNTIME_ROLE_TIER_REASON,
   STRICT_ALLOWED_SKIPS,
   isAllowedSkip,
   missingPrerequisites,
@@ -53,6 +61,22 @@ function runFixture(name: string, body: string): { status: number | null; output
   return { status: result.status, output: result.stdout };
 }
 
+/** Test sources other than this file, by file name. */
+function testSources(): ReadonlyMap<string, string> {
+  return new Map(
+    readdirSync(SOURCE_DIR)
+      .filter((file) => file.endsWith('.test.ts') && file !== 'strict-reach.test.ts')
+      .map((file) => [file, readFileSync(join(SOURCE_DIR, file), 'utf8')] as const),
+  );
+}
+
+function packageScripts(): Record<string, string> {
+  const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
+    scripts?: Record<string, string>;
+  };
+  return manifest.scripts ?? {};
+}
+
 const GROUP_SKIP_REASON = 'TEST_DATABASE_URL is not set — fixture group did not run';
 
 describe('strict-reach · a skipped group is caught although Node does not count it', () => {
@@ -81,7 +105,7 @@ describe('strict-reach · a skipped group is caught although Node does not count
   });
 
   it('refuses to call the run a pass', () => {
-    const verdict = strictVerdict(run.status, readSpecSummary(run.output), readSkipMarkers(run.output), 'darwin');
+    const verdict = strictVerdict(run.status, readSpecSummary(run.output), readSkipMarkers(run.output), 'darwin', 'ordinary');
     assert.ok(verdict !== null, 'a run that skipped a group is not a pass');
     assert.match(verdict, /a database group/);
     assert.match(verdict, /TEST_DATABASE_URL is not set/);
@@ -93,14 +117,14 @@ describe('strict-reach · other run shapes', () => {
     const run = runFixture('test-skip', `test('one skipped test', { skip: 'no reason to run' }, () => {});\ntest('ran', () => {});`);
     const markers = readSkipMarkers(run.output);
     assert.deepEqual(markers.map((m) => m.reason), ['no reason to run']);
-    assert.ok(strictVerdict(run.status, readSpecSummary(run.output), markers, 'darwin') !== null);
+    assert.ok(strictVerdict(run.status, readSpecSummary(run.output), markers, 'darwin', 'ordinary') !== null);
   });
 
   it('a clean run is a pass', () => {
     const run = runFixture('clean', `describe('a group', () => { it('ran', () => {}); });\ntest('also ran', () => {});`);
     const markers = readSkipMarkers(run.output);
     assert.deepEqual(markers, []);
-    assert.equal(strictVerdict(run.status, readSpecSummary(run.output), markers, 'darwin'), null);
+    assert.equal(strictVerdict(run.status, readSpecSummary(run.output), markers, 'darwin', 'ordinary'), null);
   });
 
   it('a failing run that also skipped reports both', () => {
@@ -108,14 +132,14 @@ describe('strict-reach · other run shapes', () => {
       'fail-and-skip',
       `test('fails', () => { throw new Error('boom'); });\ndescribe('skipped group', { skip: 'not here' }, () => { it('x', () => {}); });`,
     );
-    const verdict = strictVerdict(run.status, readSpecSummary(run.output), readSkipMarkers(run.output), 'darwin');
+    const verdict = strictVerdict(run.status, readSpecSummary(run.output), readSkipMarkers(run.output), 'darwin', 'ordinary');
     assert.ok(verdict !== null);
     assert.match(verdict, /exited 1/);
     assert.match(verdict, /skipped group/);
   });
 
   it('an unreadable output is not a pass', () => {
-    assert.ok(strictVerdict(0, readSpecSummary('nothing a reporter printed'), [], 'darwin') !== null);
+    assert.ok(strictVerdict(0, readSpecSummary('nothing a reporter printed'), [], 'darwin', 'ordinary') !== null);
   });
 
   it('reads a marker through ANSI colour codes', () => {
@@ -126,52 +150,124 @@ describe('strict-reach · other run shapes', () => {
   it('a skip with no reason has an empty reason, which no allowance matches', () => {
     const markers = readSkipMarkers('  ﹣ bare skip (0.1ms)\n');
     assert.deepEqual(markers, [{ name: 'bare skip', reason: '' }]);
-    assert.equal(isAllowedSkip(markers[0]!, 'darwin'), false);
+    assert.equal(isAllowedSkip(markers[0]!, 'darwin', 'ordinary'), false);
+    assert.equal(isAllowedSkip(markers[0]!, 'linux', 'ordinary'), false);
   });
 });
 
-describe('strict-reach · the only skips allowed are platform-bound or opt-in, and each is named', () => {
-  const linuxOnly = 'Linux only: the proof reads /proc and ss';
+describe('strict-reach · platform-bound and opt-in skips are allowed only on the platform they belong to', () => {
+  const allowed = (reason: string, platform: NodeJS.Platform): boolean =>
+    isAllowedSkip({ name: 'x', reason }, platform, 'ordinary');
+  const reasonOf = (fragment: string): string => {
+    const entry = STRICT_ALLOWED_SKIPS.find((candidate) => candidate.reason.includes(fragment));
+    assert.ok(entry !== undefined, `no allowance contains: ${fragment}`);
+    return entry.reason;
+  };
 
-  it('allows a Linux-only skip off Linux, and refuses it on Linux', () => {
-    assert.equal(isAllowedSkip({ name: 'x', reason: linuxOnly }, 'darwin'), true);
-    assert.equal(isAllowedSkip({ name: 'x', reason: linuxOnly }, 'linux'), false);
+  it('Linux-only proofs: allowed off Linux, refused on Linux', () => {
+    const linuxOnly = reasonOf('Linux only: the proof reads /proc and ss');
+    assert.equal(allowed(linuxOnly, 'darwin'), true);
+    assert.equal(allowed(linuxOnly, 'linux'), false);
+    const notLinux = reasonOf('not linux — the real systemd-creds suite did not run');
+    assert.equal(allowed(notLinux, 'darwin'), true);
+    assert.equal(allowed(notLinux, 'linux'), false);
+  });
+
+  it('macOS-only proofs: allowed off macOS, refused on macOS', () => {
+    const notDarwin = reasonOf('not darwin — the real-Keychain suite did not run');
+    assert.equal(allowed(notDarwin, 'linux'), true);
+    assert.equal(allowed(notDarwin, 'darwin'), false);
+    const occupancy = reasonOf('macOS only: the occupancy-lock proof');
+    assert.equal(allowed(occupancy, 'linux'), true);
+    assert.equal(allowed(occupancy, 'darwin'), false);
+  });
+
+  it('opt-in custody suites: each allowed only on its own platform', () => {
+    const keychain = reasonOf('BUILDROOM_CUSTODY_MACOS is not set');
+    assert.equal(allowed(keychain, 'darwin'), true);
+    assert.equal(allowed(keychain, 'linux'), false);
+    const systemd = reasonOf('BUILDROOM_CUSTODY_LINUX is not set');
+    assert.equal(allowed(systemd, 'linux'), true);
+    assert.equal(allowed(systemd, 'darwin'), false);
   });
 
   it('refuses any reason it does not list', () => {
-    assert.equal(isAllowedSkip({ name: 'x', reason: 'TEST_DATABASE_URL is not set' }, 'darwin'), false);
-  });
-
-  it('passes a run whose only skips are allowed, and names them in the verdict-free report', () => {
-    const output =
-      `﹣ linux proof (0.1ms) # ${linuxOnly}\n✔ ran (0.1ms)\n` +
-      'ℹ tests 1\nℹ suites 1\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\n';
-    const markers = readSkipMarkers(output);
-    const summary = readSpecSummary(output);
-    assert.equal(strictVerdict(0, summary, markers, 'darwin'), null);
-    const report = reachReport(summary!, markers, 7);
-    assert.match(report, /1 tests in 7 files ran/);
-    assert.match(report, /Linux only/);
-    assert.match(report, /npm test/, 'each allowed skip names where it does run');
+    assert.equal(allowed('TEST_DATABASE_URL is not set', 'darwin'), false);
   });
 
   it('every allowed reason appears verbatim in a test source, so the list cannot outlive the skip', () => {
-    const sources = readdirSync(SOURCE_DIR)
-      .filter((file) => file.endsWith('.test.ts') && file !== 'strict-reach.test.ts')
-      .map((file) => readFileSync(join(SOURCE_DIR, file), 'utf8'))
-      .join('\n');
-    for (const allowed of STRICT_ALLOWED_SKIPS) {
-      assert.ok(sources.includes(allowed.reason), `no test source skips with: ${allowed.reason}`);
+    const sources = [...testSources().values()].join('\n');
+    for (const entry of STRICT_ALLOWED_SKIPS) {
+      assert.ok(sources.includes(entry.reason), `no test source skips with: ${entry.reason}`);
     }
   });
 
   it('every allowed skip names an npm script that exists', () => {
-    const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
-      scripts?: Record<string, string>;
-    };
-    for (const allowed of STRICT_ALLOWED_SKIPS) {
-      assert.ok(manifest.scripts?.[allowed.command] !== undefined, `missing npm script: ${allowed.command}`);
+    const scripts = packageScripts();
+    for (const entry of STRICT_ALLOWED_SKIPS) {
+      assert.ok(scripts[entry.command] !== undefined, `missing npm script: ${entry.command}`);
     }
+  });
+});
+
+describe('strict-reach · the runtime-role suites run in a second pass', () => {
+  const tierSkip = { name: 'phase 4 lifecycle · reconstruction', reason: RUNTIME_ROLE_TIER_REASON };
+
+  it('the ordinary pass may skip with the runtime-role reason, on any platform', () => {
+    assert.equal(isAllowedSkip(tierSkip, 'darwin', 'ordinary'), true);
+    assert.equal(isAllowedSkip(tierSkip, 'linux', 'ordinary'), true);
+  });
+
+  it('the runtime-role pass may skip nothing, not even an otherwise allowed reason', () => {
+    assert.equal(isAllowedSkip(tierSkip, 'darwin', 'runtime-role'), false);
+    const linuxOnly = { name: 'x', reason: 'Linux only: the proof reads /proc and ss' };
+    assert.equal(isAllowedSkip(linuxOnly, 'darwin', 'ordinary'), true);
+    assert.equal(isAllowedSkip(linuxOnly, 'darwin', 'runtime-role'), false);
+  });
+
+  it('every suite that skips with the runtime-role reason is one the second pass runs', () => {
+    // Without this, the ordinary pass could allow a skip that no pass ever runs.
+    const suffix = '.storage.test.ts';
+    const skipping = [...testSources()]
+      .filter(([, text]) => text.includes(RUNTIME_ROLE_TIER_REASON))
+      .map(([file]) => file);
+    assert.ok(skipping.length > 0, 'the runtime-role reason must be found in at least one suite');
+    for (const file of skipping) {
+      assert.ok(file.endsWith(suffix), `${file} skips for the runtime role but is not a storage suite`);
+      assert.ok(RUNTIME_ROLE_SUITES.includes(file.slice(0, -suffix.length)), `${file} is not in RUNTIME_ROLE_SUITES`);
+    }
+  });
+
+  it('the runner runs RUNTIME_ROLE_SUITES with BUILDROOM_RUNTIME_ROLE=1 (a text check on its source)', () => {
+    const runner = readFileSync(join(SOURCE_DIR, 'support', 'run-strict.ts'), 'utf8');
+    assert.match(runner, /RUNTIME_ROLE_SUITES/);
+    assert.match(runner, /BUILDROOM_RUNTIME_ROLE: '1'/);
+    assert.match(runner, /runPass\('runtime-role', runtimeRoleFiles,/, 'and judges those files as the runtime-role pass');
+  });
+});
+
+describe('strict-reach · the report names both passes and every skip', () => {
+  const ordinaryOutput =
+    '﹣ linux proof (0.1ms) # Linux only: the proof reads /proc and ss\n' +
+    `﹣ phase 4 group (0.1ms) # ${RUNTIME_ROLE_TIER_REASON}\n✔ ran (0.1ms)\n` +
+    'ℹ tests 1\nℹ suites 2\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\n';
+  const runtimeOutput = '✔ ran as the runtime role (0.1ms)\nℹ tests 3\nℹ suites 1\nℹ pass 3\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\n';
+
+  it('both passes are accepted', () => {
+    assert.equal(strictVerdict(0, readSpecSummary(ordinaryOutput), readSkipMarkers(ordinaryOutput), 'darwin', 'ordinary'), null);
+    assert.equal(strictVerdict(0, readSpecSummary(runtimeOutput), readSkipMarkers(runtimeOutput), 'darwin', 'runtime-role'), null);
+  });
+
+  it('the report states each pass and where each skip runs instead', () => {
+    const report = reachReport(
+      { summary: readSpecSummary(ordinaryOutput)!, markers: readSkipMarkers(ordinaryOutput), fileCount: 7 },
+      { summary: readSpecSummary(runtimeOutput)!, markers: readSkipMarkers(runtimeOutput), fileCount: 2 },
+    );
+    assert.match(report, /ordinary pass: 1 tests in 7 files ran and passed/);
+    assert.match(report, /runtime-role pass: 3 tests in 2 files ran and passed as br_app_runtime/);
+    assert.match(report, /1 skipped .*runtime-role pass/, 'the tier skip is reported as run in the second pass');
+    assert.match(report, /Linux only/);
+    assert.match(report, /npm test/, 'each platform skip names where it does run');
   });
 });
 
@@ -199,6 +295,13 @@ describe('strict-reach · boot prerequisites fail closed and are all reported at
     assert.ok(missing.some((m) => /MADBRIDGE_CHECKOUT/.test(m)));
   });
 
+  it('says MADBRIDGE_CHECKOUT is separate from the variable the Prerequisite C check reads', () => {
+    const missing = missingPrerequisites({ ...complete, env: { ...complete.env, MADBRIDGE_CHECKOUT: '' } });
+    assert.equal(missing.length, 1);
+    assert.match(missing[0]!, /BUILDROOM_PREREQC_TUI_ROOT/);
+    assert.match(missing[0]!, /7d37a61/, 'and names the commit the clone must contain');
+  });
+
   it('treats a blank variable as missing', () => {
     const missing = missingPrerequisites({ ...complete, env: { ...complete.env, TEST_DATABASE_URL: '  ' } });
     assert.equal(missing.length, 1);
@@ -217,10 +320,7 @@ describe('strict-reach · the command', () => {
   });
 
   it('is wired in package.json: builds first, then runs the strict runner', () => {
-    const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
-      scripts?: Record<string, string>;
-    };
-    const command = manifest.scripts?.['test:strict'];
+    const command = packageScripts()['test:strict'];
     assert.ok(command !== undefined, 'test:strict must exist');
     assert.match(command, /^npm run build && /);
     assert.match(command, /dist\/test\/support\/run-strict\.js/);

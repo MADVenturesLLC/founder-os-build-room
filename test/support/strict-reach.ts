@@ -14,12 +14,25 @@
  * (U+FE63) for every skipped group and every skipped test, so the verdict here
  * reads those markers rather than trusting the counter.
  * `test/strict-reach.test.ts` pins that behaviour against a real Node run.
+ *
+ * TWO PASSES. Some storage suites run only with the application connected as
+ * `br_app_runtime` (`BUILDROOM_RUNTIME_ROLE=1`) and skip otherwise. The runner
+ * runs every file in the ordinary pass, then `RUNTIME_ROLE_SUITES` in the
+ * runtime-role pass. The ordinary pass may skip with the runtime-role reason
+ * because the second pass runs those suites; the second pass may skip nothing.
  */
 
 import { tierVerdict, type SpecSummary } from './runtime-role-tier.js';
 
 /** Node's spec reporter prefixes a skipped test or group with this character. */
 const SKIP_MARKER = '﹣';
+
+/** The two passes `test:strict` makes over the suite. */
+export type StrictPass = 'ordinary' | 'runtime-role';
+
+/** The reason a storage suite gives when it runs only as `br_app_runtime`, verbatim from its source. */
+export const RUNTIME_ROLE_TIER_REASON =
+  'runs in the runtime-role tier (npm run test:storage:runtime-role): the journal accepts only br_app_runtime';
 
 export interface SkipMarker {
   readonly name: string;
@@ -38,30 +51,58 @@ export interface AllowedSkip {
   readonly runsWhere: string;
 }
 
+const notOn = (excluded: NodeJS.Platform) => (platform: NodeJS.Platform): boolean => platform !== excluded;
+const onlyOn = (included: NodeJS.Platform) => (platform: NodeJS.Platform): boolean => platform === included;
+
 /**
- * The skips a strict run may contain. Each is bound to a platform or is an
- * explicit opt-in, and each names where it does run. Anything else skipped
- * fails the run, including a reason that changed wording: that fails closed.
+ * The skips the ordinary pass may contain. Each is bound to a platform, is an
+ * explicit opt-in, or is run by the runtime-role pass, and each names where it
+ * does run. Anything else skipped fails the run, including a reason that
+ * changed wording: that fails closed.
  */
 export const STRICT_ALLOWED_SKIPS: readonly AllowedSkip[] = [
   {
+    reason: RUNTIME_ROLE_TIER_REASON,
+    expectedOn: () => true,
+    command: 'test:storage:runtime-role',
+    runsWhere: "run in this command's runtime-role pass, as br_app_runtime",
+  },
+  {
     reason: 'Linux only: the proof reads /proc and ss',
-    expectedOn: (platform) => platform !== 'linux',
+    expectedOn: notOn('linux'),
     command: 'test',
     runsWhere: "Linux only; runs under `npm test` in CI's Linux build-and-test job",
   },
   {
     reason: 'not linux — the real systemd-creds suite did not run',
-    expectedOn: (platform) => platform !== 'linux',
+    expectedOn: notOn('linux'),
     command: 'test:custody:linux',
     runsWhere: 'Linux only, via `npm run test:custody:linux`; no CI job runs it today',
   },
   {
+    reason: 'BUILDROOM_CUSTODY_LINUX is not set — run `npm run test:custody:linux` to exercise real systemd-creds',
+    expectedOn: onlyOn('linux'),
+    command: 'test:custody:linux',
+    runsWhere: 'uses the real systemd-creds store, so it runs only when asked: `npm run test:custody:linux`; no CI job runs it today',
+  },
+  {
+    reason: 'not darwin — the real-Keychain suite did not run',
+    expectedOn: notOn('darwin'),
+    command: 'test:custody:macos',
+    runsWhere: "macOS only, via `npm run test:custody:macos`, which CI's macOS job runs",
+  },
+  {
     reason: 'BUILDROOM_CUSTODY_MACOS is not set — run `npm run test:custody:macos` to exercise the real Keychain',
-    expectedOn: (platform) => platform === 'darwin',
+    expectedOn: onlyOn('darwin'),
     command: 'test:custody:macos',
     runsWhere:
       "writes to the real macOS Keychain under a synthetic service name, so it runs only when asked: `npm run test:custody:macos`, which CI's macOS job runs",
+  },
+  {
+    reason: 'macOS only: the occupancy-lock proof uses the macOS O_EXLOCK kernel lock',
+    expectedOn: notOn('darwin'),
+    command: 'test',
+    runsWhere: "macOS only; runs under `npm test` in CI's macOS build-and-test job",
   },
 ];
 
@@ -85,12 +126,14 @@ export function readSkipMarkers(output: string): readonly SkipMarker[] {
     });
 }
 
-export function isAllowedSkip(marker: SkipMarker, platform: NodeJS.Platform): boolean {
+/** The runtime-role pass exists to run what the ordinary pass skipped, so it may skip nothing. */
+export function isAllowedSkip(marker: SkipMarker, platform: NodeJS.Platform, pass: StrictPass): boolean {
+  if (pass === 'runtime-role') return false;
   return STRICT_ALLOWED_SKIPS.some((allowed) => allowed.reason === marker.reason && allowed.expectedOn(platform));
 }
 
 /**
- * Why a finished strict run must NOT be reported as a pass, or `null` when it
+ * Why a finished strict pass must NOT be reported as a pass, or `null` when it
  * may be. The counter checks are `tierVerdict`'s; the skip markers are added
  * here because those counters cannot see a skipped group.
  */
@@ -99,12 +142,13 @@ export function strictVerdict(
   summary: SpecSummary | undefined,
   markers: readonly SkipMarker[],
   platform: NodeJS.Platform,
+  pass: StrictPass,
 ): string | null {
   const base = tierVerdict(exitCode, summary);
-  const refused = markers.filter((marker) => !isAllowedSkip(marker, platform));
+  const refused = markers.filter((marker) => !isAllowedSkip(marker, platform, pass));
   if (refused.length === 0) return base;
   const listed = refused.map((m) => `  - ${m.name} # ${m.reason === '' ? '(no reason given)' : m.reason}`).join('\n');
-  const skipped = `${refused.length} skipped (tests or whole groups) that a strict run may not skip:\n${listed}`;
+  const skipped = `${refused.length} skipped (tests or whole groups) that the ${pass} pass may not skip:\n${listed}`;
   return base === null ? skipped : `${base}\nand ${skipped}`;
 }
 
@@ -136,20 +180,32 @@ export function missingPrerequisites(facts: PrerequisiteFacts): readonly string[
     missing.push(`Prerequisite C proof runtime: ${gap}`);
   }
   if (isBlank(facts.env['MADBRIDGE_CHECKOUT'])) {
-    missing.push('MADBRIDGE_CHECKOUT is not set. Point it at a madventures-tui clone so the pinned MadBridge blobs are re-resolved.');
+    missing.push(
+      'MADBRIDGE_CHECKOUT is not set. Point it at a madventures-tui clone that contains commit 7d37a61, so the pinned MadBridge blobs are re-resolved. ' +
+        'It is separate from BUILDROOM_PREREQC_TUI_ROOT, which the Prerequisite C check reads; the same clone may serve both if it contains that commit.',
+    );
   }
   return missing;
 }
 
-/** The sentence a strict pass may be cited as, allowed skips included by name. */
-export function reachReport(summary: SpecSummary, markers: readonly SkipMarker[], fileCount: number): string {
-  const head = `${summary.tests} tests in ${fileCount} files ran and passed`;
-  if (markers.length === 0) return `${head}; nothing was skipped.`;
+export interface PassResult {
+  readonly summary: SpecSummary;
+  readonly markers: readonly SkipMarker[];
+  readonly fileCount: number;
+}
+
+/** The text a strict pass may be cited as: both passes, and every allowed skip with where it runs. */
+export function reachReport(ordinary: PassResult, runtimeRole: PassResult): string {
+  const lines = [
+    `ordinary pass: ${ordinary.summary.tests} tests in ${ordinary.fileCount} files ran and passed`,
+    `runtime-role pass: ${runtimeRole.summary.tests} tests in ${runtimeRole.fileCount} files ran and passed as br_app_runtime, nothing skipped`,
+  ];
   const counts = new Map<string, number>();
-  for (const marker of markers) counts.set(marker.reason, (counts.get(marker.reason) ?? 0) + 1);
-  const lines = [...counts].map(([reason, count]) => {
+  for (const marker of ordinary.markers) counts.set(marker.reason, (counts.get(marker.reason) ?? 0) + 1);
+  for (const [reason, count] of counts) {
     const where = STRICT_ALLOWED_SKIPS.find((allowed) => allowed.reason === reason)?.runsWhere ?? '';
-    return `  - ${count} skipped: "${reason}" (${where})`;
-  });
-  return `${head}; ${markers.length} skipped by platform or opt-in, not run here:\n${lines.join('\n')}`;
+    lines.push(`  - ${count} skipped in the ordinary pass: "${reason}" (${where})`);
+  }
+  if (counts.size === 0) lines.push('  - nothing skipped in the ordinary pass');
+  return lines.join('\n');
 }
