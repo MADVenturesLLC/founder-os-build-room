@@ -54,6 +54,26 @@ Actor-Id: <session-scoped>
 Execution-Surface: <surface_id>
 ```
 
+## Served model
+
+Every pull request records the model that served each commit's work
+(FounderOS `DEC-20261020-01` clauses 3 to 5, Amendment 2), and the
+`served-model` check (`scripts/served-model-check.sh`) judges it:
+
+- **`claude-code` commits:** write nothing. The `Co-Authored-By:` trailer the
+  harness adds is the record. It must name a model on the
+  `claude-code:anthropic` allowlist.
+- **Commits on any other builder surface (today `codex`):** put one line per
+  model in the PR body, at column 0 and above the Attribution block, as
+  `Served-Model: <model id> (<evidence source>)`. Every model must be on that
+  lane's allowlist.
+- A missing record is an advisory alert through 2026-11-14 and fails the
+  check from 2026-11-15. An off-list model fails it at once.
+
+The lanes and allowlists live in `scripts/served-model-lanes.json`, a copy of
+FounderOS `04-agents/model-registry.md` at the commit it names. When FounderOS
+changes a lane, update that file in its own reviewed pull request.
+
 ## Git rules
 
 - Clear, descriptive commit messages; logical commits per unit of work

@@ -1,0 +1,71 @@
+# SERVED-MODEL CHECK — FounderOS DEC-20261020-01 clauses 3, 4 and 5
+# (Amendment 2, ratified 2026-10-22).
+#
+# Judges whether every commit a pull request adds records the model that
+# served it: a claude-code commit by its own Co-Authored-By trailer, a commit
+# on another builder surface by a `Served-Model:` line in the PR body. The
+# decision lives in scripts/served-model-check.sh, against the lanes and
+# allowlists in scripts/served-model-lanes.json; test/served-model-check.test.ts
+# drives it. A missing record is an advisory alert through 2026-11-14 and a
+# failure from 2026-11-15; an off-list model fails at once.
+#
+# IT ONLY BLOCKS ONCE IT IS REQUIRED. Making `served-model` a required status
+# check on `main` is a repository security-posture change reserved to the
+# Founder (AGENTS.md approval gates). This file does not do that.
+#
+# UNTRUSTED INPUT. The PR body reaches the checker through an env mapping
+# only, never shell interpolation; no `${{ }}` expression appears inside a
+# run: script. On pull requests the checker and its data file are taken from
+# the base revision when the base has them, so a PR cannot weaken the gate or
+# the allowlists that judge it. A PR that adds or changes them is judged by
+# the base copy, or by its own copy only when the base has none.
+#
+# SHAPE ONLY. The surface, the trailer and the body line are self-attested;
+# the check validates their form, never their truth.
+#
+# Changes to this workflow's triggers, permissions, or steps require founder
+# approval before merge (same rule class as DEC-20260718-02 clause 4).
+
+name: Served Model Check
+
+on:
+  pull_request:
+    # `edited` included so a body-only change re-runs the check.
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  served-model:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for the commit range)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select trusted checker and data (base revision when present)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if git show "$BASE_SHA:scripts/served-model-check.sh" > "$RUNNER_TEMP/served-model-check.sh" 2>/dev/null \
+            && git show "$BASE_SHA:scripts/served-model-lanes.json" > "$RUNNER_TEMP/served-model-lanes.json" 2>/dev/null; then
+            echo "using trusted base-revision checker and data ($BASE_SHA)"
+          else
+            echo "checker or data absent on base — using PR revision"
+            cp scripts/served-model-check.sh "$RUNNER_TEMP/served-model-check.sh"
+            cp scripts/served-model-lanes.json "$RUNNER_TEMP/served-model-lanes.json"
+          fi
+
+      - name: Run the served-model check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          LANES_FILE="$RUNNER_TEMP/served-model-lanes.json" \
+            bash "$RUNNER_TEMP/served-model-check.sh" "$BASE_SHA" "$HEAD_SHA"
