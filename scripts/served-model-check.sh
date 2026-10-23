@@ -20,7 +20,11 @@
 #   - It fails closed. A covered commit with no `Execution-Surface:`, one
 #     naming a surface with no builder lane, a `claude-code` commit with no
 #     trailer that maps, and a commit on another builder surface when the
-#     body has no well-formed line, each count as a MISSING record.
+#     body has no well-formed line, each count as a MISSING record. So does a
+#     body whose `Served-Model:` line git reads as part of the trailer block
+#     (clause 3: above the Attribution block, not a trailer). A body line
+#     inside an HTML comment never counts, even one left unclosed. A commit
+#     range git cannot list fails, as an unreadable commit does.
 #   - A recorded model that is not on its lane's allowlist is OFF-LIST.
 #
 # PHASE-IN (clause 4). OFF-LIST fails at once. MISSING is an advisory alert
@@ -46,8 +50,11 @@
 #         LANES_FILE  data file (optional; default served-model-lanes.json
 #                     beside this script)
 #   exit: 0 pass, or MISSING before blocking_from (advisory)
-#         1 fail: OFF-LIST, an unreadable commit, or MISSING from blocking_from
-#         2 input refused (fail closed)
+#         1 fail: OFF-LIST, an unreadable commit or range, or MISSING from
+#           blocking_from
+#         2 input refused (fail closed): bad arguments, an unset PR_BODY, a
+#           date that is not a real calendar date, or a lanes file that is
+#           malformed anywhere, down to each allowlist entry
 #
 # The PR body and commit messages are untrusted input. They are read by git
 # and jq only, never evaluated by the shell.
@@ -70,14 +77,34 @@ head="$2"
 lanes_file="${LANES_FILE:-$(dirname "$0")/served-model-lanes.json}"
 [[ -r "$lanes_file" ]] || refuse "lanes file $lanes_file is not readable"
 lanes="$(cat "$lanes_file")"
-jq -e '(.blocking_from | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
-       and (.builder_lanes | type == "object" and length > 0)
-       and (.display_names | type == "object")' >/dev/null 2>&1 <<<"$lanes" \
-  || refuse "lanes file $lanes_file is malformed"
+# A real calendar date in YYYY-MM-DD form: the round trip through strptime
+# and mktime rejects 2026-00-00 and 2026-02-30 as well as malformed text.
+JQ_ISDATE='def isdate: type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+  and (try ((strptime("%Y-%m-%d") | mktime | strftime("%Y-%m-%d")) == .) catch false);'
+
+# Validated to the leaf: a malformed lane must refuse, never judge. An
+# allowlist that is a string, not an array, would otherwise let a substring
+# match pass an off-list model.
+jq -e "$JQ_ISDATE"'
+  (.blocking_from | isdate)
+  and (.builder_lanes | type == "object" and length > 0
+       and all(.[]; type == "object"
+               and (.lane | type == "string" and length > 0)
+               and (.record == "co-authored-by" or .record == "served-model-line")
+               and (.allowlist | type == "array" and length > 0
+                    and all(.[]; type == "string" and length > 0))))
+  and (.display_names | type == "object" and all(.[]; type == "string" and length > 0))' \
+  >/dev/null 2>&1 <<<"$lanes" || refuse "lanes file $lanes_file is malformed"
 blocking_from="$(jq -r '.blocking_from' <<<"$lanes")"
 
 today="${CHECK_DATE:-$(date -u +%F)}"
-[[ "$today" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || refuse "CHECK_DATE is not YYYY-MM-DD"
+jq -en --arg d "$today" "$JQ_ISDATE"' $d | isdate' >/dev/null 2>&1 \
+  || refuse "CHECK_DATE is not a real YYYY-MM-DD date"
+
+# on_allowlist <surface> <model id>: exact membership, never a substring test.
+on_allowlist() {
+  jq -e --arg s "$1" --arg m "$2" 'any(.builder_lanes[$s].allowlist[]; . == $m)' >/dev/null <<<"$lanes"
+}
 
 git cat-file -e "$base^{commit}" 2>/dev/null || refuse "base $base is not a commit here"
 git cat-file -e "$head^{commit}" 2>/dev/null || refuse "head $head is not a commit here"
@@ -101,14 +128,31 @@ unreadable=0
 body_surfaces=""
 
 # The body's Served-Model lines, HTML comments removed first so a template's
-# example never counts. Each line is {id, evidence} or {malformed}.
+# example never counts. A comment left open runs to the end of the body, as
+# a renderer reads it. Each line is {id, evidence} or {malformed}.
 body_records="$(jq -Rsc '
   gsub("\r"; "")
-  | gsub("<!--[\\s\\S]*?-->"; "")
+  | gsub("<!--[\\s\\S]*?(-->|\\z)"; "")
   | split("\n")
   | map(select(test("^Served-Model:")))
   | map(capture("^Served-Model:[ \t]*(?<id>[A-Za-z0-9._-]+)[ \t]+\\((?<evidence>[^)]*[^) \t][^)]*)\\)[ \t]*$") // {malformed: .})
 ' <<<"$PR_BODY")"
+
+# Clause 3: the line sits above the Attribution block and is not a trailer.
+# The merge commit's message is "<title>\n\n<body>", so the body is read the
+# way git will read it there, under a stand-in title line: a Served-Model line
+# that git takes for part of the trailer block is out of place, and the
+# body's record then counts as missing.
+served_in_trailers="$(printf 'title\n\n%s\n' "$PR_BODY" | tr -d '\r' | git interpret-trailers --parse \
+  | grep -i '^Served-Model:' || true)"
+
+# Listed before the loop, so a failed listing fails closed instead of reading
+# as a range with no commits in it.
+if ! commits="$(git rev-list --reverse "$base..$head")"; then
+  echo "FAIL: the commit range $base..$head cannot be listed (failing closed)"
+  unreadable=1
+  commits=""
+fi
 
 while IFS= read -r sha; do
   [[ -n "$sha" ]] || continue
@@ -157,7 +201,7 @@ while IFS= read -r sha; do
       fi
       while IFS= read -r id; do
         [[ -n "$id" ]] || continue
-        if jq -e --arg s "$surface" --arg m "$id" '.builder_lanes[$s].allowlist | index($m)' >/dev/null <<<"$lanes"; then
+        if on_allowlist "$surface" "$id"; then
           echo "ok $short: $surface, served by $id (Co-Authored-By)"
         else
           echo "OFF-LIST $short: $surface commit served by $id, not on the $(jq -r --arg s "$surface" '.builder_lanes[$s].lane' <<<"$lanes") allowlist"
@@ -174,11 +218,16 @@ while IFS= read -r sha; do
       missing=1
       ;;
   esac
-done < <(git rev-list --reverse "$base..$head")
+done <<<"$commits"
 
 while IFS= read -r surface; do
   [[ -n "$surface" ]] || continue
   lane="$(jq -r --arg s "$surface" '.builder_lanes[$s].lane' <<<"$lanes")"
+  if [[ -n "$served_in_trailers" ]]; then
+    echo "MISSING body: a Served-Model line is in the trailer block; put it above the Attribution block, separated by a blank line"
+    missing=1
+    continue
+  fi
   while IFS= read -r bad; do
     [[ -n "$bad" ]] || continue
     echo "MISSING body: malformed line '$bad' (expected 'Served-Model: <model id> (<evidence source>)')"
@@ -195,7 +244,7 @@ while IFS= read -r surface; do
     if [[ "$id" == "unavailable-from-current-harness" ]]; then
       echo "MISSING body: Served-Model is unavailable-from-current-harness (unverified, not on-list)"
       missing=1
-    elif jq -e --arg s "$surface" --arg m "$id" '.builder_lanes[$s].allowlist | index($m)' >/dev/null <<<"$lanes"; then
+    elif on_allowlist "$surface" "$id"; then
       echo "ok body: $surface, served by $id"
     else
       echo "OFF-LIST body: $id is not on the $lane allowlist"

@@ -16,10 +16,10 @@
 # UNTRUSTED INPUT. The PR body reaches the checker through an env mapping
 # only, never shell interpolation; no `${{ }}` expression appears inside a
 # run: script. On pull requests the checker and its data file are taken from
-# the base revision when the base has them, so a PR cannot weaken the script
-# or the allowlists that judge it without changing this workflow (see WHAT
-# THIS DOES NOT PROTECT). A PR that adds or changes them is judged by
-# the base copy, or by its own copy only when the base has none.
+# the base revision once the base has the checker, so a PR cannot weaken the
+# script or the allowlists that judge it without changing this workflow (see
+# WHAT THIS DOES NOT PROTECT). A PR that adds or changes them is judged by
+# the base copy, or by its own copy only when the base has no checker.
 #
 # SHAPE ONLY. The surface, the trailer and the body line are self-attested;
 # the check validates their form, never their truth.
@@ -61,11 +61,15 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          if git show "$BASE_SHA:scripts/served-model-check.sh" > "$RUNNER_TEMP/served-model-check.sh" 2>/dev/null \
-            && git show "$BASE_SHA:scripts/served-model-lanes.json" > "$RUNNER_TEMP/served-model-lanes.json" 2>/dev/null; then
+          # Fall back to the PR's copy only when the base has no checker at
+          # all. Once it does, a failure to read the base's script or data
+          # fails this step rather than handing the gate to the PR.
+          if git cat-file -e "$BASE_SHA:scripts/served-model-check.sh" 2>/dev/null; then
+            git show "$BASE_SHA:scripts/served-model-check.sh" > "$RUNNER_TEMP/served-model-check.sh"
+            git show "$BASE_SHA:scripts/served-model-lanes.json" > "$RUNNER_TEMP/served-model-lanes.json"
             echo "using trusted base-revision checker and data ($BASE_SHA)"
           else
-            echo "checker or data absent on base — using PR revision"
+            echo "checker absent on base — using PR revision"
             cp scripts/served-model-check.sh "$RUNNER_TEMP/served-model-check.sh"
             cp scripts/served-model-lanes.json "$RUNNER_TEMP/served-model-lanes.json"
           fi

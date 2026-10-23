@@ -11,16 +11,20 @@ claude-code work: write nothing here. Each commit's Co-Authored-By trailer,
 which the claude-code harness adds, is the record.
 
 Work on any other builder surface (today codex): add one line per model that
-served the work, starting at column 0, outside this comment and above the
-Attribution block. The form, shown indented here so it does not count:
+served the work, starting at column 0, outside this comment, above the
+Attribution block and separated from it by a blank line (a line in the
+trailer block does not count). The form, shown indented here so it does not
+count:
 
     Served-Model: <model id> (<evidence source>)
     Served-Model: gpt-6.1-sol (codex session report)
 
 Lines inside this comment are ignored.
 
-A missing record is an advisory alert through 2026-11-14 and blocks merge
-from 2026-11-15. A model not on its lane's allowlist blocks at once.
+A missing record is an advisory alert through 2026-11-14 and fails the
+served-model check from 2026-11-15; a model not on its lane's allowlist fails
+it at once. A failing check blocks merge once served-model is a required
+check on main. Direct-founder commits are not covered.
 -->
 
 ## Attribution

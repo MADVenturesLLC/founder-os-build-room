@@ -82,6 +82,11 @@ const CLAUDE = [...BUILDER, 'Execution-Surface: claude-code'];
 const CODEX = ['Role-Id: builder', 'Actor-Id: session:codex/test', 'Execution-Surface: codex'];
 const OPUS = 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>';
 
+/** A PR body as it should be: summary, the record lines, then the Attribution block. */
+function body(...records: string[]): string {
+  return `Summary.\n\n${records.join('\n')}\n\nRole-Id: builder\nActor-Id: session:codex/test\nExecution-Surface: codex\n`;
+}
+
 describe('served-model check — claude-code commits (Co-Authored-By is the record)', () => {
   it('passes a commit whose trailer maps to an allowlisted model', () => {
     const r = repo();
@@ -144,7 +149,7 @@ describe('served-model check — other builder surfaces (the body line is the re
   it('passes a codex commit with a well-formed, allowlisted body line', () => {
     const r = repo();
     const head = r.commit(CODEX);
-    const res = run(r.dir, r.base, head, 'Summary.\n\nServed-Model: gpt-6.1-sol (codex session report)\n\nRole-Id: builder\n', FROM);
+    const res = run(r.dir, r.base, head, body('Served-Model: gpt-6.1-sol (codex session report)'), FROM);
     r.done();
     assert.equal(res.status, 0, res.out);
     assert.match(res.out, /served by gpt-6\.1-sol/);
@@ -153,8 +158,8 @@ describe('served-model check — other builder surfaces (the body line is the re
   it('accepts one line per model', () => {
     const r = repo();
     const head = r.commit(CODEX);
-    const body = 'Served-Model: gpt-6.1-sol (codex session report)\nServed-Model: gpt-6-astra (codex session report)\n';
-    const res = run(r.dir, r.base, head, body, FROM);
+    const lines = body('Served-Model: gpt-6.1-sol (codex session report)', 'Served-Model: gpt-6-astra (codex session report)');
+    const res = run(r.dir, r.base, head, lines, FROM);
     r.done();
     assert.equal(res.status, 0, res.out);
   });
@@ -162,7 +167,7 @@ describe('served-model check — other builder surfaces (the body line is the re
   it('fails at once on an off-list body line', () => {
     const r = repo();
     const head = r.commit(CODEX);
-    const res = run(r.dir, r.base, head, 'Served-Model: gpt-6-luna (codex session report)\n', BEFORE);
+    const res = run(r.dir, r.base, head, body('Served-Model: gpt-6-luna (codex session report)'), BEFORE);
     r.done();
     assert.equal(res.status, 1, res.out);
     assert.match(res.out, /OFF-LIST body: gpt-6-luna/);
@@ -176,12 +181,12 @@ describe('served-model check — other builder surfaces (the body line is the re
     ['a line only inside an HTML comment (the template example)', '<!--\nServed-Model: gpt-6.1-sol (codex session report)\n-->\n'],
     ['unavailable-from-current-harness (unverified, not on-list)', 'Served-Model: unavailable-from-current-harness (codex has no report)\n'],
   ];
-  for (const [label, body] of missing) {
+  for (const [label, text] of missing) {
     it(`counts ${label} as MISSING, failing from 2026-11-15`, () => {
       const r = repo();
       const head = r.commit(CODEX);
-      const before = run(r.dir, r.base, head, body, BEFORE);
-      const from = run(r.dir, r.base, head, body, FROM);
+      const before = run(r.dir, r.base, head, text, BEFORE);
+      const from = run(r.dir, r.base, head, text, FROM);
       r.done();
       assert.equal(before.status, 0, before.out);
       assert.match(before.out, /MISSING/);
@@ -192,7 +197,7 @@ describe('served-model check — other builder surfaces (the body line is the re
   it('reads a CRLF body', () => {
     const r = repo();
     const head = r.commit(CODEX);
-    const res = run(r.dir, r.base, head, 'Summary.\r\n\r\nServed-Model: gpt-6.1-sol (codex session report)\r\n', FROM);
+    const res = run(r.dir, r.base, head, body('Served-Model: gpt-6.1-sol (codex session report)').replace(/\n/g, '\r\n'), FROM);
     r.done();
     assert.equal(res.status, 0, res.out);
   });
@@ -304,6 +309,111 @@ describe('served-model check — input it refuses (fail closed, exit 2)', () => 
   });
 });
 
+describe('served-model check — cases from the Codex Tier-2 review of cb1cfb7', () => {
+  it('keeps the model when a trailer for a human co-author sits beside it', () => {
+    const r = repo();
+    const head = r.commit([...CLAUDE, 'Co-Authored-By: Some Person <person@example.invalid>', OPUS]);
+    const res = run(r.dir, r.base, head, '', FROM);
+    r.done();
+    assert.equal(res.status, 0, res.out);
+    assert.match(res.out, /served by claude-opus-5\.5/);
+  });
+
+  it('judges a range mixing claude-code and codex commits by both records', () => {
+    const r = repo();
+    r.commit([...CLAUDE, OPUS]);
+    const head = r.commit(CODEX);
+    const withLine = run(r.dir, r.base, head, body('Served-Model: gpt-6.1-sol (codex session report)'), FROM);
+    const without = run(r.dir, r.base, head, 'Summary only.\n', FROM);
+    r.done();
+    assert.equal(withLine.status, 0, withLine.out);
+    assert.equal(without.status, 1, without.out);
+  });
+
+  it('fails closed when the commit range cannot be listed', () => {
+    const r = repo();
+    const middle = r.commit([...CLAUDE, OPUS]);
+    const head = r.commit([...CLAUDE, OPUS]);
+    rmSync(join(r.dir, '.git', 'objects', middle.slice(0, 2), middle.slice(2)));
+    const res = run(r.dir, r.base, head, '', BEFORE);
+    r.done();
+    assert.equal(res.status, 1, res.out);
+    assert.match(res.out, /cannot be listed/);
+    assert.doesNotMatch(res.out, /PASS/);
+  });
+
+  it('counts a Served-Model line inside an HTML comment left unclosed as MISSING', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const res = run(r.dir, r.base, head, 'Summary.\n<!--\nServed-Model: gpt-6.1-sol (codex session report)\n', FROM);
+    r.done();
+    assert.equal(res.status, 1, res.out);
+    assert.match(res.out, /MISSING/);
+  });
+
+  it('counts a Served-Model line inside the trailer block as MISSING, and accepts it a blank line above', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const inBlock = 'Summary.\n\nServed-Model: gpt-6.1-sol (codex session report)\nRole-Id: builder\nActor-Id: session:codex/test\n';
+    const above = 'Summary.\n\nServed-Model: gpt-6.1-sol (codex session report)\n\nRole-Id: builder\nActor-Id: session:codex/test\n';
+    const bad = run(r.dir, r.base, head, inBlock, FROM);
+    const good = run(r.dir, r.base, head, above, FROM);
+    r.done();
+    assert.equal(bad.status, 1, bad.out);
+    assert.match(bad.out, /in the trailer block/);
+    assert.equal(good.status, 0, good.out);
+  });
+
+  it('counts a body made only of Served-Model lines as MISSING: in the merge commit they are its trailers', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const res = run(r.dir, r.base, head, 'Served-Model: gpt-6.1-sol (codex session report)\n', FROM);
+    r.done();
+    assert.equal(res.status, 1, res.out);
+    assert.match(res.out, /in the trailer block/);
+  });
+
+  it('refuses dates that are not real calendar dates', () => {
+    const r = repo();
+    const head = r.commit([...CLAUDE, OPUS]);
+    for (const date of ['2026-00-00', '2026-02-30', '2026-13-01']) {
+      assert.equal(run(r.dir, r.base, head, '', date).status, 2, date);
+    }
+    r.done();
+  });
+
+  it('refuses a lanes file malformed below the top level', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const good = JSON.parse(readFileSync(LANES, 'utf8')) as Record<string, unknown> & {
+      builder_lanes: Record<string, Record<string, unknown>>;
+    };
+    const variants: Array<[string, (d: typeof good) => void]> = [
+      ['an allowlist that is a string', (d) => { d.builder_lanes.codex!.allowlist = 'gpt-6-luna'; }],
+      ['an allowlist entry that is not a string', (d) => { d.builder_lanes.codex!.allowlist = [1]; }],
+      ['an empty allowlist', (d) => { d.builder_lanes.codex!.allowlist = []; }],
+      ['an unknown record kind', (d) => { d.builder_lanes.codex!.record = 'telepathy'; }],
+      ['a display name mapped to a non-string', (d) => { (d.display_names as Record<string, unknown>)['X'] = 5; }],
+      ['an impossible blocking_from', (d) => { d.blocking_from = '2026-02-30'; }],
+    ];
+    for (const [label, mutate] of variants) {
+      const copy = JSON.parse(JSON.stringify(good)) as typeof good;
+      mutate(copy);
+      const file = join(r.dir, 'lanes.json');
+      writeFileSync(file, JSON.stringify(copy));
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        PR_BODY: 'Served-Model: gpt-6-luna (codex session report)\n',
+        CHECK_DATE: BEFORE,
+        LANES_FILE: file,
+      };
+      const res = spawnSync('bash', [CHECK, r.base, head], { cwd: r.dir, encoding: 'utf8', env });
+      assert.equal(res.status, 2, `${label}: ${res.stdout}`);
+    }
+    r.done();
+  });
+});
+
 describe('served-model lanes file — a pinned copy of the FounderOS registry', () => {
   const lanes = JSON.parse(readFileSync(LANES, 'utf8')) as {
     source: { repository: string; commit: string };
@@ -350,6 +460,10 @@ describe('served-model workflow and PR template shape', () => {
     const start = lines.findIndex((l) => l === 'permissions:');
     assert.equal(lines[start + 1]?.trim(), 'contents: read');
     assert.ok(!/write/.test(lines.slice(start, start + 3).join('\n')));
+  });
+
+  it('falls back to the PR copy only when the base has no checker', () => {
+    assert.match(text, /if git cat-file -e "\$BASE_SHA:scripts\/served-model-check\.sh"/);
   });
 
   it('takes the checker and its data from the base revision when the base has them', () => {
