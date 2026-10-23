@@ -173,15 +173,17 @@ describe('served-model check — other builder surfaces (the body line is the re
     assert.match(res.out, /OFF-LIST body: gpt-6-luna/);
   });
 
-  const missing: Array<[string, string]> = [
-    ['no body line at all', 'Summary only.\n'],
-    ['a line with no evidence source', 'Served-Model: gpt-6.1-sol\n'],
-    ['a line with an empty evidence source', 'Served-Model: gpt-6.1-sol ( )\n'],
-    ['a line that is not at column 0', '  Served-Model: gpt-6.1-sol (codex session report)\n'],
-    ['a line only inside an HTML comment (the template example)', '<!--\nServed-Model: gpt-6.1-sol (codex session report)\n-->\n'],
-    ['unavailable-from-current-harness (unverified, not on-list)', 'Served-Model: unavailable-from-current-harness (codex has no report)\n'],
+  // Each body is well placed (above an Attribution block), so each case
+  // reaches the branch it names rather than the trailer-block rule.
+  const missing: Array<[string, string, RegExp]> = [
+    ['no body line at all', body('No record here.'), /the body has none/],
+    ['a line with no evidence source', body('Served-Model: gpt-6.1-sol'), /malformed line/],
+    ['a line with an empty evidence source', body('Served-Model: gpt-6.1-sol ( )'), /malformed line/],
+    ['a line that is not at column 0', body('  Served-Model: gpt-6.1-sol (codex session report)'), /the body has none/],
+    ['a line only inside an HTML comment (the template example)', body('<!--', 'Served-Model: gpt-6.1-sol (codex session report)', '-->'), /the body has none/],
+    ['unavailable-from-current-harness (unverified, not on-list)', body('Served-Model: unavailable-from-current-harness (codex has no report)'), /unavailable-from-current-harness \(unverified/],
   ];
-  for (const [label, text] of missing) {
+  for (const [label, text, reason] of missing) {
     it(`counts ${label} as MISSING, failing from 2026-11-15`, () => {
       const r = repo();
       const head = r.commit(CODEX);
@@ -189,7 +191,8 @@ describe('served-model check — other builder surfaces (the body line is the re
       const from = run(r.dir, r.base, head, text, FROM);
       r.done();
       assert.equal(before.status, 0, before.out);
-      assert.match(before.out, /MISSING/);
+      assert.match(before.out, reason);
+      assert.doesNotMatch(before.out, /in the trailer block/);
       assert.equal(from.status, 1, from.out);
     });
   }
@@ -373,6 +376,18 @@ describe('served-model check — cases from the Codex Tier-2 review of cb1cfb7',
     assert.match(res.out, /in the trailer block/);
   });
 
+  it('still fails at once on an off-list record when another Served-Model line is misplaced in the trailer block', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const text = 'Summary.\n\nServed-Model: gpt-6-luna (codex session report)\n\nRole-Id: builder\nActor-Id: session:codex/test\nExecution-Surface: codex\nServed-Model: gpt-6.1-sol (codex session report)\n';
+    const res = run(r.dir, r.base, head, text, BEFORE);
+    r.done();
+    assert.equal(res.status, 1, res.out);
+    assert.match(res.out, /OFF-LIST body: gpt-6-luna/);
+    assert.match(res.out, /in the trailer block/);
+    assert.doesNotMatch(res.out, /served by gpt-6\.1-sol/, 'the misplaced line is never judged as a record');
+  });
+
   it('refuses dates that are not real calendar dates', () => {
     const r = repo();
     const head = r.commit([...CLAUDE, OPUS]);
@@ -396,6 +411,17 @@ describe('served-model check — cases from the Codex Tier-2 review of cb1cfb7',
       ['a display name mapped to a non-string', (d) => { (d.display_names as Record<string, unknown>)['X'] = 5; }],
       ['an impossible blocking_from', (d) => { d.blocking_from = '2026-02-30'; }],
     ];
+    const twice = join(r.dir, 'twice.json');
+    writeFileSync(twice, JSON.stringify(good) + '\n' + JSON.stringify(good));
+    const twiceEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      PR_BODY: body('Served-Model: gpt-6-luna (codex session report)'),
+      CHECK_DATE: BEFORE,
+      LANES_FILE: twice,
+    };
+    const twiceRes = spawnSync('bash', [CHECK, r.base, head], { cwd: r.dir, encoding: 'utf8', env: twiceEnv });
+    assert.equal(twiceRes.status, 2, `two JSON documents: ${twiceRes.stdout}`);
+    assert.match(twiceRes.stdout, /not exactly one JSON document/);
     for (const [label, mutate] of variants) {
       const copy = JSON.parse(JSON.stringify(good)) as typeof good;
       mutate(copy);
@@ -462,8 +488,10 @@ describe('served-model workflow and PR template shape', () => {
     assert.ok(!/write/.test(lines.slice(start, start + 3).join('\n')));
   });
 
-  it('falls back to the PR copy only when the base has no checker', () => {
-    assert.match(text, /if git cat-file -e "\$BASE_SHA:scripts\/served-model-check\.sh"/);
+  it('falls back to the PR copy only when the base tree, read successfully, has no checker', () => {
+    assert.ok(lines.some((l) => l.trim() === 'listing="$(git ls-tree --name-only "$BASE_SHA" -- scripts/served-model-check.sh)"'));
+    assert.ok(lines.some((l) => l.trim() === 'if [[ -n "$listing" ]]; then'));
+    assert.ok(lines.some((l) => l.trim() === 'set -euo pipefail'), 'a failed read of the base fails the step');
   });
 
   it('takes the checker and its data from the base revision when the base has them', () => {

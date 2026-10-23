@@ -22,9 +22,11 @@
 #     trailer that maps, and a commit on another builder surface when the
 #     body has no well-formed line, each count as a MISSING record. So does a
 #     body whose `Served-Model:` line git reads as part of the trailer block
-#     (clause 3: above the Attribution block, not a trailer). A body line
-#     inside an HTML comment never counts, even one left unclosed. A commit
-#     range git cannot list fails, as an unreadable commit does.
+#     (clause 3: above the Attribution block, not a trailer); such a line is
+#     never judged as a record, and the body's other records are judged all
+#     the same, so an off-list one still fails at once. A body line inside an
+#     HTML comment never counts, even one left unclosed. A commit range git
+#     cannot list fails, as an unreadable commit does.
 #   - A recorded model that is not on its lane's allowlist is OFF-LIST.
 #
 # PHASE-IN (clause 4). OFF-LIST fails at once. MISSING is an advisory alert
@@ -54,7 +56,8 @@
 #           blocking_from
 #         2 input refused (fail closed): bad arguments, an unset PR_BODY, a
 #           date that is not a real calendar date, or a lanes file that is
-#           malformed anywhere, down to each allowlist entry
+#           not exactly one JSON document or is malformed anywhere in it,
+#           down to each allowlist entry
 #
 # The PR body and commit messages are untrusted input. They are read by git
 # and jq only, never evaluated by the shell.
@@ -76,7 +79,10 @@ head="$2"
 
 lanes_file="${LANES_FILE:-$(dirname "$0")/served-model-lanes.json}"
 [[ -r "$lanes_file" ]] || refuse "lanes file $lanes_file is not readable"
-lanes="$(cat "$lanes_file")"
+# Exactly one JSON document: a file holding two would make every lookup below
+# return two values joined by a newline, which no branch recognises.
+lanes="$(jq -cs 'if length == 1 then .[0] else error("not exactly one JSON document") end' "$lanes_file" 2>/dev/null)" \
+  || refuse "lanes file $lanes_file is not exactly one JSON document"
 # A real calendar date in YYYY-MM-DD form: the round trip through strptime
 # and mktime rejects 2026-00-00 and 2026-02-30 as well as malformed text.
 JQ_ISDATE='def isdate: type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
@@ -127,24 +133,33 @@ offlist=0
 unreadable=0
 body_surfaces=""
 
-# The body's Served-Model lines, HTML comments removed first so a template's
-# example never counts. A comment left open runs to the end of the body, as
-# a renderer reads it. Each line is {id, evidence} or {malformed}.
-body_records="$(jq -Rsc '
+# Clause 3: the line sits above the Attribution block and is not a trailer.
+# The merge commit's message is "<title>\n\n<body>", so the body is read the
+# way git will read it there, under a stand-in title line. Any Served-Model
+# line git takes for a trailer is out of place: it counts as a missing record
+# and is never judged as a record.
+body_trailers="$(printf 'title\n\n%s\n' "$PR_BODY" | tr -d '\r' | git interpret-trailers --parse)"
+served_in_trailers="$(grep -i '^Served-Model:' <<<"$body_trailers" || true)"
+has_trailers=false
+[[ -n "$body_trailers" ]] && has_trailers=true
+
+# The body's Served-Model records: every line above the trailer block (git
+# keeps trailers in the last paragraph, so when it finds any, that paragraph
+# is set aside), with HTML comments removed so a template's example never
+# counts; a comment left open runs to the end, as a renderer reads it. Each
+# line is {id, evidence} or {malformed}. Records are judged whether or not a
+# misplaced line was also found, so an off-list model always fails at once.
+body_records="$(jq -Rsc --argjson trailers "$has_trailers" '
   gsub("\r"; "")
+  | sub("\\s+\\z"; "")
+  | [splits("\n[ \t]*\n")] as $paras
+  | (if $trailers then $paras[:-1] else $paras end)
+  | join("\n\n")
   | gsub("<!--[\\s\\S]*?(-->|\\z)"; "")
   | split("\n")
   | map(select(test("^Served-Model:")))
   | map(capture("^Served-Model:[ \t]*(?<id>[A-Za-z0-9._-]+)[ \t]+\\((?<evidence>[^)]*[^) \t][^)]*)\\)[ \t]*$") // {malformed: .})
 ' <<<"$PR_BODY")"
-
-# Clause 3: the line sits above the Attribution block and is not a trailer.
-# The merge commit's message is "<title>\n\n<body>", so the body is read the
-# way git will read it there, under a stand-in title line: a Served-Model line
-# that git takes for part of the trailer block is out of place, and the
-# body's record then counts as missing.
-served_in_trailers="$(printf 'title\n\n%s\n' "$PR_BODY" | tr -d '\r' | git interpret-trailers --parse \
-  | grep -i '^Served-Model:' || true)"
 
 # Listed before the loop, so a failed listing fails closed instead of reading
 # as a range with no commits in it.
@@ -224,9 +239,8 @@ while IFS= read -r surface; do
   [[ -n "$surface" ]] || continue
   lane="$(jq -r --arg s "$surface" '.builder_lanes[$s].lane' <<<"$lanes")"
   if [[ -n "$served_in_trailers" ]]; then
-    echo "MISSING body: a Served-Model line is in the trailer block; put it above the Attribution block, separated by a blank line"
+    echo "MISSING body: a Served-Model line is in the trailer block, where it does not count; put it above the Attribution block, separated by a blank line"
     missing=1
-    continue
   fi
   while IFS= read -r bad; do
     [[ -n "$bad" ]] || continue

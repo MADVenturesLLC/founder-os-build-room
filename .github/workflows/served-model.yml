@@ -61,10 +61,12 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          # Fall back to the PR's copy only when the base has no checker at
-          # all. Once it does, a failure to read the base's script or data
-          # fails this step rather than handing the gate to the PR.
-          if git cat-file -e "$BASE_SHA:scripts/served-model-check.sh" 2>/dev/null; then
+          # Fall back to the PR's copy only when the base's tree, read
+          # successfully, has no checker. Any failure to read the base (its
+          # tree, the script or the data) fails this step rather than handing
+          # the gate to the PR.
+          listing="$(git ls-tree --name-only "$BASE_SHA" -- scripts/served-model-check.sh)"
+          if [[ -n "$listing" ]]; then
             git show "$BASE_SHA:scripts/served-model-check.sh" > "$RUNNER_TEMP/served-model-check.sh"
             git show "$BASE_SHA:scripts/served-model-lanes.json" > "$RUNNER_TEMP/served-model-lanes.json"
             echo "using trusted base-revision checker and data ($BASE_SHA)"
