@@ -440,6 +440,81 @@ describe('served-model check — cases from the Codex Tier-2 review of cb1cfb7',
   });
 });
 
+describe('served-model check — cases from the Codex Tier-2 review of a4712fd', () => {
+  const ATTRIBUTION = 'Role-Id: builder\nActor-Id: session:codex/test\nExecution-Surface: codex';
+
+  it('counts a Served-Model line below a --- divider as MISSING: git does not read past it', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const text = `Summary.\n\n${ATTRIBUTION}\n\n---\nServed-Model: gpt-6.1-sol (codex session report)\n\nTail.\n`;
+    const before = run(r.dir, r.base, head, text, BEFORE);
+    const from = run(r.dir, r.base, head, text, FROM);
+    r.done();
+    assert.equal(before.status, 0, before.out);
+    assert.match(before.out, /ALERT/);
+    assert.equal(from.status, 1, from.out);
+    assert.match(from.out, /below the end of the message git reads/);
+    assert.doesNotMatch(from.out, /served by gpt-6\.1-sol/, 'the line below the divider is never judged as a record');
+  });
+
+  it('never judges a line in the trailer block git finds above a divider, even an off-list one', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const text = `Summary.\n\nServed-Model: gpt-6.1-sol (codex session report)\n\nRole-Id: builder\nServed-Model: gpt-6-luna (x)\nExecution-Surface: codex\n\n---\nTail.\n`;
+    const res = run(r.dir, r.base, head, text, BEFORE);
+    r.done();
+    assert.equal(res.status, 0, res.out);
+    assert.match(res.out, /in the trailer block/);
+    assert.doesNotMatch(res.out, /OFF-LIST/);
+    assert.match(res.out, /served by gpt-6\.1-sol/);
+  });
+
+  it('never judges a line in the trailer block git finds above trailing comment lines', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const text = `Summary.\n\nServed-Model: gpt-6.1-sol (codex session report)\n\nRole-Id: builder\nServed-Model: gpt-6-luna (x)\nExecution-Surface: codex\n\n# note\n`;
+    const res = run(r.dir, r.base, head, text, BEFORE);
+    r.done();
+    assert.equal(res.status, 0, res.out);
+    assert.match(res.out, /in the trailer block/);
+    assert.doesNotMatch(res.out, /OFF-LIST/);
+  });
+
+  it('still reads a record above the Attribution block when a divider follows it', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const text = `${body('Served-Model: gpt-6.1-sol (codex session report)')}\n---\nTail.\n`;
+    const res = run(r.dir, r.base, head, text, FROM);
+    r.done();
+    assert.equal(res.status, 0, res.out);
+    assert.match(res.out, /served by gpt-6\.1-sol/);
+    assert.match(res.out, /PASS/);
+  });
+
+  it('fails at once when one of several mapped model co-authors is off the allowlist', () => {
+    const r = repo();
+    const head = r.commit([...CLAUDE, OPUS, 'Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>']);
+    const res = run(r.dir, r.base, head, '', BEFORE);
+    r.done();
+    assert.equal(res.status, 1, res.out);
+    assert.match(res.out, /served by claude-opus-5\.5/);
+    assert.match(res.out, /OFF-LIST [0-9a-f]{7}: claude-code commit served by claude-sonnet-5\.5/);
+  });
+
+  it('fails closed when the range lists but a commit\'s diff cannot be read', () => {
+    const r = repo();
+    const head = r.commit([...CLAUDE, OPUS]);
+    const tree = git(r.dir, ['rev-parse', `${head}^{tree}`]);
+    rmSync(join(r.dir, '.git', 'objects', tree.slice(0, 2), tree.slice(2)));
+    const res = run(r.dir, r.base, head, '', BEFORE);
+    r.done();
+    assert.equal(res.status, 1, res.out);
+    assert.match(res.out, /commit cannot be read/);
+    assert.doesNotMatch(res.out, /cannot be listed/, 'the listing itself succeeded');
+    assert.doesNotMatch(res.out, /PASS/);
+  });
+});
+
 describe('served-model lanes file — a pinned copy of the FounderOS registry', () => {
   const lanes = JSON.parse(readFileSync(LANES, 'utf8')) as {
     source: { repository: string; commit: string };

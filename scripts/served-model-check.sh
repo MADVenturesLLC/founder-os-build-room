@@ -21,8 +21,10 @@
 #     naming a surface with no builder lane, a `claude-code` commit with no
 #     trailer that maps, and a commit on another builder surface when the
 #     body has no well-formed line, each count as a MISSING record. So does a
-#     body whose `Served-Model:` line git reads as part of the trailer block
-#     (clause 3: above the Attribution block, not a trailer); such a line is
+#     body whose `Served-Model:` line git reads as part of the trailer block,
+#     or that sits below the end of the message git reads (a `---` divider
+#     line, or trailing comment lines) (clause 3: above the Attribution
+#     block, not a trailer). Both boundaries are git's own. Such a line is
 #     never judged as a record, and the body's other records are judged all
 #     the same, so an off-list one still fails at once. A body line inside an
 #     HTML comment never counts, even one left unclosed. A commit range git
@@ -57,7 +59,8 @@
 #         2 input refused (fail closed): bad arguments, an unset PR_BODY, a
 #           date that is not a real calendar date, or a lanes file that is
 #           not exactly one JSON document or is malformed anywhere in it,
-#           down to each allowlist entry
+#           down to each allowlist entry, or a PR body whose end of message
+#           git cannot be made to mark
 #
 # The PR body and commit messages are untrusted input. They are read by git
 # and jq only, never evaluated by the shell.
@@ -135,31 +138,59 @@ body_surfaces=""
 
 # Clause 3: the line sits above the Attribution block and is not a trailer.
 # The merge commit's message is "<title>\n\n<body>", so the body is read the
-# way git will read it there, under a stand-in title line. Any Served-Model
-# line git takes for a trailer is out of place: it counts as a missing record
-# and is never judged as a record.
-body_trailers="$(printf 'title\n\n%s\n' "$PR_BODY" | tr -d '\r' | git interpret-trailers --parse)"
+# way git will read it there, under a stand-in title line. Every boundary is
+# git's own, never a guess at it:
+#   - The end of the message. git stops reading at a `---` divider line, and
+#     sets aside trailing comment and blank lines; nothing there is in the
+#     message. To find that end, git appends one trailer under a key no body
+#     can predict: it writes it at the end of the message's trailer block (or
+#     as a new one), and copies the part it did not read, byte for byte,
+#     after it. Whatever follows the marker is that part.
+#   - The trailer block. git starts it after the last blank line above that
+#     end, so it is the last paragraph of what remains, when git finds any
+#     trailers.
+# A Served-Model line in the trailer block, or below the end of the message,
+# is out of place: it counts as a missing record and is never judged as one.
+message="$(printf 'title\n\n%s\n' "$PR_BODY" | tr -d '\r'; printf x)"
+message="${message%x}"
+body_trailers="$(printf '%s' "$message" | git interpret-trailers --parse)"
 served_in_trailers="$(grep -i '^Served-Model:' <<<"$body_trailers" || true)"
 has_trailers=false
 [[ -n "$body_trailers" ]] && has_trailers=true
 
-# The body's Served-Model records: every line above the trailer block (git
-# keeps trailers in the last paragraph, so when it finds any, that paragraph
-# is set aside), with HTML comments removed so a template's example never
-# counts; a comment left open runs to the end, as a renderer reads it. Each
-# line is {id, evidence} or {malformed}. Records are judged whether or not a
-# misplaced line was also found, so an off-list model always fails at once.
+marker="Served-Model-Boundary-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n'): x"
+marked="$(printf '%s' "$message" \
+  | git interpret-trailers --where end --if-exists add --if-missing add --trailer "$marker"; printf x)"
+marked="${marked%x}"
+[[ "$(grep -cxF -- "$marker" <<<"$marked" || true)" -eq 1 ]] \
+  || refuse "git did not mark the end of the PR body's message exactly once"
+# A newline held in a variable, not $'\n' inside the expansion, which bash
+# 3.2 reads differently when extquote is off.
+nl=$'\n'
+unread="${marked#*"$marker$nl"}"
+[[ "$message" == *"$unread" ]] \
+  || refuse "the part of the PR body git does not read could not be located"
+read_part="${message%"$unread"}"
+served_unread="$(grep -i '^Served-Model:' <<<"$unread" || true)"
+
+# The body's Served-Model records: every line of the message above the trailer
+# block (the stand-in title set aside), with HTML comments removed so a
+# template's example never counts; a comment left open runs to the end, as a
+# renderer reads it. Each line is {id, evidence} or {malformed}. Records are
+# judged whether or not a misplaced line was also found, so an off-list model
+# always fails at once.
 body_records="$(jq -Rsc --argjson trailers "$has_trailers" '
-  gsub("\r"; "")
+  sub("\\Atitle\n"; "")
+  | sub("\\A\\s+"; "")
   | sub("\\s+\\z"; "")
-  | [splits("\n[ \t]*\n")] as $paras
+  | [splits("\n[ \t\f\u000b]*\n")] as $paras
   | (if $trailers then $paras[:-1] else $paras end)
   | join("\n\n")
   | gsub("<!--[\\s\\S]*?(-->|\\z)"; "")
   | split("\n")
   | map(select(test("^Served-Model:")))
   | map(capture("^Served-Model:[ \t]*(?<id>[A-Za-z0-9._-]+)[ \t]+\\((?<evidence>[^)]*[^) \t][^)]*)\\)[ \t]*$") // {malformed: .})
-' <<<"$PR_BODY")"
+' <<<"$read_part")"
 
 # Listed before the loop, so a failed listing fails closed instead of reading
 # as a range with no commits in it.
@@ -240,6 +271,10 @@ while IFS= read -r surface; do
   lane="$(jq -r --arg s "$surface" '.builder_lanes[$s].lane' <<<"$lanes")"
   if [[ -n "$served_in_trailers" ]]; then
     echo "MISSING body: a Served-Model line is in the trailer block, where it does not count; put it above the Attribution block, separated by a blank line"
+    missing=1
+  fi
+  if [[ -n "$served_unread" ]]; then
+    echo "MISSING body: a Served-Model line is below the end of the message git reads (a --- line, or trailing comment lines), where it does not count; put it above the Attribution block"
     missing=1
   fi
   while IFS= read -r bad; do

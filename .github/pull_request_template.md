@@ -12,9 +12,10 @@ which the claude-code harness adds, is the record.
 
 Work on any other builder surface (today codex): add one line per model that
 served the work, starting at column 0, outside this comment, above the
-Attribution block and separated from it by a blank line (a line in the
-trailer block does not count). The form, shown indented here so it does not
-count:
+Attribution block and separated from it by a blank line. A line in the
+trailer block does not count, and nor does one below a line of three hyphens,
+where git stops reading the message. The form, shown indented here so it
+does not count:
 
     Served-Model: <model id> (<evidence source>)
     Served-Model: gpt-6.1-sol (codex session report)

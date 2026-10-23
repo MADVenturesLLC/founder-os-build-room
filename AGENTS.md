@@ -69,8 +69,9 @@ with no `Role-Id`). The `served-model` check
   model in the PR body, at column 0, above the Attribution block and
   separated from it by a blank line, as
   `Served-Model: <model id> (<evidence source>)`. A line git would read as
-  part of the trailer block does not count. Every model must be on that
-  lane's allowlist.
+  part of the trailer block does not count, and nor does one below a `---`
+  divider line, where git stops reading the message. Every model must be on
+  that lane's allowlist.
 - A missing record is an advisory alert through 2026-11-14 and fails the
   check from 2026-11-15. An off-list model fails it at once. A failing check
   blocks merge only once `served-model` is a required check on `main`, a
