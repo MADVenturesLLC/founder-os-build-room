@@ -174,19 +174,22 @@ read_part="${message%"$unread"}"
 served_unread="$(grep -i '^Served-Model:' <<<"$unread" || true)"
 
 # The body's Served-Model records: every line of the message above the trailer
-# block (the stand-in title set aside), with HTML comments removed so a
-# template's example never counts; a comment left open runs to the end, as a
-# renderer reads it. Each line is {id, evidence} or {malformed}. Records are
-# judged whether or not a misplaced line was also found, so an off-list model
-# always fails at once.
+# block that starts at column 0. The stand-in title and the blank lines after
+# it are set aside, never a line's own indentation, so an indented line stays
+# off column 0. HTML comments are removed so a template's example never
+# counts; a comment left open runs to the end, as a renderer reads it. Each
+# comment becomes one space, so a line that began with a comment does not
+# start at column 0 once it is gone. Each line is {id, evidence} or
+# {malformed}. Records are judged whether or not a misplaced line was also
+# found, so an off-list model always fails at once.
 body_records="$(jq -Rsc --argjson trailers "$has_trailers" '
   sub("\\Atitle\n"; "")
-  | sub("\\A\\s+"; "")
+  | sub("\\A([ \t\f\u000b]*\n)+"; "")
   | sub("\\s+\\z"; "")
   | [splits("\n[ \t\f\u000b]*\n")] as $paras
   | (if $trailers then $paras[:-1] else $paras end)
   | join("\n\n")
-  | gsub("<!--[\\s\\S]*?(-->|\\z)"; "")
+  | gsub("<!--[\\s\\S]*?(-->|\\z)"; " ")
   | split("\n")
   | map(select(test("^Served-Model:")))
   | map(capture("^Served-Model:[ \t]*(?<id>[A-Za-z0-9._-]+)[ \t]+\\((?<evidence>[^)]*[^) \t][^)]*)\\)[ \t]*$") // {malformed: .})

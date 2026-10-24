@@ -491,6 +491,30 @@ describe('served-model check — cases from the Codex Tier-2 review of a4712fd',
     assert.match(res.out, /PASS/);
   });
 
+  it('does not count an indented Served-Model line at the very start of the body', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const indented = `  Served-Model: gpt-6.1-sol (codex session report)\n\n${ATTRIBUTION}\n`;
+    const blankFirst = `\n \n\nServed-Model: gpt-6.1-sol (codex session report)\n\n${ATTRIBUTION}\n`;
+    const bad = run(r.dir, r.base, head, indented, FROM);
+    const good = run(r.dir, r.base, head, blankFirst, FROM);
+    r.done();
+    assert.equal(bad.status, 1, bad.out);
+    assert.match(bad.out, /the body has none/);
+    assert.doesNotMatch(bad.out, /served by gpt-6\.1-sol/);
+    assert.equal(good.status, 0, good.out);
+    assert.match(good.out, /served by gpt-6\.1-sol/);
+  });
+
+  it('does not count a Served-Model line that only follows an HTML comment on its line', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const res = run(r.dir, r.base, head, body('<!-- note -->Served-Model: gpt-6.1-sol (codex session report)'), FROM);
+    r.done();
+    assert.equal(res.status, 1, res.out);
+    assert.match(res.out, /the body has none/);
+  });
+
   it('fails at once when one of several mapped model co-authors is off the allowlist', () => {
     const r = repo();
     const head = r.commit([...CLAUDE, OPUS, 'Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>']);
