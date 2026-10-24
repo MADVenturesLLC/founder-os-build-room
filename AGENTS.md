@@ -54,6 +54,34 @@ Actor-Id: <session-scoped>
 Execution-Surface: <surface_id>
 ```
 
+## Served model
+
+Every pull request records the model that served each commit's work
+(FounderOS `DEC-20261020-01` clauses 3 to 5, Amendment 2), covering every
+commit that changes a file except direct-founder work (`Actor-Id: founder`
+with no `Role-Id`). The `served-model` check
+(`scripts/served-model-check.sh`) judges it:
+
+- **`claude-code` commits:** write nothing. The `Co-Authored-By:` trailer the
+  harness adds is the record. It must name a model on the
+  `claude-code:anthropic` allowlist.
+- **Commits on any other builder surface (today `codex`):** put one line per
+  model in the PR body, at column 0, above the Attribution block and
+  separated from it by a blank line, as
+  `Served-Model: <model id> (<evidence source>)`. A line git would read as
+  part of the trailer block does not count, and nor does one below a `---`
+  divider line, where git stops reading the message. A record is one whole
+  line: a `Served-Model:` line holding any part of an HTML comment is
+  malformed. Every model must be on that lane's allowlist.
+- A missing record is an advisory alert through 2026-11-14 and fails the
+  check from 2026-11-15. An off-list model fails it at once. A failing check
+  blocks merge only once `served-model` is a required check on `main`, a
+  Founder act.
+
+The lanes and allowlists live in `scripts/served-model-lanes.json`, a copy of
+FounderOS `04-agents/model-registry.md` at the commit it names. When FounderOS
+changes a lane, update that file in its own reviewed pull request.
+
 ## Git rules
 
 - Clear, descriptive commit messages; logical commits per unit of work
