@@ -515,6 +515,49 @@ describe('served-model check — cases from the Codex Tier-2 review of a4712fd',
     assert.match(res.out, /the body has none/);
   });
 
+  it('does not count a Served-Model line that a comment at the start of the body precedes', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const text = `<!-- note -->Served-Model: gpt-6.1-sol (codex session report)\n\n${ATTRIBUTION}\n`;
+    const res = run(r.dir, r.base, head, text, FROM);
+    r.done();
+    assert.equal(res.status, 1, res.out);
+    assert.match(res.out, /the body has none/);
+  });
+
+  it('never joins two lines into one record by removing a comment between them', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const text = body('Served-Model: <!--\n-->gpt-6.1-sol (codex session report)');
+    const res = run(r.dir, r.base, head, text, FROM);
+    r.done();
+    assert.equal(res.status, 1, res.out);
+    assert.match(res.out, /malformed line 'Served-Model:/);
+    assert.doesNotMatch(res.out, /served by gpt-6\.1-sol/);
+  });
+
+  it('counts a Served-Model line holding part of a comment as malformed, never reading around it', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    for (const line of [
+      'Served-Model:<!-- x -->gpt-6.1-sol (codex session report)',
+      'Served-Model: gpt-6.1-sol (codex <!-- x --> session report)',
+      'Served-Model: gpt-6.1-sol (codex session report) <!-- x -->',
+    ]) {
+      const res = run(r.dir, r.base, head, body(line), FROM);
+      assert.equal(res.status, 1, `${line}: ${res.out}`);
+      assert.match(res.out, /malformed line 'Served-Model:.*<!--\.\.\.-->/, line);
+      assert.doesNotMatch(res.out, /served by gpt-6\.1-sol/, line);
+    }
+    r.done();
+  });
+
+  it('records the bash the checker runs under', (t) => {
+    const r = spawnSync('bash', ['-c', 'printf "%s %s" "$BASH_VERSION" "$(command -v bash)"'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    t.diagnostic(`bash ${r.stdout}`);
+  });
+
   it('fails at once when one of several mapped model co-authors is off the allowlist', () => {
     const r = repo();
     const head = r.commit([...CLAUDE, OPUS, 'Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>']);

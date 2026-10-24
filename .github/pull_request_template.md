@@ -20,7 +20,8 @@ does not count:
     Served-Model: <model id> (<evidence source>)
     Served-Model: gpt-6.1-sol (codex session report)
 
-Lines inside this comment are ignored.
+Lines inside this comment are ignored, and a Served-Model line that holds any
+part of an HTML comment is malformed.
 
 A missing record is an advisory alert through 2026-11-14 and fails the
 served-model check from 2026-11-15; a model not on its lane's allowlist fails
