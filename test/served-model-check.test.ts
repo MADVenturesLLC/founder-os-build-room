@@ -443,7 +443,7 @@ describe('served-model check — cases from the Codex Tier-2 review of cb1cfb7',
 describe('served-model check — cases from the Codex Tier-2 review of a4712fd', () => {
   const ATTRIBUTION = 'Role-Id: builder\nActor-Id: session:codex/test\nExecution-Surface: codex';
 
-  it('counts a Served-Model line below a --- divider as MISSING: git does not read past it', () => {
+  it('does not count a Served-Model line below a --- divider: git does not read past it', () => {
     const r = repo();
     const head = r.commit(CODEX);
     const text = `Summary.\n\n${ATTRIBUTION}\n\n---\nServed-Model: gpt-6.1-sol (codex session report)\n\nTail.\n`;
@@ -453,8 +453,45 @@ describe('served-model check — cases from the Codex Tier-2 review of a4712fd',
     assert.equal(before.status, 0, before.out);
     assert.match(before.out, /ALERT/);
     assert.equal(from.status, 1, from.out);
-    assert.match(from.out, /below the end of the message git reads/);
+    assert.match(from.out, /the body has none/);
+    assert.match(from.out, /note body: .*below the end of the message git reads/);
     assert.doesNotMatch(from.out, /served by gpt-6\.1-sol/, 'the line below the divider is never judged as a record');
+  });
+
+  it('reads a body written from the PR template: passes with a record, MISSING without one', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const template = readFileSync(TEMPLATE, 'utf8');
+    const at = template.indexOf('## Attribution');
+    assert.ok(at > 0);
+    const fill = (record: string) =>
+      `${template.slice(0, at)}${record}${template.slice(at).trimEnd()}\n\n${ATTRIBUTION}\n`;
+    const good = run(r.dir, r.base, head, fill('Served-Model: gpt-6.1-sol (codex session report)\n\n'), FROM);
+    const crlf = run(r.dir, r.base, head, fill('Served-Model: gpt-6.1-sol (codex session report)\n\n').replace(/\n/g, '\r\n'), FROM);
+    const none = run(r.dir, r.base, head, fill(''), FROM);
+    r.done();
+    assert.equal(good.status, 0, good.out);
+    assert.match(good.out, /PASS/);
+    assert.equal(crlf.status, 0, crlf.out);
+    assert.equal(none.status, 1, none.out);
+    assert.match(none.out, /the body has none/);
+    assert.doesNotMatch(none.out, /malformed|OFF-LIST/, 'the template\'s own examples never count');
+  });
+
+  it('passes a correct record when a Served-Model line, commented or not, sits below a --- divider', () => {
+    const r = repo();
+    const head = r.commit(CODEX);
+    const above = `Summary.\n\nServed-Model: gpt-6.1-sol (codex session report)\n\n${ATTRIBUTION}\n\n---\n`;
+    for (const below of [
+      '<!--\nServed-Model: gpt-6-luna (example only)\n-->\n',
+      'Served-Model: gpt-6-luna (example only)\n',
+    ]) {
+      const res = run(r.dir, r.base, head, above + below, FROM);
+      assert.equal(res.status, 0, `${below}: ${res.out}`);
+      assert.match(res.out, /served by gpt-6\.1-sol/);
+      assert.doesNotMatch(res.out, /OFF-LIST|MISSING/, below);
+    }
+    r.done();
   });
 
   it('never judges a line in the trailer block git finds above a divider, even an off-list one', () => {

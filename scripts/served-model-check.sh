@@ -21,12 +21,14 @@
 #     naming a surface with no builder lane, a `claude-code` commit with no
 #     trailer that maps, and a commit on another builder surface when the
 #     body has no well-formed line, each count as a MISSING record. So does a
-#     body whose `Served-Model:` line git reads as part of the trailer block,
-#     or that sits below the end of the message git reads (a `---` divider
-#     line, or trailing comment lines) (clause 3: above the Attribution
-#     block, not a trailer). Both boundaries are git's own. Such a line is
-#     never judged as a record, and the body's other records are judged all
-#     the same, so an off-list one still fails at once. A body line inside an
+#     body whose `Served-Model:` line git reads as part of the trailer block
+#     (clause 3: above the Attribution block, not a trailer), where it would
+#     become a trailer of the merge commit. A line below the end of the
+#     message git reads (a `---` divider line, or trailing comment lines) is
+#     not in the message at all: it is noted and does not count, for or
+#     against. Both boundaries are git's own. Neither kind of line is ever
+#     judged as a record, and the body's other records are judged all the
+#     same, so an off-list one still fails at once. A body line inside an
 #     HTML comment never counts, even one left unclosed. A commit range git
 #     cannot list fails, as an unreadable commit does.
 #   - A recorded model that is not on its lane's allowlist is OFF-LIST.
@@ -149,8 +151,9 @@ body_surfaces=""
 #   - The trailer block. git starts it after the last blank line above that
 #     end, so it is the last paragraph of what remains, when git finds any
 #     trailers.
-# A Served-Model line in the trailer block, or below the end of the message,
-# is out of place: it counts as a missing record and is never judged as one.
+# A Served-Model line in the trailer block is out of place: it counts as a
+# missing record. One below the end of the message is outside it: it is noted
+# only. Neither is ever judged as a record.
 message="$(printf 'title\n\n%s\n' "$PR_BODY" | tr -d '\r'; printf x)"
 message="${message%x}"
 body_trailers="$(printf '%s' "$message" | git interpret-trailers --parse)"
@@ -280,8 +283,7 @@ while IFS= read -r surface; do
     missing=1
   fi
   if [[ -n "$served_unread" ]]; then
-    echo "MISSING body: a Served-Model line is below the end of the message git reads (a --- line, or trailing comment lines), where it does not count; put it above the Attribution block"
-    missing=1
+    echo "note body: a Served-Model line is below the end of the message git reads (a --- line, or trailing comment lines); it does not count, for or against"
   fi
   while IFS= read -r bad; do
     [[ -n "$bad" ]] || continue
