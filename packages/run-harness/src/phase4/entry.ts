@@ -20,7 +20,12 @@
  *     reviewer are on theirs; the reviewer's surface differs from the
  *     builder's (surface-level distinctness, the issuance receipt's
  *     settled decision — two surfaces that resolve to the same model are
- *     the Founder's call, not a check).
+ *     the Founder's call, not a check). Each seat is a lane token,
+ *     `surface` or `surface:provider`, as the act's are: a bare surface
+ *     that carries more than one approved provider on that seat is
+ *     refused as ambiguous, and the reviewer's resolved provider differs
+ *     from the builder's (DEC-20261020-01 clause 7: work built on
+ *     `claude-code:anthropic` is not reviewed on `antigravity:anthropic`).
  *
  * The seat lanes are Build Room's ratified registrations
  * (`@build-room/seat-registry`, `RATIFIED_SEATS`), and the named Gateway is
@@ -31,6 +36,7 @@
  */
 
 import { RATIFIED_SEATS, type SeatRegistrationV1 } from '../../../seat-registry/src/index.js';
+import { parseLaneToken } from '../../../control-plane/src/counted-run-config.js';
 import {
   PHASE4_DISPATCHER,
   PHASE4_NAMED_GATEWAY_PREFIX,
@@ -94,11 +100,42 @@ export function evaluatePhase4Entry(
   ) {
     failures.push('planner_lane_not_approved');
   }
-  if (!onApprovedLane(seats, 'builder', (lane) => lane.surface_id === set.seats.builder)) failures.push('builder_lane_not_approved');
-  if (!onApprovedLane(seats, 'independent-reviewer', (lane) => lane.surface_id === set.seats.reviewer)) failures.push('reviewer_lane_not_approved');
-  if (set.seats.reviewer === set.seats.builder) failures.push('reviewer_same_as_builder');
+  const builder = seatLane(seats, 'builder', set.seats.builder);
+  const reviewer = seatLane(seats, 'independent-reviewer', set.seats.reviewer);
+  if (builder.kind === 'not_approved') failures.push('builder_lane_not_approved');
+  if (builder.kind === 'ambiguous') failures.push('builder_lane_ambiguous');
+  if (reviewer.kind === 'not_approved') failures.push('reviewer_lane_not_approved');
+  if (reviewer.kind === 'ambiguous') failures.push('reviewer_lane_ambiguous');
+  if (builder.surface !== null && builder.surface === reviewer.surface) failures.push('reviewer_same_as_builder');
+  else if (builder.kind === 'resolved' && reviewer.kind === 'resolved' && builder.provider === reviewer.provider) {
+    failures.push('reviewer_same_family_as_builder');
+  }
 
   return { ok: failures.length === 0, failures };
+}
+
+type SeatLaneResolution =
+  | { readonly kind: 'resolved'; readonly surface: string; readonly provider: string }
+  | { readonly kind: 'ambiguous'; readonly surface: string }
+  | { readonly kind: 'not_approved'; readonly surface: string | null };
+
+/**
+ * Resolve a seat's lane token to the provider of the approved lane it names,
+ * as boot does (`counted-run-config.ts`): a bare surface resolves only when
+ * every approved lane it carries on that seat is one provider's.
+ */
+function seatLane(seats: readonly SeatRegistrationV1[], seatId: string, raw: string): SeatLaneResolution {
+  const token = parseLaneToken(raw);
+  if (token === null) return { kind: 'not_approved', surface: null };
+  const providers = new Set(
+    (seats.find((s) => s.seat_id === seatId)?.routing ?? [])
+      .filter((lane) => lane.binding_status === 'approved-binding' && lane.surface_id === token.surface)
+      .filter((lane) => token.provider === null || lane.provider === token.provider)
+      .map((lane) => lane.provider),
+  );
+  if (providers.size === 0) return { kind: 'not_approved', surface: token.surface };
+  if (providers.size > 1) return { kind: 'ambiguous', surface: token.surface };
+  return { kind: 'resolved', surface: token.surface, provider: [...providers][0]! };
 }
 
 function onApprovedLane(

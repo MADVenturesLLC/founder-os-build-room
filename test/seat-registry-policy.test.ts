@@ -98,6 +98,20 @@ describe('Test 4 — Per-run model distinctness (r7 §9.1 test 4)', () => {
       'a codex:openai build may be reviewed on antigravity:anthropic',
     );
 
+    // Positive pairing on a model-exact lane: a different provider and model,
+    // with an attestation id on the roster, is distinct.
+    const modelExactOnRoster = {
+      ...builder.not_approved_lanes[0]!.record,
+      provider: 'xai',
+      model_id: 'grok-4.5',
+      tier2_attestation_id: 'grok-build',
+    };
+    assert.ok(isDistinctReviewLane(opusBuild, modelExactOnRoster), 'a model-exact lane on the roster, another family and model, is distinct');
+    assert.ok(
+      !isDistinctReviewLane({ provider: 'openai', model_id: 'grok-4.5' }, modelExactOnRoster),
+      'a model-exact lane rejects its own model even under another provider',
+    );
+
     // Negative pairing 3: off-roster attestation (a model-exact lane whose token is not on the roster)
     const mockOffRosterLane = {
       ...builder.not_approved_lanes[0]!.record,

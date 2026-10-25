@@ -22,6 +22,11 @@ import { fileURLToPath } from 'node:url';
 
 import {
   DISPLAY_NAMES,
+  GROK_BULLET_1,
+  GROK_BULLET_2,
+  GROK_ITEM,
+  HERMES_BULLET_1,
+  HERMES_BULLET_2,
   RATIFIED_SEATS,
   RESEARCHER_CONTRACT_SHA256,
   ARCHITECT_CONTRACT_SHA256,
@@ -32,9 +37,11 @@ import {
   TIER2_ROSTER_ATTESTATION_IDS,
   isDisplayName,
   isSeatId,
+  isSurfaceProviderLane,
   isTerminalStatusFor,
   toAttentionState,
   type AttentionState,
+  type ModelExactLane,
   type SeatId,
   type SeatRegistrationV1,
 } from '../packages/seat-registry/src/index.js';
@@ -318,6 +325,130 @@ describe('Test 11 — toAttentionState (r7 §9.1 test 11)', () => {
       () => toAttentionState('independent-reviewer', 'PLAN_READY_FOR_FOUNDER_APPROVAL'),
       RangeError,
     );
+  });
+});
+
+/*
+ * The six lanes DEC-20261020-01 clause 2 drops, exactly as main bound them
+ * before this change (founder-os-build-room bbed869, registry-data.ts),
+ * copied here so a not-approved record that drifts from what was bound fails.
+ */
+const MAIN_BUILDER_LARGE: ModelExactLane = {
+  lane_label: 'large',
+  provider: 'xai',
+  surface_id: 'grok-build',
+  model_id: 'grok-4.5',
+  binding_status: 'approved-binding',
+  binding_class: 'large-implementation-primary-task-scoped', // DEC-20260807-01
+  provider_class: 'NOT_RECORDED', // deployment_channel: unverified
+  data_eligibility: ['public'], // public-class only by default (DEC-20260815-04 conditions)
+  conditions: [GROK_BULLET_1, GROK_BULLET_2, GROK_ITEM],
+  derivation: ['DEC-20260807-01', 'DEC-20260815-04', 'DEC-20260716-02 amendment grok-build item', 'model-registry.md grok-4.5'],
+};
+
+const MAIN_BUILDER_LARGE_FALLBACK: ModelExactLane = {
+  lane_label: 'large fallback',
+  provider: 'anthropic',
+  surface_id: 'claude-code',
+  model_id: 'sonnet-5',
+  binding_status: 'approved-binding',
+  binding_class: 'large-implementation-fallback-task-scoped', // DEC-20260807-01; data-boundary condition is initial eligibility, not a failover trigger (§4)
+  provider_class: 'P1', // deployment_channel: P1 (model-registry)
+  data_eligibility: ['public', 'internal'],
+  conditions: [],
+  derivation: ['DEC-20260807-01', 'model-registry.md sonnet-5'],
+};
+
+const MAIN_BUILDER_MEDIUM: ModelExactLane = {
+  lane_label: 'medium',
+  provider: 'anthropic',
+  surface_id: 'claude-code',
+  model_id: 'opus-4.7',
+  binding_status: 'approved-binding',
+  binding_class: 'medium-work-primary', // DEC-20260807-01
+  provider_class: 'P1', // deployment_channel: P1-anthropic-first-party
+  data_eligibility: ['public', 'internal'],
+  conditions: [],
+  derivation: ['DEC-20260807-01', 'model-registry.md opus-4.7'],
+};
+
+const MAIN_BUILDER_LIGHT: ModelExactLane = {
+  lane_label: 'light',
+  provider: 'anthropic',
+  surface_id: 'claude-code',
+  model_id: 'claude-haiku-4-5',
+  binding_status: 'approved-binding',
+  binding_class: 'light-implementation-task-scoped', // DEC-20260807-01
+  provider_class: 'NOT_RECORDED', // deployment_channel: verification-pending
+  data_eligibility: ['public'],
+  conditions: [],
+  derivation: ['DEC-20260807-01', 'model-registry.md claude-haiku-4-5'],
+};
+
+const MAIN_BUILDER_HERMES_LOCAL: ModelExactLane = {
+  lane_label: 'Hermes local',
+  provider: 'Hermes (local)', // the Naming Act provider name (DEC-20260815-04); model registry records provider: deepseek
+  surface_id: 'hermes-local-code',
+  model_id: 'deepseek-v4-flash',
+  binding_status: 'approved-binding',
+  binding_class: 'hermes-local-code-current-model', // DEC-20260807-01
+  provider_class: 'P5', // deployment_channel: P5-founder-operated-local
+  data_eligibility: ['local-only'], // external transmission denied unless exactly Founder-authorized
+  conditions: [HERMES_BULLET_1, HERMES_BULLET_2],
+  derivation: ['DEC-20260815-04', 'DEC-20260807-01 §3.3', 'model-registry.md deepseek-v4-flash'],
+};
+
+const MAIN_TIER2_CLAUDE_CODE: ModelExactLane = {
+  lane_label: 'tier-2',
+  provider: 'anthropic',
+  surface_id: 'claude-code',
+  model_id: 'sonnet-5',
+  binding_status: 'approved-binding',
+  binding_class: 'tier-2',
+  mode: 'invoked',
+  tier2_attestation_id: 'claude-code', // NOT on the FOUNDER-ACT-20261011 B2 binding surface roster (antigravity|codex|chatgpt|grok-build); retained for the surface-keyed seat act, with the binding Claude lane moving to antigravity under DEC-20261019-01 Clause D in Slice 2
+  provider_class: 'P1', // deployment_channel: P1 (model-registry, sonnet-5)
+  data_eligibility: ['public', 'internal'], // sonnet-5 is ZDR-eligible (model-registry); no data-boundary condition recorded
+  conditions: [],
+  derivation: [
+    'BR-PHASE4-SURFACE-KEYED-SEATS-R1 (2026-10-17) claude-code admitted as an independent-reviewer surface',
+    'DEC-20261001-01 (roster re-based to surface attestation tokens; claude-code re-admitted at surface level)',
+    'DEC-20260815-05',
+    'model-registry.md sonnet-5 (dispatch pin; anthropic; P1; ZDR-eligible)',
+  ],
+};
+
+describe('DEC-20261020-01 — not-approved records keep every field as bound', () => {
+  it('each builder and reviewer record deep-equals the lane main bound', () => {
+    const builder = RATIFIED_SEATS.find((s) => s.seat_id === 'builder') as SeatRegistrationV1;
+    const reviewer = RATIFIED_SEATS.find((s) => s.seat_id === 'independent-reviewer') as SeatRegistrationV1;
+    assert.deepEqual(
+      builder.not_approved_lanes.map((n) => n.record),
+      [MAIN_BUILDER_LARGE, MAIN_BUILDER_LARGE_FALLBACK, MAIN_BUILDER_MEDIUM, MAIN_BUILDER_LIGHT, MAIN_BUILDER_HERMES_LOCAL],
+    );
+    assert.deepEqual(reviewer.not_approved_lanes.map((n) => n.record), [MAIN_TIER2_CLAUDE_CODE]);
+  });
+});
+
+describe('DEC-20261020-01 — every lane is well formed at runtime', () => {
+  it('builder and reviewer lanes are surface:provider lanes with a token equal to surface:provider and a non-empty, duplicate-free allowlist; architect lanes are model-exact', () => {
+    for (const seat of RATIFIED_SEATS) {
+      for (const lane of seat.routing) {
+        if (seat.seat_id === 'builder' || seat.seat_id === 'independent-reviewer') {
+          assert.ok(isSurfaceProviderLane(lane), `${seat.seat_id} ${lane.lane_label} is a surface:provider lane`);
+          assert.equal(lane.lane, `${lane.surface_id}:${lane.provider}`);
+          assert.ok(lane.allowlist.length > 0, `${seat.seat_id} ${lane.lane} has a non-empty allowlist`);
+          assert.equal(new Set(lane.allowlist).size, lane.allowlist.length, `${seat.seat_id} ${lane.lane} lists each model once`);
+          assert.equal((lane as { model_id?: unknown }).model_id, undefined);
+          assert.equal((lane as { tier2_attestation_id?: unknown }).tier2_attestation_id, undefined);
+        } else {
+          assert.ok(!isSurfaceProviderLane(lane), `${seat.seat_id} ${lane.lane_label} stays model-exact (clause 1)`);
+          assert.ok(lane.model_id.length > 0);
+        }
+      }
+      const tokens = seat.routing.filter(isSurfaceProviderLane).map((lane) => lane.lane);
+      assert.equal(new Set(tokens).size, tokens.length, `${seat.seat_id} carries each surface:provider lane once`);
+    }
   });
 });
 
