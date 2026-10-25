@@ -9,12 +9,14 @@
  * Planner's execution surface — which must be the counted run's adapter
  * surface (`COUNTED_RUN_PLANNER_SURFACE`, `antigravity`; any other surface
  * is refused at boot with its own string) — and `seats` carries the
- * builder's and the reviewer's execution-surface ids. No provider, no
- * model in the act's terms. Provider and model remain in the seat registry
- * as routing detail: each check below reads `surface_id` and
- * `binding_status` only, and the parsed config carries the planner's
- * provider and model RESOLVED from the approved lane, so the routes
- * journal the same intended route they always did. Two surfaces that
+ * builder's and the reviewer's execution-surface ids. No model in the
+ * act's terms. Each term is a lane token, `surface` or `surface:provider`
+ * (`DEC-20261019-01` Clause C): a bare surface resolves only when the seat
+ * carries one provider's approved lanes on it. Each check below reads
+ * `surface_id`, `provider` and `binding_status`; the parsed config carries
+ * the planner's provider and model RESOLVED from the approved lane, so the
+ * routes journal the same intended route they always did, and keeps each
+ * seat's surface only. Two surfaces that
  * resolve to the same model are the Founder's call, not a check; the
  * reviewer's surface differs from the builder's (the issuance receipt's
  * settled decision), and since DEC-20261020-01 clause 7 the two resolved
@@ -105,8 +107,9 @@ export function parseCountedRunConfig(raw: string | undefined, seats: readonly S
   }
   // DEC-20261020-01 clause 7: the reviewer's model family must differ from the
   // builder's, so work built on claude-code:anthropic is not reviewed on
-  // antigravity:anthropic. Different surfaces are not enough; boot is the one
-  // place that sees both lanes' providers, since the parsed seats keep surfaces only.
+  // antigravity:anthropic. Different surfaces are not enough. The parsed seats
+  // keep the surface only, so a reader that needs the provider resolves its own
+  // lane token, as the Phase 4 entry check does with its run set.
   if (reviewerLane.provider === builderLane.provider) {
     throw new CountedRunConfigError('the reviewer provider must differ from the builder provider');
   }

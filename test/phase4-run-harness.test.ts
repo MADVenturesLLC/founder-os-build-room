@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { founderGoalDigest } from '../packages/control-plane/src/founder-goal.js';
 import { plannerCommandIdFor } from '../packages/control-plane/src/planner-loop.js';
+import { parseCountedRunConfig } from '../packages/control-plane/src/counted-run-config.js';
 import { RATIFIED_SEATS, type SeatRegistrationV1, type SeatRoutingLane } from '../packages/seat-registry/src/index.js';
 import {
   PHASE4_DISPATCHER,
@@ -251,6 +252,36 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
     assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'codex', reviewer: 'grok-build:anthropic' } }), observation()).failures, ['reviewer_lane_not_approved']);
     // The same surface with different providers is still the same surface.
     assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'codex:openai', reviewer: 'codex' } }), observation()).failures, ['reviewer_same_as_builder']);
+  });
+
+  it('refuses a malformed seat token as not approved, on either seat', () => {
+    for (const bad of ['codex:', ':openai', 'codex:openai:extra', 'codex::openai', '']) {
+      assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: bad, reviewer: 'grok-build' } }), observation()).failures, ['builder_lane_not_approved'], JSON.stringify(bad));
+      assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'codex', reviewer: bad } }), observation()).failures, ['reviewer_lane_not_approved'], JSON.stringify(bad));
+    }
+  });
+
+  it('refuses a bare builder surface that carries two providers, and resolves the qualified one', () => {
+    const twoBuilderFamilies: readonly SeatRegistrationV1[] = RATIFIED_SEATS.map((seat) => {
+      if (seat.seat_id !== 'builder') return seat;
+      const codex = seat.routing.find((lane) => lane.surface_id === 'codex')!;
+      return { ...seat, routing: [...seat.routing, { ...codex, lane_label: 'test-codex-google', provider: 'google', lane: 'codex:google' } as SeatRoutingLane] };
+    });
+    assert.deepEqual(evaluatePhase4Entry(set(), observation(), { seats: twoBuilderFamilies }).failures, ['builder_lane_ambiguous']);
+    assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'codex:openai', reviewer: 'grok-build' } }), observation(), { seats: twoBuilderFamilies }).failures, []);
+    // The injected google codex builder lane is the reviewer's family on antigravity:google.
+    assert.deepEqual(
+      evaluatePhase4Entry(set({ seats: { builder: 'codex:google', reviewer: 'antigravity:google' } }), observation(), { seats: twoBuilderFamilies }).failures,
+      ['reviewer_same_family_as_builder'],
+    );
+  });
+
+  it('fails closed on boot-normalized seats: a provider the act named but the parsed config dropped is ambiguous at entry, never accepted', () => {
+    // Codex round 2, advisory 1: boot keeps each seat's surface only. Fed
+    // that output, entry cannot recover antigravity:google and refuses it.
+    const config = parseCountedRunConfig(JSON.stringify({ actId: 'FOUNDER-ACT-EXAMPLE', gatewayId: '1880c12d-0000-4000-8000-000000000001', planner: 'antigravity', seats: { builder: 'claude-code', reviewer: 'antigravity:google' } }))!;
+    assert.deepEqual(config.seats, { builder: 'claude-code', reviewer: 'antigravity' });
+    assert.deepEqual(evaluatePhase4Entry(set({ seats: config.seats }), observation()).failures, ['reviewer_lane_ambiguous']);
   });
 
   it('refuses every set against a registry that carries no build-room-control-plane, and admits it on the pinned copy', () => {

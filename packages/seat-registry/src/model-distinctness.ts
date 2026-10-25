@@ -20,8 +20,10 @@ import { isSurfaceProviderLane, laneModelIds, type SeatRoutingLane } from './sch
  * roster from model ids to EXECUTION-SURFACE ATTESTATION TOKENS — model ids
  * churn (provider retirement, HTTP 404, unserved tiers) and the churn failure
  * mode is a review that ran but could not be attested. The exact served model
- * is recorded — never gated — in the Tier2-Reviewer-Model: evidence line
- * (DEC-20261001-01 clause 3). FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION
+ * is recorded in the Tier2-Reviewer-Model: evidence line (DEC-20261001-01
+ * clause 3), and this roster never gates it; on Build Room lanes
+ * DEC-20261020-01 clause 4 separately refuses a served model off its lane's
+ * allowlist. FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION
  * B2 fixes the surface set to the four tokens below; a reviewer on any other
  * surface cannot issue a binding Tier-2 verdict.
  */
