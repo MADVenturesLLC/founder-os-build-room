@@ -138,14 +138,10 @@ const ROLE_REGISTRAR_SET: ReadonlySet<string> = new Set(ROLE_REGISTRAR);
  * every approved-binding lane falls into one of those categories (§2.5).
  */
 const LANE_STANDING_REQUIREMENT: ReadonlyMap<string, string> = new Map([
-  // builder lanes (per-task, DEC-20260807-01 / DEC-20260716-02 amendment)
-  ['large', 'a per-task Founder-authorized task-scoped assignment, until MP-1 activation'],
-  ['large fallback', 'a per-task Founder-authorized task-scoped assignment, until MP-1 activation'],
-  ['medium', 'a per-task Founder-authorized task-scoped assignment, until MP-1 activation'],
-  ['light', 'a per-task Founder-authorized task-scoped assignment, until MP-1 activation'],
-  ['Codex complex / high-risk', 'a per-task Founder-authorized task-scoped assignment; max mode additionally requires an exact Founder authorization and a recorded reason'],
-  ['Codex routine / bounded', 'a per-task Founder-authorized task-scoped assignment, until MP-1 activation'],
-  ['Hermes local', 'a per-task Founder authorization; only a registered, Founder-approved local model may replace the selection'],
+  // builder lanes (per-task, DEC-20260807-01 / DEC-20260716-02 amendment), on
+  // the two surface:provider lanes of DEC-20261020-01 clause 2
+  ['claude-code:anthropic', 'a per-task Founder-authorized task-scoped assignment, until MP-1 activation'],
+  ['codex:openai', 'a per-task Founder-authorized task-scoped assignment, until MP-1 activation; max mode additionally requires an exact Founder authorization and a recorded reason'],
   // architect primary: the Founder's manual per-task model selection (antigravity)
   ['primary', "the Founder's manual per-task model selection on `antigravity`, with the exact model and effort recorded"],
   // architect bounded reconciliation: per-invocation preconditions (DEC-20260807-01 §5.1)

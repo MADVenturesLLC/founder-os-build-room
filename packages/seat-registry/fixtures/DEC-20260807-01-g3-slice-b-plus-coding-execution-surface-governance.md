@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-08-07
-updated: 2026-08-07
-version: 0.3
+updated: 2026-10-24
+version: 0.5
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -55,6 +55,13 @@ tags:
 > independent review of the release manifest — nothing here activates MP-1,
 > retires the Temporary Task-Assignment Policy, or grants unbounded
 > repository, data, merge, or production authority.
+
+> **Amendment 1 (clause 2 item 7) is ratified** (below, "Amendment 1
+> Ratification", Founder comment 6389927395 at head `af10edb…`) **and binds
+> on merge of FounderOS pull request 398**; clause 2 item 7 below carries
+> it. It defines when the record store counts as live and how executions
+> performed before that are evidenced. Until that merge, clause 2 binds as
+> ratified on 2026-08-07.
 
 ## Founder ratification (2026-08-07)
 
@@ -208,6 +215,39 @@ review or the Founder ruling.
 6. The exact committed head SHA MUST be part of the approval-bound merge
    effect. Any subsequent commit changes the approved effect and invalidates
    the prior review and Founder authorization.
+7. **When the record store is live, and executions before it.** For
+   this clause the record store is live from the first governed coding
+   execution that begins after both of the following hold: (a)
+   migrations `1784419200007` through `1784419200011` of
+   `MADVenturesLLC/founder-os-telegram` have been applied to the hosted
+   Neon durable evidence store's default branch, as evidenced by their
+   rows in that database's `pgmigrations` table; and (b) the runtime's
+   own tooling has performed one successful write and read-back of a
+   `cger_execution_records` row against that database, the write/read
+   reconciliation `/00-system/coding-governance-execution-record-v1.0.md`
+   requires, with the run's evidence locator recorded in
+   `founder-os-telegram`'s `docs/cger-implementation-deviations.md` and
+   cited by the next release manifest. Migration rows alone do not make
+   the store live. This is a definition for the record only: the
+   Founder's activation ruling under clause 6.3 remains separate and is
+   not implied by it.
+   Governed coding executions performed before that moment are **not
+   back-recorded** as Coding Governance Execution Records, because a
+   record written after the fact would assert lifecycle state
+   (ownership, lease, fencing token, exception binding, verification
+   capture) that did not exist when the work ran. For each such
+   execution the **evidence of record** is: the merge commit on the
+   repository's `main` with its Attribution trailers; the pull request
+   body carrying the item 2 fields that apply; the Founder's SHA-named
+   merge-authorization comment; and the review-evidence bundle with its
+   `VERDICT.md` sha256 as that comment records it. These four artifacts
+   are the operative evidence set; any shorter description elsewhere in
+   this decision is shorthand for them. The executions this
+   item covers at the time of drafting are `founder-os-telegram` pull
+   requests #130 through #136 and the `HO-20261024-02` supervisor build
+   under `TTA-20261024-01`; any further execution that begins before the
+   store is live is covered on the same terms. Items 2 and 3 apply in
+   full from the first execution after the store is live.
 
 ### 3. Execution-surface registrations and model-selection amendments
 
@@ -440,6 +480,21 @@ does not grant repository write authority.
   `gpt-5.6-sol` to that roster while retaining the existing `gpt-5.6`,
   `gemini-3.1-pro`, `grok-4.5`, and `opus-4.8` entries. `gpt-5.6-terra` is
   limited to routine verification and bounded fixes and cannot satisfy Tier-2.
+
+  > **Reconciliation note (2026-10-20).** The sentence above was superseded
+  > for model-eligibility purposes by `DEC-20260719-02` v1.1 (2026-08-15;
+  > Founder ratification 2026-08-14), which placed `gpt-5.6-terra` on the
+  > Tier-2 full roster. The `04-agents/model-registry.md` entry now records
+  > that binding as retired on 2026-10-19 (citing `DEC-20261019-01` Clause B);
+  > the successor is `gpt-6-astra`, an explicit substitution, not a rename.
+  > In FounderOS, from `DEC-20260719-02` v1.2 (2026-10-11,
+  > `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION`), a binding Tier-2
+  > verdict is attested by execution surface (`antigravity`, `codex`,
+  > `chatgpt`, `grok-build`); the model is recorded in
+  > `Tier2-Reviewer-Model` but is not bound. The historical sentence is
+  > retained verbatim. This note records the text reconciliation; it does
+  > not restore a retired binding.
+
   Other Gemini models selected through `antigravity` may build or provide
   supplemental review but cannot satisfy Tier-2 until an explicit roster
   amendment names the exact model.
@@ -785,6 +840,128 @@ until the separate exact-SHA activation ruling defined in clause 6, and the
 Temporary Task-Assignment Policy remains globally controlling until that
 ruling.
 
+## Amendment 1 (proposed, 2026-10-24)
+
+**Not in force.** Until the Founder ratifies it, clause 2 binds as ratified
+and quoted in the Decision section above. Drafted by `builder` at the
+Founder's direction of 2026-10-24.
+
+**Why it was raised.** Clause 2 items 2 and 3 require every governed coding
+execution to carry a Coding Governance Execution Record persisted in the
+Neon durable evidence store. The store's migrations (`1784419200007` through
+`1784419200011` in `MADVenturesLLC/founder-os-telegram`) have been merged
+but not applied to the hosted Neon, so every G3 Slice B+ build to date
+(`founder-os-telegram` pull requests #130 through #136) and the
+`HO-20261024-02` supervisor build were, or will be, governed executions with
+no persisted record. `HO-20261024-01` put the question to the Founder.
+Copilot's review of FounderOS pull request 397 (finding at
+`discussion_r4367843568`) held, correctly, that a Founder ruling recorded in
+a handoff cannot amend this decision and that `DEC-20260731-05` Q5 governs
+the Console approval ledger, not this store; the ruling therefore needs a
+canonical carrier. This amendment is that carrier. These are the builder's
+statements of the record, not the Founder's.
+
+**The Founder's selection (2026-10-24), recorded as the option's label and
+text.** Question put: "Every G3 build so far (and the coming Zcode run) is a
+governed execution under DEC-20260807-01 §2 with no persisted CGER record,
+because the store is not live. When it goes live, what happens to those
+executions?" Selected: **"No backfill; records start at activation"**.
+Option text: "Mirrors the ledger ruling (DEC-20260731-05 Q5). Pre-activation
+builds stay evidenced by PR bodies and bundles only." The word "only" in
+that option text is the builder's shorthand, written before the evidence
+set was drafted; the operative evidence set is the four artifacts item 7
+names below (merge commit, pull request body, Founder merge-authorization
+comment, review-evidence bundle), and item 7 governs where the two differ.
+
+**The builder's drafting recommendations and the Founder's answer.** Before
+drafting, the builder recommended (1) defining "activation" by a checkable
+event rather than leaving it to a later reading, and (2) stating what the
+evidence of record *is* for pre-activation executions, so that "no
+backfill" does not read as "no evidence"; and, for the companion
+decision-log entry, (3) wording the Founder's acceptance of the
+`DEC-20260716-01` clause-6 gap on pull requests #132–#134 as a retroactive
+acceptance rather than as a finding that prior authorization existed, and
+(4) recording the `c16e7ff6…` ruling as the pre-pilot implementation
+baseline rather than as a "build phase", a term this decision does not
+define. The Founder answered, verbatim: **"I agree"** (2026-10-24, builder
+session). The amendment text below follows those four points.
+
+**The amendment.** One addition to the Decision section, once ratified: a
+new item 7 at the end of clause 2 ("Coding Governance Execution Record and
+canonical approval binding"). Nothing else in the Decision section changes.
+The text below is the proposal; clause 2 above does not yet carry it.
+
+> 7. **When the record store is live, and executions before it.** For
+>    this clause the record store is live from the first governed coding
+>    execution that begins after both of the following hold: (a)
+>    migrations `1784419200007` through `1784419200011` of
+>    `MADVenturesLLC/founder-os-telegram` have been applied to the hosted
+>    Neon durable evidence store's default branch, as evidenced by their
+>    rows in that database's `pgmigrations` table; and (b) the runtime's
+>    own tooling has performed one successful write and read-back of a
+>    `cger_execution_records` row against that database, the write/read
+>    reconciliation `/00-system/coding-governance-execution-record-v1.0.md`
+>    requires, with the run's evidence locator recorded in
+>    `founder-os-telegram`'s `docs/cger-implementation-deviations.md` and
+>    cited by the next release manifest. Migration rows alone do not make
+>    the store live. This is a definition for the record only: the
+>    Founder's activation ruling under clause 6.3 remains separate and is
+>    not implied by it.
+>    Governed coding executions performed before that moment are **not
+>    back-recorded** as Coding Governance Execution Records, because a
+>    record written after the fact would assert lifecycle state
+>    (ownership, lease, fencing token, exception binding, verification
+>    capture) that did not exist when the work ran. For each such
+>    execution the **evidence of record** is: the merge commit on the
+>    repository's `main` with its Attribution trailers; the pull request
+>    body carrying the item 2 fields that apply; the Founder's SHA-named
+>    merge-authorization comment; and the review-evidence bundle with its
+>    `VERDICT.md` sha256 as that comment records it. These four artifacts
+>    are the operative evidence set; any shorter description elsewhere in
+>    this decision is shorthand for them. The executions this
+>    item covers at the time of drafting are `founder-os-telegram` pull
+>    requests #130 through #136 and the `HO-20261024-02` supervisor build
+>    under `TTA-20261024-01`; any further execution that begins before the
+>    store is live is covered on the same terms. Items 2 and 3 apply in
+>    full from the first execution after the store is live.
+
+**Amendment 1 Ratification.** Pending. The sequence follows `DEC-20261020-01`
+Amendment 1: (1) the Founder ratifies this "Amendment 1" section as it
+reads at an exact head of the carrying pull request, by a comment on that
+pull request naming the head and the file's SHA-256; (2) the builder then,
+in a later commit on the same pull request, quotes that comment here
+verbatim with its SHA-256, carries item 7 into clause 2 unchanged, and
+leaves this section's heading and "Not in force" line as they were at
+ratification; (3) independent Tier-2 review covers the final head; (4) the
+Founder's separate SHA-named merge authorization names that final head; (5)
+the amendment takes effect on merge. A ratification at a head whose
+Amendment 1 section differs from the one later merged is void; a new
+ratification is required. Until the merge, clause 2 binds unchanged; until
+the ratification, nothing is carried.
+
+## Amendment 1 Ratification
+
+Given as comment 6389927395 on FounderOS pull request 398, posted
+2026-10-24T21:46:11Z by the Founder's account (`decivantiq`) and not edited
+since. It ratifies the "Amendment 1 (proposed, 2026-10-24)" section as it
+reads at head `af10edb67dda3169492c7e55b090785cd2a1a1c9`, whose file SHA-256
+(`44af5a6d2cd52528ce79e1287090490e1fc2082394f15fbdd1492c0c03509b3c`) it
+names. That section is unchanged here, byte for byte, including its
+"(proposed)" heading, its "Not in force" line and its "Pending" ratification
+paragraph, which this record does not edit; item 7 as the section quotes it
+is now in clause 2, and nothing else in the Decision section changed. The
+text is identical to the draft the builder handed the Founder in session.
+Recorded verbatim (the comment body with CR bytes removed; SHA-256 of that
+text plus one final LF: `0d2ac44d47295cdd501df8ff5e5590b460adfcf6ffc921c276fe9103e4b2a752`):
+
+```text
+Ratified: DEC-20260807-01 Amendment 1, as proposed in MADVenturesLLC/FounderOS#398 at head af10edb67dda3169492c7e55b090785cd2a1a1c9
+
+I ratify Amendment 1 to DEC-20260807-01 as its "Amendment 1 (proposed, 2026-10-24)" section reads at that head (file SHA-256 44af5a6d2cd52528ce79e1287090490e1fc2082394f15fbdd1492c0c03509b3c): a new clause 2 item 7, under which the record store is live only after both the pgmigrations rows and one successful write/read of a cger_execution_records row by the runtime's own tooling, and executions before that are not back-recorded, their evidence of record being the four artifacts the item names. Nothing else in the Decision section changes. The builder carries item 7 into clause 2 by a later commit on this pull request; a changed Amendment 1 section voids this ratification. Effective on merge.
+
+This ratification authorizes no executor, no counted run, no deployment, no merge and no spend.
+```
+
 ## Rationale
 
 G3 Slice A closed attribution and identity drift but deliberately deferred the
@@ -903,6 +1080,23 @@ ruling satisfies clause 6.3.
 activation ruling.
 
 ## Notes
+
+**v0.5 (2026-10-24) — Amendment 1 ratified and carried.** The Founder
+ratified the "Amendment 1 (proposed, 2026-10-24)" section at head
+`af10edb67dda3169492c7e55b090785cd2a1a1c9` (comment 6389927395, recorded
+verbatim under "Amendment 1 Ratification"); item 7 is carried into clause 2
+unchanged; the status banner reads ratified, binding on merge of pull
+request 398. The Amendment 1 section itself is byte-identical to the
+ratified head.
+
+**v0.4 (2026-10-24) — Amendment 1 proposed, not in force.** Adds the
+"Amendment 1 (proposed, 2026-10-24)" section and its status banner: a new
+clause 2 item 7 on when the record store is live and how executions before
+it are evidenced, to be carried into clause 2 only after the Founder
+ratifies it at an exact head. The Decision section is unchanged at this
+version. Builder-drafted at the Founder's direction; Copilot review of
+FounderOS pull request 398 taken (Notes entry, carry semantics, write/read
+reconciliation in the activation predicate, the "only" clarification).
 
 - This proposed artifact and its companion edits authorize no merge, runtime,
   production, deployment, or MP-1 activation action before Founder ratification.

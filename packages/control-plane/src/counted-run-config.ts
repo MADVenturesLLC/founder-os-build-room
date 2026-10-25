@@ -20,7 +20,7 @@
  * the builder's (the issuance receipt's settled decision).
  */
 
-import { RATIFIED_SEATS, type SeatRegistrationV1 } from '../../seat-registry/src/index.js';
+import { RATIFIED_SEATS, isSurfaceProviderLane, type SeatRegistrationV1 } from '../../seat-registry/src/index.js';
 
 /** Q2a: the Planner runs on the Antigravity adapter — the act's planner surface today. */
 export const COUNTED_RUN_PLANNER_SURFACE = 'antigravity';
@@ -85,6 +85,11 @@ export function parseCountedRunConfig(raw: string | undefined, seats: readonly S
     throw new CountedRunConfigError('seats must be exactly { builder, reviewer }');
   }
   const lane = resolveLane(seats, 'architect', plannerToken, 'the planner surface is not on an approved architect lane');
+  // The architect's lanes stay model-exact (DEC-20261020-01 clause 1); the
+  // parsed planner carries that one model, so a lane without one is refused.
+  if (isSurfaceProviderLane(lane)) {
+    throw new CountedRunConfigError('the planner surface resolves to a lane with no exact model');
+  }
   // F3 (r1 correction): the runtime names only the adapter's surface as the
   // planner's execution surface, so an act naming any other surface — even an
   // approved architect lane like `claude-code` — would be authorized

@@ -40,6 +40,7 @@ import {
   resolveSeat,
   retryBudgetTransition,
   type DispatchPolicyV1,
+  type ImplementationIdentity,
   type RefusalClass,
   type ResolvedSeat,
   type RetryBudgetDecision,
@@ -133,7 +134,7 @@ export interface SeatPolicyGate {
   /** A lost-response replay resolves to the SAME logical command. */
   decideReplay(state: RetryBudgetState, event: RetryBudgetEvent): RetryDecision;
   policy(): DispatchPolicyV1;
-  assertReviewDistinctness(implementationModelId: string, reviewLane: SeatRoutingLane): boolean;
+  assertReviewDistinctness(implementation: ImplementationIdentity, reviewLane: SeatRoutingLane): boolean;
 }
 
 /** The name of the field a malformed request is refused by. */
@@ -250,10 +251,10 @@ export function createSeatPolicyGate(options?: SeatPolicyGateOptions): SeatPolic
     policy(): DispatchPolicyV1 {
       return policyData;
     },
-    assertReviewDistinctness(implementationModelId: string, reviewLane: SeatRoutingLane): boolean {
+    assertReviewDistinctness(implementation: ImplementationIdentity, reviewLane: SeatRoutingLane): boolean {
       // The predicate, delegated verbatim. The gate records nothing about any
       // actual review (plan §5.5).
-      return isDistinctReviewLane(implementationModelId, reviewLane);
+      return isDistinctReviewLane(implementation, reviewLane);
     },
   };
 }
@@ -273,6 +274,7 @@ export {
 };
 export type {
   DispatchPolicyV1,
+  ImplementationIdentity,
   RetryBudgetEvent,
   RetryBudgetState,
   SeatRoutingLane,

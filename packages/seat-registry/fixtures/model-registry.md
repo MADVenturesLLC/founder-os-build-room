@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-07-15
-updated: 2026-10-16
-version: 0.23
+updated: 2026-10-25
+version: 0.25
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -24,6 +24,8 @@ related_decisions:
   - DEC-20260807-01-g3-slice-b-plus-coding-execution-surface-governance
   - DEC-20260814-02-tier2-shape-check-gate
   - DEC-20261016-01-gemini-4-argon-architect-antigravity-lane
+  - DEC-20261019-01-model-registry-repin
+  - DEC-20261020-01-surface-bound-builder-and-tier2-lanes
 related_workflows: []
 used_by:
   - builder
@@ -70,6 +72,10 @@ Active — promoted by the G2 activation package executing `DEC-20260715-16` ite
 
 **Tier-2 roster reconciled 2026-10-19 — GPT-6 and Claude 5.5** (`DEC-20261019-01` Clauses B and D, founder-directed): `gpt-5.6-sol`, `gpt-5.6-terra` and `gpt-5.6-luna` are replaced by `gpt-6.1-sol`, `gpt-6-astra` and `gpt-6-luna`. `gpt-5.6-terra` → `gpt-6-astra` is an **explicit substitution, not a rename**. `claude-opus-5.5` and `claude-sonnet-5.5`, already registered to executive seats, gain Build Room builder and Tier-2 bindings and are served on the `antigravity` surface. The roster is now `gemini-4-argon`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-luna`, `grok-4.5`, plus the Claude 5.5 pair as `antigravity`-served lanes.
 
+**Lanes bound by surface, 2026-10-22** (`DEC-20261020-01`, active since FounderOS pull request 389 merged as `ba3b6184287cc70b526dfd0ed7edd756aa09ddd7`, with Amendment 1 since pull request 391 merged as `5b047ca03165e69a5f9ab57a31011b663545f5c2`): Build Room builder seat lanes and `independent-reviewer` Tier-2 lanes now bind to `surface:provider` with a model allowlist; see *Lanes* at the end of this file. It corrects the paragraph above: `claude-opus-5.5`'s builder lane is `claude-code:anthropic`, not the `antigravity` surface, and Antigravity serves the Claude 5.5 pair only on the `antigravity:anthropic` Tier-2 lane (`DEC-20261020-01` clause 9). `claude-sonnet-5.5` holds a Tier-2 binding only, not a builder binding (`DEC-20261019-01` Clause D). The 2026-10-19 Antigravity paragraph and the `gemini-3.1-pro` retirement note say `DEC-20261019-01` Clause A moves the architect `primary` lane; that ruling says "The architect primary lane stays as DEC-20261016-01 binds it", and the `gemini-4-argon` YAML binds it so. These corrections answer items 3 and 4 of the known inconsistencies `DEC-20261019-01` records; items 1 and 2, the Claude 5.5 and `gemini-4-argon` attestation ids, are answered by the field's retirement. `claude-fable-5.1` gains the Build Room builder binding on `claude-code:anthropic`. The per-model `tier2_attestation_id` field is retired on the seven lane models that carried it.
+
+**Grok models registered, 2026-10-25** (`DEC-20261020-01`: its clause 2 table admits them "on registration", following the Founder's answer of 2026-10-21, "Add served models"): `grok-4.6`, `grok-4.7` and `grok-4.7-build-fast` gain entries built from xAI's documentation and join the `grok-build:xai` Tier-2 allowlist. Each is public-class only while xAI's data-retention terms stay unverified. `grok-4.7-build-fast`'s id string is the one `grok-build` reports; xAI documents the variant as Grok 4.7 Fast but publishes no ID for it. `claude-fable-5.5` stays unregistered: Anthropic has not released it.
+
 ## Next Action
 Permanent binding assignments for unassigned roles follow `/00-system/model-portfolio-and-routing-strategy.md`'s staged evaluation track; routing enforcement remains gated by its own implementation package.
 
@@ -100,7 +106,7 @@ approved_role_bindings:
 proposed_role_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-tier2_attestation_id: gemini-3.1-pro   # matches model_id; no variance
+tier2_attestation_id: gemini   # was: gemini-3.1-pro (DEC-20261001-01 clause 1 maps it to `gemini`; v1.3)
 governance_status: approved-binding-architect-primary-and-tier-2-reviewer
 model_compatibility_aliases: []
 portfolio_classification: approved-binding   # per DEC-20260716-02 §3 classification ladder
@@ -170,7 +176,10 @@ approved_role_bindings:
 proposed_role_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-tier2_attestation_id: grok-4.5   # matches model_id; no variance
+lanes:   # DEC-20261020-01 clause 2; the Lanes section below is the table
+  - lane: grok-build:xai
+    role_id: independent-reviewer
+# tier2_attestation_id retired (DEC-20261020-01 clause 6); was: grok (and before v1.3 of DEC-20260719-02, grok-4.5)
 governance_status: approved-binding-architect-advisor-tier-2-reviewer-and-task-scoped-builder   # advisor runtime wired-not-live; Tier 2 is invoked off-runtime (e.g. grok-build); builder requires per-task Temporary Task-Assignment
 model_compatibility_aliases: []
 portfolio_classification: approved-binding   # per DEC-20260716-02 §3 classification ladder
@@ -608,7 +617,7 @@ approved_role_bindings:
     binding_class: tier-2-full-roster
     mode: xhigh
     decision: DEC-20260807-01
-tier2_attestation_id: chatgpt-5.6-sol   # the Tier2-Reviewer-Id token the tier2-shape gate accepts — NOT the model_id
+tier2_attestation_id: codex   # was: chatgpt-5.6-sol (DEC-20261001-01 clause 1 maps it to codex; entry surface_availability [codex]; v1.3)
 governance_status: approved-g3-slice-b-plus
 portfolio_classification: approved-binding
 last_verified: 2026-08-07
@@ -646,7 +655,7 @@ approved_role_bindings:
   - role_id: finance-lead
     binding_class: primary
     decision: DEC-20261005-01
-tier2_attestation_id: chatgpt-5.6-terra   # the Tier2-Reviewer-Id token the tier2-shape gate accepts — NOT the model_id
+tier2_attestation_id: codex   # was: chatgpt-5.6-terra (DEC-20261001-01 clause 1 maps it to codex; entry surface_availability [codex]; v1.3)
 governance_status: approved-g3-slice-b-plus-tier-2-full-roster
 portfolio_classification: approved-binding
 last_verified: 2026-08-07
@@ -848,7 +857,12 @@ approved_role_bindings:
   - role_id: independent-reviewer
     binding_class: tier-2
     decision: DEC-20261019-01
-tier2_attestation_id: codex   # DEC-20261001-01 surface token
+lanes:   # DEC-20261020-01 clause 2; the Lanes section below is the table
+  - lane: codex:openai
+    role_id: builder
+  - lane: codex:openai
+    role_id: independent-reviewer
+# tier2_attestation_id retired (DEC-20261020-01 clause 6); was: codex
 governance_status: active-cfo-primary-and-build-room-builder-and-tier-2-reviewer
 portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
 last_verified: 2026-10-05
@@ -898,11 +912,16 @@ approved_role_bindings:
     decision: DEC-20261005-01
   - role_id: builder
     binding_class: large-implementation-primary-task-scoped
-    decision: DEC-20261019-01   # Clause D: served on the antigravity surface
+    decision: DEC-20261020-01   # clause 2, lane claude-code:anthropic; first bound by DEC-20261019-01 Clause D, superseded by clause 9
   - role_id: independent-reviewer
     binding_class: tier-2
-    decision: DEC-20261019-01
-tier2_attestation_id: claude-code   # DEC-20261001-01 surface token; served on antigravity
+    decision: DEC-20261020-01   # clause 2, lane antigravity:anthropic; first bound by DEC-20261019-01 Clause D, superseded by clause 9
+lanes:   # DEC-20261020-01 clause 2; the Lanes section below is the table
+  - lane: claude-code:anthropic
+    role_id: builder
+  - lane: antigravity:anthropic
+    role_id: independent-reviewer
+# tier2_attestation_id retired (DEC-20261020-01 clause 6); was: claude-code
 governance_status: active-compliance-primary-and-build-room-builder-and-tier-2-reviewer
 portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
 last_verified: 2026-10-05
@@ -929,8 +948,11 @@ approved_role_bindings:
     decision: DEC-20261005-01
   - role_id: independent-reviewer
     binding_class: tier-2
-    decision: DEC-20261019-01   # Clause D: served on the antigravity surface
-tier2_attestation_id: claude-code   # DEC-20261001-01 surface token; served on antigravity
+    decision: DEC-20261020-01   # clause 2, lane antigravity:anthropic; first bound by DEC-20261019-01 Clause D, superseded by clause 9
+lanes:   # DEC-20261020-01 clause 2; the Lanes section below is the table
+  - lane: antigravity:anthropic
+    role_id: independent-reviewer
+# tier2_attestation_id retired (DEC-20261020-01 clause 6); was: claude-code
 governance_status: active-security-lead-primary-and-tier-2-reviewer
 portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
 last_verified: 2026-10-05
@@ -1141,7 +1163,13 @@ approved_role_bindings:
   - role_id: experience-architect
     binding_class: primary
     decision: DEC-20261005-01
-governance_status: active-experience-architect-primary-binding
+  - role_id: builder
+    binding_class: large-implementation-primary-task-scoped
+    decision: DEC-20261020-01   # clause 2: claude-code:anthropic builder allowlist
+lanes:   # DEC-20261020-01 clause 2; the Lanes section below is the table
+  - lane: claude-code:anthropic
+    role_id: builder
+governance_status: active-experience-architect-primary-and-build-room-builder
 portfolio_classification: approved-binding   # MP-2 §3 ladder — DEC-20261005-01 names the role, model, mode and class
 last_verified: 2026-10-05
 source: https://docs.anthropic.com/en/release-notes/api
@@ -1149,7 +1177,7 @@ deployment_channel: P1
 data_class_boundary: active data-boundary policy; US-domiciled first-party
 ```
 
-- **Binding:** `experience-architect` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Current Fable; `fable-5.5` is not released (parked in DEC-20261005-01).
+- **Binding:** `experience-architect` primary, `DEC-20261005-01` (ratified 2026-10-05). Runtime routing remains gated by MP-1 activation; the binding names the accountable model. Current Fable; `fable-5.5` is not released (parked in DEC-20261005-01). **Build Room builder:** on the `claude-code:anthropic` builder lane's allowlist, `DEC-20261020-01` clause 2 (active 2026-10-21); `claude-fable-5.5` joins that allowlist only once its own entry merges.
 - **Authority statement:** owns no independent governance authority; the `experience-architect` role remains accountable.
 
 ### `qwen3.7-flash`
@@ -1231,7 +1259,7 @@ approved_role_bindings:
 proposed_role_bindings: []
 implementation_observed_bindings: []   # no runtime integration exists or is authorized; Tier 2 review is performed outside the Telegram runtime (Codex surface)
 temporary_task_assignments: []
-tier2_attestation_id: chatgpt-5.6-luna   # the Tier2-Reviewer-Id token the tier2-shape gate accepts — NOT the model_id
+tier2_attestation_id: codex   # was: chatgpt-5.6-luna (DEC-20261001-01 clause 1 maps it to codex; entry surface_availability [codex]; v1.3)
 governance_status: active-independent-reviewer-tier-2-binding
 model_compatibility_aliases: []
 portfolio_classification: approved-binding   # an active Founder decision names the role, model, mode, and binding class
@@ -1346,7 +1374,10 @@ approved_role_bindings:
 proposed_role_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-tier2_attestation_id: gemini   # DEC-20261001-01 surface token
+lanes:   # DEC-20261020-01 clause 2; the Lanes section below is the table
+  - lane: antigravity:google
+    role_id: independent-reviewer
+# tier2_attestation_id retired (DEC-20261020-01 clause 6); was: gemini
 governance_status: approved-binding-architect-primary-and-tier-2-reviewer
 portfolio_classification: approved-binding   # per DEC-20260716-02 §3 classification ladder; DEC-20261016-01, ratified 2026-10-16
 last_verified: 2026-10-16   # Google Cloud model page: "Launch stage: GA", "Release date: October 13, 2026", thinking levels LOW, MEDIUM (default), HIGH; listed by `agy models` (agy 1.3.5) on the Founder's PC
@@ -1378,7 +1409,12 @@ approved_role_bindings:
 proposed_role_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-tier2_attestation_id: codex   # DEC-20261001-01 surface token
+lanes:   # DEC-20261020-01 clause 2; the Lanes section below is the table
+  - lane: codex:openai
+    role_id: builder
+  - lane: codex:openai
+    role_id: independent-reviewer
+# tier2_attestation_id retired (DEC-20261020-01 clause 6); was: codex
 governance_status: active-build-room-builder-and-tier-2-reviewer
 portfolio_classification: approved-binding
 last_verified: 2026-10-19   # configured model of the codex surface (`~/.codex/config.toml`); provider pricing/limits not re-verified
@@ -1405,7 +1441,10 @@ approved_role_bindings:
 proposed_role_bindings: []
 implementation_observed_bindings: []
 temporary_task_assignments: []
-tier2_attestation_id: codex   # DEC-20261001-01 surface token
+lanes:   # DEC-20261020-01 clause 2; the Lanes section below is the table
+  - lane: codex:openai
+    role_id: independent-reviewer
+# tier2_attestation_id retired (DEC-20261020-01 clause 6); was: codex
 governance_status: active-independent-reviewer-tier-2-binding
 portfolio_classification: approved-binding
 last_verified: 2026-10-19   # runtime catalog presence; provider pricing/limits not re-verified
@@ -1416,3 +1455,140 @@ deployment_channel: verification-pending
 
 - **Binding:** `DEC-20261019-01` Clause B, replacing `gpt-5.6-luna` on the Tier-2 roster.
 - **Authority statement:** owns no independent governance authority; the `independent-reviewer` role remains accountable.
+
+## Entries registered under `DEC-20261020-01` (2026-10-25)
+
+Three of the four models `DEC-20261020-01`'s clause 2 table admits "on registration", each built from its provider's documentation as read on 2026-10-25. xAI's pages now name the company SpaceXSI; the registry keeps provider `xai`, as the lane token `grok-build:xai` does. `claude-fable-5.5` has no entry: Anthropic's models overview (https://platform.claude.com/docs/en/models/overview, read 2026-10-25) lists Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 and no Fable 5.5, so the Founder's condition ("once becomes available") is not met.
+
+### `grok-4.6`
+
+```yaml
+model_id: grok-4.6
+display_name: Grok 4.6
+provider: xai
+provider_identifier: grok-4.6
+modes: [invoked]   # Tier-2 review is invoked per case, never automatic
+approved_role_bindings:
+  - role_id: independent-reviewer
+    binding_class: tier-2
+    mode: invoked
+    decision: DEC-20261020-01   # clause 2 table: grok-build:xai allowlist, "on registration"; the Founder's answer of 2026-10-21, "Add served models"
+    limits: public-class review material only while deployment_channel is unverified; internal-class needs the Founder's authorization for that specific invocation (data-boundary-policy §5 item 4)
+proposed_role_bindings: []
+implementation_observed_bindings: []
+temporary_task_assignments: []
+lanes:   # DEC-20261020-01 clause 2; the Lanes section below is the table
+  - lane: grok-build:xai
+    role_id: independent-reviewer
+governance_status: active-independent-reviewer-tier-2-binding
+portfolio_classification: approved-binding
+last_verified: 2026-10-25   # xAI grok-4.6 model page: model name grok-4.6; text and image input; 500,000-token context; reasoning efforts low, medium, high, xhigh (default high); $2.00 input, $0.50 cached input, $6.00 output per 1M tokens below 200k prompt tokens, $4.00 / $1.00 / $12.00 at or above; also on the US regional endpoint (pricing page); no release date, data-retention or no-training statement
+source: https://docs.x.ai/developers/models/grok-4.6
+surface_availability: [grok-build]   # grok-build served grok-4.6 on Build Room pull request 121 (recorded in DEC-20261020-01)
+deployment_channel: unverified   # xAI's model pages state no data-retention or no-training terms (read 2026-10-25); per data-boundary-policy.md §5 item 4, public-class only, internal-class only under the Founder's explicit authorization for that specific invocation, confidential/restricted/local-only prohibited
+data_class_boundary: public-class only; internal-class needs per-invocation Founder authorization; confidential, restricted and local-only prohibited
+```
+
+- **Binding:** `independent-reviewer` Tier-2 on the `grok-build:xai` lane, admitted "on registration" by `DEC-20261020-01`'s clause 2 table, following the Founder's answer of 2026-10-21 ("Add served models"); this entry is that registration. FounderOS Tier-2 verdicts stay under `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B2 and B3 (surface named, model recorded, not bound).
+- **Authority statement:** owns no independent governance authority; the `independent-reviewer` role remains accountable.
+
+### `grok-4.7`
+
+```yaml
+model_id: grok-4.7
+display_name: Grok 4.7
+provider: xai
+provider_identifier: grok-4.7
+modes: [invoked]   # Tier-2 review is invoked per case, never automatic
+approved_role_bindings:
+  - role_id: independent-reviewer
+    binding_class: tier-2
+    mode: invoked
+    decision: DEC-20261020-01   # clause 2 table: grok-build:xai allowlist, "on registration"; the Founder's answer of 2026-10-21, "Add served models"
+    limits: public-class review material only while deployment_channel is unverified; internal-class needs the Founder's authorization for that specific invocation (data-boundary-policy §5 item 4)
+proposed_role_bindings: []
+implementation_observed_bindings: []
+temporary_task_assignments: []
+lanes:   # DEC-20261020-01 clause 2; the Lanes section below is the table
+  - lane: grok-build:xai
+    role_id: independent-reviewer
+governance_status: active-independent-reviewer-tier-2-binding
+portfolio_classification: approved-binding
+last_verified: 2026-10-25   # xAI Grok 4.7 guide and model page: model name grok-4.7; text and image input; 500,000-token context; reasoning efforts low, medium, high, xhigh (default high); $2.00 input, $0.50 cached input, $6.00 output per 1M tokens below 200k prompt tokens, $4.00 / $1.00 / $12.00 at or above; on the xAI API, the US regional endpoint at a 10% premium, Grok Build (its default model), Cursor and gateways; no release date, data-retention or no-training statement
+source: https://docs.x.ai/docs/grok-4-7 and https://docs.x.ai/developers/models/grok-4.7
+surface_availability: [grok-build]   # the Grok Build default model per xAI; grok-build served grok-4.7 for a review authorized as grok-4.5 on FounderOS pull request 380 (recorded in DEC-20261020-01)
+deployment_channel: unverified   # xAI's model pages state no data-retention or no-training terms (read 2026-10-25); per data-boundary-policy.md §5 item 4, public-class only, internal-class only under the Founder's explicit authorization for that specific invocation, confidential/restricted/local-only prohibited
+data_class_boundary: public-class only; internal-class needs per-invocation Founder authorization; confidential, restricted and local-only prohibited
+```
+
+- **Binding:** `independent-reviewer` Tier-2 on the `grok-build:xai` lane, admitted "on registration" by `DEC-20261020-01`'s clause 2 table, following the Founder's answer of 2026-10-21 ("Add served models"); this entry is that registration. FounderOS Tier-2 verdicts stay under `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B2 and B3 (surface named, model recorded, not bound).
+- **Authority statement:** owns no independent governance authority; the `independent-reviewer` role remains accountable.
+
+### `grok-4.7-build-fast`
+
+```yaml
+model_id: grok-4.7-build-fast
+display_name: Grok 4.7 Fast
+provider: xai
+provider_identifier: grok-4.7-build-fast   # the id grok-build reports serving (Build Room pull request 121, recorded in DEC-20261020-01); xAI documents Grok 4.7 Fast but publishes no model ID for it
+modes: [invoked]   # Tier-2 review is invoked per case, never automatic
+approved_role_bindings:
+  - role_id: independent-reviewer
+    binding_class: tier-2
+    mode: invoked
+    decision: DEC-20261020-01   # clause 2 table: grok-build:xai allowlist, "on registration"; the Founder's answer of 2026-10-21, "Add served models"
+    limits: public-class review material only while deployment_channel is unverified; internal-class needs the Founder's authorization for that specific invocation (data-boundary-policy §5 item 4)
+proposed_role_bindings: []
+implementation_observed_bindings: []
+temporary_task_assignments: []
+lanes:   # DEC-20261020-01 clause 2; the Lanes section below is the table
+  - lane: grok-build:xai
+    role_id: independent-reviewer
+governance_status: active-independent-reviewer-tier-2-binding
+portfolio_classification: approved-binding
+last_verified: 2026-10-25   # xAI Grok 4.7 guide and pricing page, Grok 4.7 Fast: "the same Grok 4.7 model served on faster infrastructure"; 2x the standard token rates, 1.5x for long-context requests ($4.00 input, $1.00 cached input, $12.00 output per 1M tokens below 200k prompt tokens; $6.00 / $1.50 / $18.00 above); "available only in Cursor and Grok Build", "not available on the public xAI API", not in Grok Build's free tier; the models page lists no fast variant
+source: https://docs.x.ai/docs/grok-4-7 and https://docs.x.ai/developers/pricing (Grok 4.7 Fast); the id string from grok-build's report on Build Room pull request 121
+surface_availability: [grok-build]   # Cursor and Grok Build only, per xAI
+deployment_channel: unverified   # xAI's model pages state no data-retention or no-training terms (read 2026-10-25); per data-boundary-policy.md §5 item 4, public-class only, internal-class only under the Founder's explicit authorization for that specific invocation, confidential/restricted/local-only prohibited
+data_class_boundary: public-class only; internal-class needs per-invocation Founder authorization; confidential, restricted and local-only prohibited
+```
+
+- **Binding:** `independent-reviewer` Tier-2 on the `grok-build:xai` lane, admitted "on registration" by `DEC-20261020-01`'s clause 2 table, following the Founder's answer of 2026-10-21 ("Add served models"); this entry is that registration. FounderOS Tier-2 verdicts stay under `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B2 and B3 (surface named, model recorded, not bound).
+- **Identifier:** xAI documents the variant but publishes no model ID for it. The Founder chose on 2026-10-25 to register it under the id string `grok-build` reports (option label: "Own entry, ID from surface (Recommended)"). Capability statements for `grok-4.7` apply to it only as xAI's "same model" statement supports; if xAI publishes a different ID, this entry is corrected, not duplicated.
+- **Authority statement:** owns no independent governance authority; the `independent-reviewer` role remains accountable.
+
+## Lanes (`DEC-20261020-01`, active 2026-10-21)
+
+Every Build Room builder seat lane and every `independent-reviewer` Tier-2
+lane binds to a `surface:provider` token plus the closed allowlist below
+(`DEC-20261020-01` clauses 1 and 2). The table is copied unchanged from
+that decision's clause 2; the decision governs if the two ever differ.
+Each listed model's entry above carries a `lanes:` field naming its
+lanes. Adding a lane or a model to an allowlist is a Founder act recorded
+here.
+
+| Lane | Role | Allowlist | Source |
+|---|---|---|---|
+| `claude-code:anthropic` | builder | `claude-opus-5.5`, `claude-fable-5.1`; `claude-fable-5.5` on registration | Opus 5.5: `DEC-20261019-01` Clause D. Fable 5.1 and 5.5: the Founder's answer of 2026-10-21 |
+| `codex:openai` | builder | `gpt-6.1-sol`, `gpt-6-astra` | `DEC-20261019-01` Clause B |
+| `codex:openai` | Tier-2 | `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-luna` | `DEC-20261019-01` Clause B |
+| `antigravity:google` | Tier-2 | `gemini-4-argon` | `DEC-20261019-01` Clause A; public class only |
+| `antigravity:anthropic` | Tier-2 | `claude-opus-5.5`, `claude-sonnet-5.5` | `DEC-20261019-01` Clause D; public class only (the Founder's answer of 2026-10-21) |
+| `grok-build:xai` | Tier-2 | `grok-4.5`; `grok-4.6`, `grok-4.7`, `grok-4.7-build-fast` on registration | `DEC-20260719-02`; the added models: the Founder's answer of 2026-10-21 |
+
+`claude-code` carries no Tier-2 lane. A model marked "on registration"
+joins its allowlist only once its own entry, built from its provider's
+documentation, merges here; work it serves before then is off-list.
+`grok-4.6`, `grok-4.7` and `grok-4.7-build-fast` are registered (2026-10-25,
+above) and so join the `grok-build:xai` allowlist. `claude-fable-5.5` has
+no entry yet: Anthropic has not released it (models overview, read
+2026-10-25).
+
+The per-model `tier2_attestation_id` field is retired for these lanes
+(`DEC-20261020-01` clause 6); each entry keeps its last value in a
+comment. Entries outside the table, including retired ones such as
+`gemini-3.1-pro` and the `gpt-5.6` family, keep the field as dated
+history. FounderOS Tier-2 verdicts stay under
+`FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B2 and B3 (surface
+named, model recorded, not bound); clause 4's refusal of off-list work
+applies on Build Room lanes only.

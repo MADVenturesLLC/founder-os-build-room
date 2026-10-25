@@ -2,7 +2,7 @@
  * Seat Registry V1 — registry data and derived lane data (§2.5, §2.7).
  *
  * Every lane mirrors the controlling registries and decisions read at the
- * doctrine pin 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694. No lane, model
+ * doctrine pin 846190fdb4da0604672bef8d7b1c8852407c4934. No lane, model
  * identifier, provider class, surface, or binding status is asserted,
  * inferred from a nearby value, or carried forward from prior drafts.
  * Where the corpus establishes no lawful lane, the row is an
@@ -12,7 +12,7 @@
  * is null for all four seats (§2.6).
  */
 
-import type { SeatRegistrationV1, SeatRoutingLane } from './schema.js';
+import type { ModelExactLane, NotApprovedLane, SeatRegistrationV1, SurfaceProviderLane } from './schema.js';
 import {
   ANTIGRAVITY_APPROVAL,
   ANTIGRAVITY_MODEL_SELECTION,
@@ -94,6 +94,7 @@ const RESEARCHER: SeatRegistrationV1 = {
   default_surface: null,
   routing: [],
   absent_lanes: [],
+  not_approved_lanes: [],
   authority: {
     allowed: [
       'search and read',
@@ -126,7 +127,7 @@ const RESEARCHER: SeatRegistrationV1 = {
 /* architect — per-task / per-invocation lanes only (§2.5.2)            */
 /* ------------------------------------------------------------------ */
 
-const ARCHITECT_PRIMARY: SeatRoutingLane = {
+const ARCHITECT_PRIMARY: ModelExactLane = {
   lane_label: 'primary',
   provider: 'google',
   surface_id: 'antigravity',
@@ -139,7 +140,7 @@ const ARCHITECT_PRIMARY: SeatRoutingLane = {
   derivation: ['DEC-20260815-04 Naming Act', 'DEC-20260807-01 §3.3', 'DEC-20260715-14', 'model-registry.md gemini-4-argon', 'model-registry.md gemini-4-argon data_class_boundary', 'DEC-20261019-01 Clause A'],
 };
 
-const ARCHITECT_BOUNDED_RECONCILIATION: SeatRoutingLane = {
+const ARCHITECT_BOUNDED_RECONCILIATION: ModelExactLane = {
   lane_label: 'bounded reconciliation',
   provider: 'anthropic',
   surface_id: 'claude-code',
@@ -168,6 +169,7 @@ const ARCHITECT: SeatRegistrationV1 = {
     { label: 'deepseek-fallback', reason: ABSENT_REASON_DEEPSEEK },
     { label: 'grok-4.5-advisor', reason: ABSENT_REASON_GROK_ADVISOR },
   ],
+  not_approved_lanes: [], // the architect's lanes are outside DEC-20261020-01's scope and stay model-exact (clause 1)
   authority: {
     allowed: [
       'inspect source and configuration read-only',
@@ -196,10 +198,18 @@ const ARCHITECT: SeatRegistrationV1 = {
 };
 
 /* ------------------------------------------------------------------ */
-/* builder — seven task-scoped lanes, cursor rows absent (§2.5.3)       */
+/* builder — two surface:provider lanes (DEC-20261020-01 clause 2),    */
+/* five earlier lanes kept as not-approved records, cursor rows absent  */
 /* ------------------------------------------------------------------ */
 
-const BUILDER_LARGE: SeatRoutingLane = {
+/*
+ * The five records below are the builder lanes as DEC-20260807-01 bound them
+ * before DEC-20261020-01. They are kept exactly as they were bound, in
+ * `not_approved_lanes`, never in `routing` (the Founder's answer of
+ * 2026-10-25: keep each record, mark it not approved, cite clause 2).
+ */
+
+const BUILDER_LARGE_RECORD: ModelExactLane = {
   lane_label: 'large',
   provider: 'xai',
   surface_id: 'grok-build',
@@ -212,7 +222,7 @@ const BUILDER_LARGE: SeatRoutingLane = {
   derivation: ['DEC-20260807-01', 'DEC-20260815-04', 'DEC-20260716-02 amendment grok-build item', 'model-registry.md grok-4.5'],
 };
 
-const BUILDER_LARGE_FALLBACK: SeatRoutingLane = {
+const BUILDER_LARGE_FALLBACK_RECORD: ModelExactLane = {
   lane_label: 'large fallback',
   provider: 'anthropic',
   surface_id: 'claude-code',
@@ -225,7 +235,7 @@ const BUILDER_LARGE_FALLBACK: SeatRoutingLane = {
   derivation: ['DEC-20260807-01', 'model-registry.md sonnet-5'],
 };
 
-const BUILDER_MEDIUM: SeatRoutingLane = {
+const BUILDER_MEDIUM_RECORD: ModelExactLane = {
   lane_label: 'medium',
   provider: 'anthropic',
   surface_id: 'claude-code',
@@ -238,7 +248,7 @@ const BUILDER_MEDIUM: SeatRoutingLane = {
   derivation: ['DEC-20260807-01', 'model-registry.md opus-4.7'],
 };
 
-const BUILDER_LIGHT: SeatRoutingLane = {
+const BUILDER_LIGHT_RECORD: ModelExactLane = {
   lane_label: 'light',
   provider: 'anthropic',
   surface_id: 'claude-code',
@@ -251,33 +261,7 @@ const BUILDER_LIGHT: SeatRoutingLane = {
   derivation: ['DEC-20260807-01', 'model-registry.md claude-haiku-4-5'],
 };
 
-const BUILDER_CODEX_COMPLEX: SeatRoutingLane = {
-  lane_label: 'Codex complex / high-risk',
-  provider: 'openai',
-  surface_id: 'codex',
-  model_id: 'gpt-6.1-sol',
-  binding_status: 'approved-binding',
-  binding_class: 'codex-complex-analysis-planning-and-surgical-fixes', // DEC-20260807-01; max mode requires exact Founder authorization
-  provider_class: 'NOT_RECORDED', // deployment_channel: codex-founder-operated, a surface descriptor (§2.2)
-  data_eligibility: ['public'],
-  conditions: ['active data-boundary policy and exact task scope'],
-  derivation: ['DEC-20260807-01', 'model-registry.md gpt-6.1-sol', 'DEC-20261019-01 Clause B'],
-};
-
-const BUILDER_CODEX_ROUTINE: SeatRoutingLane = {
-  lane_label: 'Codex routine / bounded',
-  provider: 'openai',
-  surface_id: 'codex',
-  model_id: 'gpt-6-astra',
-  binding_status: 'approved-binding',
-  binding_class: 'routine-verification-and-bounded-fixes', // DEC-20260807-01
-  provider_class: 'NOT_RECORDED', // deployment_channel: codex-founder-operated
-  data_eligibility: ['public'],
-  conditions: ['active data-boundary policy and exact task scope'],
-  derivation: ['DEC-20260807-01', 'model-registry.md gpt-6-astra', 'DEC-20261019-01 Clause B'],
-};
-
-const BUILDER_HERMES_LOCAL: SeatRoutingLane = {
+const BUILDER_HERMES_LOCAL_RECORD: ModelExactLane = {
   lane_label: 'Hermes local',
   provider: 'Hermes (local)', // the Naming Act provider name (DEC-20260815-04); model registry records provider: deepseek
   surface_id: 'hermes-local-code',
@@ -290,6 +274,70 @@ const BUILDER_HERMES_LOCAL: SeatRoutingLane = {
   derivation: ['DEC-20260815-04', 'DEC-20260807-01 §3.3', 'model-registry.md deepseek-v4-flash'],
 };
 
+const NOT_APPROVED_BUILDER_LANE =
+  'DEC-20261020-01 clause 2: the clause 2 table is the whole set of Build Room builder seat lanes, and "a lane in ' +
+  'scope or a model not in it is not approved for that lane". The table carries two builder lanes, ' +
+  '`claude-code:anthropic` (claude-opus-5.5, claude-fable-5.1) and `codex:openai` (gpt-6.1-sol, gpt-6-astra). ';
+
+function notApprovedBuilderLane(record: ModelExactLane, why: string): NotApprovedLane {
+  return { record, reason: NOT_APPROVED_BUILDER_LANE + why + ' Adding it back is a Founder act recorded in model-registry.md.' };
+}
+
+const BUILDER_NOT_APPROVED: readonly NotApprovedLane[] = [
+  notApprovedBuilderLane(BUILDER_LARGE_RECORD, '`grok-build:xai` is in the table as a Tier-2 lane only, so `grok-build` carries no builder lane.'),
+  notApprovedBuilderLane(BUILDER_LARGE_FALLBACK_RECORD, '`sonnet-5` is not on the `claude-code:anthropic` allowlist.'),
+  notApprovedBuilderLane(BUILDER_MEDIUM_RECORD, '`opus-4.7` is not on the `claude-code:anthropic` allowlist.'),
+  notApprovedBuilderLane(BUILDER_LIGHT_RECORD, '`claude-haiku-4-5` is not on the `claude-code:anthropic` allowlist.'),
+  notApprovedBuilderLane(BUILDER_HERMES_LOCAL_RECORD, '`hermes-local-code` has no lane in the table.'),
+];
+
+/*
+ * The two approved builder lanes, copied from the model registry's Lanes
+ * table at the pin. An allowlist holds only models whose own entry is in the
+ * registry at the pin: `claude-fable-5.5` joins `claude-code:anthropic` on
+ * registration and has no entry yet, so it is not listed.
+ */
+const BUILDER_CLAUDE_CODE: SurfaceProviderLane = {
+  lane_label: 'claude-code:anthropic',
+  lane: 'claude-code:anthropic',
+  provider: 'anthropic',
+  surface_id: 'claude-code',
+  allowlist: ['claude-opus-5.5', 'claude-fable-5.1'],
+  binding_status: 'approved-binding', // portfolio_classification of every allowlist model at the pin
+  binding_class: 'builder-lane', // DEC-20261020-01 clause 2 table
+  provider_class: 'P1', // deployment_channel: P1 for claude-opus-5.5 and claude-fable-5.1
+  data_eligibility: ['public', 'internal'],
+  conditions: [],
+  derivation: [
+    'DEC-20261020-01 clauses 1 and 2',
+    'model-registry.md Lanes',
+    'DEC-20261019-01 Clause D (claude-opus-5.5)',
+    "the Founder's answer of 2026-10-21 (claude-fable-5.1)",
+    'model-registry.md claude-opus-5.5',
+    'model-registry.md claude-fable-5.1',
+  ],
+};
+
+const BUILDER_CODEX: SurfaceProviderLane = {
+  lane_label: 'codex:openai',
+  lane: 'codex:openai',
+  provider: 'openai',
+  surface_id: 'codex',
+  allowlist: ['gpt-6.1-sol', 'gpt-6-astra'],
+  binding_status: 'approved-binding', // portfolio_classification of every allowlist model at the pin
+  binding_class: 'builder-lane', // DEC-20261020-01 clause 2 table
+  provider_class: 'NOT_RECORDED', // gpt-6.1-sol: openai-first-party-api; gpt-6-astra: verification-pending; neither is a P1–P5 token (§2.2)
+  data_eligibility: ['public'],
+  conditions: ['active data-boundary policy and exact task scope'],
+  derivation: [
+    'DEC-20261020-01 clauses 1 and 2',
+    'model-registry.md Lanes',
+    'DEC-20261019-01 Clause B',
+    'model-registry.md gpt-6.1-sol',
+    'model-registry.md gpt-6-astra',
+  ],
+};
+
 const BUILDER: SeatRegistrationV1 = {
   seat_id: 'builder',
   display_name: 'Hephaestus',
@@ -300,20 +348,13 @@ const BUILDER: SeatRegistrationV1 = {
   contract_ref: 'contracts/seats/builder.md',
   contract_sha256: '5a0c3eecd002684433d1dbe47c9229187bcdcacda4300ebcd2584f2f5069b6ae',
   default_surface: null,
-  routing: [
-    BUILDER_LARGE,
-    BUILDER_LARGE_FALLBACK,
-    BUILDER_MEDIUM,
-    BUILDER_LIGHT,
-    BUILDER_CODEX_COMPLEX,
-    BUILDER_CODEX_ROUTINE,
-    BUILDER_HERMES_LOCAL,
-  ],
+  routing: [BUILDER_CLAUDE_CODE, BUILDER_CODEX],
   absent_lanes: [
     { label: 'cursor-primary', reason: ABSENT_REASON_CURSOR },
     { label: 'cursor-alternative', reason: ABSENT_REASON_CURSOR },
     { label: 'cursor-secondary', reason: GLM_52_CONDITION }, // the glm-5.2 carry (§2.4.2) is compared on this reason by test 10
   ],
+  not_approved_lanes: BUILDER_NOT_APPROVED,
   authority: {
     allowed: [
       'modify only the authorized worktree and scope',
@@ -346,91 +387,94 @@ const BUILDER: SeatRegistrationV1 = {
 /* independent-reviewer — Tier-2 lanes + absent rows (§2.5.4)           */
 /* ------------------------------------------------------------------ */
 
-const TIER2_GEMINI: SeatRoutingLane = {
+/*
+ * The four Tier-2 lanes, copied from the model registry's Lanes table at the
+ * pin. The attestation token is the surface (DEC-20261020-01 clause 6), so
+ * no lane carries `tier2_attestation_id`; the model that served a review is
+ * recorded in its `Tier2-Reviewer-Model:` line, and on Build Room clause 4
+ * refuses one that is not on its lane's allowlist. Effort is per model (each
+ * entry's `modes:`) and is recorded per review, not pinned on the lane.
+ */
+const TIER2_ANTIGRAVITY_GOOGLE: SurfaceProviderLane = {
   lane_label: 'tier-2',
+  lane: 'antigravity:google',
   provider: 'google',
   surface_id: 'antigravity',
-  model_id: 'gemini-4-argon',
+  allowlist: ['gemini-4-argon'],
   binding_status: 'approved-binding',
-  binding_class: 'tier-2', // DEC-20260719-02
-  mode: 'invoked',
-  tier2_attestation_id: 'antigravity', // DEC-20261001-01 surface token; FOUNDER-ACT-20261011 B2 binding surface
+  binding_class: 'tier-2', // DEC-20260719-02; DEC-20261020-01 clause 2 table
   provider_class: 'NOT_RECORDED', // model-registry: deployment_channel `unverified`; nothing there classifies it P1
   data_eligibility: ['public'], // model-registry data_class_boundary: "public-class only; internal-or-higher prohibited"
   conditions: [ANTIGRAVITY_MODEL_SELECTION, ANTIGRAVITY_APPROVAL, ANTIGRAVITY_PROHIBITED, REVIEWER_CLAUSE_3],
-  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260815-05', 'DEC-20260719-02 v1.1', 'DEC-20260807-01 §3.3', 'model-registry.md gemini-4-argon', 'model-registry.md gemini-4-argon data_class_boundary', 'DEC-20261019-01 Clause A'],
+  derivation: ['DEC-20261020-01 clauses 1, 2 and 6', 'model-registry.md Lanes', 'DEC-20261019-01 Clause A', 'DEC-20260815-05', 'DEC-20260807-01 §3.3', 'model-registry.md gemini-4-argon', 'model-registry.md gemini-4-argon data_class_boundary'],
 };
 
-const TIER2_SOL: SeatRoutingLane = {
+/*
+ * `antigravity:anthropic` carries Claude as a Tier-2 lane only (DEC-20261020-01
+ * clause 9). Its models' entries are P1 for Anthropic's own channel; this lane
+ * reaches them through Antigravity, which nothing at the pin classifies, and
+ * clause 8 holds it to public class. The execution-surface registry's
+ * `underlying_model_selection` line for `antigravity` still names Gemini
+ * models only at the pin, so this lane does not carry it.
+ */
+const TIER2_ANTIGRAVITY_ANTHROPIC: SurfaceProviderLane = {
   lane_label: 'tier-2',
-  provider: 'openai',
-  surface_id: 'codex',
-  model_id: 'gpt-6.1-sol',
+  lane: 'antigravity:anthropic',
+  provider: 'anthropic',
+  surface_id: 'antigravity',
+  allowlist: ['claude-opus-5.5', 'claude-sonnet-5.5'],
   binding_status: 'approved-binding',
-  binding_class: 'tier-2-full-roster', // DEC-20260719-02 v1.1
-  mode: 'xhigh',
-  tier2_attestation_id: 'codex', // DEC-20261001-01 surface token (was the attestation-id variance chatgpt-5.6-sol)
-  provider_class: 'NOT_RECORDED', // deployment_channel: codex-founder-operated
-  data_eligibility: ['public'],
-  conditions: [],
-  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-6.1-sol', 'DEC-20261019-01 Clause B'],
-};
-
-const TIER2_TERRA: SeatRoutingLane = {
-  lane_label: 'tier-2',
-  provider: 'openai',
-  surface_id: 'codex',
-  model_id: 'gpt-6-astra',
-  binding_status: 'approved-binding',
-  binding_class: 'tier-2-full-roster', // DEC-20260719-02 v1.1 (supersedes the DEC-20260807-01 not-Tier-2 line, §2.5.4 hazard 2)
-  mode: 'high',
-  tier2_attestation_id: 'codex', // DEC-20261001-01 surface token (was chatgpt-5.6-terra)
+  binding_class: 'tier-2', // DEC-20261020-01 clause 2 table
   provider_class: 'NOT_RECORDED',
-  data_eligibility: ['public'],
-  conditions: [],
-  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-6-astra', 'DEC-20261019-01 Clause B'],
+  data_eligibility: ['public'], // DEC-20261020-01 clause 8: public-class only
+  conditions: [ANTIGRAVITY_APPROVAL, ANTIGRAVITY_PROHIBITED, REVIEWER_CLAUSE_3],
+  derivation: ['DEC-20261020-01 clauses 1, 2, 6, 7, 8 and 9', 'model-registry.md Lanes', 'DEC-20261019-01 Clause D', "the Founder's answer of 2026-10-21 (public class only)", 'model-registry.md claude-opus-5.5', 'model-registry.md claude-sonnet-5.5'],
 };
 
-const TIER2_LUNA: SeatRoutingLane = {
+const TIER2_CODEX: SurfaceProviderLane = {
   lane_label: 'tier-2',
+  lane: 'codex:openai',
   provider: 'openai',
   surface_id: 'codex',
-  model_id: 'gpt-6-luna',
+  allowlist: ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna'],
   binding_status: 'approved-binding',
-  binding_class: 'tier-2-full-roster', // DEC-20260719-02 v1.1
-  mode: 'invoked',
-  tier2_attestation_id: 'codex', // DEC-20261001-01 surface token (was chatgpt-5.6-luna)
-  provider_class: 'NOT_RECORDED', // deployment_channel: verification-pending — a governance sentinel, not a P1–P5 class (§2.2)
-  data_eligibility: ['public'], // public-class only; internal-class review material requires explicit per-invocation Founder authorization
+  binding_class: 'tier-2-full-roster', // DEC-20260719-02 v1.1; DEC-20261020-01 clause 2 table
+  provider_class: 'NOT_RECORDED', // openai-first-party-api / verification-pending: no P1–P5 token (§2.2)
+  data_eligibility: ['public'], // internal-class review material requires explicit per-invocation Founder authorization
   conditions: [],
-  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-5.6-luna'],
+  derivation: ['DEC-20261020-01 clauses 1, 2 and 6', 'model-registry.md Lanes', 'DEC-20261019-01 Clause B', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-6.1-sol', 'model-registry.md gpt-6-astra', 'model-registry.md gpt-6-luna'],
 };
 
-const TIER2_GROK: SeatRoutingLane = {
+/*
+ * grok-4.6, grok-4.7 and grok-4.7-build-fast join this allowlist on
+ * registration (DEC-20261020-01 clause 2 table); their entries merged on
+ * 2026-10-25 and are in the registry at the pin.
+ */
+const TIER2_GROK: SurfaceProviderLane = {
   lane_label: 'tier-2',
+  lane: 'grok-build:xai',
   provider: 'xai',
   surface_id: 'grok-build',
-  model_id: 'grok-4.5',
+  allowlist: ['grok-4.5', 'grok-4.6', 'grok-4.7', 'grok-4.7-build-fast'],
   binding_status: 'approved-binding',
-  binding_class: 'tier-2', // DEC-20260719-02 v1.1
-  mode: 'invoked',
-  tier2_attestation_id: 'grok-build', // DEC-20261001-01 surface token; FOUNDER-ACT-20261011 B2 binding surface
-  provider_class: 'NOT_RECORDED', // deployment_channel: unverified
-  data_eligibility: ['public'], // public-class only by default (§2.4.2)
+  binding_class: 'tier-2', // DEC-20260719-02 v1.1; DEC-20261020-01 clause 2 table
+  provider_class: 'NOT_RECORDED', // deployment_channel: unverified, for all four
+  data_eligibility: ['public'], // public-class only by default (§2.4.2); each entry's data_class_boundary
   conditions: [GROK_BULLET_1, GROK_BULLET_2],
-  derivation: ['DEC-20261001-01 (attestation id re-based to surface token)', 'DEC-20260815-05', 'DEC-20260719-02 v1.1', 'DEC-20260815-04', 'model-registry.md grok-4.5'],
+  derivation: ['DEC-20261020-01 clauses 1, 2 and 6', 'model-registry.md Lanes', 'DEC-20260719-02 v1.1', 'DEC-20260815-05', 'DEC-20260815-04', "the Founder's answer of 2026-10-21 (grok-4.6, grok-4.7, grok-4.7-build-fast)", 'model-registry.md grok-4.5', 'model-registry.md grok-4.6', 'model-registry.md grok-4.7', 'model-registry.md grok-4.7-build-fast'],
 };
 
 /**
  * The claude-code reviewer lane `BR-PHASE4-SURFACE-KEYED-SEATS-R1` (issued
- * 2026-10-17) adds: the derivation act the retired absent-lane entry
- * anticipated. Identity is the surface (DEC-20261001-01 roster token
+ * 2026-10-17) added, kept as bound in `not_approved_lanes`: DEC-20261020-01's
+ * clause 2 table gives `claude-code` no Tier-2 lane. As bound, it was the
+ * derivation act the retired absent-lane entry anticipated. Identity is the surface (DEC-20261001-01 roster token
  * `claude-code`); the model_id is dispatch pinning only — the registry's
  * own claude-code review association (`model-registry.md` sonnet-5: "Sonnet
  * for routine review"; anthropic, P1, ZDR-eligible) — and the act's checks
  * never read it.
  */
-const TIER2_CLAUDE_CODE: SeatRoutingLane = {
+const TIER2_CLAUDE_CODE_RECORD: ModelExactLane = {
   lane_label: 'tier-2',
   provider: 'anthropic',
   surface_id: 'claude-code',
@@ -460,12 +504,21 @@ const INDEPENDENT_REVIEWER: SeatRegistrationV1 = {
   contract_ref: 'contracts/seats/independent-reviewer.md',
   contract_sha256: '10992c6feb5d047d6d922b1bf8d73c15d70c639758dd5fd6e3c9aa6fede32996',
   default_surface: null,
-  routing: [TIER2_GEMINI, TIER2_SOL, TIER2_TERRA, TIER2_LUNA, TIER2_GROK, TIER2_CLAUDE_CODE],
+  routing: [TIER2_ANTIGRAVITY_GOOGLE, TIER2_ANTIGRAVITY_ANTHROPIC, TIER2_CODEX, TIER2_GROK],
   absent_lanes: [
     { label: 'restricted-local-hermes-4-14b', reason: ABSENT_REASON_RESTRICTED_LOCAL },
     { label: 'restricted-local-tencent-hy3', reason: ABSENT_REASON_RESTRICTED_LOCAL },
     { label: 'supplemental-gemini-3.6-flash', reason: ABSENT_REASON_SUPPLEMENTAL },
     { label: 'supplemental-gemini-3.5-flash', reason: ABSENT_REASON_SUPPLEMENTAL },
+  ],
+  not_approved_lanes: [
+    {
+      record: TIER2_CLAUDE_CODE_RECORD,
+      reason:
+        'DEC-20261020-01 clause 2: the clause 2 table is the whole set of `independent-reviewer` Tier-2 lanes, and ' +
+        '"`claude-code` carries no Tier-2 lane" (the Founder\'s answer of 2026-10-21). Claude reviews only on ' +
+        '`antigravity:anthropic`, public class only. Adding it back is a Founder act recorded in model-registry.md.',
+    },
   ],
   authority: {
     allowed: [

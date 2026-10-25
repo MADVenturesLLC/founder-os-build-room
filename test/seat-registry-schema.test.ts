@@ -68,6 +68,10 @@ describe('Test 1 — Registry shape (r7 §9.1 test 1)', () => {
       assert.ok(Object.isFrozen(seat.handoff), `seat ${seat.seat_id}.handoff is frozen`);
       assert.ok(Object.isFrozen(seat.routing), `seat ${seat.seat_id}.routing is frozen`);
       assert.ok(Object.isFrozen(seat.absent_lanes), `seat ${seat.seat_id}.absent_lanes is frozen`);
+      assert.ok(Object.isFrozen(seat.not_approved_lanes), `seat ${seat.seat_id}.not_approved_lanes is frozen`);
+      for (const n of seat.not_approved_lanes) {
+        assert.ok(Object.isFrozen(n.record), `seat ${seat.seat_id} not-approved record ${n.record.lane_label} is frozen`);
+      }
 
       // Verify runtime mutation throws in strict mode
       assert.throws(() => {
@@ -318,17 +322,21 @@ describe('Test 11 — toAttentionState (r7 §9.1 test 11)', () => {
 });
 
 describe('BR-PHASE4-SURFACE-KEYED-SEATS-R1 — the claude-code reviewer lane', () => {
-  it('carries claude-code as an approved tier-2 reviewer lane, but its surface token is not on the binding roster', () => {
+  it('keeps the claude-code tier-2 lane only as a not-approved record (DEC-20261020-01 clause 2)', () => {
     const reviewer = RATIFIED_SEATS.find((s) => s.seat_id === 'independent-reviewer') as SeatRegistrationV1;
-    const lane = reviewer.routing.find((l) => l.surface_id === 'claude-code');
-    assert.ok(lane !== undefined, 'the reviewer seat carries a claude-code lane');
-    assert.equal(lane.binding_status, 'approved-binding');
-    assert.equal(lane.binding_class, 'tier-2');
-    assert.equal(lane.tier2_attestation_id, 'claude-code');
     assert.equal(
-      TIER2_ROSTER_ATTESTATION_IDS.includes(lane.tier2_attestation_id as never),
+      reviewer.routing.some((l) => l.surface_id === 'claude-code'),
       false,
-      'FOUNDER-ACT-20261011 B2 limits binding Tier-2 verdicts to antigravity|codex|chatgpt|grok-build; the claude-code lane is non-binding until DEC-20261019-01 Clause D moves it to antigravity',
+      'the clause 2 table gives claude-code no Tier-2 lane, so no routing lane is on claude-code',
+    );
+    const kept = reviewer.not_approved_lanes.find((n) => n.record.surface_id === 'claude-code');
+    assert.ok(kept !== undefined, 'the reviewer seat keeps the claude-code lane record');
+    assert.equal(kept.record.binding_class, 'tier-2');
+    assert.equal(kept.record.tier2_attestation_id, 'claude-code');
+    assert.equal(
+      TIER2_ROSTER_ATTESTATION_IDS.includes(kept.record.tier2_attestation_id as never),
+      false,
+      'FOUNDER-ACT-20261011 B2 limits binding Tier-2 verdicts to antigravity|codex|chatgpt|grok-build',
     );
   });
 

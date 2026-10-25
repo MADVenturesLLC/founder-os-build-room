@@ -223,8 +223,12 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
     // reviewer still may not share the builder's surface (the receipt's settled
     // decision; that the two may resolve to one model is the Founder's call).
     assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'codex', reviewer: 'codex' } }), observation()).failures, ['reviewer_same_as_builder']);
-    // claude-code is now an approved reviewer surface.
-    assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'codex', reviewer: 'claude-code' } }), observation()).failures, []);
+    // claude-code carries no Tier-2 lane (DEC-20261020-01 clause 2 table), and
+    // grok-build no builder lane: both are not-approved records, outside routing.
+    assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'codex', reviewer: 'claude-code' } }), observation()).failures, ['reviewer_lane_not_approved']);
+    assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'grok-build', reviewer: 'codex' } }), observation()).failures, ['builder_lane_not_approved']);
+    // claude-code is an approved builder surface, on claude-code:anthropic.
+    assert.deepEqual(evaluatePhase4Entry(set({ seats: { builder: 'claude-code', reviewer: 'grok-build' } }), observation()).failures, []);
   });
 
   it('refuses every set against a registry that carries no build-room-control-plane, and admits it on the pinned copy', () => {

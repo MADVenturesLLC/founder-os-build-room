@@ -18,7 +18,7 @@ import { createGatewaySurface, type GatewaySurface } from '../packages/control-p
 import type { PostgresLedgerStore } from '../packages/control-plane/src/store.js';
 import { ConfigError, loadConfig } from '../packages/control-plane/src/config.js';
 import { CountedRunConfigError, parseCountedRunConfig, plannerLaneLabel } from '../packages/control-plane/src/counted-run-config.js';
-import { RATIFIED_SEATS, type SeatRegistrationV1, type SeatRoutingLane } from '../packages/seat-registry/src/index.js';
+import { RATIFIED_SEATS, type SeatRegistrationV1, type SeatRoutingLane, type SurfaceProviderLane } from '../packages/seat-registry/src/index.js';
 import { COUNTED_RUN_REGISTRY, countedRunCompletionResolver, pinnedRegisteredSurfaces, vendoredRegisteredSurfaces } from '../packages/control-plane/src/counted-run.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -132,10 +132,62 @@ describe('counted run · the act’s terms, read at boot', () => {
     assert.equal(plannerLaneLabel(config), 'primary');
   });
 
-  it('accepts claude-code as the reviewer surface, on the lane the registry now carries', () => {
-    const config = parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'codex', reviewer: 'claude-code' } }))!;
-    assert.equal(config.seats.reviewer, 'claude-code');
-    assert.equal(plannerLaneLabel(config), 'primary');
+  it('refuses the surfaces DEC-20261020-01 clause 2 gives no lane on that seat, and the boot with them', () => {
+    // `claude-code` carries no Tier-2 lane, and `grok-build` and
+    // `hermes-local-code` carry no builder lane: those lanes are not-approved
+    // records now, outside routing.
+    const offTable: [unknown, RegExp][] = [
+      [{ ...ACT, seats: { builder: 'codex', reviewer: 'claude-code' } }, /reviewer surface/],
+      [{ ...ACT, seats: { builder: 'grok-build', reviewer: 'codex' } }, /builder surface/],
+      [{ ...ACT, seats: { builder: 'hermes-local-code', reviewer: 'grok-build' } }, /builder surface/],
+    ];
+    for (const [value, message] of offTable) {
+      const raw = JSON.stringify(value);
+      assert.throws(() => parseCountedRunConfig(raw), (error: unknown) => error instanceof CountedRunConfigError && message.test(error.message));
+      assert.throws(() => loadConfig({ ...BASE_ENV, PHASE4_COUNTED_RUN: raw }), ConfigError);
+    }
+  });
+
+  it('accepts claude-code as the builder surface, on the claude-code:anthropic lane', () => {
+    const config = parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'claude-code', reviewer: 'grok-build' } }))!;
+    assert.equal(config.seats.builder, 'claude-code');
+  });
+
+  it('refuses a planner lane that carries no exact model', () => {
+    // The architect's lanes stay model-exact (DEC-20261020-01 clause 1); were
+    // one ever a surface:provider lane, the parsed planner could not name its
+    // model, so boot refuses it.
+    const allowlistPlanner: readonly SeatRegistrationV1[] = RATIFIED_SEATS.map((seat) => {
+      if (seat.seat_id !== 'architect') return seat;
+      return {
+        ...seat,
+        routing: seat.routing.map((lane): SeatRoutingLane => {
+          if (lane.surface_id !== 'antigravity' || lane.model_id === undefined) return lane;
+          const rest: Record<string, unknown> = { ...lane };
+          delete rest['model_id'];
+          delete rest['tier2_attestation_id'];
+          return { ...(rest as Omit<typeof lane, 'model_id' | 'tier2_attestation_id'>), lane: 'antigravity:google', allowlist: ['gemini-4-argon'] };
+        }),
+      };
+    });
+    assert.throws(
+      () => parseCountedRunConfig(JSON.stringify(ACT), allowlistPlanner),
+      (error: unknown) => error instanceof CountedRunConfigError && error.message === 'the planner surface resolves to a lane with no exact model',
+    );
+  });
+
+  it('refuses a bare antigravity reviewer, which now spans two families, and resolves either qualified form', () => {
+    // The reviewer seat carries antigravity:google and antigravity:anthropic
+    // (DEC-20261020-01 clause 2 table), so `antigravity` alone is ambiguous.
+    assert.throws(
+      () => parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'codex', reviewer: 'antigravity' } })),
+      (error: unknown) =>
+        error instanceof CountedRunConfigError && /more than one approved lane; name the provider/.test(error.message),
+    );
+    for (const reviewer of ['antigravity:google', 'antigravity:anthropic']) {
+      const config = parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'codex', reviewer } }))!;
+      assert.equal(config.seats.reviewer, 'antigravity');
+    }
   });
 
   it('resolves a provider-qualified token to its lane, and keeps the surface as the term', () => {
@@ -156,14 +208,16 @@ describe('counted run · the act’s terms, read at boot', () => {
     // without its provider: boot must refuse rather than take the first lane.
     const twoFamilies: readonly SeatRegistrationV1[] = RATIFIED_SEATS.map((seat) => {
       if (seat.seat_id !== 'builder') return seat;
-      const base = seat.routing[0] as SeatRoutingLane;
-      return {
-        ...seat,
-        routing: [
-          ...seat.routing,
-          { ...base, lane_label: 'test-second-family', surface_id: 'codex', provider: 'google', model_id: 'gemini-4-argon' },
-        ],
+      const base = seat.routing[0] as SurfaceProviderLane;
+      const secondFamily: SeatRoutingLane = {
+        ...base,
+        lane_label: 'test-second-family',
+        lane: 'codex:google',
+        surface_id: 'codex',
+        provider: 'google',
+        allowlist: ['gemini-4-argon'],
       };
+      return { ...seat, routing: [...seat.routing, secondFamily] };
     });
     assert.throws(
       () => parseCountedRunConfig(JSON.stringify(ACT), twoFamilies),
@@ -183,7 +237,7 @@ describe('counted run · the act’s terms, read at boot', () => {
     ['a builder model id where a surface belongs', { ...ACT, seats: { builder: 'gpt-5.6-sol', reviewer: 'grok-build' } }, /builder surface/],
     ['a reviewer model id where a surface belongs', { ...ACT, seats: { builder: 'codex', reviewer: 'opus-4.7' } }, /reviewer surface/],
     ['an unknown reviewer surface string', { ...ACT, seats: { builder: 'codex', reviewer: 'not-a-surface' } }, /reviewer surface/],
-    ['a reviewer on the builder’s surface', { ...ACT, seats: { builder: 'grok-build', reviewer: 'grok-build' } }, /reviewer surface must differ/],
+    ['a reviewer on the builder’s surface', { ...ACT, seats: { builder: 'codex', reviewer: 'codex' } }, /reviewer surface must differ/],
   ];
   for (const [name, value, message] of refusals) {
     it(`refuses ${name}, and the boot with it`, () => {
@@ -225,7 +279,7 @@ describe('counted run · the act’s terms, read at boot', () => {
     assert.throws(() => parseCountedRunConfig(plannerAct, rebind('architect', 'antigravity')), /planner surface/);
     assert.throws(() => parseCountedRunConfig(plannerAct, rebind('builder', 'codex')), /builder surface/);
     assert.throws(
-      () => parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'codex', reviewer: 'claude-code' } }), rebind('independent-reviewer', 'claude-code')),
+      () => parseCountedRunConfig(JSON.stringify(ACT), rebind('independent-reviewer', 'grok-build')),
       /reviewer surface/,
     );
   });
