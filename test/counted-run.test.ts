@@ -176,6 +176,18 @@ describe('counted run · the act’s terms, read at boot', () => {
     );
   });
 
+  it('refuses a same-family reviewer on another surface (DEC-20261020-01 clause 7), and the boot with it', () => {
+    const sameFamily = JSON.stringify({ ...ACT, seats: { builder: 'claude-code', reviewer: 'antigravity:anthropic' } });
+    assert.throws(
+      () => parseCountedRunConfig(sameFamily),
+      (error: unknown) => error instanceof CountedRunConfigError && error.message === 'the reviewer provider must differ from the builder provider',
+    );
+    assert.throws(() => loadConfig({ ...BASE_ENV, PHASE4_COUNTED_RUN: sameFamily }), ConfigError);
+    // The other family on the same reviewer surface is accepted.
+    const config = parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'claude-code', reviewer: 'antigravity:google' } }))!;
+    assert.deepEqual(config.seats, { builder: 'claude-code', reviewer: 'antigravity' });
+  });
+
   it('refuses a bare antigravity reviewer, which now spans two families, and resolves either qualified form', () => {
     // The reviewer seat carries antigravity:google and antigravity:anthropic
     // (DEC-20261020-01 clause 2 table), so `antigravity` alone is ambiguous.

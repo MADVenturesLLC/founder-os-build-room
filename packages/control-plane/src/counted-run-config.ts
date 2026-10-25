@@ -15,9 +15,10 @@
  * `binding_status` only, and the parsed config carries the planner's
  * provider and model RESOLVED from the approved lane, so the routes
  * journal the same intended route they always did. Two surfaces that
- * resolve to the same model are the Founder's call, not a check; the one
- * distinctness rule is surface-level — the reviewer's surface differs from
- * the builder's (the issuance receipt's settled decision).
+ * resolve to the same model are the Founder's call, not a check; the
+ * reviewer's surface differs from the builder's (the issuance receipt's
+ * settled decision), and since DEC-20261020-01 clause 7 the two resolved
+ * lanes' providers differ too.
  */
 
 import { RATIFIED_SEATS, isSurfaceProviderLane, type SeatRegistrationV1 } from '../../seat-registry/src/index.js';
@@ -97,10 +98,17 @@ export function parseCountedRunConfig(raw: string | undefined, seats: readonly S
   if (plannerToken.surface !== COUNTED_RUN_PLANNER_SURFACE) {
     throw new CountedRunConfigError("the planner surface is not the counted run's adapter surface");
   }
-  resolveLane(seats, 'builder', builderToken, 'the builder surface is not on an approved builder lane');
-  resolveLane(seats, 'independent-reviewer', reviewerToken, 'the reviewer surface is not on an approved independent-reviewer lane');
+  const builderLane = resolveLane(seats, 'builder', builderToken, 'the builder surface is not on an approved builder lane');
+  const reviewerLane = resolveLane(seats, 'independent-reviewer', reviewerToken, 'the reviewer surface is not on an approved independent-reviewer lane');
   if (reviewerToken.surface === builderToken.surface) {
     throw new CountedRunConfigError('the reviewer surface must differ from the builder surface');
+  }
+  // DEC-20261020-01 clause 7: the reviewer's model family must differ from the
+  // builder's, so work built on claude-code:anthropic is not reviewed on
+  // antigravity:anthropic. Different surfaces are not enough; boot is the one
+  // place that sees both lanes' providers, since the parsed seats keep surfaces only.
+  if (reviewerLane.provider === builderLane.provider) {
+    throw new CountedRunConfigError('the reviewer provider must differ from the builder provider');
   }
   return {
     actId: text(root['actId']),
