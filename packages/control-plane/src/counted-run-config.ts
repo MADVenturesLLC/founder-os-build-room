@@ -42,10 +42,17 @@ export interface CountedRunConfig {
   /**
    * The Planner's execution surface, as the act names it, with the provider
    * and model of the approved architect lane it resolves to — routing
-   * detail from the registry, never part of the act's terms or of a check.
+   * detail from the registry, never part of the act's terms. Boot checks
+   * no provider or model the act states, since the act states none; the
+   * Phase 4 entry check compares its run set's planner provider and model
+   * against this lane.
    */
   readonly planner: { readonly surface: string; readonly provider: string; readonly model: string };
-  /** The builder's and the reviewer's execution-surface ids, as the act names them. */
+  /**
+   * The surface of the builder's and the reviewer's lane tokens as the act
+   * names them. A provider qualifier (`antigravity:google`) is checked at
+   * boot and not kept here.
+   */
   readonly seats: { readonly builder: string; readonly reviewer: string };
 }
 
