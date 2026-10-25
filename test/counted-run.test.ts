@@ -17,7 +17,7 @@ import { createServer } from '../packages/control-plane/src/server.js';
 import { createGatewaySurface, type GatewaySurface } from '../packages/control-plane/src/gateway/index.js';
 import type { PostgresLedgerStore } from '../packages/control-plane/src/store.js';
 import { ConfigError, loadConfig } from '../packages/control-plane/src/config.js';
-import { CountedRunConfigError, parseCountedRunConfig, plannerLaneLabel } from '../packages/control-plane/src/counted-run-config.js';
+import { CountedRunConfigError, parseCountedRunConfig, parseLaneToken, plannerLaneLabel } from '../packages/control-plane/src/counted-run-config.js';
 import { RATIFIED_SEATS, type SeatRegistrationV1, type SeatRoutingLane, type SurfaceProviderLane } from '../packages/seat-registry/src/index.js';
 import { COUNTED_RUN_REGISTRY, countedRunCompletionResolver, pinnedRegisteredSurfaces, vendoredRegisteredSurfaces } from '../packages/control-plane/src/counted-run.js';
 import { createHash } from 'node:crypto';
@@ -208,6 +208,17 @@ describe('counted run · the act’s terms, read at boot', () => {
     )!;
     assert.equal(config.seats.builder, 'codex');
     assert.equal(config.seats.reviewer, 'grok-build');
+  });
+
+  it('parses a lane token as surface or surface:provider, and nothing else', () => {
+    assert.deepEqual(parseLaneToken('codex'), { surface: 'codex', provider: null });
+    assert.deepEqual(parseLaneToken('antigravity:google'), { surface: 'antigravity', provider: 'google' });
+    assert.deepEqual(parseLaneToken(' codex : openai '), { surface: 'codex', provider: 'openai' });
+    // An empty side, a third part, a character outside the label set, a
+    // non-string and an over-long token are each refused at the parser.
+    for (const bad of ['codex:', ':openai', 'codex:openai:extra', 'codex::openai', '', ' ', ' : ', 'codex;openai', 'x'.repeat(129), 42, null, undefined]) {
+      assert.equal(parseLaneToken(bad), null, JSON.stringify(bad));
+    }
   });
 
   it('accepts a provider-qualified planner on the adapter surface', () => {
