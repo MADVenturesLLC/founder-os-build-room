@@ -89,7 +89,12 @@ export interface Phase4RunSet {
    * part of the act's terms or of a check.
    */
   readonly planner: { readonly provider: string; readonly model: string };
-  /** Q7a as surface-keyed: the other seats' execution-surface ids, each on an approved lane of its seat, the two different. */
+  /**
+   * Q7a as surface-keyed: the other seats' lane tokens (`surface` or
+   * `surface:provider`), each on an approved lane of its seat, the two
+   * surfaces different and, since DEC-20261020-01 clause 7, the two
+   * providers too.
+   */
   readonly seats: { readonly builder: string; readonly reviewer: string };
   /** The surface relaying the Founder's T1, recorded in its attribution. */
   readonly founderRelay: { readonly actualModel: string; readonly executionSurface: string };
@@ -109,8 +114,11 @@ export type Phase4EntryFailure =
   | 'dispatcher_surface_unregistered'
   | 'planner_lane_not_approved'
   | 'builder_lane_not_approved'
+  | 'builder_lane_ambiguous'
   | 'reviewer_lane_not_approved'
+  | 'reviewer_lane_ambiguous'
   | 'reviewer_same_as_builder'
+  | 'reviewer_same_family_as_builder'
   | 'goal_invalid';
 
 export type Phase4RunOutcome =

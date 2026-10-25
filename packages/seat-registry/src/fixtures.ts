@@ -2,12 +2,15 @@
  * Seat Registry V1 — vendored doctrine fixtures (test 14).
  *
  * Each fixture is byte-captured from FounderOS at the doctrine pin
- * 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694 and its SHA-256 recorded here and
+ * 846190fdb4da0604672bef8d7b1c8852407c4934 and its SHA-256 recorded here and
  * asserted by the fixture-integrity test. No fixture is vendored without its
  * hash; the hashes are recomputed and compared at test time.
  *
- * The founder retained the r7 doctrine pin for this implementation: FounderOS
- * advancing to 8198ecf… does not re-pin these fixtures.
+ * Re-pinned from 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694 under
+ * DEC-20261020-01 clause 10 (the Founder's answer of 2026-10-25: re-vendor in
+ * the Seat Registry lanes pull request), so the lanes can mirror the model
+ * registry's Lanes table. Four fixtures changed between the pins; the other
+ * six are byte-identical at both.
  */
 
 export interface FixtureEntry {
@@ -16,18 +19,18 @@ export interface FixtureEntry {
   readonly sha256: string;
 }
 
-export const DOCTRINE_PIN = '8d09e7ed36dcb2a67df2b45daa81c8ad7d170694';
+export const DOCTRINE_PIN = '846190fdb4da0604672bef8d7b1c8852407c4934';
 
 export const FIXTURES: readonly FixtureEntry[] = [
   {
     source_path: '04-agents/role-registry.md',
     filename: 'role-registry.md',
-    sha256: '2233971a66fe8ef9c085fe12b4058d0a4977b6ea17fbc2b23d015d7c4447064d',
+    sha256: 'b3f8a658bb3657a7df680ab906ea8b7a4c9ded8e2b763781354a44140d2844b4',
   },
   {
     source_path: '04-agents/model-registry.md',
     filename: 'model-registry.md',
-    sha256: 'e0bebd9dacbf00c79d6d4d0b8586fb2ffafc8f40918fd01c185665dac2f55372',
+    sha256: '8c866be4c35e3bce78b69cd6e51c8ae0d4b54859bc44b93a40fa343d047c1062',
   },
   {
     source_path: '04-agents/execution-surface-registry.md',
@@ -57,7 +60,7 @@ export const FIXTURES: readonly FixtureEntry[] = [
   {
     source_path: '07-decisions/DEC-20260807-01-g3-slice-b-plus-coding-execution-surface-governance.md',
     filename: 'DEC-20260807-01-g3-slice-b-plus-coding-execution-surface-governance.md',
-    sha256: 'd582698066d47aad816e44e94b0b80ba9695c952cff10e8857493d491cb1b72f',
+    sha256: '13aa576138c096c45711f1b39ec19b8cae7cf30672d15174aee33a8a4c242ac0',
   },
   {
     source_path: '07-decisions/DEC-20260720-02-architect-fallback-azure-access-channel.md',
@@ -67,7 +70,7 @@ export const FIXTURES: readonly FixtureEntry[] = [
   {
     source_path: '07-decisions/decision-log.md',
     filename: 'decision-log.md',
-    sha256: '30a54633f45b5b95b4e3074e93aaaf71d9b082f370673ac554f022006ac6de09',
+    sha256: '4f358961646eeae3e7b8a657c8aad6228e1999a64cf06b58ec86f2c7c42ae242',
   },
 ] as const;
 

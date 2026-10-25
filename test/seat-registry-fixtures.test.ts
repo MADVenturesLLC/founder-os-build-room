@@ -6,7 +6,7 @@
  * Ratified plan: docs/planning/seat-registry-v1/seat-registry-v1-implementation-plan-r7-DRAFT.md
  * (sha256 b1bc4159b8cdb1ce6c342d84b4be3650a340abfc467624154ea5ba2a54815b60).
  * Governing decision: DEC-20260902-02 (active, source_of_truth: true, version 0.2).
- * Doctrine pin: FounderOS 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694.
+ * Doctrine pin: FounderOS 846190fdb4da0604672bef8d7b1c8852407c4934.
  *
  * Requirements:
  * - imports only the public entry point (../packages/seat-registry/src/index.js)
@@ -25,6 +25,8 @@ import {
   FIXTURES,
   RATIFIED_SEATS,
   deriveProviderClass,
+  isSurfaceProviderLane,
+  laneModelIds,
   type SeatRegistrationV1,
 } from '../packages/seat-registry/src/index.js';
 
@@ -44,8 +46,8 @@ function fixtureLines(filename: string): string[] {
 }
 
 describe('Test 14 — Fixture integrity (doctrine pin) (r7 §9.1 test 14)', () => {
-  it('recorded doctrine pin is the full 40-character 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694', () => {
-    assert.equal(DOCTRINE_PIN, '8d09e7ed36dcb2a67df2b45daa81c8ad7d170694');
+  it('recorded doctrine pin is the full 40-character 846190fdb4da0604672bef8d7b1c8852407c4934', () => {
+    assert.equal(DOCTRINE_PIN, '846190fdb4da0604672bef8d7b1c8852407c4934');
     assert.match(DOCTRINE_PIN, /^[0-9a-f]{40}$/);
   });
 
@@ -167,18 +169,114 @@ describe('Test 8 — Binding status is mirrored, never assigned (r7 §9.1 test 8
           `binding_status ${lane.binding_status} must be one of the 9 DEC-20260716-02 ladder values`,
         );
 
-        const fixtureClassification = modelClassifications[lane.model_id];
-        assert.ok(
-          fixtureClassification !== undefined,
-          `model ${lane.model_id} must carry portfolio_classification in fixture`,
-        );
-        assert.equal(
-          lane.binding_status,
-          fixtureClassification,
-          `lane for ${lane.model_id} binding_status must equal portfolio_classification in model-registry.md`,
-        );
+        // A surface:provider lane mirrors every model on its allowlist.
+        for (const modelId of laneModelIds(lane)) {
+          const fixtureClassification = modelClassifications[modelId];
+          assert.ok(
+            fixtureClassification !== undefined,
+            `model ${modelId} must carry portfolio_classification in fixture`,
+          );
+          assert.equal(
+            lane.binding_status,
+            fixtureClassification,
+            `lane for ${modelId} binding_status must equal portfolio_classification in model-registry.md`,
+          );
+        }
       }
     }
+  });
+});
+
+describe('DEC-20261020-01 — lanes mirror the model registry Lanes table', () => {
+  const ROLE_SEAT: Readonly<Record<string, string>> = { builder: 'builder', 'Tier-2': 'independent-reviewer' };
+
+  /** The Lanes table at the pin: lane token, seat, and the allowlist as the registry stands. */
+  function lanesTable(): { lane: string; seat: string; allowlist: string[] }[] {
+    const lines = fixtureLines('model-registry.md');
+    const start = lines.findIndex((l) => l.startsWith('## Lanes (`DEC-20261020-01`'));
+    assert.ok(start !== -1, 'found the Lanes section in model-registry.md');
+    const registered = new Set(
+      lines.map((l) => /^model_id:\s*([-a-z0-9.]+)\s*$/.exec(l)?.[1]).filter((m): m is string => m !== undefined),
+    );
+    const rows: { lane: string; seat: string; allowlist: string[] }[] = [];
+    for (let i = start + 1; i < lines.length && !lines[i]!.startsWith('## '); i++) {
+      const cells = lines[i]!.split('|').map((c) => c.trim());
+      const lane = /^`([a-z0-9-]+:[a-z0-9-]+)`$/.exec(cells[1] ?? '')?.[1];
+      if (lane === undefined) continue;
+      const seat = ROLE_SEAT[cells[2] ?? ''];
+      assert.ok(seat !== undefined, `Lanes row ${lane} names a known role, got ${JSON.stringify(cells[2])}`);
+      // "a; b on registration": the first part is listed; the rest join only
+      // once their own entry is in the registry (clause 2 table note).
+      const allowlist: string[] = [];
+      for (const part of (cells[3] ?? '').split(';')) {
+        const onRegistration = part.includes('on registration');
+        for (const m of part.matchAll(/`([-a-z0-9.]+)`/g)) {
+          if (!onRegistration || registered.has(m[1]!)) allowlist.push(m[1]!);
+        }
+      }
+      rows.push({ lane, seat, allowlist });
+    }
+    return rows;
+  }
+
+  it('the builder and independent-reviewer routing sets are exactly the table, lane for lane and model for model', () => {
+    const table = lanesTable();
+    assert.equal(table.length, 6, 'the Lanes table carries six rows at the pin');
+    for (const seatId of ['builder', 'independent-reviewer']) {
+      const seat = RATIFIED_SEATS.find((s) => s.seat_id === seatId)!;
+      const expected = table
+        .filter((r) => r.seat === seatId)
+        .map((r) => `${r.lane}=${[...r.allowlist].sort().join(',')}`)
+        .sort();
+      const actual = seat.routing
+        .map((lane) => {
+          assert.ok(isSurfaceProviderLane(lane), `${seatId} lane ${lane.lane_label} is a surface:provider lane (clause 1)`);
+          assert.equal(lane.lane, `${lane.surface_id}:${lane.provider}`, `${seatId} lane token is surface:provider`);
+          return `${lane.lane}=${[...lane.allowlist].sort().join(',')}`;
+        })
+        .sort();
+      assert.deepEqual(actual, expected, `${seatId} routing mirrors the Lanes table`);
+    }
+  });
+
+  it('a model marked on registration with no entry at the pin is on no allowlist', () => {
+    const lines = fixtureLines('model-registry.md');
+    assert.ok(!lines.some((l) => /^model_id:\s*claude-fable-5\.5\s*$/.test(l)), 'claude-fable-5.5 has no entry at the pin');
+    for (const seat of RATIFIED_SEATS) {
+      for (const lane of seat.routing) {
+        assert.ok(!laneModelIds(lane).includes('claude-fable-5.5'), `${seat.seat_id} ${lane.lane_label} does not list claude-fable-5.5`);
+      }
+    }
+  });
+
+  it('every not-approved record cites clause 2 and no routing lane can serve it', () => {
+    const builder = RATIFIED_SEATS.find((s) => s.seat_id === 'builder')!;
+    const reviewer = RATIFIED_SEATS.find((s) => s.seat_id === 'independent-reviewer')!;
+    assert.deepEqual(
+      builder.not_approved_lanes.map((n) => `${n.record.surface_id}/${n.record.model_id}`),
+      ['grok-build/grok-4.5', 'claude-code/sonnet-5', 'claude-code/opus-4.7', 'claude-code/claude-haiku-4-5', 'hermes-local-code/deepseek-v4-flash'],
+    );
+    assert.deepEqual(reviewer.not_approved_lanes.map((n) => `${n.record.surface_id}/${n.record.model_id}`), ['claude-code/sonnet-5']);
+    for (const seat of RATIFIED_SEATS) {
+      for (const { record, reason } of seat.not_approved_lanes) {
+        assert.match(reason, /^DEC-20261020-01 clause 2: /, `${seat.seat_id} ${record.model_id} cites clause 2`);
+        const servable = seat.routing.some(
+          (lane) => lane.surface_id === record.surface_id && lane.provider === record.provider && laneModelIds(lane).includes(record.model_id),
+        );
+        assert.ok(!servable, `${seat.seat_id} ${record.surface_id}/${record.model_id} is not reachable through routing`);
+      }
+    }
+  });
+
+  it('the builder lanes equal the served-model check copy in scripts/served-model-lanes.json', () => {
+    const copy = JSON.parse(readFileSync(fileURLToPath(new URL('../../scripts/served-model-lanes.json', import.meta.url)), 'utf8')) as {
+      builder_lanes: Record<string, { lane: string; allowlist: string[] }>;
+    };
+    const builder = RATIFIED_SEATS.find((s) => s.seat_id === 'builder')!;
+    assert.deepEqual(
+      builder.routing.map((lane) => `${lane.surface_id}|${isSurfaceProviderLane(lane) ? lane.lane : ''}|${laneModelIds(lane).join(',')}`).sort(),
+      Object.entries(copy.builder_lanes).map(([surface, l]) => `${surface}|${l.lane}|${l.allowlist.join(',')}`).sort(),
+    );
   });
 });
 
@@ -189,13 +287,13 @@ describe('Test 10 — Data eligibility, carried conditions, and provider-class p
         if (lane.provider_class === 'NOT_RECORDED') {
           assert.ok(
             !lane.data_eligibility.includes('internal'),
-            `lane ${lane.lane_label} (${lane.model_id}) with NOT_RECORDED provider_class must NOT be eligible for internal work`,
+            `lane ${lane.lane_label} (${laneModelIds(lane).join(", ")}) with NOT_RECORDED provider_class must NOT be eligible for internal work`,
           );
         }
         if (lane.provider_class === 'P4') {
           assert.ok(
             !lane.data_eligibility.includes('internal'),
-            `lane ${lane.lane_label} (${lane.model_id}) with P4 provider_class must NOT be eligible for internal work`,
+            `lane ${lane.lane_label} (${laneModelIds(lane).join(", ")}) with P4 provider_class must NOT be eligible for internal work`,
           );
         }
         if (lane.provider_class === 'P3') {
@@ -224,23 +322,24 @@ describe('Test 10 — Data eligibility, carried conditions, and provider-class p
     const grokBullet2 = dec04Lines.slice(62, 67).join('\n');
     const grokItem = dec02Lines.slice(151, 160).join('\n');
 
-    // Compare on builder large lane
+    // Compare on the builder large lane's record, kept as bound in
+    // not_approved_lanes (DEC-20261020-01 clause 2)
     const builder = RATIFIED_SEATS.find((s) => s.seat_id === 'builder') as SeatRegistrationV1;
-    const builderLarge = builder.routing.find((l) => l.lane_label === 'large')!;
+    const builderLarge = builder.not_approved_lanes.find((n) => n.record.lane_label === 'large')!.record;
     assert.ok(builderLarge.conditions.includes(grokBullet1), 'builder large carries grokBullet1 byte-exact');
     assert.ok(builderLarge.conditions.includes(grokBullet2), 'builder large carries grokBullet2 byte-exact');
     assert.ok(builderLarge.conditions.includes(grokItem), 'builder large carries grokItem byte-exact');
 
-    // Compare on independent-reviewer grok-4.5 tier-2 lane
+    // Compare on the independent-reviewer grok-build:xai tier-2 lane
     const reviewer = RATIFIED_SEATS.find((s) => s.seat_id === 'independent-reviewer') as SeatRegistrationV1;
-    const reviewerGrok = reviewer.routing.find((l) => l.model_id === 'grok-4.5')!;
+    const reviewerGrok = reviewer.routing.find((l) => l.surface_id === 'grok-build')!;
     assert.ok(reviewerGrok.conditions.includes(grokBullet1), 'reviewer grok carries grokBullet1 byte-exact');
     assert.ok(reviewerGrok.conditions.includes(grokBullet2), 'reviewer grok carries grokBullet2 byte-exact');
 
     // (b) hermes-local-code conditions: DEC-20260815-04 lines 76-80
     const hermesBullet1 = dec04Lines.slice(75, 77).join('\n');
     const hermesBullet2 = dec04Lines.slice(77, 80).join('\n');
-    const builderHermes = builder.routing.find((l) => l.lane_label === 'Hermes local')!;
+    const builderHermes = builder.not_approved_lanes.find((n) => n.record.lane_label === 'Hermes local')!.record;
     assert.ok(builderHermes.conditions.includes(hermesBullet1), 'builder hermes carries bullet1 byte-exact');
     assert.ok(builderHermes.conditions.includes(hermesBullet2), 'builder hermes carries bullet2 byte-exact');
 
@@ -261,14 +360,28 @@ describe('Test 10 — Data eligibility, carried conditions, and provider-class p
     assert.ok(archPrimary.conditions.includes(antiApproval), 'architect primary carries antiApproval byte-exact');
     assert.ok(archPrimary.conditions.includes(antiProhibited), 'architect primary carries antiProhibited byte-exact');
 
-    const reviewerGemini = reviewer.routing.find((l) => l.surface_id === 'antigravity')!;
+    const reviewerGemini = reviewer.routing.find((l) => l.surface_id === 'antigravity' && l.provider === 'google')!;
     assert.ok(reviewerGemini.conditions.includes(antiModel), 'reviewer gemini carries antiModel byte-exact');
     assert.ok(reviewerGemini.conditions.includes(antiApproval), 'reviewer gemini carries antiApproval byte-exact');
     assert.ok(reviewerGemini.conditions.includes(antiProhibited), 'reviewer gemini carries antiProhibited byte-exact');
     assert.ok(reviewerGemini.conditions.includes(reviewerClause3), 'reviewer gemini carries clause 3 byte-exact');
 
-    // (d) architect bounded reconciliation: DEC-20260807-01 lines 446-452
-    const archReconcilePreconditions = dec07Lines.slice(445, 452).join('\n');
+    // antigravity:anthropic carries the surface's approval and prohibition
+    // lines and clause 3, but not its model-selection line, which names
+    // Gemini models only at the pin.
+    assert.match(antiModel, /Gemini model ID/, 'the selection line still names Gemini only');
+    const reviewerClaude = reviewer.routing.find((l) => l.surface_id === 'antigravity' && l.provider === 'anthropic')!;
+    assert.ok(!reviewerClaude.conditions.includes(antiModel), 'reviewer antigravity:anthropic does not carry the Gemini selection line');
+    assert.ok(reviewerClaude.conditions.includes(antiApproval), 'reviewer antigravity:anthropic carries antiApproval byte-exact');
+    assert.ok(reviewerClaude.conditions.includes(antiProhibited), 'reviewer antigravity:anthropic carries antiProhibited byte-exact');
+    assert.ok(reviewerClaude.conditions.includes(reviewerClause3), 'reviewer antigravity:anthropic carries clause 3 byte-exact');
+
+    // (d) architect bounded reconciliation: DEC-20260807-01, located by its
+    // first line so the assertion survives a doctrine re-vendor (Amendment 1
+    // moved it from line 446 to 501).
+    const reconcileStart = dec07Lines.findIndex((l) => l.startsWith('- After the binding Tier-2 verdict, an `opus-4.7` execution'));
+    assert.ok(reconcileStart !== -1, 'found the reconciliation preconditions in DEC-20260807-01');
+    const archReconcilePreconditions = dec07Lines.slice(reconcileStart, reconcileStart + 7).join('\n');
     const archBounded = architect.routing.find((l) => l.lane_label === 'bounded reconciliation')!;
     assert.ok(
       archBounded.conditions.includes(archReconcilePreconditions),

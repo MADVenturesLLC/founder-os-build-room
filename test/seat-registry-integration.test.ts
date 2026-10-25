@@ -25,6 +25,7 @@ import {
   classifyTransportFailure,
   contractEventForOutcome,
   isDistinctReviewLane,
+  laneModelIds,
   TIER2_ROSTER_ATTESTATION_IDS,
   type DeploymentBucket,
   type ResolvedSeat,
@@ -148,7 +149,7 @@ function scenarioMatrix(): unknown[] {
   // T10 distinctness predicate over registry data
   const builder = RATIFIED_SEATS.find((r) => r.seat_id === 'builder') as SeatRegistrationV1;
   for (const lane of builder.routing) {
-    outputs.push(gate.assertReviewDistinctness(lane.model_id === 'model-x' ? 'model-y' : 'model-x', lane));
+    outputs.push(gate.assertReviewDistinctness({ provider: lane.provider === 'provider-x' ? 'provider-y' : 'provider-x', model_id: 'model-x' }, lane));
   }
 
   // T12(d) temporary task assignment offered via reference field
@@ -542,77 +543,58 @@ describe('T10 — Builder/reviewer model distinctness (predicate only)', () => {
   const builder = RATIFIED_SEATS.find((r) => r.seat_id === 'builder') as SeatRegistrationV1;
   const reviewer = RATIFIED_SEATS.find((r) => r.seat_id === 'independent-reviewer') as SeatRegistrationV1;
 
-  it('the predicate holds exactly: true only when the model differs and the attestation is on the roster; the gate echoes the registry predicate for every pairing', () => {
+  it('the predicate holds exactly: true only when the family and the model differ and the attestation is on the roster; the gate echoes the registry predicate for every pairing', () => {
     const gate = createSeatPolicyGate();
     let distinctSeen = 0;
+    let sameFamilySeen = 0;
     let sameModelSeen = 0;
-    let distinctModelOffRosterSeen = 0;
-    let offRosterLaneSeen = 0;
     for (const implLane of builder.routing) {
-      for (const reviewLane of reviewer.routing) {
-        const expected = isDistinctReviewLane(implLane.model_id, reviewLane);
-        const actual = gate.assertReviewDistinctness(implLane.model_id, reviewLane);
-        assert.equal(actual, expected, `gate echoes the predicate for ${implLane.model_id} × ${reviewLane.model_id}`);
-        const rosterEligible = TIER2_ROSTER_ATTESTATION_IDS.includes(reviewLane.tier2_attestation_id ?? '');
-        if (!rosterEligible) {
-          assert.equal(actual, false, `off-roster reviewer lane ${reviewLane.surface_id} is refused`);
-          offRosterLaneSeen += 1;
-          continue;
-        }
-        if (implLane.model_id === reviewLane.model_id) {
-          assert.equal(actual, false, 'same-model pairing is never distinct');
-          sameModelSeen += 1;
-        } else {
-          // Distinct-model case: the truth is the registry predicate itself,
-          // which requires BOTH a differing model AND a roster-eligible
-          // attestation — asserting true on model difference alone would miss
-          // the roster condition.
-          assert.equal(
-            actual,
-            expected,
-            `distinct-model pairing ${implLane.model_id} × ${reviewLane.model_id}: the gate matches the registry predicate`,
-          );
-          if (expected) {
-            distinctSeen += 1;
-          } else {
-            distinctModelOffRosterSeen += 1;
-          }
+      for (const modelId of laneModelIds(implLane)) {
+        const implementation = { provider: implLane.provider, model_id: modelId };
+        for (const reviewLane of reviewer.routing) {
+          const expected = isDistinctReviewLane(implementation, reviewLane);
+          const actual = gate.assertReviewDistinctness(implementation, reviewLane);
+          const label = `${implLane.lane_label}/${modelId} × ${reviewLane.surface_id}:${reviewLane.provider}`;
+          assert.equal(actual, expected, `gate echoes the predicate for ${label}`);
+          // The truth, computed apart from the predicate: DEC-20261020-01
+          // clauses 6 and 7 and DEC-20260815-05 clause 1.
+          const truth =
+            implLane.provider !== reviewLane.provider &&
+            !laneModelIds(reviewLane).includes(modelId) &&
+            TIER2_ROSTER_ATTESTATION_IDS.includes(reviewLane.surface_id);
+          assert.equal(actual, truth, `the predicate is exactly the three conditions for ${label}`);
+          if (implLane.provider === reviewLane.provider) sameFamilySeen += 1;
+          if (laneModelIds(reviewLane).includes(modelId)) sameModelSeen += 1;
+          if (actual) distinctSeen += 1;
         }
       }
     }
-    // Corpus evidence at the doctrine pin: every roster-eligible reviewer
-    // lane satisfies BOTH conditions (differing model AND roster attestation).
-    // FOUNDER-ACT-20261011 B2 limits binding Tier-2 verdicts to four surfaces;
-    // the retained claude-code lane is deliberately off-roster until
-    // DEC-20261019-01 Clause D moves it to antigravity (Slice 2).
-    assert.ok(distinctSeen > 0, 'at least one pairing satisfies distinct-model AND roster-eligibility');
+    assert.ok(distinctSeen > 0, 'at least one pairing is distinct');
+    assert.ok(sameFamilySeen > 0, 'same-family pairings exist and are refused (claude-code:anthropic × antigravity:anthropic, codex:openai × codex:openai)');
     assert.ok(sameModelSeen > 0, 'same-model pairings exist and are refused');
-    assert.equal(distinctModelOffRosterSeen, 0, 'every roster-eligible reviewer lane is roster-eligible');
-    const offRosterReviewerLanes = reviewer.routing.filter(
-      (lane) => !TIER2_ROSTER_ATTESTATION_IDS.includes(lane.tier2_attestation_id ?? ''),
-    );
+    // Every reviewer routing lane attests on the roster: the claude-code lane,
+    // the one that did not, is a not-approved record now (clause 2).
     assert.deepEqual(
-      offRosterReviewerLanes.map((lane) => lane.surface_id),
-      ['claude-code'],
-      'the retained claude-code reviewer lane is the only off-roster reviewer lane',
+      reviewer.routing.filter((lane) => !TIER2_ROSTER_ATTESTATION_IDS.includes(lane.surface_id)).map((lane) => lane.surface_id),
+      [],
+      'no reviewer routing lane is off the roster',
     );
-    assert.ok(offRosterLaneSeen > 0, 'the off-roster reviewer lane is exercised');
   });
 
-  it('the same-model case rejects', () => {
+  it('the same-model case rejects, even across families', () => {
     const gate = createSeatPolicyGate();
     const reviewLane = reviewer.routing[0] as SeatRoutingLane;
-    assert.equal(gate.assertReviewDistinctness(reviewLane.model_id, reviewLane), false);
+    assert.equal(gate.assertReviewDistinctness({ provider: 'another-provider', model_id: laneModelIds(reviewLane)[0]! }, reviewLane), false);
   });
 
   it('an off-roster attestation rejects', () => {
     const gate = createSeatPolicyGate();
     const offRoster: SeatRoutingLane = {
-      ...(reviewer.routing[0] as SeatRoutingLane),
+      ...reviewer.not_approved_lanes[0]!.record,
       model_id: 'off-roster-model',
       tier2_attestation_id: 'not-on-the-tier2-roster',
     };
-    assert.equal(gate.assertReviewDistinctness('some-implementation-model', offRoster), false);
+    assert.equal(gate.assertReviewDistinctness({ provider: 'some-provider', model_id: 'some-implementation-model' }, offRoster), false);
   });
 
   it('no gate-produced decision text claims a review occurred — predicate wording only', () => {

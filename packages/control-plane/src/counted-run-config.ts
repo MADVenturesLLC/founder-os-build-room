@@ -9,18 +9,21 @@
  * Planner's execution surface — which must be the counted run's adapter
  * surface (`COUNTED_RUN_PLANNER_SURFACE`, `antigravity`; any other surface
  * is refused at boot with its own string) — and `seats` carries the
- * builder's and the reviewer's execution-surface ids. No provider, no
- * model in the act's terms. Provider and model remain in the seat registry
- * as routing detail: each check below reads `surface_id` and
- * `binding_status` only, and the parsed config carries the planner's
- * provider and model RESOLVED from the approved lane, so the routes
- * journal the same intended route they always did. Two surfaces that
- * resolve to the same model are the Founder's call, not a check; the one
- * distinctness rule is surface-level — the reviewer's surface differs from
- * the builder's (the issuance receipt's settled decision).
+ * builder's and the reviewer's execution-surface ids. No model in the
+ * act's terms. Each term is a lane token, `surface` or `surface:provider`
+ * (`DEC-20261019-01` Clause C): a bare surface resolves only when the seat
+ * carries one provider's approved lanes on it. Each check below reads
+ * `surface_id`, `provider` and `binding_status`; the parsed config carries
+ * the planner's provider and model RESOLVED from the approved lane, so the
+ * routes journal the same intended route they always did, and keeps each
+ * seat's surface only. Two surfaces that
+ * resolve to the same model are the Founder's call, not a check; the
+ * reviewer's surface differs from the builder's (the issuance receipt's
+ * settled decision), and since DEC-20261020-01 clause 7 the two resolved
+ * lanes' providers differ too.
  */
 
-import { RATIFIED_SEATS, type SeatRegistrationV1 } from '../../seat-registry/src/index.js';
+import { RATIFIED_SEATS, isSurfaceProviderLane, type SeatRegistrationV1 } from '../../seat-registry/src/index.js';
 
 /** Q2a: the Planner runs on the Antigravity adapter — the act's planner surface today. */
 export const COUNTED_RUN_PLANNER_SURFACE = 'antigravity';
@@ -37,12 +40,18 @@ export interface CountedRunConfig {
   readonly actId: string;
   readonly gatewayId: string;
   /**
-   * The Planner's execution surface, as the act names it, with the provider
-   * and model of the approved architect lane it resolves to — routing
-   * detail from the registry, never part of the act's terms or of a check.
+   * The Planner's execution surface, as the act names it (`antigravity`, or
+   * `antigravity:google`, whose provider boot checks), with the provider and
+   * model of the approved architect lane it resolves to: routing detail from
+   * the registry. The act never names a model. The Phase 4 entry check
+   * compares its run set's planner provider and model against this lane.
    */
   readonly planner: { readonly surface: string; readonly provider: string; readonly model: string };
-  /** The builder's and the reviewer's execution-surface ids, as the act names them. */
+  /**
+   * The surface of the builder's and the reviewer's lane tokens as the act
+   * names them. A provider qualifier (`antigravity:google`) is checked at
+   * boot and not kept here.
+   */
   readonly seats: { readonly builder: string; readonly reviewer: string };
 }
 
@@ -85,6 +94,11 @@ export function parseCountedRunConfig(raw: string | undefined, seats: readonly S
     throw new CountedRunConfigError('seats must be exactly { builder, reviewer }');
   }
   const lane = resolveLane(seats, 'architect', plannerToken, 'the planner surface is not on an approved architect lane');
+  // The architect's lanes stay model-exact (DEC-20261020-01 clause 1); the
+  // parsed planner carries that one model, so a lane without one is refused.
+  if (isSurfaceProviderLane(lane)) {
+    throw new CountedRunConfigError('the planner surface resolves to a lane with no exact model');
+  }
   // F3 (r1 correction): the runtime names only the adapter's surface as the
   // planner's execution surface, so an act naming any other surface — even an
   // approved architect lane like `claude-code` — would be authorized
@@ -92,10 +106,18 @@ export function parseCountedRunConfig(raw: string | undefined, seats: readonly S
   if (plannerToken.surface !== COUNTED_RUN_PLANNER_SURFACE) {
     throw new CountedRunConfigError("the planner surface is not the counted run's adapter surface");
   }
-  resolveLane(seats, 'builder', builderToken, 'the builder surface is not on an approved builder lane');
-  resolveLane(seats, 'independent-reviewer', reviewerToken, 'the reviewer surface is not on an approved independent-reviewer lane');
+  const builderLane = resolveLane(seats, 'builder', builderToken, 'the builder surface is not on an approved builder lane');
+  const reviewerLane = resolveLane(seats, 'independent-reviewer', reviewerToken, 'the reviewer surface is not on an approved independent-reviewer lane');
   if (reviewerToken.surface === builderToken.surface) {
     throw new CountedRunConfigError('the reviewer surface must differ from the builder surface');
+  }
+  // DEC-20261020-01 clause 7: the reviewer's model family must differ from the
+  // builder's, so work built on claude-code:anthropic is not reviewed on
+  // antigravity:anthropic. Different surfaces are not enough. The parsed seats
+  // keep the surface only, so a reader that needs the provider resolves its own
+  // lane token, as the Phase 4 entry check does with its run set.
+  if (reviewerLane.provider === builderLane.provider) {
+    throw new CountedRunConfigError('the reviewer provider must differ from the builder provider');
   }
   return {
     actId: text(root['actId']),

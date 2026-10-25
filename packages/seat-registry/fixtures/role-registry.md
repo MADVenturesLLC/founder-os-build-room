@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-07-15
-updated: 2026-10-11
-version: 0.23
+updated: 2026-10-25
+version: 0.24
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -367,14 +367,19 @@ approved_bindings:
     scope: routine code-review PRs across FounderOS, founder-os-console, founder-os-telegram (WF-13 merge gate)
     binding_status: active           # DEC-20260719-02, founder-activated 2026-07-19
   tier-2:
-    # Closed roster per DEC-20260719-02 v1.1. No "equivalent model" escape hatch.
-    model_ids_full: [gemini-3.1-pro, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, grok-4.5]
+    # Closed roster. Since DEC-20261020-01 (active 2026-10-21) it is the Tier-2 lanes and
+    # their allowlists in the Lanes section of the model registry; that decision governs.
+    # No "equivalent model" escape hatch.
+    roster_source: /04-agents/model-registry.md   # section "Lanes (DEC-20261020-01, active 2026-10-21)"
+    # Superseded, kept as dated history: the DEC-20260719-02 v1.1 roster (2026-08-15),
+    # replaced by DEC-20261019-01 (2026-10-19) and DEC-20261020-01.
+    model_ids_full_superseded: [gemini-3.1-pro, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, grok-4.5]
     # Superseded for FounderOS, kept as history (2026-10-11): "Tier2-Reviewer-Id attestation
     # ids differ from model_id for the Codex models: chatgpt-5.6-sol | chatgpt-5.6-terra |
     # chatgpt-5.6-luna. See /04-agents/model-registry.md."
     # FounderOS now attests by surface (antigravity | codex | chatgpt | grok-build) plus a
-    # Tier2-Reviewer-Model line, per FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION; this
-    # model list stays the Build Room roster (DEC-20260815-05).
+    # Tier2-Reviewer-Model line, per FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION; the
+    # Lanes allowlists are the Build Room roster (DEC-20260815-05, DEC-20261020-01).
     model_ids_full_removed: [opus-4.8, gpt-5.6]        # removed 2026-08-15, founder-directed (v1.1)
     model_ids_restricted: [hermes-4-14b, tencent-hy3]
     # clause 5 (v0.9): paired, NON-BINDING findings only; cannot independently satisfy

@@ -68,27 +68,59 @@ describe('Test 4 — Per-run model distinctness (r7 §9.1 test 4)', () => {
     const reviewer = RATIFIED_SEATS.find((s) => s.seat_id === 'independent-reviewer') as SeatRegistrationV1;
     const builder = RATIFIED_SEATS.find((s) => s.seat_id === 'builder') as SeatRegistrationV1;
 
-    // Positive pairing: sonnet-5 builder with gemini-4-argon reviewer
-    const geminiLane = reviewer.routing.find((l) => l.model_id === 'gemini-4-argon')!;
+    // Positive pairing: claude-opus-5.5 builder (claude-code:anthropic) with the antigravity:google reviewer
+    const geminiLane = reviewer.routing.find((l) => l.surface_id === 'antigravity' && l.provider === 'google')!;
+    const opusBuild = { provider: 'anthropic', model_id: 'claude-opus-5.5' };
     assert.ok(
-      isDistinctReviewLane('sonnet-5', geminiLane),
-      'sonnet-5 builder + gemini-4-argon reviewer is a distinct valid pairing',
+      isDistinctReviewLane(opusBuild, geminiLane),
+      'claude-opus-5.5 builder + antigravity:google reviewer is a distinct valid pairing',
     );
 
-    // Negative pairing 1: same model (gemini-4-argon builder with gemini-4-argon reviewer)
+    // Negative pairing 1: same model (gemini-4-argon implementation, gemini-4-argon reviewer lane)
     assert.ok(
-      !isDistinctReviewLane('gemini-4-argon', geminiLane),
+      !isDistinctReviewLane({ provider: 'google', model_id: 'gemini-4-argon' }, geminiLane),
       'same implementation and review model must be rejected',
     );
 
-    // Negative pairing 2: off-roster model (e.g. claude-haiku-4-5 as reviewer)
+    // Negative pairing 2: same family on another surface (DEC-20261020-01 clause 7):
+    // work built on claude-code:anthropic is not reviewed on antigravity:anthropic
+    const claudeLane = reviewer.routing.find((l) => l.surface_id === 'antigravity' && l.provider === 'anthropic')!;
+    assert.ok(
+      !isDistinctReviewLane(opusBuild, claudeLane),
+      'a claude-code:anthropic build reviewed on antigravity:anthropic must be rejected, even on another surface',
+    );
+    assert.ok(
+      !isDistinctReviewLane({ provider: 'anthropic', model_id: 'claude-fable-5.1' }, claudeLane),
+      'the family check holds even when the implementation model is not on the review allowlist',
+    );
+    assert.ok(
+      isDistinctReviewLane({ provider: 'openai', model_id: 'gpt-6.1-sol' }, claudeLane),
+      'a codex:openai build may be reviewed on antigravity:anthropic',
+    );
+
+    // Positive pairing on a model-exact lane: a different provider and model,
+    // with an attestation id on the roster, is distinct.
+    const modelExactOnRoster = {
+      ...builder.not_approved_lanes[0]!.record,
+      provider: 'xai',
+      model_id: 'grok-4.5',
+      tier2_attestation_id: 'grok-build',
+    };
+    assert.ok(isDistinctReviewLane(opusBuild, modelExactOnRoster), 'a model-exact lane on the roster, another family and model, is distinct');
+    assert.ok(
+      !isDistinctReviewLane({ provider: 'openai', model_id: 'grok-4.5' }, modelExactOnRoster),
+      'a model-exact lane rejects its own model even under another provider',
+    );
+
+    // Negative pairing 3: off-roster attestation (a model-exact lane whose token is not on the roster)
     const mockOffRosterLane = {
-      ...geminiLane,
-      model_id: 'claude-haiku-4-5',
+      ...builder.not_approved_lanes[0]!.record,
+      provider: 'minimax',
+      model_id: 'minimax-m3',
       tier2_attestation_id: 'minimax',
     };
     assert.ok(
-      !isDistinctReviewLane('sonnet-5', mockOffRosterLane),
+      !isDistinctReviewLane(opusBuild, mockOffRosterLane),
       'off-roster reviewer model must be rejected',
     );
   });
@@ -183,7 +215,8 @@ describe('Test 9 — resolveSeat fail-closed (r7 §9.1 test 9)', () => {
     assert.equal(res.refusal, 'lane_not_standing');
     assert.ok(res.registration !== null);
     assert.equal(res.registration?.seat_id, 'builder');
-    assert.equal(res.readiness.length, 7, 'builder has 7 readiness results');
+    // Two since DEC-20261020-01 clause 2: claude-code:anthropic and codex:openai.
+    assert.equal(res.readiness.length, 2, 'builder has 2 readiness results');
     assert.match(res.reason, /per-task/);
     assert.ok(res.requirement !== null);
     assert.match(res.requirement!, /per-task/);
@@ -208,8 +241,9 @@ describe('Test 9 — resolveSeat fail-closed (r7 §9.1 test 9)', () => {
     assert.equal(res.refusal, 'lane_not_standing');
     assert.ok(res.registration !== null);
     assert.equal(res.registration?.seat_id, 'independent-reviewer');
-    // Six since BR-PHASE4-SURFACE-KEYED-SEATS-R1 added the claude-code tier-2 lane.
-    assert.equal(res.readiness.length, 6, 'independent-reviewer has 6 readiness results');
+    // Four since DEC-20261020-01 clause 2: antigravity:google, antigravity:anthropic,
+    // codex:openai and grok-build:xai; the claude-code lane is a not-approved record.
+    assert.equal(res.readiness.length, 4, 'independent-reviewer has 4 readiness results');
     assert.match(res.reason, /per-run Founder act/);
     assert.ok(res.requirement !== null);
     assert.match(res.requirement!, /per-run Founder act/);
