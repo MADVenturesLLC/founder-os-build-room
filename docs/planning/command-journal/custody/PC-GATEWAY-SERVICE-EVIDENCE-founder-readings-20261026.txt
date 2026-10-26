@@ -1,0 +1,280 @@
+=== 1. B1, first attempt (typo in the first command); received by the builder at 2026-10-26T02:01:55Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ ~pgrep -af gateway-daemon; git -C ~/buildroom-gateway rev-parse HEAD
+Command '~pgrep' not found, did you mean:
+  command 'pgrep' from deb procps (2:4.0.4-9ubuntu1)
+Try: sudo apt install <deb name>
+750b6839090df90c7dcf0fa7fc7feee4f9045e1b
+
+=== 2. B1, the PC readings; received by the builder at 2026-10-26T02:02:11Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ pgrep -af gateway-daemon; echo "---"; git -C ~/buildroom-gateway rev-parse HEAD; git -C ~/buildroom-gateway status --short; echo "---"; ~/.nvm/versions/node/v22.23.2/bin/node --version; systemctl --version | head -1; loginctl show-user "$USER" -p Linger; echo "---"; systemctl --user cat buildroom-gateway.service
+---
+750b6839090df90c7dcf0fa7fc7feee4f9045e1b
+---
+v22.23.2
+systemd 259 (259.9-0ubuntu0.1)
+Linger=yes
+---
+No files found for buildroom-gateway.service.
+
+=== 3. B1, Railway CLI, first attempt; received by the builder at 2026-10-26T02:07:13Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ railway deployment list --service rare-enjoyment | head -5
+railway: command not found
+
+=== 4. B1, Railway deployment list; received by the builder at 2026-10-26T02:09:10Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ railway deployment list --service rare-enjoyment | head -5
+Recent Deployments
+  fe8ea5c3-568f-4ad5-8ea3-4e359851fdd5 | SUCCESS | 2026-10-25 18:33:36 -04:00
+  205a3159-28a7-481d-8dd5-98bfc86fc351 | REMOVED | 2026-10-24 19:15:53 -04:00
+  7a2aa595-244f-4d9a-9d56-bffbc684af5f | REMOVED | 2026-10-20 07:52:38 -04:00
+  4ac22b59-d138-4b69-88cf-5b3ab6cfa298 | REMOVED | 2026-10-18 23:22:30 -04:00
+
+=== 5. B2, clone, checkout and build; received by the builder at 2026-10-26T02:09:57Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ git clone https://github.com/MADVenturesLLC/founder-os-build-room.git ~/buildroom-gateway-056ffd1
+git -C ~/buildroom-gateway-056ffd1 checkout --detach 056ffd11d7db78b42463b233d758d41cdbf682a3
+cd ~/buildroom-gateway-056ffd1 && PATH="$HOME/.nvm/versions/node/v22.23.2/bin:$PATH" npm ci && PATH="$HOME/.nvm/versions/node/v22.23.2/bin:$PATH" npm run build
+git -C ~/buildroom-gateway-056ffd1 rev-parse HEAD; git -C ~/buildroom-gateway-056ffd1 status --short; ls -l ~/buildroom-gateway-056ffd1/dist/packages/gateway-daemon/src/main.js
+Cloning into '/home/michaeldaley/buildroom-gateway-056ffd1'...
+remote: Enumerating objects: 4811, done.
+remote: Counting objects: 100% (1246/1246), done.
+remote: Compressing objects: 100% (520/520), done.
+remote: Total 4811 (delta 968), reused 884 (delta 726), pack-reused 3565 (from 2)
+Receiving objects: 100% (4811/4811), 5.08 MiB | 19.21 MiB/s, done.
+Resolving deltas: 100% (2933/2933), done.
+HEAD is now at 056ffd1 seat-registry: bind builder and Tier-2 lanes to surface:provider (DEC-20261020-01) (#128)
+
+added 196 packages, and audited 208 packages in 575ms
+
+56 packages are looking for funding
+  run `npm fund` for details
+
+1 high severity vulnerability
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+
+> founder-os-build-room@0.0.0 build
+> tsc --build tsconfig.json
+
+056ffd11d7db78b42463b233d758d41cdbf682a3
+-rw-rw-r-- 1 michaeldaley michaeldaley 3764 Oct 25 22:09 /home/michaeldaley/buildroom-gateway-056ffd1/dist/packages/gateway-daemon/src/main.js
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway-056ffd1$
+
+=== 6. B4, unit file, enable and start, linger; received by the builder at 2026-10-26T02:10:56Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway-056ffd1$ mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/buildroom-gateway.service <<'EOF'
+[Unit]
+Description=Build Room Gateway daemon (1880c12d)
+
+[Service]
+Type=simple
+WorkingDirectory=%h/buildroom-gateway-056ffd1
+Environment=BUILDROOM_CONTROL_PLANE_URL=https://rare-enjoyment-production-0869.up.railway.app
+ExecStart=%h/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-daemon/src/main.js
+Restart=on-failure
+RestartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target
+EOF
+sha256sum ~/.config/systemd/user/buildroom-gateway.service
+systemctl --user daemon-reload
+systemctl --user enable --now buildroom-gateway.service
+sudo loginctl enable-linger "$USER"
+28efebbdc20e04af971250dbb0b400ec6bf99a98578d276006ec7e35f8b7b7f8  /home/michaeldaley/.config/systemd/user/buildroom-gateway.service
+Created symlink '/home/michaeldaley/.config/systemd/user/default.target.wants/buildroom-gateway.service' → '/home/michaeldaley/.config/systemd/user/buildroom-gateway.service'.
+[sudo: authenticate] Password:           
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway-056ffd1$
+
+=== 7. B5, after; received by the builder at 2026-10-26T02:11:28Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway-056ffd1$ systemctl --user status buildroom-gateway.service --no-pager; echo "---"; journalctl --user -u buildroom-gateway.service -n 40 --no-pager; echo "---"; loginctl show-user "$USER" -p Linger; echo "---"; cd ~/buildroom-gateway-056ffd1 && ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-cli/src/bin.js status
+● buildroom-gateway.service - Build Room Gateway daemon (1880c12d)
+     Loaded: loaded (/home/michaeldaley/.config/systemd/user/buildroom-gateway.service; enabled; preset: enabled)
+     Active: active (running) since Sun 2026-10-25 22:10:37 EDT; 40s ago
+ Invocation: 0471d3f453624be980d7bf90422c2c5e
+   Main PID: 888562 (node)
+      Tasks: 11 (limit: 37083)
+     Memory: 18.9M (peak: 31.9M)
+        CPU: 159ms
+     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/buildroom-gateway.service
+             └─888562 /home/michaeldaley/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-daemon/src/main.js
+
+Oct 25 22:10:37 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2340]: Started buildroom-gateway.service - Build Room Gate…c12d).
+Hint: Some lines were ellipsized, use -l to show in full.
+---
+Oct 25 22:10:37 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2340]: Started buildroom-gateway.service - Build Room Gateway daemon (1880c12d).
+---
+Linger=yes
+---
+primary: HEARTBEATING
+staging: INACTIVE
+
+=== 8. B6, after the reboot; received by the builder at 2026-10-26T02:14:11Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ uptime; systemctl --user status buildroom-gateway.service --no-pager; echo "---"; journalctl --user -u buildroom-gateway.service -b -n 40 --no-pager; echo "---"; loginctl show-user "$USER" -p Linger; echo "---"; cd ~/buildroom-gateway-056ffd1 && ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-cli/src/bin.js status
+ 22:14:04 up 0 min,  1 user,  load average: 0.96, 0.25, 0.09
+● buildroom-gateway.service - Build Room Gateway daemon (1880c12d)
+     Loaded: loaded (/home/michaeldaley/.config/systemd/user/buildroom-gateway.service; enabled; preset: enabled)
+     Active: active (running) since Sun 2026-10-25 22:13:27 EDT; 37s ago
+ Invocation: a7449172722943b79f459e7e9deb71d5
+   Main PID: 2589 (node)
+      Tasks: 11 (limit: 37083)
+     Memory: 72.4M (peak: 84.1M)
+        CPU: 171ms
+     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/buildroom-gateway.service
+             └─2589 /home/michaeldaley/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-daemon/src/main.js
+
+Oct 25 22:13:27 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2325]: Started buildroom-gateway.service - Build Room Gate…c12d).
+Hint: Some lines were ellipsized, use -l to show in full.
+---
+Oct 25 22:13:27 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2325]: Started buildroom-gateway.service - Build Room Gateway daemon (1880c12d).
+---
+Linger=yes
+---
+primary: HEARTBEATING
+staging: INACTIVE
+
+=== 9. B6, boot time and logins; received by the builder at 2026-10-26T02:16:23Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway-056ffd1$ who -b; who
+         system boot  2026-10-25 22:13
+1000     seat0        2026-10-25 22:13
+1000     tty2         2026-10-25 22:13
+
+=== 10. The Founder's statement on the Railway CLI on the PC; received by the builder at 2026-10-26T02:20:27Z ===
+yes I installed railway cli on the PC
+
+=== 11. B6, the order of the user manager, the service and the first login, from the system journal; received by the builder at 2026-10-26T02:20:36Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway-056ffd1$ sudo journalctl -b --no-pager -o short-iso-precise | grep -E 'New session|Started user@1000|Started buildroom-gateway|autologin|Autologin' | head -20
+[sudo: authenticate] Password:           
+2026-10-25T22:13:27.065714-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd-logind[1974]: New session '1' of user 'michaeldaley' with class 'manager' and type 'unspecified'.
+2026-10-25T22:13:27.132049-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd-logind[1974]: New session 'c1' of user 'gdm-greeter' with class 'greeter' and type 'wayland'.
+2026-10-25T22:13:27.186109-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd-logind[1974]: New session '2' of user 'gdm-greeter' with class 'manager-early' and type 'unspecified'.
+2026-10-25T22:13:27.207349-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd[1]: Started user@1000.service - User Manager for UID 1000.
+2026-10-25T22:13:27.207538-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2325]: Started buildroom-gateway.service - Build Room Gateway daemon (1880c12d).
+2026-10-25T22:13:35.745147-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd-logind[1974]: New session '3' of user 'michaeldaley' with class 'user' and type 'wayland'.
+
+=== Railway build log of the serving deployment, as the Founder uploaded it at 2026-10-26T02:03:57Z (f2792263-logs.1792980211591.log) ===
+2026-10-25T22:33:38.701894401Z [inf]  🚂 All aboard, next stop: builder v4
+2026-10-25T22:33:43.128889644Z [inf]  unpacking archive
+2026-10-25T22:33:43.131958474Z [inf]  downloading build driver nixpacks-v1.41.0 from https://github.com/railwayapp/nixpacks/releases/download/v1.41.0/nixpacks-v1.41.0-x86_64-unknown-linux-musl.tar.gz
+2026-10-25T22:33:43.139984094Z [inf]  uploading snapshot
+2026-10-25T22:33:43.353304134Z [inf]  using build driver nixpacks-v1.41.0
+2026-10-25T22:33:43.420299924Z [inf]  
+2026-10-25T22:33:43.420389254Z [inf]  ╔════════════════════ Nixpacks v1.41.0 ═══════════════════╗
+2026-10-25T22:33:43.420393524Z [inf]  ║ setup      │ nodejs_22, npm-9_x                         ║
+2026-10-25T22:33:43.420395354Z [inf]  ║─────────────────────────────────────────────────────────║
+2026-10-25T22:33:43.420395974Z [inf]  ║ install    │ npm ci                                     ║
+2026-10-25T22:33:43.420396534Z [inf]  ║─────────────────────────────────────────────────────────║
+2026-10-25T22:33:43.420397174Z [inf]  ║ build      │ npm install --include=dev && npm run build ║
+2026-10-25T22:33:43.420397484Z [inf]  ║─────────────────────────────────────────────────────────║
+2026-10-25T22:33:43.420397964Z [inf]  ║ start      │ npm start                                  ║
+2026-10-25T22:33:43.420398624Z [inf]  ╚═════════════════════════════════════════════════════════╝
+2026-10-25T22:33:43.420399204Z [inf]  
+2026-10-25T22:33:43.421047944Z [inf]  
+2026-10-25T22:33:43.421075014Z [inf]  Saved output to:
+2026-10-25T22:33:43.421077234Z [inf]    snapshot-target-unpack
+2026-10-25T22:33:43.466336734Z [inf]  [internal] load build definition from Dockerfile
+2026-10-25T22:33:43.466344524Z [inf]  [internal] load build definition from Dockerfile
+2026-10-25T22:33:43.466348084Z [inf]  [internal] load build definition from Dockerfile
+2026-10-25T22:33:43.521425484Z [inf]  [internal] load build definition from Dockerfile
+2026-10-25T22:33:43.530080964Z [inf]  [internal] load metadata for ghcr.io/railwayapp/nixpacks:ubuntu-1745885067
+2026-10-25T22:33:43.695481464Z [inf]  [internal] load metadata for ghcr.io/railwayapp/nixpacks:ubuntu-1745885067
+2026-10-25T22:33:43.696825424Z [inf]  [internal] load .dockerignore
+2026-10-25T22:33:43.696829724Z [inf]  [internal] load .dockerignore
+2026-10-25T22:33:43.696831014Z [inf]  [internal] load .dockerignore
+2026-10-25T22:33:43.722028174Z [inf]  [internal] load .dockerignore
+2026-10-25T22:33:43.734093404Z [inf]  [stage-0 10/10] COPY . /app
+2026-10-25T22:33:43.734117764Z [inf]  [stage-0  9/10] RUN printf '\nPATH=/app/node_modules/.bin:$PATH' >> /root/.profile
+2026-10-25T22:33:43.734121624Z [inf]  [stage-0  8/10] RUN --mount=type=cache,id=s/5a3fd421-f1a7-4562-aad6-dc309641d306-node_modules/cache,target=/app/node_modules/.cache npm install --include=dev && npm run build
+2026-10-25T22:33:43.734122424Z [inf]  [stage-0  7/10] COPY . /app/.
+2026-10-25T22:33:43.734123034Z [inf]  [stage-0  6/10] RUN --mount=type=cache,id=s/5a3fd421-f1a7-4562-aad6-dc309641d306-/root/npm,target=/root/.npm npm ci
+2026-10-25T22:33:43.734123604Z [inf]  [stage-0  5/10] COPY . /app/.
+2026-10-25T22:33:43.734124674Z [inf]  [stage-0  4/10] RUN nix-env -if .nixpacks/nixpkgs-e6f23dc08d3624daab7094b701aa3954923c6bbb.nix && nix-collect-garbage -d
+2026-10-25T22:33:43.734132804Z [inf]  [stage-0  3/10] COPY .nixpacks/nixpkgs-e6f23dc08d3624daab7094b701aa3954923c6bbb.nix .nixpacks/nixpkgs-e6f23dc08d3624daab7094b701aa3954923c6bbb.nix
+2026-10-25T22:33:43.734134074Z [inf]  [internal] load build context
+2026-10-25T22:33:43.734135044Z [inf]  [stage-0  2/10] WORKDIR /app/
+2026-10-25T22:33:43.734137564Z [inf]  [stage-0  1/10] FROM ghcr.io/railwayapp/nixpacks:ubuntu-1745885067@sha256:d45c89d80e13d7ad0fd555b5130f22a866d9dd10e861f589932303ef2314c7de
+2026-10-25T22:33:43.735440414Z [inf]  [stage-0  1/10] FROM ghcr.io/railwayapp/nixpacks:ubuntu-1745885067@sha256:d45c89d80e13d7ad0fd555b5130f22a866d9dd10e861f589932303ef2314c7de
+2026-10-25T22:33:43.735443514Z [inf]  [internal] load build context
+2026-10-25T22:33:43.735444644Z [inf]  [internal] load build context
+2026-10-25T22:33:43.764412564Z [inf]  [stage-0  1/10] FROM ghcr.io/railwayapp/nixpacks:ubuntu-1745885067@sha256:d45c89d80e13d7ad0fd555b5130f22a866d9dd10e861f589932303ef2314c7de
+2026-10-25T22:33:43.945945764Z [inf]  [internal] load build context
+2026-10-25T22:33:43.961450804Z [inf]  [stage-0  2/10] WORKDIR /app/
+2026-10-25T22:33:43.961456744Z [inf]  [stage-0  3/10] COPY .nixpacks/nixpkgs-e6f23dc08d3624daab7094b701aa3954923c6bbb.nix .nixpacks/nixpkgs-e6f23dc08d3624daab7094b701aa3954923c6bbb.nix
+2026-10-25T22:33:43.961458814Z [inf]  [stage-0  4/10] RUN nix-env -if .nixpacks/nixpkgs-e6f23dc08d3624daab7094b701aa3954923c6bbb.nix && nix-collect-garbage -d
+2026-10-25T22:33:43.961459574Z [inf]  [stage-0  5/10] COPY . /app/.
+2026-10-25T22:33:44.093452074Z [inf]  [stage-0  5/10] COPY . /app/.
+2026-10-25T22:33:44.096925174Z [inf]  [stage-0  6/10] RUN --mount=type=cache,id=s/5a3fd421-f1a7-4562-aad6-dc309641d306-/root/npm,target=/root/.npm npm ci
+2026-10-25T22:33:47.774557473Z [inf]  
+added 196 packages, and audited 208 packages in 3s
+
+56 packages are looking for funding
+
+2026-10-25T22:33:47.774826513Z [inf]    run `npm fund` for details
+
+2026-10-25T22:33:47.776752453Z [inf]  
+1 high severity vulnerability
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+
+2026-10-25T22:33:47.936190903Z [inf]  [stage-0  6/10] RUN --mount=type=cache,id=s/5a3fd421-f1a7-4562-aad6-dc309641d306-/root/npm,target=/root/.npm npm ci
+2026-10-25T22:33:47.939082923Z [inf]  [stage-0  7/10] COPY . /app/.
+2026-10-25T22:33:48.090111353Z [inf]  [stage-0  7/10] COPY . /app/.
+2026-10-25T22:33:48.095543713Z [inf]  [stage-0  8/10] RUN --mount=type=cache,id=s/5a3fd421-f1a7-4562-aad6-dc309641d306-node_modules/cache,target=/app/node_modules/.cache npm install --include=dev && npm run build
+2026-10-25T22:33:48.961729723Z [inf]  
+changed 2 packages, and audited 208 packages in 690ms
+
+2026-10-25T22:33:48.962050383Z [inf]  
+2026-10-25T22:33:48.962437583Z [inf]  56 packages are looking for funding
+
+2026-10-25T22:33:48.962810963Z [inf]    run `npm fund` for details
+
+2026-10-25T22:33:48.968928893Z [inf]  
+1 high severity vulnerability
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+
+2026-10-25T22:33:49.071838823Z [inf]  
+> founder-os-build-room@0.0.0 build
+> tsc --build tsconfig.json
+
+
+2026-10-25T22:33:57.648609890Z [inf]  [stage-0  8/10] RUN --mount=type=cache,id=s/5a3fd421-f1a7-4562-aad6-dc309641d306-node_modules/cache,target=/app/node_modules/.cache npm install --include=dev && npm run build
+2026-10-25T22:33:57.651702980Z [inf]  [stage-0  9/10] RUN printf '\nPATH=/app/node_modules/.bin:$PATH' >> /root/.profile
+2026-10-25T22:33:57.745042970Z [inf]  [stage-0  9/10] RUN printf '\nPATH=/app/node_modules/.bin:$PATH' >> /root/.profile
+2026-10-25T22:33:57.752087830Z [inf]  [stage-0 10/10] COPY . /app
+2026-10-25T22:33:57.874616340Z [inf]  [stage-0 10/10] COPY . /app
+2026-10-25T22:33:57.878727410Z [inf]  exporting to docker image format
+2026-10-25T22:34:00.195169950Z [inf]  exporting to docker image format
+2026-10-25T22:34:00.422856990Z [inf]  containerimage.descriptor: eyJtZWRpYVR5cGUiOiJhcHBsaWNhdGlvbi92bmQub2NpLmltYWdlLm1hbmlmZXN0LnYxK2pzb24iLCJkaWdlc3QiOiJzaGEyNTY6MTI4NzJkMGZmZDIxZWFlNmYxYWU2YjdhMWEzNDNjN2I3ZGEzODYwNDg5NWM5ZTUyZmQ3ZmNlZDUyZDk3NmJlNCIsInNpemUiOjI3NjcsImFubm90YXRpb25zIjp7Im9yZy5vcGVuY29udGFpbmVycy5pbWFnZS5jcmVhdGVkIjoiMjAyNi0xMC0yNVQyMjozMzo1OFoifSwicGxhdGZvcm0iOnsiYXJjaGl0ZWN0dXJlIjoiYW1kNjQiLCJvcyI6ImxpbnV4In19
+2026-10-25T22:34:00.423094170Z [inf]  containerimage.config.digest: sha256:61bcee7abccae55aa7860535f7b6984ad031e5d353e716edc21fb1c150320198
+2026-10-25T22:34:00.423097800Z [inf]  containerimage.digest: sha256:12872d0ffd21eae6f1ae6b7a1a343c7b7da38604895c9e52fd7fced52d976be4
+2026-10-25T22:34:03.423427299Z [inf]  image push
+2026-10-25T22:34:11.698717047Z [inf]  
+2026-10-25T22:34:11.698722199Z [inf]  [35m====================
+Starting Healthcheck
+====================
+[0m
+2026-10-25T22:34:11.698724177Z [inf]  [37mPath: /health[0m
+2026-10-25T22:34:11.698726344Z [inf]  [37mRetry window: 2m0s[0m
+2026-10-25T22:34:11.698728232Z [inf]  
+2026-10-25T22:34:11.887068922Z [inf]  [92m[1/1] Healthcheck succeeded![0m
+
+=== Railway deploy log of the serving deployment, as the Founder uploaded it at 2026-10-26T02:04:59Z (28404f15-logs.1792980287431.log) ===
+2026-10-25T22:34:10.977705320Z [inf]  Starting Container
+2026-10-25T22:34:11.057270676Z [inf]  
+2026-10-25T22:34:11.057273816Z [inf]  > founder-os-build-room@0.0.0 start
+2026-10-25T22:34:11.057277426Z [inf]  > node dist/packages/control-plane/src/main.js
+2026-10-25T22:34:11.057281376Z [inf]  
+2026-10-25T22:34:11.057284136Z [inf]  
+2026-10-25T22:34:11.099378585Z [inf]  
+2026-10-25T22:34:11.104612607Z [inf]  
+2026-10-25T22:35:01.134028850Z [inf]  
