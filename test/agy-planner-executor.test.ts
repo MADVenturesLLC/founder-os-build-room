@@ -34,10 +34,10 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   AGY_PLANNER_GATEWAY_ID,
@@ -261,7 +261,9 @@ describe('start: the init gate', () => {
     const message = JSON.parse(seen.stdin[0] ?? '') as { message: { content: string } };
     assert.match(message.message.content, /Add an uptime field to the health route\./);
     assert.match(message.message.content, /MADVenturesLLC\/example/);
-    assert.equal(seen.cwd, h.checkouts[0]);
+    // The checkout is gone by now; resolve its parent, since macOS reports /var as /private/var.
+    const checkout = h.checkouts[0] ?? '';
+    assert.equal(seen.cwd, join(realpathSync(dirname(checkout)), basename(checkout)));
     assert.equal(existsSync(h.checkouts[0] ?? ''), false, 'the checkout is removed after the run');
 
     const [evidence] = evidenceOf(h.gatewayDirectory);
