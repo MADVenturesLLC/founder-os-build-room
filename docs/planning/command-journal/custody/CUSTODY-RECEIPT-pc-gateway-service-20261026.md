@@ -53,12 +53,12 @@ accepts B6:
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/PC-GATEWAY-SERVICE-EVIDENCE-builder-reads-20261026.txt` |
-| Git blob id | `f7d35051807fbe501ab0f794f2fce1eba6c4417d` |
-| SHA-256 | `260dcef42ed8c56c2f35be6757bb8ca2791760aa9506d8f23326fae7a54bea55` |
-| Bytes | 1845 |
-| Lines | 8 (`wc -l`) |
+| Git blob id | `c8e743885ab2716b10c4edd24053625a0856c51a` |
+| SHA-256 | `ca9e31ea162deb6f24ab6d415667be1e5a75ccbd8bd08811dfedd365d091ea73` |
+| Bytes | 2546 |
+| Lines | 9 (`wc -l`) |
 | Trailing newline | present (single LF); no CR bytes |
-| What it is | the builder's reads for the act: the A2 repository facts, the signed file's hash, the B1 reads of GitHub `main` and public `/health`, the expected unit-file hash, and `/health` across B4 to B6. No Railway API was read (finding 2) |
+| What it is | the builder's reads for the act: the A2 repository facts, the signed file's hash, the B1 reads of GitHub `main` and public `/health`, the expected unit-file hash, `/health` across B4 to B6, and, after the act, the Railway deployment list and heartbeat request logs (finding 2) |
 
 ## What happened, in order
 
@@ -93,6 +93,7 @@ All times are UTC. The PC's own lines read EDT (UTC−4).
 | 02:30:09.982Z | logind session `5`, class `user`, type `wayland`, on `seat0`/`tty2`, a console login | the PC's journal, `loginctl` |
 | 02:30:22Z | B6 readings over that SSH session: uptime 1 min, `active (running)` since 02:29:29Z, `Linger=yes`, `primary: HEARTBEATING` | the Founder, in session |
 | 02:33:19Z | the Founder's ruling: "yes fingerprint reader, I accept B6" | the Founder, in session |
+| 03:13:01Z to 03:14:21Z | `POST /gateway/heartbeat` answered 200 every 10 seconds; serving deployment `fe8ea5c3` read at `056ffd1` | Railway API, read by the builder about 03:14Z |
 
 ## Findings
 
@@ -101,15 +102,19 @@ process. The last recorded heartbeat is 2026-10-15T01:38:58Z, read under
 the restart act; when the daemon stopped after that is not known. B3 had
 nothing to stop.
 
-**2. The builder read no Railway API.** The Railway connector was not
-loaded in this session, so every Railway fact here is the Founder's: the
+**2. Railway was read by the Founder during the act and by the builder
+after it.** The Railway connector was not loaded in this session during
+the act, so B1's deployment state is the Founder's: the
 `railway deployment list` output and the two logs he uploaded. The list
-does not name the serving deployment's commit. That it is `056ffd1` is
-the builder's inference from timing (created 3 seconds after the merge
-of PR #128), not a reading. B1 asks only for SUCCESS with nothing
-building, which the list shows. The builder also could not read
-Railway's request logs for `/gateway/heartbeat` in B5; as B5 allows,
-the heartbeat rests on the Founder's `buildroom status` readings.
+does not name a commit. After the act, at about 03:14Z, the connector
+loaded and the builder read it directly: the serving deployment
+`fe8ea5c3` is at `056ffd11d7db78b42463b233d758d41cdbf682a3` with nothing
+building, which confirms what B1 had only inferred from timing; and
+`POST /gateway/heartbeat` was answered 200 every 10 seconds from
+03:13:01Z through 03:14:21Z, from one source with user agent `node`. In
+B5 itself the heartbeat rests on the Founder's `buildroom status`
+readings, as B5 allows. The requests' source address is left out of
+this record.
 
 **3. The Railway CLI was installed on the PC during the act, outside
 it.** The PC had no `railway` at 02:07:13Z and listed deployments at
@@ -185,7 +190,8 @@ None of the findings was corrected.
 ## What the builder read and did not do
 
 - Every repository fact above was read from git and GitHub; `/health`
-  from the public route.
+  from the public route; the post-act Railway facts from the Railway API
+  (deployments and request logs only).
 - The builder holds no connection string, password, token or key, and
   called no tool that returns a variable's value.
 - The builder changed nothing on the PC. The Founder ran every command
