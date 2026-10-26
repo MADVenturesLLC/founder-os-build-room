@@ -1,0 +1,51 @@
+FOUNDER-ACT-20261026-BR-PC-GATEWAY-SERVICE: the PC's Gateway rebuilt at Build Room main and run as a supervised user service
+
+I, Michael Daley, Founder of MAD Ventures, act as follows. This act takes effect when I sign it in the builder's session.
+
+A1. Basis. C5 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE names Gateway 1880c12d, on the PC, as the Gateway for the Phase 4 counted runs, and directs the builder to draft, for me to rule on separately, the act that updates the PC's checkout and runs its daemon as a supervised service. That ruling's Part E and C2 of FOUNDER-ACT-20261015-BR-PC-GATEWAY-RESTART left both to a separate act. This is that act. Item 2 of the builder's Phase 4 run-unit proposal (docs/planning/phase4-planner-loop/PHASE4-RUN-UNIT-PROPOSAL-r1.md, section 6) lists it among what must exist before a counted run.
+
+A2. Facts, read by the builder from the repository and the public /health route, 2026-10-26. Build Room main is at 056ffd11d7db78b42463b233d758d41cdbf682a3 (the merge of pull request 128). The PC's checkout ~/buildroom-gateway was last recorded at 750b6839090df90c7dcf0fa7fc7feee4f9045e1b, and the daemon was last recorded running by hand from it, heartbeating, at 2026-10-15T01:39:08Z. Between those commits, 13 files in packages/gateway-daemon and packages/gateway-protocol changed (+1,079 lines), adding the planner_poll and planner_report purposes, their envelopes and the planner worker (commit 3e54e17); the only lines removed are three in the macOS Keychain custody, one comment and one import that are rewritten, and the two-purpose type and union that gain the planner purposes, so no session-start or heartbeat field changes; packages/gateway-cli and the Gateway's paths, state and Linux custody files are unchanged, and the daemon keeps its key, state and socket in its fixed directory under my home directory, outside any checkout. On main the daemon polls no planner work, because no planner executor ships (DEC-20260827-01 §3.4 authorizes no provider binding). /health answered 200 at 2026-10-26T01:55:19Z with uptimeSeconds 12069.
+
+A3. What this act gives and what it does not. It gives the PC a checkout carrying the planner worker and a daemon that restarts on failure and starts at boot without a login. It does not give the Gateway a planner executor (item 3 of that proposal), configure the counted-run surface (item 4), or authorize any counted run; each needs my separate act.
+
+B1. Before. On the PC I read and give the builder: pgrep -af gateway-daemon; git -C ~/buildroom-gateway rev-parse HEAD and git -C ~/buildroom-gateway status --short; ~/.nvm/versions/node/v22.23.2/bin/node --version, which must print v22.23.2; systemctl --version | head -1; loginctl show-user "$USER" -p Linger; and systemctl --user cat buildroom-gateway.service, which must report that no such unit exists. The builder reads, within 15 minutes before B2: main on GitHub at 056ffd11d7db78b42463b233d758d41cdbf682a3, or a later commit that changes no file under packages/gateway-daemon, packages/gateway-protocol or packages/gateway-cli; /health 200; and Railway's serving deployment of rare-enjoyment SUCCESS with nothing building, through the Railway connector or, if it is unavailable, from my reading of the Railway dashboard. If any of these fails, I stop and nothing is changed.
+
+B2. Build, beside the old checkout. On the PC I run:
+git clone https://github.com/MADVenturesLLC/founder-os-build-room.git ~/buildroom-gateway-056ffd1
+git -C ~/buildroom-gateway-056ffd1 checkout --detach 056ffd11d7db78b42463b233d758d41cdbf682a3
+cd ~/buildroom-gateway-056ffd1 && PATH="$HOME/.nvm/versions/node/v22.23.2/bin:$PATH" npm ci && PATH="$HOME/.nvm/versions/node/v22.23.2/bin:$PATH" npm run build
+git -C ~/buildroom-gateway-056ffd1 rev-parse HEAD must print 056ffd11d7db78b42463b233d758d41cdbf682a3, git -C ~/buildroom-gateway-056ffd1 status --short must print nothing, and dist/packages/gateway-daemon/src/main.js must exist. The old checkout ~/buildroom-gateway is not touched; it is the rollback in B7. If the clone, npm ci or the build fails, I stop, give the builder the output, and the hand-started daemon, if B1 found one, keeps running.
+
+B3. Stop the hand-started daemon. If B1 found a daemon process, I stop it: Ctrl-C in its terminal if that terminal is still open, otherwise kill -TERM with the process id B1 printed. pgrep -af gateway-daemon then prints nothing.
+
+B4. Install and start the service. I create ~/.config/systemd/user/buildroom-gateway.service with exactly this content:
+[Unit]
+Description=Build Room Gateway daemon (1880c12d)
+
+[Service]
+Type=simple
+WorkingDirectory=%h/buildroom-gateway-056ffd1
+Environment=BUILDROOM_CONTROL_PLANE_URL=https://rare-enjoyment-production-0869.up.railway.app
+ExecStart=%h/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-daemon/src/main.js
+Restart=on-failure
+RestartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target
+Then I run: systemctl --user daemon-reload; systemctl --user enable --now buildroom-gateway.service; and sudo loginctl enable-linger "$USER", so that my user's services start at boot without a login. The unit holds no secret: the daemon reads its own key from systemd-creds when it starts, as before, and that read is part of starting it. A clean SIGTERM exits 0 and is not restarted; any other exit is restarted after 30 seconds.
+
+B5. After. Within 15 minutes of B4 I read and give the builder: systemctl --user status buildroom-gateway.service --no-pager, which must show active (running); journalctl --user -u buildroom-gateway.service -n 40 --no-pager; loginctl show-user "$USER" -p Linger, which must print Linger=yes; and, from ~/buildroom-gateway-056ffd1, ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-cli/src/bin.js status, which must answer from the running daemon, not from its last persisted state, with primary HEARTBEATING. The builder reads /health 200, and Railway's logs for /gateway/heartbeat answered 200 after B4 if the connector is available; if it is not, the builder says so and relies on my readings.
+
+B6. Reboot check. When I choose, the same day or later, I reboot the PC and do not log in at its console; within 10 minutes of boot, over SSH, I repeat the readings of B5. This proves the service starts without a login. A reboot also restarts the hermes service on the PC; this act changes nothing in it. Until B6 is done the custody record says the service is installed but not reboot-tested.
+
+B7. Stop and rollback. If any check of B5 or B6 fails, I run systemctl --user disable --now buildroom-gateway.service and give the builder the output of B5's commands. I may then start the daemon by hand from the old checkout exactly as B2 of FOUNDER-ACT-20261015-BR-PC-GATEWAY-RESTART does, in a terminal I leave open. Nothing is retried, re-enrolled or revoked without my new act. Lingering may stay on; sudo loginctl disable-linger "$USER" turns it off.
+
+C1. Filing. Under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, the builder files this act verbatim, my readings (with any host identifier, address, node key or phone number masked, as in the 2026-10-15 receipt), the builder's reads and B6 when done, in one Build Room custody pull request that needs my separate authorization.
+
+C2. Not authorized. This act does not authorize: a planner executor or any provider binding; a counted run, or setting or changing PHASE4_COUNTED_RUN, PHASE4_COUNTED_RUN_TOKEN or any other Railway variable; buildroom enroll or doctor, or the revocation or denial of any Gateway, including 2222132d; any read or move of a key other than the daemon's own read at start; any change to Gateway 2222132d or the MacBook; any change to the hermes service; any systemd unit other than buildroom-gateway.service; deleting or changing ~/buildroom-gateway; any change to the control plane, the database, a migration, a Neon role or any secret; or any deploy, redeploy or rollback. Each needs my separate act.
+
+Signed: Michael Daley
+Date: 2026-10-26 (UTC)
+Actor-Id: founder
