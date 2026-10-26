@@ -161,6 +161,102 @@ Logged out successfully
 michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway-056ffd1$ gsettings get org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type
 'nothing'
 
+=== 13. After B6: whether the PC logs in automatically; received by the builder at 2026-10-26T02:28:04Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway-056ffd1$ grep -i -E 'autologin|AutomaticLogin' /etc/gdm3/custom.conf
+#  AutomaticLoginEnable = true
+#  AutomaticLogin = user1
+
+=== 14. After B6: whether SSH runs on the PC and its Tailscale status; received by the builder at 2026-10-26T02:28:29Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway-056ffd1$ systemctl is-active ssh; tailscale status --self 2>/dev/null | head -1
+active
+[masked: Tailscale address]   michaeldaley-z890-pro-rs-wifi-white  decivantiq@  linux  -
+
+=== 15. B6, second reboot: the SSH login from the MacBook; received by the builder at 2026-10-26T02:30:06Z ===
+~/MADVenturesOPs ➜  ssh michaeldaley@michaeldaley-z890-pro-rs-wifi-white
+The authenticity of host 'michaeldaley-z890-pro-rs-wifi-white ([masked: Tailscale address])' can't be established.
+ED25519 key fingerprint is: [masked: SSH host key fingerprint]
+This host key is known by the following other names/addresses:
+    ~/.ssh/known_hosts:16: [masked: LAN address]
+    ~/.ssh/known_hosts:19: [masked: LAN address]
+    ~/.ssh/known_hosts:20: [masked: Tailscale address]
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added 'michaeldaley-z890-pro-rs-wifi-white' (ED25519) to the list of known hosts.
+michaeldaley@michaeldaley-z890-pro-rs-wifi-white's password: 
+Welcome to Ubuntu 26.04.1 LTS (GNU/Linux 7.0.0-38-generic x86_64)
+
+ * Documentation:  https://docs.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+Expanded Security Maintenance for Applications is not enabled.
+
+11 updates can be applied immediately.
+To see these additional updates run: apt list --upgradable
+
+17 additional security updates can be applied with ESM Apps.
+Learn more about enabling ESM Apps service at https://ubuntu.com/esm
+
+Last login: Fri Oct  9 22:04:25 2026 from [masked: Tailscale address]
+Your user’s .npmrc file (${HOME}/.npmrc)
+has a `globalconfig` and/or a `prefix` setting, which are incompatible with nvm.
+Run `nvm use --delete-prefix v22.23.2 --silent` to unset it.
+
+=== 16. B6, second reboot: the B5 readings over that SSH session; received by the builder at 2026-10-26T02:30:40Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~$ uptime; who -b; who; systemctl --user status buildroom-gateway.service --no-pager; echo "---"; loginctl show-user "$USER" -p Linger; echo "---"; cd ~/buildroom-gateway-056ffd1 && ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-cli/src/bin.js status
+ 22:30:22 up 1 min,  2 users,  load average: 0.61, 0.22, 0.08
+         system boot  2026-10-25 22:29
+1000     seat0        2026-10-25 22:30
+1000     tty2         2026-10-25 22:30
+● buildroom-gateway.service - Build Room Gateway daemon (1880c12d)
+     Loaded: loaded (/home/michaeldaley/.config/systemd/user/buildroom-gateway.service; enabled; preset: enabled)
+     Active: active (running) since Sun 2026-10-25 22:29:29 EDT; 53s ago
+ Invocation: 735ede9d0a004670b3eafd3b4b54da59
+   Main PID: 2583 (node)
+      Tasks: 11 (limit: 37083)
+     Memory: 72.9M (peak: 85.8M)
+        CPU: 180ms
+     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/buildroom-gateway.service
+             └─2583 /home/michaeldaley/.nvm/versions/node/v22.23.2/bin/node dis…
+
+Oct 25 22:29:29 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2318]: Started bui….
+Hint: Some lines were ellipsized, use -l to show in full.
+---
+Linger=yes
+---
+primary: HEARTBEATING
+staging: INACTIVE
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway-056ffd1$
+
+=== 17. The Founder's statement on where the readings were taken; received by the builder at 2026-10-26T02:31:12Z ===
+those outputs were from my macbook
+
+=== 18. B6, second reboot: the sessions and the order of the user manager, the service and the logins, from logind and the system journal; received by the builder at 2026-10-26T02:32:07Z ===
+michaeldaley@michaeldaley-Z890-Pro-RS-WiFi-White:~/buildroom-gateway-056ffd1$ loginctl list-sessions --no-pager; echo "---"; sudo journalctl -b --no-pager -o short-iso-precise | grep -E 'New session|Started user@1000|Started buildroom-gateway|Accepted (password|publickey)' | head -20
+SESSION  UID USER         SEAT  LEADER CLASS   TTY  IDLE SINCE
+      1 1000 michaeldaley -     2318   manager -    no   -    
+      3 1000 michaeldaley -     6411   user    -    no   -    
+      5 1000 michaeldaley seat0 4829   user    tty2 no   -    
+
+3 sessions listed.
+---
+[sudo: authenticate] Password:     
+sudo: Authentication failed, try again.
+[sudo: authenticate] Password:           
+2026-10-25T22:29:29.071172-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd-logind[1972]: New session '1' of user 'michaeldaley' with class 'manager' and type 'unspecified'.
+2026-10-25T22:29:29.150622-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd-logind[1972]: New session 'c1' of user 'gdm-greeter' with class 'greeter' and type 'wayland'.
+2026-10-25T22:29:29.181421-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd-logind[1972]: New session '2' of user 'gdm-greeter' with class 'manager-early' and type 'unspecified'.
+2026-10-25T22:29:29.247964-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd[1]: Started user@1000.service - User Manager for UID 1000.
+2026-10-25T22:29:29.248438-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd[2318]: Started buildroom-gateway.service - Build Room Gateway daemon (1880c12d).
+2026-10-25T22:29:56.624132-04:00 michaeldaley-Z890-Pro-RS-WiFi-White sshd-session[6411]: Accepted password for michaeldaley from [masked: Tailscale address] port 50025 ssh2
+2026-10-25T22:29:56.627408-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd-logind[1972]: New session '3' of user 'michaeldaley' with class 'user' and type 'tty'.
+2026-10-25T22:30:09.982107-04:00 michaeldaley-Z890-Pro-RS-WiFi-White systemd-logind[1972]: New session '5' of user 'michaeldaley' with class 'user' and type 'wayland'.
+
+=== 19. The Founder's message on a fingerprint question; received by the builder at 2026-10-26T02:33:03Z ===
+I put yes on fingerprint question
+
+=== 20. The Founder's answer on the fingerprint reader, and his ruling on B6; received by the builder at 2026-10-26T02:33:19Z ===
+yes fingerprint reader, I accept B6
+
 === Railway build log of the serving deployment, as the Founder uploaded it at 2026-10-26T02:03:57Z (f2792263-logs.1792980211591.log) ===
 2026-10-25T22:33:38.701894401Z [inf]  🚂 All aboard, next stop: builder v4
 2026-10-25T22:33:43.128889644Z [inf]  unpacking archive

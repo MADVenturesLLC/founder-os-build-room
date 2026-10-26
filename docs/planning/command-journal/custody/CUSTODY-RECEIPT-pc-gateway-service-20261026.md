@@ -2,8 +2,8 @@
 
 **This receipt records the landing of one Founder instrument, his act
 `FOUNDER-ACT-20261026-BR-PC-GATEWAY-SERVICE`, with the readings he gave
-under it and the builder's reads. It records nine findings and
-authorizes nothing.** The act's own text governs. The filing is ordered
+under it, his ruling accepting B6, and the builder's reads. It records
+ten findings and authorizes nothing.** The act's own text governs. The filing is ordered
 by C1 of the act and C1 of `FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE`
 (one custody filing per act, after the act completes). The merge of this
 record needs the Founder's separate SHA-named authorization.
@@ -31,17 +31,24 @@ byte for byte, which the Founder signed by reference to its SHA-256.
 
 (Rewrapped for this file.)
 
+**The ruling on B6, verbatim**, given in session at 2026-10-26T02:33:19Z
+after the second reboot (finding 5), answering the builder's two
+questions, whether the PC has a fingerprint reader and whether he
+accepts B6:
+
+> yes fingerprint reader, I accept B6
+
 ## The evidence
 
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/PC-GATEWAY-SERVICE-EVIDENCE-founder-readings-20261026.txt` |
-| Git blob id | `84ac8f61b4f4ae060bac008166e589b376df7ef9` |
-| SHA-256 | `5b909e00eda2d437a5b8a05c325ab9054e2526429a839de41ed0c760d2ef8f7b` |
-| Bytes | 19696 |
-| Lines | 286 (`wc -l`) |
+| Git blob id | `9ab15061f1f790b6dc34f970d1a165a14dd42c34` |
+| SHA-256 | `23c726d8a475f38593b250aed7429a6dadabc5c7afff46b334b6fb78c58de922` |
+| Bytes | 26085 |
+| Lines | 382 (`wc -l`) |
 | Trailing newline | present (single LF); no CR bytes |
-| What it is | the Founder's twelve readings and statements on the PC as he gave them in session, from B1 to B6 and one after the act, each under a heading line with the time the builder received it, then the two Railway logs he uploaded for B1; otherwise verbatim. Nothing needed masking (finding 8) |
+| What it is | the Founder's twenty readings and statements as he gave them in session: B1 to B6, one after the act, and the second reboot for B6 with his ruling on it, each under a heading line with the time the builder received it, then the two Railway logs he uploaded for B1; otherwise verbatim, with five values masked (finding 8) |
 
 | Field | Value |
 |---|---|
@@ -77,6 +84,15 @@ All times are UTC. The PC's own lines read EDT (UTC−4).
 | 02:14:04Z | B6 readings, taken at the console after the login above (finding 5): uptime 0 min, `active (running)` since 02:13:27Z, `Linger=yes`, `primary: HEARTBEATING` | the Founder, in session |
 | 02:14:26Z | `/health` 200 | public `/health` |
 | 02:23:33Z | after the act: `railway logout` on the PC succeeds; idle suspend on AC power reads `'nothing'` | the Founder, in session |
+| 02:26:44Z | Copilot finds that finding 5 overstated B6 | GitHub API |
+| 02:28:04Z to 02:28:29Z | automatic login is commented out in `/etc/gdm3/custom.conf`; `ssh` active; the PC on Tailscale | the Founder, in session |
+| about 02:29Z | the PC rebooted a second time for B6 | the Founder, in session |
+| 02:29:29.071Z | logind session `1`, class `manager` (the lingering user manager) | the PC's journal |
+| 02:29:29.248Z | `buildroom-gateway.service` started | the PC's journal |
+| 02:29:56.624Z | SSH login from the Founder's MacBook over Tailscale accepted; logind session `3`, class `user`, type `tty` | the PC's journal |
+| 02:30:09.982Z | logind session `5`, class `user`, type `wayland`, on `seat0`/`tty2`, a console login | the PC's journal, `loginctl` |
+| 02:30:22Z | B6 readings over that SSH session: uptime 1 min, `active (running)` since 02:29:29Z, `Linger=yes`, `primary: HEARTBEATING` | the Founder, in session |
+| 02:33:19Z | the Founder's ruling: "yes fingerprint reader, I accept B6" | the Founder, in session |
 
 ## Findings
 
@@ -110,18 +126,29 @@ successfully" (reading 12); the CLI itself stays installed.
 B4's `sudo loginctl enable-linger` changed nothing. What turned it on
 earlier is not recorded.
 
-**5. B6 was not carried out as written.** B6 reads "I reboot the PC
-and do not log in at its console; within 10 minutes of boot, over SSH,
-I repeat the readings of B5." After the reboot a console login took
-place at 02:13:35.745Z (session `3`, class `user`; `who` lists `seat0`
-and `tty2`), and the B6 readings were taken at that console, not over
-SSH. Whether the login was typed or automatic is not recorded; the
-journal shows no autologin line. As context only: the journal places
-the lingering user manager and the Gateway service's start at
-02:13:27Z, 8.5 seconds before that login. Whether B6 is met is the
-Founder's to decide; this record does not decide it, and until he
-does, the service is recorded as installed and restarting at boot, with
-its start without a login not shown by the procedure B6 sets.
+**5. B6 took two reboots and departs from its wording once; the
+Founder accepted it.** B6 reads "I reboot the PC and do not log in at
+its console; within 10 minutes of boot, over SSH, I repeat the readings
+of B5."
+
+- First reboot, about 02:13Z: a console login took place at
+  02:13:35.745Z (session `3`, class `user`; `who` lists `seat0` and
+  `tty2`), and the readings were taken at that console, not over SSH.
+  The Gateway service had started at 02:13:27Z, 8.5 seconds earlier.
+  Copilot found that an earlier revision of this finding called that a
+  proof; it was not B6 as written.
+- Second reboot, about 02:29Z: the readings were taken over SSH from
+  the Founder's MacBook (session `3`, type `tty`, accepted at
+  02:29:56.624Z). The Gateway service had started at 02:29:29.248Z,
+  before any user session existed. A console login still took place, at
+  02:30:09.982Z (session `5`, type `wayland`, on `seat0`), 13 seconds
+  after the SSH login and before the readings. Automatic login is off
+  (reading 13); the Founder states the PC has a fingerprint reader, which
+  is consistent with, but does not show, a fingerprint login at the PC.
+  Who or what logged in at the console is not recorded.
+
+The Founder ruled at 02:33:19Z: "yes fingerprint reader, I accept B6".
+This record files that ruling; it does not itself decide B6.
 
 **6. The Gateway still serves no planner work.** Per A3, the daemon on
 `main` is built without a planner executor and polls nothing for the
@@ -132,16 +159,26 @@ provider binding under `DEC-20260827-01` §3.4, needs its own act.
 appears in the build log of Railway's serving deployment, so it is not
 new to the PC. The act authorizes no `npm audit fix`, and none was run.
 
-**8. Nothing in the PC readings needed masking.** This repository is
-public. The readings carry the PC's hostname, as earlier records did,
-and no address, node key, host identifier or phone number. The sudo
-prompts show no password.
+**8. Five values in the readings are masked.** This repository is
+public. Two Tailscale addresses (the PC's and the MacBook's), two LAN
+addresses (in the MacBook's `known_hosts` lines) and the PC's SSH host
+key fingerprint are each replaced by a bracketed `[masked: …]` label,
+in eight places; nothing else is changed. The unmasked text exists only
+in the builder's session. The readings carry the PC's hostname, as
+earlier records did. The sudo prompts show no password.
 
 **9. The PC does not suspend when idle on AC power.** After the act
 the Founder read the GNOME setting `sleep-inactive-ac-type` as
 `'nothing'` (reading 12). The act changes no power setting. A suspend
 would stop the heartbeats without the service exiting, so it would not
 be restarted.
+
+**10. nvm warns about `.npmrc` at login on the PC.** The SSH login
+printed that the user's `.npmrc` has a `globalconfig` or `prefix`
+setting incompatible with nvm. The service runs Node by its full path,
+`~/.nvm/versions/node/v22.23.2/bin/node`, and the B5 and B6 readings
+show it running, so the warning does not reach the daemon. Nothing was
+changed.
 
 None of the findings was corrected.
 
