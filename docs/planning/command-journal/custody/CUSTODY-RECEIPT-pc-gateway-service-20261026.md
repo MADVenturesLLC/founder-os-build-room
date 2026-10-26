@@ -74,7 +74,7 @@ All times are UTC. The PC's own lines read EDT (UTC−4).
 | 02:13:27.065Z | logind session `1`, class `manager` (the lingering user manager) | the PC's journal |
 | 02:13:27.207Z | `user@1000.service` and `buildroom-gateway.service` started | the PC's journal |
 | 02:13:35.745Z | the first login, session `3`, class `user`, on the console | the PC's journal |
-| 02:14:04Z | B6: uptime 0 min, `active (running)` since 02:13:27Z, `Linger=yes`, `primary: HEARTBEATING` | the Founder, in session |
+| 02:14:04Z | B6 readings, taken at the console after the login above (finding 5): uptime 0 min, `active (running)` since 02:13:27Z, `Linger=yes`, `primary: HEARTBEATING` | the Founder, in session |
 | 02:14:26Z | `/health` 200 | public `/health` |
 | 02:23:33Z | after the act: `railway logout` on the PC succeeds; idle suspend on AC power reads `'nothing'` | the Founder, in session |
 
@@ -110,12 +110,18 @@ successfully" (reading 12); the CLI itself stays installed.
 B4's `sudo loginctl enable-linger` changed nothing. What turned it on
 earlier is not recorded.
 
-**5. B6 proves the service starts without a login.** The PC's console
-logged in at 02:13:35.745Z (session `3`, class `user`), but the
-lingering user manager and the Gateway service started 8.5 seconds
-earlier, at 02:13:27Z. The B6 readings were taken at that console, not
-over SSH as the act suggests; the journal's order, not the reading's
-transport, carries the proof.
+**5. B6 was not carried out as written.** B6 reads "I reboot the PC
+and do not log in at its console; within 10 minutes of boot, over SSH,
+I repeat the readings of B5." After the reboot a console login took
+place at 02:13:35.745Z (session `3`, class `user`; `who` lists `seat0`
+and `tty2`), and the B6 readings were taken at that console, not over
+SSH. Whether the login was typed or automatic is not recorded; the
+journal shows no autologin line. As context only: the journal places
+the lingering user manager and the Gateway service's start at
+02:13:27Z, 8.5 seconds before that login. Whether B6 is met is the
+Founder's to decide; this record does not decide it, and until he
+does, the service is recorded as installed and restarting at boot, with
+its start without a login not shown by the procedure B6 sets.
 
 **6. The Gateway still serves no planner work.** Per A3, the daemon on
 `main` is built without a planner executor and polls nothing for the
