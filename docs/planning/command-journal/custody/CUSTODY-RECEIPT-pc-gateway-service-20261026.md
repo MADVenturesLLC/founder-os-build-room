@@ -2,7 +2,7 @@
 
 **This receipt records the landing of one Founder instrument, his act
 `FOUNDER-ACT-20261026-BR-PC-GATEWAY-SERVICE`, with the readings he gave
-under it and the builder's reads. It records eight findings and
+under it and the builder's reads. It records nine findings and
 authorizes nothing.** The act's own text governs. The filing is ordered
 by C1 of the act and C1 of `FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE`
 (one custody filing per act, after the act completes). The merge of this
@@ -36,12 +36,12 @@ byte for byte, which the Founder signed by reference to its SHA-256.
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/PC-GATEWAY-SERVICE-EVIDENCE-founder-readings-20261026.txt` |
-| Git blob id | `0a09ce156fc536779a1b2dfea1d454627a13e346` |
-| SHA-256 | `6554fb90169e63d391af9e1a8f6c78ef5bfcaa29aff7709d937a5058e6c79a08` |
-| Bytes | 19270 |
-| Lines | 280 (`wc -l`) |
+| Git blob id | `84ac8f61b4f4ae060bac008166e589b376df7ef9` |
+| SHA-256 | `5b909e00eda2d437a5b8a05c325ab9054e2526429a839de41ed0c760d2ef8f7b` |
+| Bytes | 19696 |
+| Lines | 286 (`wc -l`) |
 | Trailing newline | present (single LF); no CR bytes |
-| What it is | the Founder's eleven readings and statements on the PC as he gave them in session, from B1 to B6, each under a heading line with the time the builder received it, then the two Railway logs he uploaded for B1; otherwise verbatim. Nothing needed masking (finding 8) |
+| What it is | the Founder's twelve readings and statements on the PC as he gave them in session, from B1 to B6 and one after the act, each under a heading line with the time the builder received it, then the two Railway logs he uploaded for B1; otherwise verbatim. Nothing needed masking (finding 8) |
 
 | Field | Value |
 |---|---|
@@ -76,6 +76,7 @@ All times are UTC. The PC's own lines read EDT (UTC−4).
 | 02:13:35.745Z | the first login, session `3`, class `user`, on the console | the PC's journal |
 | 02:14:04Z | B6: uptime 0 min, `active (running)` since 02:13:27Z, `Linger=yes`, `primary: HEARTBEATING` | the Founder, in session |
 | 02:14:26Z | `/health` 200 | public `/health` |
+| 02:23:33Z | after the act: `railway logout` on the PC succeeds; idle suspend on AC power reads `'nothing'` | the Founder, in session |
 
 ## Findings
 
@@ -101,8 +102,9 @@ cover changes to the Gateway host, and it bars none of this kind
 expressly. Because the list command worked, the PC now likely holds a
 logged-in Railway credential with production access, which the
 Gateway's design does not account for. The builder advised
-`railway logout` on the PC unless the Founder wants it kept; that is
-the Founder's call and is not recorded as done.
+`railway logout` on the PC unless the Founder wants it kept. The
+Founder ran it after the act, at 02:23Z, and it printed "Logged out
+successfully" (reading 12); the CLI itself stays installed.
 
 **4. Lingering was already on.** B1 read `Linger=yes` before B4, so
 B4's `sudo loginctl enable-linger` changed nothing. What turned it on
@@ -128,6 +130,12 @@ new to the PC. The act authorizes no `npm audit fix`, and none was run.
 public. The readings carry the PC's hostname, as earlier records did,
 and no address, node key, host identifier or phone number. The sudo
 prompts show no password.
+
+**9. The PC does not suspend when idle on AC power.** After the act
+the Founder read the GNOME setting `sleep-inactive-ac-type` as
+`'nothing'` (reading 12). The act changes no power setting. A suspend
+would stop the heartbeats without the service exiting, so it would not
+be restarted.
 
 None of the findings was corrected.
 
