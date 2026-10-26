@@ -15,8 +15,8 @@
  * carries one provider's approved lanes on it. Each check below reads
  * `surface_id`, `provider` and `binding_status`; the parsed config carries
  * the planner's provider and model RESOLVED from the approved lane, so the
- * routes journal the same intended route they always did, and keeps each
- * seat's surface only. Two surfaces that
+ * routes journal the same intended route they always did, and each seat's
+ * surface with the provider of the lane it resolved to. Two surfaces that
  * resolve to the same model are the Founder's call, not a check; the
  * reviewer's surface differs from the builder's (the issuance receipt's
  * settled decision), and since DEC-20261020-01 clause 7 the two resolved
@@ -48,11 +48,18 @@ export interface CountedRunConfig {
    */
   readonly planner: { readonly surface: string; readonly provider: string; readonly model: string };
   /**
-   * The surface of the builder's and the reviewer's lane tokens as the act
-   * names them. A provider qualifier (`antigravity:google`) is checked at
-   * boot and not kept here.
+   * The builder's and the reviewer's seats: the surface of each lane token as
+   * the act names it, with the provider of the approved lane it resolves to.
+   * A qualified token (`antigravity:google`) keeps the provider it names; a
+   * bare one gets its seat's one provider on that surface. Never a model.
    */
-  readonly seats: { readonly builder: string; readonly reviewer: string };
+  readonly seats: { readonly builder: CountedRunSeat; readonly reviewer: CountedRunSeat };
+}
+
+/** One seat of the parsed act: a surface and its resolved lane's provider. */
+export interface CountedRunSeat {
+  readonly surface: string;
+  readonly provider: string;
 }
 
 export class CountedRunConfigError extends Error {
@@ -113,9 +120,7 @@ export function parseCountedRunConfig(raw: string | undefined, seats: readonly S
   }
   // DEC-20261020-01 clause 7: the reviewer's model family must differ from the
   // builder's, so work built on claude-code:anthropic is not reviewed on
-  // antigravity:anthropic. Different surfaces are not enough. The parsed seats
-  // keep the surface only, so a reader that needs the provider resolves its own
-  // lane token, as the Phase 4 entry check does with its run set.
+  // antigravity:anthropic. Different surfaces are not enough.
   if (reviewerLane.provider === builderLane.provider) {
     throw new CountedRunConfigError('the reviewer provider must differ from the builder provider');
   }
@@ -123,7 +128,10 @@ export function parseCountedRunConfig(raw: string | undefined, seats: readonly S
     actId: text(root['actId']),
     gatewayId: text(root['gatewayId']),
     planner: { surface: plannerToken.surface, provider: lane.provider, model: lane.model_id },
-    seats: { builder: builderToken.surface, reviewer: reviewerToken.surface },
+    seats: {
+      builder: { surface: builderToken.surface, provider: builderLane.provider },
+      reviewer: { surface: reviewerToken.surface, provider: reviewerLane.provider },
+    },
   };
 }
 

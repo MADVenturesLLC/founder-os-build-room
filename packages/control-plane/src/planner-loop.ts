@@ -15,9 +15,10 @@
  *        the row bound to its room and to the T2 event. G2's facts:
  *        `rolesAssigned` and `reviewerIsNotBuilder` from the room's role
  *        assignment, read through `roomRoles` — each seat `{ roleId,
- *        surface, model }`, `surface` an execution-surface id and `model` a
- *        model id or `null` (null: not bound by the act; the seat's
- *        approved lane decides at execution), the reviewer/builder
+ *        surface, model, provider? }`, `surface` an execution-surface id,
+ *        `model` a model id or `null` (null: not bound by the act; the
+ *        seat's approved lane decides at execution) and `provider` the
+ *        resolved lane's provider, which no fact reads, the reviewer/builder
  *        distinctness read at the surface, never the model;
  *        `gatewayOnline` derived by
  *        the fence, which overwrites anything asserted (contract §10). A
@@ -242,13 +243,22 @@ export interface SeatAssignment {
    * execution", and the value is never a surface id.
    */
   readonly model: string | null;
+  /**
+   * The provider of the approved lane the seat resolved to, when the
+   * assigning act resolved one; the counted run always does. No guard reads
+   * it and the journal does not record it: `reviewerIsNotBuilder` compares
+   * surfaces, and boot has already refused a same-provider reviewer
+   * (`DEC-20261020-01` clause 7).
+   */
+  readonly provider?: string;
 }
 
 /**
  * A room's role assignment, as G2 reads it. Who assigns it is not ruled
  * (plan r1 Q2). Each seat is a `SeatAssignment`: a role id, an
- * execution-surface id, and a model id or `null` (not bound by the act —
- * the seat's approved lane decides at execution). `reviewerIsNotBuilder`
+ * execution-surface id, a model id or `null` (not bound by the act —
+ * the seat's approved lane decides at execution), and optionally the
+ * resolved lane's provider. `reviewerIsNotBuilder`
  * reads the two seats' surfaces — two surfaces that resolve to the same
  * model are still distinct — while `rolesAssigned` still reads the
  * planner's model against the route's intended model.
