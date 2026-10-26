@@ -29,6 +29,8 @@ import { ControlPlaneClient, validateControlPlaneUrl } from './client.js';
 import { defaultGatewayCustody } from './custody-factory.js';
 import { createDaemonClock } from './clock.js';
 import { gatewayPaths } from './paths.js';
+import { choosePlannerExecutor } from './planner-executor-factory.js';
+import { GatewayStateStore } from './state.js';
 
 /** The heartbeat cadence §15 drives both lanes at (10 s). */
 const HEARTBEAT_CADENCE_MS = 10_000;
@@ -55,12 +57,28 @@ async function main(): Promise<number> {
   }
 
   const paths = gatewayPaths();
+  /*
+   * The Planner executor, only where the Founder's ruling binds one
+   * (`planner-executor-factory.ts`). A refused selection is logged and the
+   * daemon runs without one: heartbeats are not held hostage to it.
+   */
+  const persisted = await new GatewayStateStore(paths).read();
+  const planner = choosePlannerExecutor({
+    env: process.env,
+    platform: process.platform,
+    gatewayId: persisted.primary.identity.gatewayId,
+    gatewayDirectory: paths.directory,
+    log: (level, at, fields) => process.stderr.write(`${JSON.stringify({ level, at, ...fields })}\n`),
+  });
+  if (planner.kind === 'refused') process.stderr.write(`planner executor refused: ${planner.reason}\n`);
+  if (planner.kind === 'agy') process.stderr.write(`planner executor: ${planner.commandLine.join(' ')}\n`);
   const daemon = new GatewayDaemon({
     paths,
     clock: createDaemonClock(),
     custody: defaultGatewayCustody(paths),
     client: new ControlPlaneClient(urlVerdict.url),
     heartbeatCadenceMs: HEARTBEAT_CADENCE_MS,
+    ...(planner.kind === 'agy' ? { plannerExecutor: planner.executor } : {}),
   });
 
   let stopping = false;

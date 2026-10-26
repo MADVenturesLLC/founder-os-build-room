@@ -19,9 +19,10 @@
  *     records `unresolved` rather than a guess.
  *
  * THE EXECUTOR is the seam where an adapter plugs in. Which one runs the
- * Planner is ruled (Q2a: Antigravity, on the active model), but binding a
- * provider is not authorized by `DEC-20260827-01` §3.4, so no executor ships
- * here and the daemon polls nothing unless one is injected.
+ * Planner is ruled (Q2a: Antigravity, on the active model). The one provider
+ * binding the Founder authorizes (FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR)
+ * is `agy-planner-executor.ts`, selected only on Gateway `1880c12d`
+ * (`planner-executor-factory.ts`); without it the daemon polls nothing.
  */
 
 import { createHash, randomUUID } from 'node:crypto';

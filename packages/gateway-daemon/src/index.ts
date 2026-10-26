@@ -124,6 +124,28 @@ export {
   type PlannerStart,
   type PlannerWorkerDeps,
 } from './planner-worker.js';
+export {
+  AGY_PLANNER_GATEWAY_ID,
+  AGY_PLANNER_LANE,
+  AGY_PLANNER_ROUTE,
+  AGY_PRINT_TIMEOUT,
+  AgyPlannerExecutor,
+  BANNED_AGY_ARGUMENTS,
+  PINNED_AGY_ARGUMENTS,
+  agyInputLine,
+  gitCheckout,
+  pgrepProbe,
+  planDocumentFrom,
+  plannerPrompt,
+  readOnly,
+  removeCheckout,
+  type AgyPlannerConfig,
+  type AgyPlannerDeps,
+  type CheckoutMaker,
+  type Launch,
+  type PlannerProcessProbe,
+} from './agy-planner-executor.js';
+export { choosePlannerExecutor, type PlannerExecutorChoice, type PlannerExecutorContext } from './planner-executor-factory.js';
 
 /**
  * Room Runtime Phase 1 (fixture occupancy only) — the Gateway-side room

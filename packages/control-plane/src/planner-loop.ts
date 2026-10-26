@@ -76,8 +76,10 @@
  * surface (slice 10) constructs one per request behind its token, act,
  * deployment-id and registry checks, and answers 503 without them. The
  * entry act that names the active model and the seats (Q2a, Q7a) is
- * still not issued, and the Gateway's Antigravity executor is not
- * built (`DEC-20260827-01` §3.4 authorizes no provider binding).
+ * still not issued. The Gateway's Antigravity executor is
+ * `gateway-daemon/src/agy-planner-executor.ts`, the one provider binding
+ * FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR authorizes, on Gateway
+ * `1880c12d` only.
  */
 
 import { createHash, randomUUID } from 'node:crypto';

@@ -34,8 +34,8 @@ export interface GatewayDaemonDeps {
   readonly heartbeatCadenceMs: number;
   /**
    * The Planner's executor (plan r1 Q2b). Absent, the daemon never polls for
-   * planner work: no executor ships, because `DEC-20260827-01` §3.4
-   * authorizes no provider binding.
+   * planner work. `main.ts` injects one only where
+   * `planner-executor-factory.ts` selects it.
    */
   readonly plannerExecutor?: PlannerExecutor;
 }
