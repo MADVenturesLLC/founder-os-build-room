@@ -190,7 +190,6 @@ describe('the command line', () => {
       'buildroom-planner',
       '--',
       '/opt/agy/bin/agy',
-      '--print',
       '--input-format',
       'stream-json',
       '--output-format',
@@ -207,6 +206,25 @@ describe('the command line', () => {
     ]);
     for (const banned of BANNED_AGY_ARGUMENTS) assert.ok(!PINNED_AGY_ARGUMENTS.includes(banned), banned);
     assert.ok(Object.isFrozen(PINNED_AGY_ARGUMENTS));
+  });
+
+  it('passes agy 1.4.7\'s own argument rules, which the fake enforces', async () => {
+    // The fake refuses what agy refuses: a bare --print, and --print taking a flag as its prompt.
+    const exitOf = (args: string[]): Promise<{ code: number | null; out: string }> =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [FAKE_AGY, '--', '/opt/agy/bin/agy', ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, FAKE_AGY_MODE: 'ok' } });
+        let out = '';
+        child.stdout.on('data', (chunk: Buffer) => (out += chunk.toString()));
+        child.stderr.on('data', (chunk: Buffer) => (out += chunk.toString()));
+        child.on('close', (code) => resolve({ code, out }));
+      });
+    const leading = await exitOf(['--print', ...PINNED_AGY_ARGUMENTS]);
+    assert.equal(leading.code, 2);
+    assert.match(leading.out, /took "--input-format" as its prompt/);
+    const trailing = await exitOf([...PINNED_AGY_ARGUMENTS, '--print']);
+    assert.equal(trailing.code, 2);
+    assert.match(trailing.out, /flag needs an argument: -print/);
+    assert.ok(!PINNED_AGY_ARGUMENTS.includes('--print'));
   });
 
   it('refuses a relative path or a malformed user name', () => {

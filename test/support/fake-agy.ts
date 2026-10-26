@@ -22,6 +22,13 @@
  *   unparseable   as ok, the response not JSON
  *   hang          init, then silence after the input line
  *   exit          init, then exit 0 after the input line with no result
+ *
+ * Whatever the mode, it first enforces what agy 1.4.7 does, as the Founder
+ * read it on the PC on 2026-10-26: `--print` must carry a value and refuses
+ * a flag as one; stream-json input needs stream-json output; and an input
+ * line must be `{"event":"user","message":{...}}`. A line without `event`,
+ * or a `user` line without an object `message`, ends the run with an ERROR
+ * result; an unknown event is ignored with a warning.
  */
 
 import { appendFileSync, writeFileSync } from 'node:fs';
@@ -37,6 +44,29 @@ if (logPath !== undefined) {
   writeFileSync(logPath, `${JSON.stringify({ argv: after, cwd: process.cwd() })}\n`);
 }
 
+// agy's own argument rules, before anything else.
+for (const flag of ['--print', '-p', '--prompt']) {
+  const at = after.indexOf(flag);
+  if (at === -1) continue;
+  const value = after[at + 1];
+  if (value === undefined) {
+    process.stderr.write(`flag needs an argument: -${flag.replace(/^-+/, '')}\n`);
+    process.exit(2);
+  }
+  if (value.startsWith('-')) {
+    process.stdout.write(`Error: ${flag} took "${value}" as its prompt, so the intended prompt was left as an argument and ignored.\n`);
+    process.exit(2);
+  }
+}
+const valueOf = (flag: string): string | undefined => {
+  const at = after.indexOf(flag);
+  return at === -1 ? undefined : after[at + 1];
+};
+if (valueOf('--input-format') === 'stream-json' && valueOf('--output-format') !== 'stream-json') {
+  process.stderr.write('--input-format stream-json requires --output-format stream-json\n');
+  process.exit(2);
+}
+
 const conversation = '3b2c7a4c-1bda-46b1-8dc1-44641701df02';
 const emit = (value: unknown): void => {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -49,6 +79,31 @@ const init = (model: string): void =>
   });
 const result = (response: string, status = 'SUCCESS'): void =>
   emit({ event: 'result', result: { conversation_id: conversation, status, response, num_turns: 1 } });
+const refuse = (error: string): never => {
+  process.stderr.write(`error: ${error}\n`);
+  emit({ event: 'result', result: { conversation_id: conversation, status: 'ERROR', response: '', error, num_turns: 0 } });
+  process.exit(1);
+};
+
+/** agy's stream input rules: `true` when the line is a user turn to answer. */
+function acceptInput(line: string): boolean {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return refuse('failed to decode stream input');
+  }
+  const record = (value ?? {}) as Record<string, unknown>;
+  if (typeof record['event'] !== 'string') return refuse('stream input message is missing the "event" field');
+  if (record['event'] !== 'user') {
+    process.stderr.write(`warning: ignoring unsupported stream input message event "${record['event']}"\n`);
+    return false;
+  }
+  const message = record['message'];
+  if (message === undefined) return refuse('stream input "user" message is missing the "message" field');
+  if (message === null || typeof message !== 'object') return refuse('failed to decode stream input: message is not an object');
+  return true;
+}
 
 if (mode === 'ok' || mode === 'fenced' || mode === 'switch' || mode === 'error' || mode === 'unparseable' || mode === 'hang' || mode === 'exit') {
   init('gemini-4-argon-high');
@@ -66,7 +121,7 @@ const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
 let answered = false;
 lines.on('line', (line) => {
   if (logPath !== undefined) appendFileSync(logPath, `${JSON.stringify({ stdin: line })}\n`);
-  if (answered) return;
+  if (answered || !acceptInput(line)) return;
   answered = true;
   switch (mode) {
     case 'stdin_first':

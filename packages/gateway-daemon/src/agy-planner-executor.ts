@@ -79,11 +79,19 @@ export const AGY_PLANNER_GATEWAY_ID = '1880c12d-d98d-4a91-b25a-23320aa7f58a';
 export const AGY_PRINT_TIMEOUT = '900s';
 
 /**
- * Exactly the arguments Amendment 1 C3 fixes, in the order the privilege
- * rule lists them. The rule matches this list character for character.
+ * The arguments the privilege rule fixes, in the order it lists them; the
+ * rule matches this list character for character.
+ *
+ * Amendment 1 C3 also lists `--print`. agy 1.4.7 takes `--print` as the
+ * flag that carries the prompt and refuses it without a value ("flag needs
+ * an argument: -print"), and with `--input-format stream-json` the prompt
+ * comes from standard input, which starts print mode on its own. The
+ * Founder read both on the PC on 2026-10-26, 22:54Z to 22:59Z. So `--print`
+ * is left out here, which narrows the command line and widens nothing; the
+ * correction to C3 is the Founder's to make, and this executor is not
+ * wired anywhere until it is.
  */
 export const PINNED_AGY_ARGUMENTS: readonly string[] = Object.freeze([
-  '--print',
   '--input-format',
   'stream-json',
   '--output-format',
@@ -244,15 +252,14 @@ export function plannerPrompt(work: PlannerWorkWire): string {
 }
 
 /**
- * One user turn on agy's stream-json input.
- *
- * [Unverified] The message shape below is not yet confirmed against agy
- * 1.3.6; the Founder's reading on the PC settles it before this executor
- * is wired anywhere (Amendment 1 B2: shown against the real agy before the
- * pull request merges).
+ * One user turn on agy's stream-json input: the same `event` envelope as its
+ * output. The Founder's readings of agy 1.4.7 on the PC (2026-10-26, 23:01Z
+ * and 23:36Z) found this the only accepted shape: without `event` agy refuses
+ * the line, an unknown event is ignored with a warning, and a string
+ * `message` fails to decode.
  */
 export function agyInputLine(prompt: string): string {
-  return `${JSON.stringify({ type: 'user', message: { role: 'user', content: prompt } })}\n`;
+  return `${JSON.stringify({ event: 'user', message: { role: 'user', content: prompt } })}\n`;
 }
 
 /** The plan document in agy's final response: the whole response, or one fenced JSON block. */
