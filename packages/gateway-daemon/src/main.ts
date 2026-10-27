@@ -68,6 +68,8 @@ async function main(): Promise<number> {
     platform: process.platform,
     gatewayId: persisted.primary.identity.gatewayId,
     gatewayDirectory: paths.directory,
+    // Read again at each attest and start: a promotion after boot can replace the primary identity.
+    currentGatewayId: async () => (await new GatewayStateStore(paths).read()).primary.identity.gatewayId,
     log: (level, at, fields) => process.stderr.write(`${JSON.stringify({ level, at, ...fields })}\n`),
   });
   if (planner.kind === 'refused') process.stderr.write(`planner executor refused: ${planner.reason}\n`);

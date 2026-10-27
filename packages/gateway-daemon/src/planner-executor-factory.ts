@@ -34,6 +34,8 @@ export interface PlannerExecutorContext {
   /** The primary identity this daemon holds, or `null` when it holds none. */
   readonly gatewayId: string | null;
   readonly gatewayDirectory: string;
+  /** Reads the primary identity the daemon holds now; the executor asks it before each attest and start. */
+  readonly currentGatewayId?: () => Promise<string | null>;
   readonly log?: (level: 'info' | 'warn' | 'error', at: string, fields: Record<string, unknown>) => void;
 }
 
@@ -59,7 +61,10 @@ export function choosePlannerExecutor(context: PlannerExecutorContext): PlannerE
   try {
     executor = new AgyPlannerExecutor(
       { sudoPath: '/usr/bin/sudo', plannerUser, agyPath, agySha256, checkoutParent, gatewayDirectory: context.gatewayDirectory },
-      context.log === undefined ? {} : { log: context.log },
+      {
+        ...(context.log === undefined ? {} : { log: context.log }),
+        ...(context.currentGatewayId === undefined ? {} : { currentGatewayId: context.currentGatewayId }),
+      },
     );
   } catch (error) {
     return { kind: 'refused', reason: error instanceof Error ? error.message : String(error) };

@@ -182,6 +182,12 @@ export interface AgyPlannerDeps {
   readonly reap?: PlannerReaper;
   readonly hashFile?: FileHasher;
   readonly checkout?: CheckoutMaker;
+  /**
+   * The primary Gateway identity the daemon holds now. A promotion can
+   * replace it after the executor was selected, so `attest` and `start` ask
+   * each time and serve only while it is `1880c12d`.
+   */
+  readonly currentGatewayId?: () => Promise<string | null>;
   /** The daemon's clock boundary (contract §4). */
   readonly clock?: Clock;
   readonly log?: (level: 'info' | 'warn' | 'error', at: string, fields: Record<string, unknown>) => void;
@@ -204,8 +210,12 @@ function routeIsLane(route: PlannerRouteWire): boolean {
   );
 }
 
+/** `attest` issues `randomUUID()`; an execution id of any other shape is not one it produced. */
+const EXECUTION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
 function identityIsLane(identity: PlannerIdentityWire): boolean {
   return (
+    EXECUTION_ID_PATTERN.test(identity.executionId) &&
     identity.role === AGY_PLANNER_LANE.role &&
     identity.surface === AGY_PLANNER_LANE.surface &&
     identity.provider === AGY_PLANNER_LANE.provider &&
@@ -351,8 +361,20 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     return [this.config.sudoPath, '-n', '-u', this.config.plannerUser, '--', PKILL_PATH, '-KILL', '-u', this.config.plannerUser];
   }
 
+  /** Whether the daemon still holds Gateway 1880c12d's identity. A reader that fails is not proof that it does. */
+  private async onBoundGateway(): Promise<boolean> {
+    if (this.deps.currentGatewayId === undefined) return true;
+    try {
+      return (await this.deps.currentGatewayId()) === AGY_PLANNER_GATEWAY_ID;
+    } catch (error) {
+      this.log('error', 'agy.gateway_identity_unreadable', { message: describe(error) });
+      return false;
+    }
+  }
+
   /** Answered from the lane alone: no process starts and no provider is contacted. */
-  attest(request: { readonly commandId: string; readonly role: string; readonly intended: PlannerRouteWire }): Promise<PlannerIdentityWire> {
+  async attest(request: { readonly commandId: string; readonly role: string; readonly intended: PlannerRouteWire }): Promise<PlannerIdentityWire> {
+    if (!(await this.onBoundGateway())) return Promise.reject(new Error('the daemon no longer holds Gateway 1880c12d\'s identity'));
     if (request.role !== AGY_PLANNER_LANE.role) return Promise.reject(new Error(`role ${request.role} is not bound to this executor`));
     if (!routeIsLane(request.intended)) return Promise.reject(new Error('the intended route is not the bound lane'));
     return Promise.resolve({
@@ -368,6 +390,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   async start(work: PlannerWorkWire, identity: PlannerIdentityWire): Promise<PlannerStart> {
     // Everything before the work is written is refusable with `not_sent`.
     if (!identityIsLane(identity)) return this.refuse(work, identity, 'identity_not_lane');
+    if (!(await this.onBoundGateway())) return this.refuse(work, identity, 'gateway_identity_changed');
     if (!REPOSITORY_PATTERN.test(work.repository) || !FULL_SHA_PATTERN.test(work.baseSha)) {
       return this.refuse(work, identity, 'work_not_checkoutable');
     }
@@ -424,7 +447,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     } catch (error) {
       this.log('warn', 'agy.checkout_failed', { message: describe(error) });
       release();
-      return this.refuse(work, identity, 'checkout_failed');
+      return this.refuse(work, identity, 'checkout_failed', agySha256);
     }
 
     const startedAt = this.isoNow();
@@ -436,7 +459,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       await removeCheckout(directory);
       release();
       this.log('warn', 'agy.launch_failed', { message: describe(error) });
-      return this.refuse(work, identity, 'launch_failed');
+      return this.refuse(work, identity, 'launch_failed', agySha256);
     }
     const run = new AgyRun(child, this.stopGraceMs, this.clock);
 
@@ -576,7 +599,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     this.log('error', 'agy.halted', { reason, haltFile: this.haltPath(), plannerUser: this.config.plannerUser });
     try {
       await mkdir(this.config.gatewayDirectory, { recursive: true, mode: DIRECTORY_MODE });
-      const handle = await open(this.haltPath(), 'w', FILE_MODE);
+      // Exclusive create: a path already there, link or file, is never written through.
+      const handle = await open(this.haltPath(), 'wx', FILE_MODE);
       try {
         await handle.writeFile(`${JSON.stringify({ haltedAt: this.isoNow(), reason, plannerUser: this.config.plannerUser })}\n`, { encoding: 'utf8' });
         await handle.sync();
@@ -584,6 +608,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
         await handle.close();
       }
     } catch (error) {
+      // Already there: the executor is halted already, and the first reason stands.
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return;
       this.log('error', 'agy.halt_write_failed', { message: describe(error) });
       this.haltedInMemory = true;
     }

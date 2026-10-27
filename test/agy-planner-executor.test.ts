@@ -110,6 +110,7 @@ function harness(options: {
   checkout?: AgyPlannerDeps['checkout'];
   timings?: AgyPlannerDeps['timings'];
   hashFile?: AgyPlannerDeps['hashFile'];
+  currentGatewayId?: AgyPlannerDeps['currentGatewayId'];
 }): Harness {
   const root = temporary('buildroom-agy-');
   const logPath = join(root, 'fake.log');
@@ -149,6 +150,7 @@ function harness(options: {
         return Promise.resolve();
       },
       hashFile: options.hashFile ?? (() => Promise.resolve(AGY_HASH)),
+      ...(options.currentGatewayId === undefined ? {} : { currentGatewayId: options.currentGatewayId }),
       checkout:
         options.checkout ??
         (async (_work, parent) => {
@@ -410,11 +412,43 @@ describe('start: refused before agy starts', () => {
     assert.equal(h.launches, 0);
   });
 
-  it('when the checkout fails', async () => {
+  it('when the checkout fails, recording the hash it had already read', async () => {
     const w = work();
     const h = harness({ mode: 'ok', checkout: () => Promise.reject(new Error('fetch failed')) });
     assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
     assert.equal(h.launches, 0);
+    const [evidence] = evidenceOf(h.gatewayDirectory);
+    assert.equal(evidence?.['outcome'], 'checkout_failed');
+    assert.equal(evidence?.['agySha256'], AGY_HASH);
+  });
+
+  it('when the execution id is not one attest would issue', async () => {
+    const h = harness({ mode: 'ok' });
+    const w = work();
+    const attested = await identityFor(h.executor, w.commandId);
+    for (const executionId of ['', 'not-a-uuid', 'A'.repeat(36)]) {
+      assert.deepEqual(await h.executor.start(w, { ...attested, executionId }), { kind: 'not_sent' });
+    }
+    assert.equal(h.launches, 0);
+  });
+
+  it('when the daemon no longer holds Gateway 1880c12d\'s identity, or cannot say', async () => {
+    const other = harness({ mode: 'ok', currentGatewayId: () => Promise.resolve('2222132d-0000-4000-8000-000000000000') });
+    const w = work();
+    await assert.rejects(other.executor.attest({ commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } }));
+    const identity = await harness({ mode: 'ok' }).executor.attest({ commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } });
+    assert.deepEqual(await other.executor.start(w, identity), { kind: 'not_sent' });
+    assert.equal(other.launches, 0);
+    assert.equal(evidenceOf(other.gatewayDirectory)[0]?.['outcome'], 'gateway_identity_changed');
+
+    const unreadable = harness({ mode: 'ok', currentGatewayId: () => Promise.reject(new Error('state unreadable')) });
+    assert.deepEqual(await unreadable.executor.start(w, identity), { kind: 'not_sent' });
+    assert.equal(unreadable.launches, 0);
+
+    const bound = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never), currentGatewayId: () => Promise.resolve(AGY_PLANNER_GATEWAY_ID) });
+    const started = await bound.executor.start(w, await identityFor(bound.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') await started.completion;
   });
 
   it('when the work names no checkoutable repository or commit', async () => {
@@ -468,6 +502,20 @@ describe('halting (Amendment 3 C1)', () => {
     const resumed = await h.executor.start(third, await identityFor(h.executor, third.commandId));
     assert.equal(resumed.kind, 'accepted', 'the Founder removing the file restarts it');
     if (resumed.kind === 'accepted') await resumed.completion.catch(() => undefined);
+  });
+
+  it('never writes the halt marker through a link already at its path', async () => {
+    const h = harness({ mode: 'ok', probe: () => Promise.resolve(true) });
+    mkdirSync(h.gatewayDirectory, { recursive: true });
+    const outside = join(temporary('buildroom-agy-outside-'), 'target');
+    writeFileSync(outside, 'untouched');
+    symlinkSync(outside, join(h.gatewayDirectory, 'planner-halted.json'));
+    const w = work();
+    assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
+    assert.equal(readFileSync(outside, 'utf8'), 'untouched');
+    const again = work();
+    assert.deepEqual(await h.executor.start(again, await identityFor(h.executor, again.commandId)), { kind: 'not_sent' });
+    assert.equal(evidenceOf(h.gatewayDirectory).find((e) => e['commandId'] === again.commandId)?.['outcome'], 'executor_halted');
   });
 
   it('halts when the check after the reap cannot be made', async () => {
