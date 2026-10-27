@@ -137,14 +137,30 @@ export async function syncMadeDirectories(
 }
 
 export class PlannerRecordStore {
+  /** Reads and writes in order: a read never sees a record renamed into place whose directory entry is not yet synced. */
+  private queue: Promise<unknown> = Promise.resolve();
+
   constructor(private readonly directory: string) {}
+
+  private serialized<T>(step: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(step, step);
+    this.queue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
 
   /** A command id is arbitrary text; its file name is its digest, so no id can name a path. */
   private pathOf(commandId: string): string {
     return join(this.directory, `${createHash('sha256').update(commandId, 'utf8').digest('hex')}.json`);
   }
 
-  async read(commandId: string): Promise<PlannerRecord | null> {
+  read(commandId: string): Promise<PlannerRecord | null> {
+    return this.serialized(() => this.readNow(commandId));
+  }
+
+  private async readNow(commandId: string): Promise<PlannerRecord | null> {
     let text: string;
     try {
       text = await readFile(this.pathOf(commandId), 'utf8');
@@ -167,7 +183,11 @@ export class PlannerRecordStore {
    * on that: a lost one would leave an older phase that permits the command
    * to start again.
    */
-  async write(record: PlannerRecord): Promise<void> {
+  write(record: PlannerRecord): Promise<void> {
+    return this.serialized(() => this.writeNow(record));
+  }
+
+  private async writeNow(record: PlannerRecord): Promise<void> {
     const created = await mkdir(this.directory, { recursive: true, mode: DIRECTORY_MODE });
     const temporary = join(this.directory, `.record.${randomUUID()}.tmp`);
     const handle = await open(temporary, 'wx', FILE_MODE);
@@ -186,7 +206,11 @@ export class PlannerRecordStore {
     await syncMadeDirectories(this.directory, created);
   }
 
-  async all(): Promise<PlannerRecord[]> {
+  all(): Promise<PlannerRecord[]> {
+    return this.serialized(() => this.allNow());
+  }
+
+  private async allNow(): Promise<PlannerRecord[]> {
     let names: string[];
     try {
       names = await readdir(this.directory);
@@ -236,6 +260,8 @@ export interface PlannerWorkerDeps {
 export class GatewayPlannerWorker {
   /** Completions still settling in this process, so a test can wait for them. */
   private readonly settling = new Set<Promise<void>>();
+  /** Results whose `finished` record could not be written: answered as finished once it can be, never as still running. */
+  private readonly unrecorded = new Map<string, PlannerResultWire>();
 
   constructor(private readonly deps: PlannerWorkerDeps) {}
 
@@ -248,7 +274,11 @@ export class GatewayPlannerWorker {
     try {
       for (const record of await this.deps.records.all()) {
         if (record.phase === 'starting') {
-          await this.deps.records.write({ commandId: record.commandId, phase: 'lost', identity: record.identity });
+          // A start this process never saw the end of; but when the executor's own record
+          // says nothing was sent (none, or a refusal), the work never reached agy, and
+          // that is answerable.
+          const sent = await this.evidenceSays(record.commandId);
+          await this.deps.records.write({ commandId: record.commandId, phase: sent === false ? 'not_sent' : 'lost', identity: record.identity });
         } else if (record.phase === 'running') {
           await this.deps.records.write({
             commandId: record.commandId,
@@ -317,7 +347,14 @@ export class GatewayPlannerWorker {
   }
 
   private async attest(request: Extract<PlannerRequestWire, { kind: 'attest' }>): Promise<PlannerReportPayload> {
-    const existing = await this.deps.records.read(request.commandId);
+    const existing = await this.readRecord(request.commandId);
+    if (existing === 'unreadable') return { kind: 'attest_failed' };
+    // A command whose work the executor's record says was sent, or cannot account for,
+    // gets no attestation: no execution it names could run.
+    if ((await this.evidenceSays(request.commandId)) !== false) {
+      this.log('warn', 'planner.attest_failed', { message: 'the executor\'s record says the work was sent, or cannot be read' });
+      return { kind: 'attest_failed' };
+    }
     // One execution per command: a repeated attest re-answers the identity already bound,
     // while the executor would still attest now.
     if (existing !== null) {
@@ -345,7 +382,8 @@ export class GatewayPlannerWorker {
   }
 
   private async execute(request: Extract<PlannerRequestWire, { kind: 'execute' }>): Promise<PlannerReportPayload | null> {
-    const record = await this.deps.records.read(request.commandId);
+    const record = await this.readRecord(request.commandId);
+    if (record === 'unreadable') return null;
     // No attestation, or a different execution than the one attested: nothing starts.
     if (record === null || record.identity.executionId !== request.executionId) return this.affirm('not_sent', request.commandId);
 
@@ -392,14 +430,21 @@ export class GatewayPlannerWorker {
         return { kind: 'failed' };
       },
     );
+    // The store writes in order, so `finished` lands after `running` whether or not the
+    // `running` write succeeds; a `finished` that cannot be written is kept in memory and
+    // answered once it can be, never as still running.
     const written = this.deps.records.write({ ...running, phase: 'running' });
-    const settle = written
-      .then(() => outcome)
-      .then((result) => this.deps.records.write({ ...running, phase: 'finished', result }))
-      .catch((error: unknown) => this.log('error', 'planner.record_failed', { message: describe(error) }));
-    await written;
+    const settle = outcome.then(async (result) => {
+      try {
+        await this.deps.records.write({ ...running, phase: 'finished', result });
+      } catch (error) {
+        this.log('error', 'planner.record_failed', { commandId: record.commandId, message: describe(error) });
+        this.unrecorded.set(record.commandId, result);
+      }
+    });
     this.settling.add(settle);
     void settle.finally(() => this.settling.delete(settle));
+    await written;
     return { kind: 'accepted', observed: { ...started.observed } };
   }
 
@@ -409,28 +454,61 @@ export class GatewayPlannerWorker {
    * worker's record (a crash can lose the worker's later phase), and the answer is nothing.
    */
   private async affirm(kind: 'not_sent' | 'never_received', commandId: string): Promise<PlannerReportPayload | null> {
-    if (this.deps.executor.sent === undefined) return { kind };
-    let sent: boolean | null;
-    try {
-      sent = await this.deps.executor.sent(commandId);
-    } catch (error) {
-      this.log('error', 'planner.evidence_unknown', { commandId, message: describe(error) });
-      return null;
-    }
+    const sent = await this.evidenceSays(commandId);
     if (sent === false) return { kind };
     this.log('error', 'planner.evidence_contradicts', { commandId, kind, sent });
     return null;
   }
 
+  /**
+   * What the executor's own record says of the command's work: `false` not sent or no
+   * record (or an executor that keeps none, taken at its word), `true` sent, `null` when
+   * it cannot say or the question itself failed.
+   */
+  private async evidenceSays(commandId: string): Promise<boolean | null> {
+    if (this.deps.executor.sent === undefined) return false;
+    try {
+      return await this.deps.executor.sent(commandId);
+    } catch (error) {
+      this.log('error', 'planner.evidence_unknown', { commandId, message: describe(error) });
+      return null;
+    }
+  }
+
+  /** The worker's record, or `'unreadable'`: a torn record is an unknown, answered as nothing, never an error out of the tick. */
+  private async readRecord(commandId: string): Promise<PlannerRecord | null | 'unreadable'> {
+    try {
+      return await this.deps.records.read(commandId);
+    } catch (error) {
+      this.log('error', 'planner.record_unreadable', { commandId, message: describe(error) });
+      return 'unreadable';
+    }
+  }
+
+  /** A result whose `finished` record failed to write: written now if it can be; `null` otherwise, never `running`. */
+  private async recordUnrecorded(record: Extract<PlannerRecord, { phase: 'running' }>): Promise<PlannerReportPayload | null> {
+    const result = this.unrecorded.get(record.commandId);
+    if (result === undefined) return { kind: 'running', executionId: record.identity.executionId, observed: record.observed };
+    try {
+      await this.deps.records.write({ ...record, phase: 'finished', result });
+    } catch (error) {
+      this.log('error', 'planner.record_failed', { commandId: record.commandId, message: describe(error) });
+      return null;
+    }
+    this.unrecorded.delete(record.commandId);
+    return { kind: 'finished', executionId: record.identity.executionId, observed: record.observed, result };
+  }
+
   private async status(commandId: string): Promise<PlannerReportPayload | null> {
-    const record = await this.deps.records.read(commandId);
+    const record = await this.readRecord(commandId);
+    if (record === 'unreadable') return null;
     if (record === null) return this.affirm('never_received', commandId);
     switch (record.phase) {
       case 'attested':
       case 'not_sent':
         return this.affirm('never_received', commandId);
       case 'running':
-        return { kind: 'running', executionId: record.identity.executionId, observed: record.observed };
+        return this.recordUnrecorded(record);
       case 'finished':
         return {
           kind: 'finished',

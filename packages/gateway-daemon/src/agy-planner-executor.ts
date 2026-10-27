@@ -596,8 +596,10 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     // The record took time to write: ask again, and make the last checks with nothing
     // awaited between them and the write, so neither a promotion nor a stop lands between.
     const boundStill = await this.onBoundGateway();
+    const haltedNow = await this.isHalted();
     const late =
       !boundStill || !this.holdsBoundGateway() ? 'gateway_identity_changed'
+      : haltedNow ? 'executor_halted'
       : this.shuttingDown || run.stopping ? 'cancelled_before_send'
       : null;
     if (late !== null) {
@@ -609,7 +611,11 @@ export class AgyPlannerExecutor implements PlannerExecutor {
 
     const completion = run.result(this.runTimeoutMs).then(async (outcome) => {
       const ended = await this.endRun(run, directory);
-      await this.evidence({ ...sentBase, endedAt: this.isoNow(), outcome: outcome.kind, ...ended });
+      // A run whose closing record cannot be written is not reported as having ended as it
+      // did: the record would still say running, and boot would close it as a daemon death.
+      if (!(await this.evidence({ ...sentBase, endedAt: this.isoNow(), outcome: outcome.kind, ...ended }))) {
+        throw new Error(`the run ended (${outcome.kind}), but its record could not be written`);
+      }
       if (outcome.kind !== 'plan') throw new Error(`agy run ended without a plan: ${outcome.kind}`);
       return { kind: 'plan', document: outcome.document } satisfies PlannerResultWire;
     });
@@ -869,7 +875,9 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     try {
       text = await readFile(this.evidencePath(commandId), 'utf8');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'none';
+      // No entry at the path is no record; an entry that cannot be read through (a link to
+      // nowhere) is a record that cannot be read, as boot treats it.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT' && (await lstat(this.evidencePath(commandId)).catch(() => null)) === null) return 'none';
       this.log('error', 'agy.evidence_unreadable', { commandId, message: describe(error) });
       return 'unreadable';
     }
