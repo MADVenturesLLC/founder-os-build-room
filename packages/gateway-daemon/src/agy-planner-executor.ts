@@ -4,9 +4,10 @@
  * Amendments 1, 2 and 3, recorded in FounderOS `DEC-20260827-01` Section
  * 12, Amendment 3 being the text with SHA-256
  * c3a257ef954239cdd1391b8d1b612e3843237219ba060b0c458057742fdfa2f5; and its
- * Amendment 4, SHA-256
- * d514039964bb60eb0c634a19a6c34e18931ace19499960a80369d106c8cfe39d, signed in
- * the builder's session on 2026-10-27).
+ * Amendments 4 and 5, SHA-256
+ * d514039964bb60eb0c634a19a6c34e18931ace19499960a80369d106c8cfe39d and
+ * f2aa86a251cb6a2399c92b42f66606309cba807f5a416a6ff4e76622b192fdee, signed in
+ * builders' sessions on 2026-10-27).
  *
  * WHAT IT IS BOUND TO (the ruling's B1). One seat, `architect`; one lane,
  * `antigravity`, `gemini-4-argon`, effort high, which agy names
@@ -52,13 +53,17 @@
  * flight the same way, from its first check on; the daemon starting reaps
  * and checks before any Planner work.
  *
- * EVIDENCE (Amendment 1 B2; Amendment 4 E1; ruling B8). For each command
- * the executor writes one record in the Gateway's directory: the `init`
- * model and conversation id, the times, the agy copy's hash, whether the
- * checkout was removed, how the run ended. A run's record is durable before
- * its work is written to agy; if it cannot be, nothing is sent. The control
- * plane's journal rows are written as before; the record is what the
- * custody filing of a counted run files beside them.
+ * EVIDENCE (Amendment 5 B3; ruling B8). For each command the executor
+ * writes one record in the Gateway's directory: the `init` model and
+ * conversation id, the times, the agy copy's hash, whether the checkout was
+ * removed, how the run ended. A run's record is durable before its work is
+ * written to agy; if it cannot be, nothing is sent. The record is
+ * supplemental evidence, not the journal and not a substitute for it: the
+ * control plane's journal rows are written as before, and the custody
+ * filing of a counted run files the record beside them. Amendment 5 B1
+ * puts the init model and conversation id into the canonical journal
+ * itself; the wire-protocol and control-plane change for that is a later
+ * act's, and until it merges no counted run proceeds (Amendment 5 B2).
  */
 
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -529,7 +534,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     }
 
     // The record is durable before the work goes in, so no run is ever sent without one
-    // (Amendment 4 E1). It says `sent` from here: contact cannot be ruled out once the
+    // (Amendment 5 B3). It says `sent` from here: contact cannot be ruled out once the
     // input may have been written, and a daemon that dies now leaves this record to boot.
     const sentBase = { ...evidenceBase, sent: true };
     if (!(await this.evidence({ ...sentBase, endedAt: null, outcome: 'running', exitCode: null, signal: null, checkoutRemoved: null }))) {
@@ -725,8 +730,9 @@ export class AgyPlannerExecutor implements PlannerExecutor {
 
   /**
    * Atomic tmp+rename, mode 0600, one file per command, overwritten as the
-   * run moves on. The record is the journal record Amendment 4 E1 names, so
-   * a write that fails halts the executor and answers `false`.
+   * run moves on. The record is the supplemental evidence Amendment 5 B3
+   * keeps, filed in custody beside the journal rows, so a write that fails
+   * halts the executor and answers `false`.
    */
   private async evidence(record: EvidenceRecord): Promise<boolean> {
     const directory = join(this.config.gatewayDirectory, 'planner-evidence');

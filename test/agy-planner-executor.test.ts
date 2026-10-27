@@ -827,7 +827,7 @@ describe('ending a run never waits on agy\'s pipes (Amendment 3 C1; Tier-2 B1)',
   });
 });
 
-describe('the evidence record is durable before the work is sent (Amendment 4 E1; Tier-2 B2)', () => {
+describe('the evidence record is durable before the work is sent (Amendment 5 B3; Tier-2 B2)', () => {
   it('sends nothing, and halts, when the running record cannot be written', async () => {
     const w = work();
     const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
