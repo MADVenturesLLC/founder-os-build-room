@@ -215,7 +215,6 @@ describe('the command line', () => {
       '--mode',
       'plan',
       '--sandbox',
-      '--disable-slash-commands',
       '--print-timeout',
       '900s',
     ]);
@@ -393,12 +392,13 @@ describe('start: refused before agy starts', () => {
     assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['outcome'], 'agy_hash_failed');
   });
 
-  it('when a planner-user process is still running', async () => {
+  it('when a planner-user process is still running, and then halts', async () => {
     const w = work();
     const h = harness({ mode: 'ok', probe: () => Promise.resolve(true) });
     assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
     assert.equal(h.launches, 0);
     assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['outcome'], 'planner_user_has_processes');
+    assert.ok(existsSync(join(h.gatewayDirectory, 'planner-halted.json')), 'the executor halts');
   });
 
   it('when the probe fails', async () => {
@@ -440,6 +440,91 @@ describe('start: refused before agy starts', () => {
     assert.deepEqual(await h.executor.start(second, await identityFor(h.executor, second.commandId)), { kind: 'not_sent' });
     if (running.kind === 'accepted') await assert.rejects(running.completion);
     assert.equal(h.launches, 1);
+  });
+});
+
+describe('halting (Amendment 3 C1)', () => {
+  it('halts when a process survives the reap, and takes no work until the halt file is removed', async () => {
+    // Clean before the start, a survivor after the reap, clean again later.
+    const answers = [false, true];
+    const h = harness({ mode: 'ok', plan: readyPlanFor({ ...work() } as never), probe: () => Promise.resolve(answers.shift() ?? false) });
+    const first = work();
+    const started = await h.executor.start(first, await identityFor(h.executor, first.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') await started.completion.catch(() => undefined);
+    const haltFile = join(h.gatewayDirectory, 'planner-halted.json');
+    assert.ok(existsSync(haltFile));
+    assert.equal((JSON.parse(readFileSync(haltFile, 'utf8')) as { reason: string }).reason, 'planner_user_survived_reap');
+
+    const second = work();
+    assert.deepEqual(await h.executor.start(second, await identityFor(h.executor, second.commandId)), { kind: 'not_sent' });
+    assert.equal(h.launches, 1, 'nothing starts while halted');
+    assert.equal(evidenceOf(h.gatewayDirectory).find((e) => e['commandId'] === second.commandId)?.['outcome'], 'executor_halted');
+
+    rmSync(haltFile);
+    const third = work();
+    const resumed = await h.executor.start(third, await identityFor(h.executor, third.commandId));
+    assert.equal(resumed.kind, 'accepted', 'the Founder removing the file restarts it');
+    if (resumed.kind === 'accepted') await resumed.completion.catch(() => undefined);
+  });
+
+  it('halts when the check after the reap cannot be made', async () => {
+    const answers: (boolean | Error)[] = [false, new Error('pgrep missing')];
+    const h = harness({
+      mode: 'ok',
+      probe: () => {
+        const next = answers.shift() ?? false;
+        return next instanceof Error ? Promise.reject(next) : Promise.resolve(next);
+      },
+    });
+    const w = work();
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    if (started.kind === 'accepted') await started.completion.catch(() => undefined);
+    assert.ok(existsSync(join(h.gatewayDirectory, 'planner-halted.json')));
+  });
+});
+
+describe('the daemon starting and stopping (Amendment 3 C2)', () => {
+  it('boot reaps and checks before any work, and halts on a survivor', async () => {
+    const clean = harness({ mode: 'ok' });
+    await clean.executor.boot();
+    assert.equal(clean.reaps(), 1);
+    assert.equal(existsSync(join(clean.gatewayDirectory, 'planner-halted.json')), false);
+
+    const dirty = harness({ mode: 'ok', probe: () => Promise.resolve(true) });
+    await dirty.executor.boot();
+    assert.equal(dirty.reaps(), 1);
+    assert.ok(existsSync(join(dirty.gatewayDirectory, 'planner-halted.json')));
+  });
+
+  it('shutdown cancels the run in flight: agy is ended, the user reaped, the checkout removed', async () => {
+    const h = harness({ mode: 'hang', timings: { runTimeoutMs: 60_000 } });
+    const w = work();
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    const begun = Date.now();
+    await h.executor.shutdown();
+    assert.ok(Date.now() - begun < 30_000, 'shutdown does not wait out the run');
+    if (started.kind === 'accepted') await assert.rejects(started.completion);
+    assert.equal(h.reaps(), 1);
+    assert.equal(existsSync(h.checkouts[0] ?? ''), false);
+    await h.executor.shutdown(); // nothing in flight: a no-op
+  });
+
+  it('the worker hands boot and shutdown to the executor', async () => {
+    const h = harness({ mode: 'hang', timings: { runTimeoutMs: 60_000 } });
+    const worker = new GatewayPlannerWorker({ executor: h.executor, records: new PlannerRecordStore(temporary('buildroom-agy-records-')) });
+    await worker.boot();
+    assert.equal(h.reaps(), 1);
+    const w = work();
+    const attested = await worker.handle({ requestId: uuid(), kind: 'attest', commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } });
+    if (attested?.kind !== 'attested') return assert.fail('not attested');
+    await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: attested.identity.executionId, work: w });
+    await worker.shutdown();
+    assert.equal(h.reaps(), 2);
+    const status = await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId });
+    assert.equal(status?.kind, 'finished');
+    if (status?.kind === 'finished') assert.deepEqual(status.result, { kind: 'failed' });
   });
 });
 

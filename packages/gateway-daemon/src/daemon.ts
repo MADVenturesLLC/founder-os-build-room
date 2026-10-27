@@ -266,6 +266,10 @@ export class GatewayDaemon {
      * is still running is about to write to.
      */
     await this.tickInFlight?.catch(() => undefined);
+    // A Planner run in flight is cancelled and ended before the daemon exits.
+    await this.planner?.shutdown().catch((error: unknown) =>
+      this.log('error', 'planner.shutdown_failed', { message: error instanceof Error ? error.message : String(error) }),
+    );
     await this.ipc.stop();
     this.log('info', 'daemon.stopped', {});
   }

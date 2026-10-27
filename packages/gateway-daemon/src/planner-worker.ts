@@ -57,6 +57,10 @@ export interface PlannerExecutor {
   attest(request: { readonly commandId: string; readonly role: string; readonly intended: PlannerRouteWire }): Promise<PlannerIdentityWire>;
   /** Throws when the outcome is unknown; the worker then answers nothing. */
   start(work: PlannerWorkWire, identity: PlannerIdentityWire): Promise<PlannerStart>;
+  /** Before the daemon takes any planner work, if the executor needs to prepare. */
+  boot?(): Promise<void>;
+  /** When the daemon stops: end what is in flight. */
+  shutdown?(): Promise<void>;
 }
 
 /** One command, as this Gateway knows it. */
@@ -200,6 +204,14 @@ export class GatewayPlannerWorker {
         });
       }
     }
+    // The executor prepares last, so nothing it does is mistaken for a lost execution.
+    await this.deps.executor.boot?.();
+  }
+
+  /** The daemon is stopping: the executor ends what it has in flight, then its records settle. */
+  async shutdown(): Promise<void> {
+    await this.deps.executor.shutdown?.();
+    await this.settled();
   }
 
   /** Wait for every completion this process is still recording. */

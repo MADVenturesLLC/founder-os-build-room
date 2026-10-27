@@ -1,8 +1,9 @@
 /**
  * The Planner's executor on Antigravity: agy, run headless on Gateway
  * `1880c12d` only (FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR and its
- * Amendments 1 and 2, recorded in FounderOS `DEC-20260827-01` Section 12,
- * and its Amendment 3, signed in the builder's session on 2026-10-27).
+ * Amendments 1 and 2, recorded in FounderOS `DEC-20260827-01` Section 12;
+ * its Amendment 3, SHA-256 `c3a257ef…2fa5`, recorded in FounderOS pull
+ * request 409; and its Amendment 4).
  *
  * WHAT IT IS BOUND TO (the ruling's B1). One seat, `architect`; one lane,
  * `antigravity`, `gemini-4-argon`, effort high, which agy names
@@ -18,9 +19,9 @@
  * a provider. A later event that names a different model fails the run.
  * Nothing about the model is read from any other output.
  *
- * HOW agy IS STARTED (Amendment 1, Part C; Amendment 3, Parts B and C).
- * Never as the Gateway's user: only through the first privilege rule,
- * `sudo -n -u <planner user> -- <agy>` followed by exactly
+ * HOW agy IS STARTED (Amendment 1, Part C; Amendment 3 B1(a); Amendment 4
+ * Part C). Never as the Gateway's user: only through the first privilege
+ * rule, `sudo -n -u <planner user> -- <agy>` followed by exactly
  * `PINNED_AGY_ARGUMENTS`, where `<agy>` is the planner user's own root-owned
  * copy. Before every run the executor hashes that copy, and a hash that is
  * not the one the Founder's latest act recorded starts nothing. The arguments are a frozen
@@ -32,13 +33,17 @@
  * checkout is fetched anonymously, which only a public repository allows
  * (ruling B5).
  *
- * HOW A RUN ENDS (Amendment 2, Part C; Amendment 3, Part E). The executor
- * ends agy through `sudo`, which relays the signal, and then runs the second
- * privilege rule, `sudo -n -u <planner user> -- /usr/bin/pkill -KILL -u
- * <planner user>`, so the planner user ends everything it still runs. Before
- * every start it asks the operating system whether any process of the
- * planner user is still running. If one is, nothing starts (`not_sent`): a
- * leftover process fails the next run closed, it is never ignored.
+ * HOW A RUN ENDS (Amendment 3, Parts B and C, which replace Amendment 2
+ * C1). The executor ends agy through `sudo`, which relays the signal, and
+ * then runs the second privilege rule, `sudo -n -u <planner user> --
+ * /usr/bin/pkill -KILL -u <planner user>`, so the planner user ends
+ * everything it still runs, and asks the operating system whether any of
+ * its processes remain. If one does, or one is running before a start, the
+ * executor HALTS: it writes `planner-halted.json` in the Gateway's
+ * directory, logs why, and takes no further Planner work while that file
+ * exists. Only the Founder's direction restarts it, by removing the file.
+ * The daemon stopping is a cancellation that ends the run in flight the same
+ * way; the daemon starting reaps and checks before any Planner work.
  *
  * EVIDENCE (Amendment 1 B2; ruling B8). For each command the executor
  * writes one record in the Gateway's directory: the `init` model and
@@ -85,10 +90,10 @@ export const AGY_PRINT_TIMEOUT = '900s';
  * The arguments the privilege rule fixes, in the order it lists them; the
  * rule matches this list character for character.
  *
- * Amendment 3 B1 sets them, replacing Amendment 1 C3's list: `--print` is
- * gone, because agy 1.4.7 refuses it without a value and standard input
+ * Amendment 3 B1(a) sets them, replacing Amendment 1 C3's list: `--print`
+ * is gone, because agy 1.4.7 refuses it without a value and standard input
  * starts print mode on its own (the Founder's readings on the PC,
- * 2026-10-26, 22:54Z to 22:59Z), and `--disable-slash-commands` is added.
+ * 2026-10-26, 22:54Z to 22:59Z). Its B2 permits no other argument.
  */
 export const PINNED_AGY_ARGUMENTS: readonly string[] = Object.freeze([
   '--input-format',
@@ -102,7 +107,6 @@ export const PINNED_AGY_ARGUMENTS: readonly string[] = Object.freeze([
   '--mode',
   'plan',
   '--sandbox',
-  '--disable-slash-commands',
   '--print-timeout',
   AGY_PRINT_TIMEOUT,
 ]);
@@ -139,7 +143,7 @@ const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/;
 /** How the executor launches a process. Production is `node:child_process.spawn`. */
 export type Launch = (file: string, args: readonly string[], options: { readonly cwd: string }) => ChildProcessWithoutNullStreams;
 
-/** The second privilege rule's command (Amendment 3 E1), run as the planner user. */
+/** The second privilege rule's command (Amendment 3 B1(b)), run as the planner user. */
 export const PKILL_PATH = '/usr/bin/pkill';
 
 /** Whether any process of the planner user is running. Production asks `pgrep`. */
@@ -159,9 +163,9 @@ export interface AgyPlannerConfig {
   readonly sudoPath: string;
   /** The dedicated, unprivileged planner user (Amendment 1 C1). */
   readonly plannerUser: string;
-  /** Absolute path of the planner user's root-owned agy copy, which the privilege rule names (Amendment 3 C1). */
+  /** Absolute path of the planner user's root-owned agy copy, which the privilege rule names (Amendment 4 C1). */
   readonly agyPath: string;
-  /** The copy's SHA-256 as the Founder's latest act records it (Amendment 3 C3). */
+  /** The copy's SHA-256 as the Founder's latest act records it (Amendment 4 C3). */
   readonly agySha256: string;
   /** A directory the Gateway's user owns and the planner user may traverse; checkouts are made below it. */
   readonly checkoutParent: string;
@@ -309,6 +313,10 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   private readonly stopGraceMs: number;
   /** One run at a time: the planner user is one user, and the lingering-process check reads the whole user. */
   private busy = false;
+  /** The run in flight and its settling, so a stopping daemon can cancel it (Amendment 3 C2). */
+  private inFlight: { readonly run: AgyRun; readonly settled: Promise<unknown> } | null = null;
+  /** A halt whose file could not be written still holds for this process. */
+  private haltedInMemory = false;
 
   constructor(
     private readonly config: AgyPlannerConfig,
@@ -335,7 +343,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     return [this.config.sudoPath, '-n', '-u', this.config.plannerUser, '--', this.config.agyPath, ...PINNED_AGY_ARGUMENTS];
   }
 
-  /** The command line the second privilege rule must match, exactly (Amendment 3 E1). */
+  /** The command line the second privilege rule must match, exactly (Amendment 3 B1(b)). */
   reapCommandLine(): readonly string[] {
     return [this.config.sudoPath, '-n', '-u', this.config.plannerUser, '--', PKILL_PATH, '-KILL', '-u', this.config.plannerUser];
   }
@@ -360,6 +368,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     if (!REPOSITORY_PATTERN.test(work.repository) || !FULL_SHA_PATTERN.test(work.baseSha)) {
       return this.refuse(work, identity, 'work_not_checkoutable');
     }
+    if (await this.isHalted()) return this.refuse(work, identity, 'executor_halted');
     if (this.busy) return this.refuse(work, identity, 'executor_busy');
     this.busy = true;
     let released = false;
@@ -387,7 +396,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       return this.refuse(work, identity, 'probe_failed');
     }
     if (lingering) {
-      this.log('error', 'agy.planner_user_busy', { plannerUser: this.config.plannerUser });
+      await this.halt('planner_user_has_processes_before_start');
       release();
       return this.refuse(work, identity, 'planner_user_has_processes');
     }
@@ -462,6 +471,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
 
     const completion = run.result(this.runTimeoutMs).then(
       async (outcome) => {
+        this.inFlight = null;
         const ended = await run.stop();
         await this.reapPlannerUser();
         await removeCheckout(directory);
@@ -471,13 +481,27 @@ export class AgyPlannerExecutor implements PlannerExecutor {
         return { kind: 'plan', document: outcome.document } satisfies PlannerResultWire;
       },
     );
+    this.inFlight = { run, settled: completion.catch(() => undefined) };
     return { kind: 'accepted', observed: { ...AGY_PLANNER_ROUTE }, completion };
   }
 
+  /** Before the daemon takes any Planner work: reap and check (Amendment 3 C2). */
+  async boot(): Promise<void> {
+    await this.reapPlannerUser();
+  }
+
+  /** The daemon is stopping: a run in flight is a cancellation, ended under Amendment 3 C1. */
+  async shutdown(): Promise<void> {
+    const inFlight = this.inFlight;
+    if (inFlight === null) return;
+    this.log('warn', 'agy.cancelled_by_shutdown', {});
+    await inFlight.run.stop();
+    await inFlight.settled;
+  }
+
   /**
-   * The second privilege rule, then the check. A reap that fails, or a
-   * process that survives it, is logged; the next start's check refuses
-   * while anything remains.
+   * The second privilege rule, then the check (Amendment 3 C1). A process
+   * that survives, or a check that cannot be made, halts the executor.
    */
   private async reapPlannerUser(): Promise<void> {
     try {
@@ -485,10 +509,49 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     } catch (error) {
       this.log('error', 'agy.reap_failed', { message: describe(error) });
     }
+    let remains: boolean;
     try {
-      if (await this.probe()) this.log('error', 'agy.planner_user_survived_reap', { plannerUser: this.config.plannerUser });
+      remains = await this.probe();
     } catch (error) {
       this.log('error', 'agy.probe_failed', { message: describe(error) });
+      remains = true;
+    }
+    if (remains) await this.halt('planner_user_survived_reap');
+  }
+
+  private haltPath(): string {
+    return join(this.config.gatewayDirectory, 'planner-halted.json');
+  }
+
+  private async isHalted(): Promise<boolean> {
+    if (this.haltedInMemory) return true;
+    try {
+      await lstat(this.haltPath());
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+    }
+  }
+
+  /**
+   * Take no further Planner work until the Founder directs otherwise
+   * (Amendment 3 C1), by removing the file. The log line is what the builder
+   * reports to the Founder.
+   */
+  private async halt(reason: string): Promise<void> {
+    this.log('error', 'agy.halted', { reason, haltFile: this.haltPath(), plannerUser: this.config.plannerUser });
+    try {
+      await mkdir(this.config.gatewayDirectory, { recursive: true, mode: DIRECTORY_MODE });
+      const handle = await open(this.haltPath(), 'w', FILE_MODE);
+      try {
+        await handle.writeFile(`${JSON.stringify({ haltedAt: this.isoNow(), reason, plannerUser: this.config.plannerUser })}\n`, { encoding: 'utf8' });
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      this.log('error', 'agy.halt_write_failed', { message: describe(error) });
+      this.haltedInMemory = true;
     }
   }
 
