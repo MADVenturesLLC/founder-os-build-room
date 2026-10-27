@@ -29,7 +29,7 @@ import { ControlPlaneClient, validateControlPlaneUrl } from './client.js';
 import { defaultGatewayCustody } from './custody-factory.js';
 import { createDaemonClock } from './clock.js';
 import { gatewayPaths } from './paths.js';
-import { choosePlannerExecutor } from './planner-executor-factory.js';
+import { boundGatewayReader, choosePlannerExecutor } from './planner-executor-factory.js';
 import { GatewayStateStore } from './state.js';
 
 /** The heartbeat cadence §15 drives both lanes at (10 s). */
@@ -63,13 +63,19 @@ async function main(): Promise<number> {
    * daemon runs without one: heartbeats are not held hostage to it.
    */
   const persisted = await new GatewayStateStore(paths).read();
+  // Bound below, once the daemon exists; until then it holds no identity, and the reader answers null.
+  let daemonRef: GatewayDaemon | null = null;
   const planner = choosePlannerExecutor({
     env: process.env,
     platform: process.platform,
     gatewayId: persisted.primary.identity.gatewayId,
     gatewayDirectory: paths.directory,
-    // Read again at each attest and start: a promotion after boot can replace the primary identity.
-    currentGatewayId: async () => (await new GatewayStateStore(paths).read()).primary.identity.gatewayId,
+    // Asked at each attest and start: a promotion after boot can replace the primary identity,
+    // in memory before its state-file write, so both must still name the same Gateway.
+    currentGatewayId: boundGatewayReader(
+      () => daemonRef?.primaryGatewayId ?? null,
+      async () => (await new GatewayStateStore(paths).read()).primary.identity.gatewayId,
+    ),
     log: (level, at, fields) => process.stderr.write(`${JSON.stringify({ level, at, ...fields })}\n`),
   });
   if (planner.kind === 'refused') process.stderr.write(`planner executor refused: ${planner.reason}\n`);
@@ -82,6 +88,7 @@ async function main(): Promise<number> {
     heartbeatCadenceMs: HEARTBEAT_CADENCE_MS,
     ...(planner.kind === 'agy' ? { plannerExecutor: planner.executor } : {}),
   });
+  daemonRef = daemon;
 
   let stopping = false;
   const stop = (): void => {

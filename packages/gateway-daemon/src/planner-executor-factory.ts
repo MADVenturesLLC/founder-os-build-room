@@ -39,6 +39,21 @@ export interface PlannerExecutorContext {
   readonly log?: (level: 'info' | 'warn' | 'error', at: string, fields: Record<string, unknown>) => void;
 }
 
+/**
+ * The identity the executor asks about before each attest and start: the
+ * Gateway id the daemon holds in memory, but only while the state file names
+ * the same one. A promotion adopts in memory before its file write lands, and
+ * a write can fail, so either side alone can be stale; when they disagree, or
+ * either cannot be read, the answer is `null` and the executor refuses.
+ */
+export function boundGatewayReader(held: () => string | null, persisted: () => Promise<string | null>): () => Promise<string | null> {
+  return async () => {
+    const inMemory = held();
+    const onDisk = await persisted();
+    return inMemory !== null && inMemory === onDisk ? inMemory : null;
+  };
+}
+
 export function choosePlannerExecutor(context: PlannerExecutorContext): PlannerExecutorChoice {
   const selected = context.env['BUILDROOM_PLANNER_EXECUTOR'];
   if (selected === undefined || selected === '') return { kind: 'none' };

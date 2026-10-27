@@ -59,6 +59,8 @@ export class GatewayDaemon {
   private stopping = false;
   /** The tick currently in flight, if any (correction B6, Rev 4.7 tester). */
   private tickInFlight: Promise<void> | null = null;
+  /** The Gateway id of the identity the primary lane holds now, set wherever it adopts one. */
+  private heldPrimaryGatewayId: string | null = null;
 
   constructor(private readonly deps: GatewayDaemonDeps) {
     this.primary = new PrimaryLane(deps.client, deps.clock, null);
@@ -81,6 +83,20 @@ export class GatewayDaemon {
       ring: () => this.ring,
       rooms: () => this.rooms,
     });
+  }
+
+  /**
+   * The Gateway id the primary lane holds in memory, which a promotion sets
+   * before its state-file write. The Planner executor checks it beside the
+   * persisted one, so neither alone can keep it serving another Gateway.
+   */
+  get primaryGatewayId(): string | null {
+    return this.heldPrimaryGatewayId;
+  }
+
+  private adoptPrimary(identity: GatewayIdentity): void {
+    this.primary.adopt(identity);
+    this.heldPrimaryGatewayId = identity.gatewayId;
   }
 
   /** Load persisted state and adopt the primary identity from custody. */
@@ -232,7 +248,7 @@ export class GatewayDaemon {
     const persisted = await this.state.read();
     const gatewayId = persisted.staging.identity.gatewayId;
     if (promotedSecret !== null && gatewayId !== null) {
-      this.primary.adopt(identityFromSecret(gatewayId, promotedSecret));
+      this.adoptPrimary(identityFromSecret(gatewayId, promotedSecret));
     }
 
     await this.state.write({
@@ -261,15 +277,22 @@ export class GatewayDaemon {
       this.cadence = null;
     }
     /*
+     * The Planner is told first (Amendment 3 C2): a tick already past its
+     * `stopping` check may be preparing a start, and the executor refuses any
+     * start once told, and cancels the one in flight. Waiting for the tick
+     * first would let that start launch agy and send its work.
+     */
+    const plannerStopped = this.planner?.shutdown().catch((error: unknown) =>
+      this.log('error', 'planner.shutdown_failed', { message: error instanceof Error ? error.message : String(error) }),
+    );
+    /*
      * (correction 5, finding #10) stop() settles only after a tick it overlapped
      * has settled — otherwise the caller tears down the very paths a tick that
      * is still running is about to write to.
      */
     await this.tickInFlight?.catch(() => undefined);
     // A Planner run in flight is cancelled and ended before the daemon exits.
-    await this.planner?.shutdown().catch((error: unknown) =>
-      this.log('error', 'planner.shutdown_failed', { message: error instanceof Error ? error.message : String(error) }),
-    );
+    await plannerStopped;
     await this.ipc.stop();
     this.log('info', 'daemon.stopped', {});
   }
@@ -414,7 +437,7 @@ export class GatewayDaemon {
      */
     try {
       await this.underStagingLock('promotion-recovery', async () => {
-        this.primary.adopt(identityFromSecret(gatewayId, primarySecret));
+        this.adoptPrimary(identityFromSecret(gatewayId, primarySecret));
         await this.state.write({
           ...persisted,
           primary: {
@@ -461,7 +484,7 @@ export class GatewayDaemon {
   private adoptRecoverably(lane: 'primary' | 'staging', gatewayId: string, secret: string): void {
     try {
       const identity = identityFromSecret(gatewayId, secret);
-      if (lane === 'primary') this.primary.adopt(identity);
+      if (lane === 'primary') this.adoptPrimary(identity);
       else this.staging.adopt(identity);
     } catch (error) {
       this.log('error', 'custody.secret_unparsable', { lane, message: describe(error) });

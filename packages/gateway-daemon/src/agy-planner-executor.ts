@@ -338,6 +338,13 @@ interface EvidenceRecord {
   readonly checkoutRemoved: boolean | null;
 }
 
+/** Enough of a record's shape to close it at boot: an object with a command id and an outcome. */
+function isEvidenceRecord(value: unknown): value is EvidenceRecord {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record['commandId'] === 'string' && record['commandId'] !== '' && typeof record['outcome'] === 'string';
+}
+
 /** A start from its first check to its last evidence write; `run` once agy is launched. */
 interface InFlight {
   run: AgyRun | null;
@@ -523,6 +530,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       init === null ? 'no_init_event'
       : init['event'] !== 'init' ? 'first_event_not_init'
       : initModel !== AGY_PLANNER_LANE.agyModel ? 'init_model_mismatch'
+      // Amendment 1 B2 needs the conversation id with the command: without one, nothing is sent.
+      : conversationId === null || conversationId.trim() === '' ? 'init_missing_conversation_id'
       : this.shuttingDown || run.stopping ? 'cancelled_before_send'
       : null;
     if (refused !== null) {
@@ -581,10 +590,16 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     }
   }
 
-  /** Before the daemon takes any Planner work: reap and check (Amendment 3 C2). */
+  /**
+   * Before the daemon takes any Planner work: reap and check (Amendment 3 C2),
+   * whatever happens while stale evidence is closed.
+   */
   async boot(): Promise<void> {
-    await this.closeStaleEvidence();
-    await this.reapPlannerUser();
+    try {
+      await this.closeStaleEvidence();
+    } finally {
+      await this.reapPlannerUser();
+    }
   }
 
   /**
@@ -609,7 +624,9 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       if (!name.endsWith('.json') || name.startsWith('.')) continue;
       let record: EvidenceRecord;
       try {
-        record = JSON.parse(await readFile(join(directory, name), 'utf8')) as EvidenceRecord;
+        const parsed: unknown = JSON.parse(await readFile(join(directory, name), 'utf8'));
+        if (!isEvidenceRecord(parsed)) throw new Error('not an evidence record');
+        record = parsed;
       } catch (error) {
         this.log('error', 'agy.evidence_unreadable', { name, message: describe(error) });
         await this.halt('evidence_unreadable');

@@ -194,20 +194,25 @@ export class GatewayPlannerWorker {
    * of: it becomes `lost`, and `status` answers nothing for it.
    */
   async boot(): Promise<void> {
-    for (const record of await this.deps.records.all()) {
-      if (record.phase === 'starting') {
-        await this.deps.records.write({ commandId: record.commandId, phase: 'lost', identity: record.identity });
-      } else if (record.phase === 'running') {
-        await this.deps.records.write({
-          commandId: record.commandId,
-          phase: 'lost',
-          identity: record.identity,
-          observed: record.observed,
-        });
+    try {
+      for (const record of await this.deps.records.all()) {
+        if (record.phase === 'starting') {
+          await this.deps.records.write({ commandId: record.commandId, phase: 'lost', identity: record.identity });
+        } else if (record.phase === 'running') {
+          await this.deps.records.write({
+            commandId: record.commandId,
+            phase: 'lost',
+            identity: record.identity,
+            observed: record.observed,
+          });
+        }
       }
+    } finally {
+      // The executor prepares last, so nothing it does is mistaken for a lost execution;
+      // and it prepares even when a record cannot be read or rewritten, so its boot
+      // cleanup never depends on the worker's own records.
+      await this.deps.executor.boot?.();
     }
-    // The executor prepares last, so nothing it does is mistaken for a lost execution.
-    await this.deps.executor.boot?.();
   }
 
   /** The daemon is stopping: the executor ends what it has in flight, then its records settle. */

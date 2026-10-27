@@ -26,6 +26,8 @@
  *                 its output open, writing the child's pid to the log
  *   deep_switch   as ok, but a step names another model twelve levels deep
  *   slow_init     init only after two seconds
+ *   no_conversation     init naming the lane's model, with no conversation_id
+ *   empty_conversation  init naming the lane's model, with an empty conversation_id
  *
  * Whatever the mode, it first enforces what agy 1.4.7 does, as the Founder
  * read it on the PC on 2026-10-26: `--print` must carry a value and refuses
@@ -112,6 +114,10 @@ function acceptInput(line: string): boolean {
 
 if (['ok', 'fenced', 'switch', 'error', 'unparseable', 'hang', 'exit', 'stubborn', 'deep_switch'].includes(mode)) {
   init('gemini-4-argon-high');
+} else if (mode === 'no_conversation') {
+  emit({ event: 'init', init: { model: 'gemini-4-argon-high', cwd: process.cwd() } });
+} else if (mode === 'empty_conversation') {
+  emit({ event: 'init', conversation_id: '', init: { model: 'gemini-4-argon-high', cwd: process.cwd() } });
 } else if (mode === 'slow_init') {
   setTimeout(() => init('gemini-4-argon-high'), 2_000);
 } else if (mode === 'wrong_model') {

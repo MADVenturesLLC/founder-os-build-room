@@ -12,12 +12,15 @@
  *     flags among them, in plan mode; the reap is exactly rule B1(b);
  *   - `attest` answers only for the architect seat on the bound lane, and
  *     starts nothing; a recorded attestation is answered again only while
- *     the daemon still holds Gateway 1880c12d's identity;
+ *     the daemon still holds Gateway 1880c12d's identity; the identity
+ *     check (`boundGatewayReader`) answers the Gateway only while the id held
+ *     in memory and the one on disk agree;
  *   - the work is written to agy only after its `init` event names
  *     `gemini-4-argon-high` (Amendment 1 B2). A wrong model, `auto`, a first
  *     line that is not `init` or not JSON, and an agy that waits for its input
- *     before saying which model it serves all end in `not_sent`, with nothing
- *     written to agy's input;
+ *     before saying which model it serves, and an init with no conversation
+ *     id or an empty one, all end in `not_sent`, with nothing written to agy's
+ *     input;
  *   - a later event naming another model, at any depth, an agy error, an
  *     answer that is not JSON, an agy that exits without a result, and a run
  *     past its time all fail the run;
@@ -36,10 +39,16 @@
  *     tree cannot change the mode of a file outside it;
  *   - the evidence record carries the init model, conversation id, agy copy
  *     hash and checkout removal, is durable before the work is sent, and a
- *     record still running at boot is closed in place;
- *   - the daemon stopping cancels a start at any stage, before launch, while
- *     agy announces its model, or while it works; the daemon starting reaps;
- *   - children get the allowlisted environment, never the daemon's;
+ *     record still running at boot is closed in place; boot reaps even when
+ *     an evidence record or a worker record cannot be read;
+ *   - the executor's `shutdown` cancels a start at any stage, before launch,
+ *     while agy announces its model, or while it works; `GatewayDaemon.stop`
+ *     calls it before waiting for a tick in flight (shown with a tick held
+ *     open by hand, not by a running daemon);
+ *   - `childEnvironment()` and `runChild()` give the allowlisted environment,
+ *     never the daemon's. The production launch passes `childEnvironment()`
+ *     to `spawn`, but every test injects its own launch, so that call is read,
+ *     not run;
  *   - the worker drives the executor end to end: attest, execute, status;
  *   - `choosePlannerExecutor` selects the executor only on Linux, on Gateway
  *     1880c12d, with every setting present. That is the factory alone: no
@@ -64,7 +73,12 @@ import {
   GatewayPlannerWorker,
   PINNED_AGY_ARGUMENTS,
   PlannerRecordStore,
+  boundGatewayReader,
   choosePlannerExecutor,
+  ControlPlaneClient,
+  Custody,
+  GatewayDaemon,
+  gatewayPaths,
   planDocumentFrom,
   childEnvironment,
   modelsNamed,
@@ -79,6 +93,7 @@ import type { PlannerIdentityWire, PlannerWorkWire } from '../packages/gateway-p
 import { judgePlanDoc } from '../packages/control-plane/src/plan-doc.js';
 import { readyPlanFor } from './support/synthetic-planner.js';
 import { uuid } from './gateway-helpers.js';
+import { FileKeychainRunner } from './fake-keychain.js';
 
 const FAKE_AGY = fileURLToPath(new URL('./support/fake-agy.js', import.meta.url));
 /** The hash the Founder's act records for the copy, in these cases. */
@@ -372,6 +387,8 @@ describe('start: the init gate', () => {
     ['not_init', 'first_event_not_init'],
     ['garbage', 'no_init_event'],
     ['stdin_first', 'no_init_event'],
+    ['no_conversation', 'init_missing_conversation_id'],
+    ['empty_conversation', 'init_missing_conversation_id'],
   ] as const) {
     it(`answers not_sent and writes nothing to agy when ${mode}`, async () => {
       const w = work();
@@ -954,5 +971,86 @@ describe('the daemon stopping while a start is still preparing (Amendment 3 C2)'
     assert.deepEqual(await starting, { kind: 'not_sent' });
     assert.equal(h.launches, 0);
     assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['outcome'], 'daemon_stopping');
+  });
+});
+
+describe('the daemon stopping tells the executor before it waits for its tick (Tier-2 N1)', () => {
+  it('shutdown reaches the executor while a tick is still in flight', async () => {
+    const root = temporary('buildroom-agy-daemon-');
+    const events: string[] = [];
+    const executor = {
+      attest: () => Promise.reject(new Error('unused')),
+      start: () => Promise.reject(new Error('unused')),
+      shutdown: () => {
+        events.push('executor.shutdown');
+        return Promise.resolve();
+      },
+    };
+    const daemon = new GatewayDaemon({
+      paths: gatewayPaths(join(root, 'gateway')),
+      clock: { wallNow: () => Date.now(), monotonicNow: () => 1_000 },
+      custody: new Custody(new FileKeychainRunner(join(root, 'keychain'))),
+      client: new ControlPlaneClient('http://control-plane.invalid', () => Promise.reject(new Error('no network in this test'))),
+      heartbeatCadenceMs: 10_000,
+      plannerExecutor: executor,
+    });
+    // A tick that is still running when stop() is called: one already past its `stopping` check.
+    let finishTick = (): void => undefined;
+    (daemon as unknown as { tickInFlight: Promise<void> }).tickInFlight = new Promise<void>((resolve) => {
+      finishTick = () => {
+        events.push('tick.settled');
+        resolve();
+      };
+    });
+    const stopping = daemon.stop();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(events, ['executor.shutdown'], 'the executor hears of the stop before the tick settles');
+    finishTick();
+    await stopping;
+    assert.deepEqual(events, ['executor.shutdown', 'tick.settled']);
+  });
+});
+
+describe('the bound Gateway is the one held in memory and on disk alike (Tier-2 N2)', () => {
+  it('answers the Gateway only while both name it, and null otherwise', async () => {
+    const other = '2222132d-0000-4000-8000-000000000000';
+    const ask = (held: string | null, disk: string | null): Promise<string | null> => boundGatewayReader(() => held, () => Promise.resolve(disk))();
+    assert.equal(await ask(AGY_PLANNER_GATEWAY_ID, AGY_PLANNER_GATEWAY_ID), AGY_PLANNER_GATEWAY_ID);
+    assert.equal(await ask(other, AGY_PLANNER_GATEWAY_ID), null, 'promoted in memory, file write not landed');
+    assert.equal(await ask(AGY_PLANNER_GATEWAY_ID, other), null, 'file says another Gateway');
+    assert.equal(await ask(null, AGY_PLANNER_GATEWAY_ID), null, 'nothing held yet');
+    await assert.rejects(boundGatewayReader(() => AGY_PLANNER_GATEWAY_ID, () => Promise.reject(new Error('unreadable')))());
+  });
+
+  it('the executor refuses attest and start when the two disagree', async () => {
+    const h = harness({ mode: 'ok', currentGatewayId: boundGatewayReader(() => '2222132d-0000-4000-8000-000000000000', () => Promise.resolve(AGY_PLANNER_GATEWAY_ID)) });
+    const w = work();
+    await assert.rejects(h.executor.attest({ commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } }));
+    const identity = await harness({ mode: 'ok' }).executor.attest({ commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } });
+    assert.deepEqual(await h.executor.start(w, identity), { kind: 'not_sent' });
+    assert.equal(h.launches, 0);
+  });
+});
+
+describe('boot always reaps and checks (Amendment 3 C2; Tier-2 N3)', () => {
+  it('the executor boots even when the worker cannot read its records, and the error still surfaces', async () => {
+    const h = harness({ mode: 'ok' });
+    const records = new PlannerRecordStore(temporary('buildroom-agy-records-'));
+    records.all = () => Promise.reject(new Error('records unreadable'));
+    const worker = new GatewayPlannerWorker({ executor: h.executor, records });
+    await assert.rejects(worker.boot(), /records unreadable/);
+    assert.equal(h.reaps(), 1, 'the reap ran regardless');
+  });
+
+  it('an evidence record that parses but is not a record halts, and the reap still runs', async () => {
+    for (const body of ['null', '[]', '42', '{"commandId":"x"}']) {
+      const h = harness({ mode: 'ok' });
+      const directory = join(h.gatewayDirectory, 'planner-evidence');
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(join(directory, 'odd.json'), body);
+      await h.executor.boot();
+      assert.equal(h.reaps(), 1, body);
+      assert.equal(haltReason(h.gatewayDirectory), 'evidence_unreadable', body);
+    }
   });
 });

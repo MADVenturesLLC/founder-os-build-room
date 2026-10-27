@@ -154,7 +154,7 @@ export {
   type PlannerReaper,
   type PlannerProcessProbe,
 } from './agy-planner-executor.js';
-export { choosePlannerExecutor, type PlannerExecutorChoice, type PlannerExecutorContext } from './planner-executor-factory.js';
+export { boundGatewayReader, choosePlannerExecutor, type PlannerExecutorChoice, type PlannerExecutorContext } from './planner-executor-factory.js';
 
 /**
  * Room Runtime Phase 1 (fixture occupancy only) — the Gateway-side room
