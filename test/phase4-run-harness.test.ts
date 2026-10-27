@@ -287,12 +287,25 @@ describe('phase 4 entry · every gap between the act and the live system', () =>
     );
   });
 
-  it('fails closed on boot-normalized seats: a provider the act named but the parsed config dropped is ambiguous at entry, never accepted', () => {
-    // Codex round 2, advisory 1: boot keeps each seat's surface only. Fed
-    // that output, entry cannot recover antigravity:google and refuses it.
+  it('keeps the provider through boot: boot-parsed seats, as lane tokens, pass entry, and their surfaces alone stay ambiguous', () => {
+    // Codex PR 128 round 2 advisory 1 (round 4 advisory 1): boot once kept each
+    // seat's surface only, so antigravity:google became a bare antigravity.
+    // It now keeps the resolved provider, qualified or bare.
     const config = parseCountedRunConfig(JSON.stringify({ actId: 'FOUNDER-ACT-EXAMPLE', gatewayId: '1880c12d-0000-4000-8000-000000000001', planner: 'antigravity', seats: { builder: 'claude-code', reviewer: 'antigravity:google' } }))!;
-    assert.deepEqual(config.seats, { builder: 'claude-code', reviewer: 'antigravity' });
-    assert.deepEqual(verdictOf(set({ seats: config.seats }), observation()).failures, ['reviewer_lane_ambiguous']);
+    assert.deepEqual(config.seats, {
+      builder: { surface: 'claude-code', provider: 'anthropic' },
+      reviewer: { surface: 'antigravity', provider: 'google' },
+    });
+    const token = (seat: { surface: string; provider: string }): string => `${seat.surface}:${seat.provider}`;
+    assert.deepEqual(
+      verdictOf(set({ seats: { builder: token(config.seats.builder), reviewer: token(config.seats.reviewer) } }), observation()).failures,
+      [],
+    );
+    // Entry still refuses the surface without its provider.
+    assert.deepEqual(
+      verdictOf(set({ seats: { builder: config.seats.builder.surface, reviewer: config.seats.reviewer.surface } }), observation()).failures,
+      ['reviewer_lane_ambiguous'],
+    );
   });
 
   it('refuses every set against a registry that carries no build-room-control-plane, and admits it on the pinned copy', () => {

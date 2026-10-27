@@ -438,12 +438,13 @@ describe('phase 4 run harness · a run over the Q9 routes, as a counted run woul
         countedRunToken: COUNTED_RUN_TOKEN,
         // The act's terms as the control plane parses them: surfaces only,
         // with the planner's provider and model resolved from the approved
-        // Antigravity lane as routing detail (BR-PHASE4-SURFACE-KEYED-SEATS-R1).
+        // Antigravity lane as routing detail (BR-PHASE4-SURFACE-KEYED-SEATS-R1),
+        // and each seat's surface with its resolved lane's provider.
         countedRun: {
           actId: set.setId,
           gatewayId: set.gatewayId,
           planner: { surface: 'antigravity', provider: PLANNER.provider, model: PLANNER.model },
-          seats: set.seats,
+          seats: { builder: { surface: set.seats.builder, provider: 'openai' }, reviewer: { surface: set.seats.reviewer, provider: 'xai' } },
         },
       },
       pool: harness!.appPool,

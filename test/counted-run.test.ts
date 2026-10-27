@@ -127,7 +127,8 @@ describe('counted run · the act’s terms, read at boot', () => {
       actId: ACT.actId,
       gatewayId: ACT.gatewayId,
       planner: { surface: 'antigravity', provider: 'google', model: 'gemini-4-argon' },
-      seats: ACT.seats,
+      // Bare surfaces each resolve to their seat's one provider on that surface.
+      seats: { builder: { surface: 'codex', provider: 'openai' }, reviewer: { surface: 'grok-build', provider: 'xai' } },
     });
     assert.equal(plannerLaneLabel(config), 'primary');
   });
@@ -150,7 +151,7 @@ describe('counted run · the act’s terms, read at boot', () => {
 
   it('accepts claude-code as the builder surface, on the claude-code:anthropic lane', () => {
     const config = parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'claude-code', reviewer: 'grok-build' } }))!;
-    assert.equal(config.seats.builder, 'claude-code');
+    assert.deepEqual(config.seats.builder, { surface: 'claude-code', provider: 'anthropic' });
   });
 
   it('refuses a planner lane that carries no exact model', () => {
@@ -185,7 +186,10 @@ describe('counted run · the act’s terms, read at boot', () => {
     assert.throws(() => loadConfig({ ...BASE_ENV, PHASE4_COUNTED_RUN: sameFamily }), ConfigError);
     // The other family on the same reviewer surface is accepted.
     const config = parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'claude-code', reviewer: 'antigravity:google' } }))!;
-    assert.deepEqual(config.seats, { builder: 'claude-code', reviewer: 'antigravity' });
+    assert.deepEqual(config.seats, {
+      builder: { surface: 'claude-code', provider: 'anthropic' },
+      reviewer: { surface: 'antigravity', provider: 'google' },
+    });
   });
 
   it('refuses a bare antigravity reviewer, which now spans two families, and resolves either qualified form', () => {
@@ -196,18 +200,30 @@ describe('counted run · the act’s terms, read at boot', () => {
       (error: unknown) =>
         error instanceof CountedRunConfigError && /more than one approved lane; name the provider/.test(error.message),
     );
-    for (const reviewer of ['antigravity:google', 'antigravity:anthropic']) {
-      const config = parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'codex', reviewer } }))!;
-      assert.equal(config.seats.reviewer, 'antigravity');
+    for (const provider of ['google', 'anthropic']) {
+      const config = parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'codex', reviewer: `antigravity:${provider}` } }))!;
+      assert.deepEqual(config.seats.reviewer, { surface: 'antigravity', provider });
     }
   });
 
-  it('resolves a provider-qualified token to its lane, and keeps the surface as the term', () => {
+  it('resolves a provider-qualified token to its lane, and keeps the surface and the provider', () => {
     const config = parseCountedRunConfig(
       JSON.stringify({ ...ACT, seats: { builder: 'codex:openai', reviewer: 'grok-build:xai' } }),
     )!;
-    assert.equal(config.seats.builder, 'codex');
-    assert.equal(config.seats.reviewer, 'grok-build');
+    assert.deepEqual(config.seats, {
+      builder: { surface: 'codex', provider: 'openai' },
+      reviewer: { surface: 'grok-build', provider: 'xai' },
+    });
+  });
+
+  it('gives a qualified and a bare token on the same lane the same parsed seat', () => {
+    const bare = parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'claude-code', reviewer: 'grok-build' } }))!;
+    const qualified = parseCountedRunConfig(JSON.stringify({ ...ACT, seats: { builder: 'claude-code:anthropic', reviewer: 'grok-build:xai' } }))!;
+    assert.deepEqual(bare.seats, qualified.seats);
+    assert.deepEqual(qualified.seats, {
+      builder: { surface: 'claude-code', provider: 'anthropic' },
+      reviewer: { surface: 'grok-build', provider: 'xai' },
+    });
   });
 
   it('parses a lane token as surface or surface:provider, and nothing else', () => {
