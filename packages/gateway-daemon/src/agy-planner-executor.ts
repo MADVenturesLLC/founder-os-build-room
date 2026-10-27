@@ -1,9 +1,12 @@
 /**
  * The Planner's executor on Antigravity: agy, run headless on Gateway
  * `1880c12d` only (FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR and its
- * Amendments 1 and 2, recorded in FounderOS `DEC-20260827-01` Section 12;
- * its Amendment 3, SHA-256 `c3a257ef…2fa5`, recorded in FounderOS pull
- * request 409; and its Amendment 4).
+ * Amendments 1, 2 and 3, recorded in FounderOS `DEC-20260827-01` Section
+ * 12, Amendment 3 being the text with SHA-256
+ * c3a257ef954239cdd1391b8d1b612e3843237219ba060b0c458057742fdfa2f5; and its
+ * Amendment 4, SHA-256
+ * d514039964bb60eb0c634a19a6c34e18931ace19499960a80369d106c8cfe39d, signed in
+ * the builder's session on 2026-10-27).
  *
  * WHAT IT IS BOUND TO (the ruling's B1). One seat, `architect`; one lane,
  * `antigravity`, `gemini-4-argon`, effort high, which agy names
@@ -54,7 +57,7 @@
 
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, open, readdir, rename, rm, unlink } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type {
@@ -327,7 +330,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     }
     if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(config.plannerUser)) throw new Error('plannerUser is not a user name');
     if (!/^[0-9a-f]{64}$/.test(config.agySha256)) throw new Error('agySha256 is not a lowercase SHA-256');
-    this.launch = deps.launch ?? ((file, args, options) => spawn(file, [...args], { cwd: options.cwd, stdio: 'pipe' }));
+    this.launch = deps.launch ?? ((file, args, options) => spawn(file, [...args], { cwd: options.cwd, stdio: 'pipe', env: childEnvironment() }));
     this.probe = deps.probe ?? pgrepProbe(config.plannerUser);
     this.reap = deps.reap ?? pkillReaper(this.reapCommandLine());
     this.hashFile = deps.hashFile ?? sha256OfFile;
@@ -487,7 +490,38 @@ export class AgyPlannerExecutor implements PlannerExecutor {
 
   /** Before the daemon takes any Planner work: reap and check (Amendment 3 C2). */
   async boot(): Promise<void> {
+    await this.closeStaleEvidence();
     await this.reapPlannerUser();
+  }
+
+  /**
+   * A record still marked `running` at boot belongs to a run the previous
+   * daemon did not see end (FOUNDER-ACT-20261027-BR-131-BRINGUP B4). It is
+   * given a terminal outcome saying so, at the boot time.
+   */
+  private async closeStaleEvidence(): Promise<void> {
+    const directory = join(this.config.gatewayDirectory, 'planner-evidence');
+    let names: string[];
+    try {
+      names = await readdir(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.log('error', 'agy.evidence_unreadable', { message: describe(error) });
+      return;
+    }
+    const bootedAt = this.isoNow();
+    for (const name of names) {
+      if (!name.endsWith('.json') || name.startsWith('.')) continue;
+      let record: EvidenceRecord;
+      try {
+        record = JSON.parse(await readFile(join(directory, name), 'utf8')) as EvidenceRecord;
+      } catch (error) {
+        this.log('error', 'agy.evidence_unreadable', { name, message: describe(error) });
+        continue;
+      }
+      if (record.outcome !== 'running') continue;
+      await this.evidence({ ...record, endedAt: bootedAt, outcome: 'daemon_ended_during_run' });
+      this.log('warn', 'agy.evidence_closed_at_boot', { commandId: record.commandId });
+    }
   }
 
   /** The daemon is stopping: a run in flight is a cancellation, ended under Amendment 3 C1. */
@@ -736,9 +770,31 @@ const ISOLATED_GIT_ENV: Readonly<Record<string, string>> = {
   GIT_SSH_COMMAND: '/bin/false',
 };
 
+/**
+ * The only variables a child of the executor inherits from the daemon
+ * (FOUNDER-ACT-20261027-BR-131-BRINGUP B5). Everything else, every `GIT_*`,
+ * `SSH_*` and `*_PROXY` among it, stays behind; `PATH` is fixed.
+ */
+const CHILD_ENV_ALLOWLIST: readonly string[] = Object.freeze(['LANG', 'LC_ALL', 'TZ']);
+
+/** The environment every child the executor starts gets: git, sudo, pkill, pgrep. */
+export function childEnvironment(parent: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env: Record<string, string> = { PATH: '/usr/bin:/bin' };
+  for (const name of CHILD_ENV_ALLOWLIST) {
+    const value = parent[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return { ...env, ...ISOLATED_GIT_ENV };
+}
+
+/** Run a child to completion with `childEnvironment()`; its exit code, or a rejection when it could not run. */
+export function runChild(file: string, args: readonly string[], cwd?: string): Promise<{ code: number }> {
+  return execute(file, args, cwd);
+}
+
 function execute(file: string, args: readonly string[], cwd?: string): Promise<{ code: number }> {
   return new Promise((resolve, reject) => {
-    execFile(file, [...args], { cwd, timeout: 300_000, env: { ...process.env, ...ISOLATED_GIT_ENV } }, (error) => {
+    execFile(file, [...args], { cwd, timeout: 300_000, env: childEnvironment() }, (error) => {
       if (error === null) return resolve({ code: 0 });
       const code = (error as NodeJS.ErrnoException & { code?: unknown }).code;
       if (typeof code === 'number') return resolve({ code });

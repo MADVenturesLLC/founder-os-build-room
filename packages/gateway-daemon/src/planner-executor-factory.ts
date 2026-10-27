@@ -14,7 +14,7 @@
  *     `BUILDROOM_PLANNER_AGY_SHA256` and `BUILDROOM_PLANNER_CHECKOUTS` name
  *     the planner user, the planner user's own agy copy the privilege rule
  *     names, that copy's SHA-256 as the Founder's latest act records it
- *     (Amendment 3, Part C), and the directory checkouts are made in.
+ *     (Amendment 4, Part C), and the directory checkouts are made in.
  *
  * Nothing here selects a test seam: the executor is built with its real
  * collaborators, and suites construct `AgyPlannerExecutor` themselves.

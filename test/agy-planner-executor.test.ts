@@ -33,7 +33,7 @@
 
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
@@ -50,6 +50,8 @@ import {
   PlannerRecordStore,
   choosePlannerExecutor,
   planDocumentFrom,
+  childEnvironment,
+  runChild,
   sha256OfFile,
   readOnly,
   removeCheckout,
@@ -525,6 +527,54 @@ describe('the daemon starting and stopping (Amendment 3 C2)', () => {
     const status = await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId });
     assert.equal(status?.kind, 'finished');
     if (status?.kind === 'finished') assert.deepEqual(status.result, { kind: 'failed' });
+  });
+});
+
+describe('evidence at boot (act B4)', () => {
+  it('closes a record still marked running, and leaves finished ones alone', async () => {
+    const h = harness({ mode: 'ok' });
+    const directory = join(h.gatewayDirectory, 'planner-evidence');
+    mkdirSync(directory, { recursive: true });
+    const base = { executionId: uuid(), startedAt: '2026-10-27T00:00:00.000Z', agySha256: AGY_HASH, initModel: 'gemini-4-argon-high', conversationId: 'c', sent: true, exitCode: null, signal: null };
+    writeFileSync(join(directory, 'a.json'), `${JSON.stringify({ ...base, commandId: 'running-one', endedAt: null, outcome: 'running' })}\n`);
+    writeFileSync(join(directory, 'b.json'), `${JSON.stringify({ ...base, commandId: 'done-one', endedAt: '2026-10-27T00:01:00.000Z', outcome: 'plan' })}\n`);
+    await h.executor.boot();
+    const records = evidenceOf(h.gatewayDirectory);
+    const closed = records.find((r) => r['commandId'] === 'running-one');
+    assert.equal(closed?.['outcome'], 'daemon_ended_during_run');
+    assert.match(String(closed?.['endedAt']), /^\d{4}-\d\d-\d\dT/);
+    assert.equal(records.find((r) => r['commandId'] === 'done-one')?.['outcome'], 'plan');
+  });
+});
+
+describe('the child environment (act B5)', () => {
+  const injected = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'injected-by-the-daemon-env', HTTPS_PROXY: 'http://proxy.invalid:9' };
+
+  it('carries only the allowlist and the git isolation, never GIT_*, SSH_* or *_PROXY from the daemon', () => {
+    const env = childEnvironment({ ...injected, PATH: '/somewhere/else', LANG: 'C.UTF-8', SSH_AUTH_SOCK: '/tmp/agent', https_proxy: 'x', ALL_PROXY: 'y', HOME: '/home/founder' });
+    assert.equal(env['PATH'], '/usr/bin:/bin');
+    assert.equal(env['LANG'], 'C.UTF-8');
+    for (const name of [...Object.keys(injected), 'SSH_AUTH_SOCK', 'https_proxy', 'ALL_PROXY', 'HOME']) assert.equal(env[name], undefined, name);
+    assert.equal(env['GIT_CONFIG_GLOBAL'], '/dev/null');
+  });
+
+  it('keeps GIT_CONFIG_COUNT and HTTPS_PROXY in the daemon\'s environment from reaching git', async () => {
+    const saved = Object.fromEntries(Object.keys(injected).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, injected);
+    try {
+      const repo = temporary('buildroom-agy-git-');
+      // Control: git started with the daemon's own environment does see the injected setting.
+      const control = spawnSync('/usr/bin/git', ['config', '--get', 'user.name'], { cwd: repo, env: process.env, encoding: 'utf8' });
+      assert.equal(control.stdout.trim(), 'injected-by-the-daemon-env');
+      // The executor's children do not.
+      assert.equal((await runChild('/usr/bin/git', ['config', '--get', 'user.name'], repo)).code, 1, 'git finds no user.name');
+      assert.equal((await runChild('/bin/sh', ['-c', 'test -z "$HTTPS_PROXY" && test -z "$GIT_CONFIG_COUNT"'])).code, 0, 'neither variable is set in the child');
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) Reflect.deleteProperty(process.env, name);
+        else process.env[name] = value;
+      }
+    }
   });
 });
 
