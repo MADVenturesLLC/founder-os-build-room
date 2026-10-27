@@ -120,6 +120,7 @@ export {
   PlannerRecordStore,
   plannerRecordsDirectory,
   syncDirectory,
+  syncMadeDirectories,
   type PlannerExecutor,
   type PlannerRecord,
   type PlannerStart,

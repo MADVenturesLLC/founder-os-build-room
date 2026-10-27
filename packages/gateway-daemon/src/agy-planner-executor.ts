@@ -69,7 +69,7 @@
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, unlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type {
   Clock,
@@ -81,7 +81,7 @@ import type {
 import { PLANDOC_SCHEMA_V1 } from '../../seat-output-schema/src/index.js';
 import { createDaemonClock } from './clock.js';
 import { DIRECTORY_MODE, FILE_MODE } from './paths.js';
-import { syncDirectory, type PlannerExecutor, type PlannerStart } from './planner-worker.js';
+import { syncDirectory, syncMadeDirectories, type PlannerExecutor, type PlannerStart } from './planner-worker.js';
 
 /** The one lane this executor serves (the ruling's B1). */
 export const AGY_PLANNER_LANE = {
@@ -361,7 +361,9 @@ function isEvidenceRecord(value: unknown): value is EvidenceRecord {
 }
 
 /** A start from its first check to its last evidence write; `run` once agy is launched. */
+// (the command id is kept so a second start of the same command meets a rejection, not a refusal)
 interface InFlight {
+  readonly commandId: string;
   run: AgyRun | null;
   readonly settled: Promise<void>;
 }
@@ -472,11 +474,20 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     }
     if (this.shuttingDown) return this.refuse(work, identity, 'daemon_stopping');
     if (await this.isHalted()) return this.refuse(work, identity, 'executor_halted');
-    if (this.busy) return this.refuse(work, identity, 'executor_busy');
+    if (this.busy) {
+      // The same command again while its own start is under way: not a refusal, which would
+      // answer not_sent for work that may be about to go, but a rejection the worker records
+      // as unknown. Nothing is written over the start in flight.
+      if (this.inFlight?.commandId === work.commandId) {
+        this.log('error', 'agy.already_starting', { commandId: work.commandId });
+        throw new Error('this command is already being started');
+      }
+      return this.refuse(work, identity, 'executor_busy');
+    }
     // From here until the run's evidence is written, this start is the one in flight.
     this.busy = true;
     let settle!: () => void;
-    const inFlight: InFlight = { run: null, settled: new Promise<void>((resolve) => (settle = resolve)) };
+    const inFlight: InFlight = { commandId: work.commandId, run: null, settled: new Promise<void>((resolve) => (settle = resolve)) };
     this.inFlight = inFlight;
     const finish = (): void => {
       if (this.inFlight === inFlight) this.inFlight = null;
@@ -669,6 +680,9 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       try {
         const parsed: unknown = JSON.parse(await readFile(join(directory, name), 'utf8'));
         if (!isEvidenceRecord(parsed)) throw new Error('not an evidence record');
+        // The file must be the one its command's record lives in: closing it rewrites that
+        // path, and a stray file naming another command's id must not write over its record.
+        if (join(directory, name) !== this.evidencePath(parsed.commandId)) throw new Error('not at its command\'s path');
         record = parsed;
       } catch (error) {
         this.log('error', 'agy.evidence_unreadable', { name, message: describe(error) });
@@ -759,9 +773,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       // The marker's directory entry survives a crash only once the directory is synced;
       // a halt that a crash could clear would let work through with no one's direction
       // (Amendment 3 C1).
-      const sync = this.deps.syncDirectory ?? syncDirectory;
-      await sync(this.config.gatewayDirectory);
-      if (created !== undefined) await sync(dirname(this.config.gatewayDirectory));
+      await syncMadeDirectories(this.config.gatewayDirectory, created, this.deps.syncDirectory ?? syncDirectory);
     } catch (error) {
       // Already there: the executor is halted already, and the first reason stands.
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') return;
@@ -909,10 +921,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
         throw error;
       });
       // A rename is visible at once but survives a crash only once its directory is
-      // synced; a directory just made needs its own entry synced in the parent too.
-      const sync = this.deps.syncDirectory ?? syncDirectory;
-      await sync(directory);
-      if (created !== undefined) await sync(dirname(directory));
+      // synced; a directory just made needs its own entry synced, in each parent made with it.
+      await syncMadeDirectories(directory, created, this.deps.syncDirectory ?? syncDirectory);
       return true;
     } catch (error) {
       this.log('error', 'agy.evidence_failed', { message: describe(error) });

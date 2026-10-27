@@ -116,6 +116,26 @@ export async function syncDirectory(path: string): Promise<void> {
   }
 }
 
+/**
+ * Syncs `directory`, and then, when `mkdir` just made it (`created` is the
+ * first directory it made, as `mkdir` with `recursive` answers), every
+ * directory whose entry that creation added, up to the parent of the first:
+ * a file is durable only once each entry on its path is.
+ */
+export async function syncMadeDirectories(
+  directory: string,
+  created: string | undefined,
+  sync: (path: string) => Promise<void> = syncDirectory,
+): Promise<void> {
+  await sync(directory);
+  if (created === undefined) return;
+  const top = dirname(created);
+  for (let path = directory; path !== top && path !== dirname(path); ) {
+    path = dirname(path);
+    await sync(path);
+  }
+}
+
 export class PlannerRecordStore {
   constructor(private readonly directory: string) {}
 
@@ -163,8 +183,7 @@ export class PlannerRecordStore {
       await unlink(temporary).catch(() => undefined);
       throw error;
     }
-    await syncDirectory(this.directory);
-    if (created !== undefined) await syncDirectory(dirname(this.directory));
+    await syncMadeDirectories(this.directory, created);
   }
 
   async all(): Promise<PlannerRecord[]> {

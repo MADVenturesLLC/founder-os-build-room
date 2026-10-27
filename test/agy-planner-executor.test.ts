@@ -48,8 +48,9 @@
  *   - the evidence record carries the init model, conversation id, agy copy
  *     hash and checkout removal, and is written before the work is sent: the
  *     file is synced, renamed, and its directory synced (and the gateway
- *     directory too when the evidence directory is new) before the input
- *     line, and a sync that fails sends nothing and halts. The directory
+ *     directory too when the evidence directory is new, and every directory
+ *     the same mkdir made) before the input line, and a sync that fails
+ *     sends nothing and halts. The directory
  *     syncs are shown through an injected sync, and the file's own sync by
  *     recording the real fsyncs by inode; that the disk keeps what was synced
  *     across a power loss is the kernel's, not shown here. A command whose
@@ -58,13 +59,17 @@
  *     refuses the start, because every refusal reads the record before it
  *     writes (shown for each refusal before launch; that the read and the
  *     write are one step in the executor's evidence queue is read, not
- *     raced); a record that cannot be read, or lacks `sent`, halts, at a
+ *     raced); a second start of the command whose start is under way is
+ *     rejected, not refused, so nothing is written over the start in
+ *     flight and no not_sent is answered for it; a record that cannot be read, or lacks `sent`, halts, at a
  *     start, at boot, and when the worker asks; an earlier refusal lets a
  *     retry through. Once the running record has been attempted, `not_sent`
  *     is answered only when the record then says so: a downgrade that
  *     cannot be written or made durable rejects instead, as the running
  *     record's own failed write does. A
- *     record still running at boot is closed in place; boot reaps even when an
+ *     record still running at boot is closed in place, and only one that is
+ *     at its command's own path, so a stray file naming a command never
+ *     writes over that command's record; boot reaps even when an
  *     evidence record or a worker record cannot be read, and
  *     `GatewayDaemon.boot` boots the Planner even when the lanes' recovery
  *     rejects (shown with the recovery step replaced by hand to reject);
@@ -124,6 +129,7 @@ import {
   readOnly,
   removeCheckout,
   syncDirectory,
+  syncMadeDirectories,
   type AgyPlannerDeps,
   type Launch,
   type PlannerExecutor,
@@ -1293,6 +1299,8 @@ describe('the running record survives a crash before the work is written (Tier-2
       { path: h.gatewayDirectory, stdinSoFar: 0 },
     ]);
     assert.equal(synced.filter((entry) => entry.path === h.gatewayDirectory).length, 1, 'the parent only when the directory is made');
+    assert.deepEqual(synced[2], { path: dirname(h.gatewayDirectory), stdinSoFar: 0 }, 'and the directory that gained the Gateway directory, made in the same mkdir');
+    assert.equal(synced.filter((entry) => entry.path === dirname(h.gatewayDirectory)).length, 1);
     assert.equal(synced.at(-1)?.path, evidenceDirectory, 'the final record is synced too');
   });
 
@@ -1673,5 +1681,64 @@ describe('not_sent is answered only when the record says so (Tier-2 H2)', () => 
     await worker.handle({ requestId: uuid(), kind: 'attest', commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } });
     assert.equal(await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: identity.executionId, work: w }), null);
     assert.equal((await records.read(w.commandId))?.phase, 'not_sent', 'what the executor answered is still recorded');
+  });
+});
+
+describe('the builder\'s own pre-review of 10f6a24: three advisories taken', () => {
+  it('syncMadeDirectories syncs the directory and every directory the same mkdir made, up to the one that existed', async () => {
+    const seen: string[] = [];
+    const record = (path: string): Promise<void> => {
+      seen.push(path);
+      return Promise.resolve();
+    };
+    await syncMadeDirectories('/a/b/c', '/a/b', record);
+    assert.deepEqual(seen, ['/a/b/c', '/a/b', '/a']);
+    seen.length = 0;
+    await syncMadeDirectories('/a/b/c', '/a/b/c', record);
+    assert.deepEqual(seen, ['/a/b/c', '/a/b']);
+    seen.length = 0;
+    await syncMadeDirectories('/a/b/c', undefined, record);
+    assert.deepEqual(seen, ['/a/b/c']);
+  });
+
+  it('boot closes a running record only at its command\'s own path, and halts on a stray file naming a command', async () => {
+    const w = work();
+    const h = harness({ mode: 'ok' });
+    const identity = await identityFor(h.executor, w.commandId);
+    const own = placeEvidence(h, w.commandId, evidenceLine(w.commandId, identity.executionId, { outcome: 'plan' }));
+    const stray = join(h.gatewayDirectory, 'planner-evidence', 'other.json');
+    writeFileSync(stray, evidenceLine(w.commandId, identity.executionId, { outcome: 'running', endedAt: null }));
+    const before = { own: readFileSync(own, 'utf8'), stray: readFileSync(stray, 'utf8') };
+    await h.executor.boot();
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_unreadable');
+    assert.equal(h.reaps(), 1);
+    assert.deepEqual({ own: readFileSync(own, 'utf8'), stray: readFileSync(stray, 'utf8') }, before, 'neither file was written');
+  });
+
+  it('a second start of the command whose start is under way is rejected, and its start goes on untouched', async () => {
+    const w = work();
+    let release = (): void => undefined;
+    const parked = new Promise<void>((resolve) => (release = resolve));
+    const h = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      checkout: async (_work, parent) => {
+        await parked;
+        return mkdtemp(join(parent, 'run-'));
+      },
+    });
+    const identity = await identityFor(h.executor, w.commandId);
+    const first = h.executor.start(w, identity);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await assert.rejects(h.executor.start(w, identity), /already being started/);
+    assert.ok(h.logged.includes('agy.already_starting'));
+    release();
+    const started = await first;
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') await started.completion;
+    const records = evidenceOf(h.gatewayDirectory);
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.['outcome'], 'plan');
+    assert.equal(records[0]?.['sent'], true);
   });
 });
