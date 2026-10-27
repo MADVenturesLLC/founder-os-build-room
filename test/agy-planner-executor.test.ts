@@ -39,6 +39,9 @@
  *   - a process surviving the reap, a check that cannot be made after it, a
  *     checkout left behind and an evidence record that cannot be written or
  *     read all halt, and only removing the halt file restarts the executor;
+ *     the halt marker is synced and then its directory, so the halt is still
+ *     there after a crash, and a marker that cannot be made durable keeps
+ *     this process halted even once the file is gone;
  *   - each run's checkout is agy's working directory and is removed after;
  *     making it read-only follows no symbolic link, so a link in a hostile
  *     tree cannot change the mode of a file outside it;
@@ -46,10 +49,14 @@
  *     hash and checkout removal, and is written before the work is sent: the
  *     file is synced, renamed, and its directory synced (and the gateway
  *     directory too when the evidence directory is new) before the input
- *     line, and a sync that fails sends nothing and halts. That the syncs are
- *     made is shown through an injected sync; that the disk keeps what was
- *     synced across a power loss is the kernel's, not shown here. A record
- *     still running at boot is closed in place; boot reaps even when an
+ *     line, and a sync that fails sends nothing and halts. The directory
+ *     syncs are shown through an injected sync, and the file's own sync by
+ *     recording the real fsyncs by inode; that the disk keeps what was synced
+ *     across a power loss is the kernel's, not shown here. A command whose
+ *     record says its work was sent, by this process or one a crash ended, is
+ *     never started again: `start` rejects, and the record stands; a record
+ *     that cannot be read halts; an earlier refusal lets a retry through. A
+ *     record still running at boot is closed in place; boot reaps even when an
  *     evidence record or a worker record cannot be read, and
  *     `GatewayDaemon.boot` boots the Planner even when the lanes' recovery
  *     rejects (shown with the recovery step replaced by hand to reject);
@@ -63,6 +70,11 @@
  *     to `spawn`, but every test injects its own launch, so that call is read,
  *     not run;
  *   - the worker drives the executor end to end: attest, execute, status;
+ *     its records are synced, file then directory, and `execute`'s
+ *     write-ahead `starting` record is on disk, synced, before the executor
+ *     is asked; a worker record that a crash left at `attested` beside
+ *     evidence that says the work was sent gets no second run, and the
+ *     worker answers nothing for it;
  *   - `choosePlannerExecutor` selects the executor only on Linux, on Gateway
  *     1880c12d, with every setting present. That is the factory alone: no
  *     test here starts `main.ts`, so its wiring of the factory is read, not
@@ -74,7 +86,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, open as openFile, type FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,6 +98,7 @@ import {
   GatewayPlannerWorker,
   PINNED_AGY_ARGUMENTS,
   PlannerRecordStore,
+  plannerRecordsDirectory,
   boundGatewayReader,
   choosePlannerExecutor,
   ControlPlaneClient,
@@ -102,6 +115,7 @@ import {
   syncDirectory,
   type AgyPlannerDeps,
   type Launch,
+  type PlannerExecutor,
 } from '../packages/gateway-daemon/src/index.js';
 import type { PlannerIdentityWire, PlannerWorkWire } from '../packages/gateway-protocol/src/index.js';
 import { judgePlanDoc } from '../packages/control-plane/src/plan-doc.js';
@@ -270,6 +284,41 @@ function evidenceOf(gatewayDirectory: string): Record<string, unknown>[] {
   return readdirSync(directory)
     .filter((name) => name.endsWith('.json'))
     .map((name) => JSON.parse(readFileSync(join(directory, name), 'utf8')) as Record<string, unknown>);
+}
+
+interface SyncSeen {
+  readonly directory: boolean;
+  readonly ino: number;
+}
+
+/**
+ * Records every `FileHandle.sync()` made until `stop`: the real fsyncs the
+ * code makes, file or directory, by inode, so a test can say which file was
+ * synced and whether its directory was synced after it. A rename keeps the
+ * inode, so a record's file is found by the inode at its final path.
+ */
+async function startRecordingSyncs(): Promise<{ readonly syncs: SyncSeen[]; stop: () => void }> {
+  const probe = await openFile(FAKE_AGY, 'r');
+  const prototype = Object.getPrototypeOf(probe) as unknown as { sync: (this: FileHandle) => Promise<void> };
+  await probe.close();
+  const original = prototype.sync;
+  const syncs: SyncSeen[] = [];
+  prototype.sync = async function (this: FileHandle): Promise<void> {
+    const info = await this.stat();
+    syncs.push({ directory: info.isDirectory(), ino: info.ino });
+    return original.call(this);
+  };
+  return {
+    syncs,
+    stop: () => {
+      prototype.sync = original;
+    },
+  };
+}
+
+/** `index` of the sync of this inode, a directory or not, after position `from`. */
+function syncAt(syncs: readonly SyncSeen[], ino: number, directory: boolean, from = -1): number {
+  return syncs.findIndex((seen, index) => index > from && seen.directory === directory && seen.ino === ino);
 }
 
 describe('the command line', () => {
@@ -866,8 +915,10 @@ describe('the evidence record is durable before the work is sent (Amendment 5 B3
   it('sends nothing, and halts, when the running record cannot be written', async () => {
     const w = work();
     const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
-    // The record's own path is a directory: the write fails, even for root.
-    mkdirSync(join(h.gatewayDirectory, 'planner-evidence', evidenceName(w.commandId)), { recursive: true });
+    // The evidence directory is a link to nowhere: nothing can be made in it, even by
+    // root, and there is no earlier record for the command to read.
+    mkdirSync(h.gatewayDirectory, { recursive: true });
+    symlinkSync(join(h.gatewayDirectory, 'nowhere'), join(h.gatewayDirectory, 'planner-evidence'));
     assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
     assert.equal(h.launches, 1);
     assert.deepEqual(h.seen().stdin, [], 'nothing was written to agy');
@@ -896,6 +947,32 @@ describe('the evidence record is durable before the work is sent (Amendment 5 B3
     assert.equal(recordAtSend?.['outcome'], 'running');
     assert.equal(recordAtSend?.['sent'], true);
     assert.equal(recordAtSend?.['initModel'], 'gemini-4-argon-high');
+  });
+
+  it('syncs the running record\'s file before the input line, not only its directory', async () => {
+    const w = work();
+    const recording = await startRecordingSyncs();
+    let fileSyncedAtSend: boolean | null = null;
+    try {
+      const h: Harness = harness({
+        mode: 'ok',
+        plan: readyPlanFor({ ...w } as never),
+        onLaunch: (child) => {
+          const write = child.stdin.end.bind(child.stdin) as (chunk: string) => void;
+          (child.stdin as unknown as { end: (chunk: string) => void }).end = (chunk: string) => {
+            // The file at the record's path is the one that was synced as a temporary file: a rename keeps the inode.
+            const ino = statSync(join(h.gatewayDirectory, 'planner-evidence', evidenceName(w.commandId))).ino;
+            fileSyncedAtSend = syncAt(recording.syncs, ino, false) !== -1;
+            write(chunk);
+          };
+        },
+      });
+      const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+      if (started.kind === 'accepted') await started.completion;
+    } finally {
+      recording.stop();
+    }
+    assert.equal(fileSyncedAtSend, true);
   });
 });
 
@@ -1227,5 +1304,173 @@ describe('daemon boot reaps and checks however the lanes\' recovery goes (Tier-2
       Promise.reject(new Error('staging recovery failed'));
     await assert.rejects(daemon.boot(), /staging recovery failed/);
     assert.deepEqual(events, ['executor.boot']);
+  });
+});
+
+describe('a halt survives a crash (Amendment 3 C1; Tier-2 F1)', () => {
+  it('syncs the halt marker, then its directory', async () => {
+    const w = work();
+    const synced: { path: string; markerVisible: boolean }[] = [];
+    const recording = await startRecordingSyncs();
+    let h: Harness;
+    try {
+      h = harness({
+        mode: 'ok',
+        probe: () => Promise.resolve(true),
+        syncDirectory: async (path) => {
+          synced.push({ path, markerVisible: existsSync(join(h.gatewayDirectory, 'planner-halted.json')) });
+          await syncDirectory(path);
+        },
+      });
+      assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
+    } finally {
+      recording.stop();
+    }
+    assert.equal(haltReason(h.gatewayDirectory), 'planner_user_has_processes_before_start');
+    const marker = statSync(join(h.gatewayDirectory, 'planner-halted.json'));
+    assert.notEqual(syncAt(recording.syncs, marker.ino, false), -1, 'the marker file was synced');
+    assert.deepEqual(synced[0], { path: h.gatewayDirectory, markerVisible: true }, 'the first directory sync is the marker\'s, after it is there');
+  });
+
+  it('stays halted in this process when the marker cannot be made durable, even once the file is gone', async () => {
+    const w = work();
+    const answers = [true];
+    const h: Harness = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      probe: () => Promise.resolve(answers.shift() ?? false),
+      syncDirectory: (path) => (path === h.gatewayDirectory ? Promise.reject(new Error('EIO')) : syncDirectory(path)),
+    });
+    assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
+    assert.ok(h.logged.includes('agy.halt_write_failed'));
+    rmSync(join(h.gatewayDirectory, 'planner-halted.json'));
+    assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' }, 'still halted');
+    assert.equal(h.launches, 0);
+  });
+});
+
+describe('the worker\'s records survive a crash, and no command runs twice (Tier-2 F2)', () => {
+  it('write syncs the record\'s file, then its directory, and the Gateway\'s when the directory is new', async () => {
+    const root = temporary('buildroom-agy-records-');
+    const directory = plannerRecordsDirectory(root);
+    const records = new PlannerRecordStore(directory);
+    const identity = await identityFor(harness({ mode: 'ok' }).executor, 'c1');
+    const recording = await startRecordingSyncs();
+    try {
+      await records.write({ commandId: 'c1', phase: 'attested', identity });
+    } finally {
+      recording.stop();
+    }
+    const fileAt = syncAt(recording.syncs, statSync(join(directory, evidenceName('c1'))).ino, false);
+    assert.notEqual(fileAt, -1, 'the file was synced');
+    assert.notEqual(syncAt(recording.syncs, statSync(directory).ino, true, fileAt), -1, 'then its directory');
+    assert.notEqual(syncAt(recording.syncs, statSync(root).ino, true, fileAt), -1, 'and the directory that gained it');
+  });
+
+  it('execute\'s starting record is on disk, synced with its directory, before the executor is asked', async () => {
+    const w = work();
+    const directory = plannerRecordsDirectory(temporary('buildroom-agy-records-'));
+    const identity = await identityFor(harness({ mode: 'ok' }).executor, w.commandId);
+    const recording = await startRecordingSyncs();
+    let atStart: { phase: unknown; fileSynced: boolean; directorySyncedAfter: boolean } | null = null;
+    const executor: PlannerExecutor = {
+      attest: () => Promise.resolve(identity),
+      start: () => {
+        const path = join(directory, evidenceName(w.commandId));
+        const fileAt = syncAt(recording.syncs, statSync(path).ino, false);
+        atStart = {
+          phase: (JSON.parse(readFileSync(path, 'utf8')) as { phase: unknown }).phase,
+          fileSynced: fileAt !== -1,
+          directorySyncedAfter: syncAt(recording.syncs, statSync(directory).ino, true, fileAt) !== -1,
+        };
+        return Promise.resolve({ kind: 'not_sent' });
+      },
+    };
+    try {
+      const worker = new GatewayPlannerWorker({ executor, records: new PlannerRecordStore(directory) });
+      await worker.handle({ requestId: uuid(), kind: 'attest', commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } });
+      assert.deepEqual(await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: identity.executionId, work: w }), { kind: 'not_sent' });
+    } finally {
+      recording.stop();
+    }
+    assert.deepEqual(atStart, { phase: 'starting', fileSynced: true, directorySyncedAfter: true });
+  });
+
+  it('a command whose evidence says its work was sent is not started again, whatever the worker\'s record says', async () => {
+    const w = work();
+    const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
+    const identity = await identityFor(h.executor, w.commandId);
+    // What a crash can leave: the worker's `starting` record lost, so its record still
+    // says `attested`, while the executor's evidence, closed at boot, says the work was sent.
+    const records = new PlannerRecordStore(plannerRecordsDirectory(temporary('buildroom-agy-records-')));
+    await records.write({ commandId: w.commandId, phase: 'attested', identity });
+    const evidenceDirectory = join(h.gatewayDirectory, 'planner-evidence');
+    mkdirSync(evidenceDirectory, { recursive: true });
+    const evidencePath = join(evidenceDirectory, evidenceName(w.commandId));
+    const earlier = `${JSON.stringify({
+      commandId: w.commandId,
+      executionId: identity.executionId,
+      startedAt: '2026-10-27T00:00:00.000Z',
+      agySha256: AGY_HASH,
+      initModel: 'gemini-4-argon-high',
+      conversationId: '3b2c7a4c-1bda-46b1-8dc1-44641701df02',
+      sent: true,
+      endedAt: '2026-10-27T00:00:01.000Z',
+      outcome: 'daemon_ended_during_run',
+      exitCode: null,
+      signal: null,
+      checkoutRemoved: null,
+    })}\n`;
+    writeFileSync(evidencePath, earlier);
+    const worker = new GatewayPlannerWorker({ executor: h.executor, records });
+    const answer = await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: identity.executionId, work: w });
+    assert.equal(answer, null, 'unknown, not not_sent: the work did reach agy once');
+    assert.equal((await records.read(w.commandId))?.phase, 'lost');
+    assert.equal(h.launches, 0);
+    assert.equal(readFileSync(evidencePath, 'utf8'), earlier, 'the earlier record stands');
+    assert.ok(h.logged.includes('agy.already_sent'));
+  });
+
+  it('an earlier refusal does not stop a retry; a record that cannot be read halts, and nothing starts', async () => {
+    const refused = (w: PlannerWorkWire, identity: PlannerIdentityWire): string =>
+      `${JSON.stringify({
+        commandId: w.commandId,
+        executionId: identity.executionId,
+        startedAt: '2026-10-27T00:00:00.000Z',
+        agySha256: null,
+        initModel: null,
+        conversationId: null,
+        sent: false,
+        endedAt: '2026-10-27T00:00:00.000Z',
+        outcome: 'agy_hash_mismatch',
+        exitCode: null,
+        signal: null,
+        checkoutRemoved: null,
+      })}\n`;
+    {
+      const w = work();
+      const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
+      const identity = await identityFor(h.executor, w.commandId);
+      mkdirSync(join(h.gatewayDirectory, 'planner-evidence'), { recursive: true });
+      writeFileSync(join(h.gatewayDirectory, 'planner-evidence', evidenceName(w.commandId)), refused(w, identity));
+      const started = await h.executor.start(w, identity);
+      assert.equal(started.kind, 'accepted');
+      if (started.kind === 'accepted') await started.completion;
+      assert.equal(h.launches, 1);
+    }
+    for (const shape of ['not json', 'a directory', 'another command\'s record'] as const) {
+      const w = work();
+      const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
+      const identity = await identityFor(h.executor, w.commandId);
+      const path = join(h.gatewayDirectory, 'planner-evidence', evidenceName(w.commandId));
+      mkdirSync(join(h.gatewayDirectory, 'planner-evidence'), { recursive: true });
+      if (shape === 'a directory') mkdirSync(path);
+      else writeFileSync(path, shape === 'not json' ? '{not json' : refused(work(), identity));
+      const before = shape === 'a directory' ? null : readFileSync(path, 'utf8');
+      await assert.rejects(h.executor.start(w, identity), /cannot be read/, shape);
+      assert.equal(h.launches, 0, shape);
+      assert.equal(haltReason(h.gatewayDirectory), 'evidence_unreadable', shape);
+      assert.equal(shape === 'a directory' ? null : readFileSync(path, 'utf8'), before, `${shape}: untouched`);
+    }
   });
 });

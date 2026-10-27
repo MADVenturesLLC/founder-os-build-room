@@ -7,9 +7,13 @@
  * Gateway's own directory. The record is what makes the channel's promises
  * true across a restart of either side:
  *
- *   - AT MOST ONE EXECUTION PER COMMAND ID. `execute` writes `starting`
- *     before it asks the executor to start, and answers every later
- *     `execute` for the command from the record, never by starting again.
+ *   - AT MOST ONE EXECUTION PER COMMAND ID. `execute` writes `starting`,
+ *     synced to disk with its directory entry, before it asks the executor
+ *     to start, and answers every later `execute` for the command from the
+ *     record, never by starting again. The executor keeps its own guard: a
+ *     command whose evidence says its work was sent is never started again
+ *     (`agy-planner-executor.ts`), so a worker record lost to a crash cannot
+ *     run a command twice.
  *   - `not_sent` AND `never_received` ARE AFFIRMATIVE. They are answered only
  *     when the record proves the work never reached a provider: no record,
  *     an attestation only, or an executor that said it sent nothing.
@@ -27,7 +31,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   MAX_PLANNER_PAYLOAD_BYTES,
   PLANNER_SURFACES,
@@ -93,6 +97,16 @@ export function plannerRecordsDirectory(gatewayDirectory: string): string {
   return join(gatewayDirectory, 'planner');
 }
 
+/** Syncs a directory, so the renames and links already made in it survive a crash. */
+export async function syncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 export class PlannerRecordStore {
   constructor(private readonly directory: string) {}
 
@@ -116,9 +130,16 @@ export class PlannerRecordStore {
     return record;
   }
 
-  /** Atomic tmp+rename, fsynced, mode 0600, as the daemon's state file. */
+  /**
+   * Atomic tmp+rename, mode 0600, as the daemon's state file: the file is
+   * synced before the rename and the directory after it (and the Gateway's
+   * directory too when this one was just made), so a record that was written
+   * is still there after a crash. The write-ahead `starting` record depends
+   * on that: a lost one would leave an older phase that permits the command
+   * to start again.
+   */
   async write(record: PlannerRecord): Promise<void> {
-    await mkdir(this.directory, { recursive: true, mode: DIRECTORY_MODE });
+    const created = await mkdir(this.directory, { recursive: true, mode: DIRECTORY_MODE });
     const temporary = join(this.directory, `.record.${randomUUID()}.tmp`);
     const handle = await open(temporary, 'wx', FILE_MODE);
     try {
@@ -133,6 +154,8 @@ export class PlannerRecordStore {
       await unlink(temporary).catch(() => undefined);
       throw error;
     }
+    await syncDirectory(this.directory);
+    if (created !== undefined) await syncDirectory(dirname(this.directory));
   }
 
   async all(): Promise<PlannerRecord[]> {

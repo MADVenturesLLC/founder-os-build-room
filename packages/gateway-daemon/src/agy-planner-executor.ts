@@ -81,7 +81,7 @@ import type {
 import { PLANDOC_SCHEMA_V1 } from '../../seat-output-schema/src/index.js';
 import { createDaemonClock } from './clock.js';
 import { DIRECTORY_MODE, FILE_MODE } from './paths.js';
-import type { PlannerExecutor, PlannerStart } from './planner-worker.js';
+import { syncDirectory, type PlannerExecutor, type PlannerStart } from './planner-worker.js';
 
 /** The one lane this executor serves (the ruling's B1). */
 export const AGY_PLANNER_LANE = {
@@ -483,6 +483,20 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   }
 
   private async startHeld(work: PlannerWorkWire, identity: PlannerIdentityWire, inFlight: InFlight): Promise<PlannerStart> {
+    // At most one execution per command: a record that says the work was sent, by this
+    // process or one a crash ended, stands, and the command is not started again. The
+    // answer is a rejection, not `not_sent`, because the work did reach agy once; the
+    // worker records that as unknown. Neither case writes over the record.
+    const prior = await this.priorEvidence(work.commandId);
+    if (prior === 'sent') {
+      this.log('error', 'agy.already_sent', { commandId: work.commandId });
+      throw new Error('this command was already sent to agy by an earlier execution, and is not started again');
+    }
+    if (prior === 'unreadable') {
+      await this.halt('evidence_unreadable');
+      throw new Error('this command\'s evidence record cannot be read, so whether it was sent is unknown');
+    }
+
     let lingering: boolean;
     try {
       lingering = await this.probe();
@@ -733,7 +747,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   private async halt(reason: string): Promise<void> {
     this.log('error', 'agy.halted', { reason, haltFile: this.haltPath(), plannerUser: this.config.plannerUser });
     try {
-      await mkdir(this.config.gatewayDirectory, { recursive: true, mode: DIRECTORY_MODE });
+      const created = await mkdir(this.config.gatewayDirectory, { recursive: true, mode: DIRECTORY_MODE });
       // Exclusive create: a path already there, link or file, is never written through.
       const handle = await open(this.haltPath(), 'wx', FILE_MODE);
       try {
@@ -742,9 +756,16 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       } finally {
         await handle.close();
       }
+      // The marker's directory entry survives a crash only once the directory is synced;
+      // a halt that a crash could clear would let work through with no one's direction
+      // (Amendment 3 C1).
+      const sync = this.deps.syncDirectory ?? syncDirectory;
+      await sync(this.config.gatewayDirectory);
+      if (created !== undefined) await sync(dirname(this.config.gatewayDirectory));
     } catch (error) {
       // Already there: the executor is halted already, and the first reason stands.
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') return;
+      // The file may or may not be there to be found after a crash; this process stays halted.
       this.log('error', 'agy.halt_write_failed', { message: describe(error) });
       this.haltedInMemory = true;
     }
@@ -774,6 +795,34 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     return { kind: 'not_sent' };
   }
 
+  /** What this command's evidence record already says: nothing, sent, not sent, or unreadable. */
+  private async priorEvidence(commandId: string): Promise<'none' | 'sent' | 'not_sent' | 'unreadable'> {
+    let text: string;
+    try {
+      text = await readFile(this.evidencePath(commandId), 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'none';
+      this.log('error', 'agy.evidence_unreadable', { commandId, message: describe(error) });
+      return 'unreadable';
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      this.log('error', 'agy.evidence_unreadable', { commandId, message: describe(error) });
+      return 'unreadable';
+    }
+    if (!isEvidenceRecord(parsed) || parsed.commandId !== commandId) {
+      this.log('error', 'agy.evidence_unreadable', { commandId, message: 'not this command\'s evidence record' });
+      return 'unreadable';
+    }
+    return parsed.sent ? 'sent' : 'not_sent';
+  }
+
+  private evidencePath(commandId: string): string {
+    return join(this.config.gatewayDirectory, 'planner-evidence', `${createHash('sha256').update(commandId, 'utf8').digest('hex')}.json`);
+  }
+
   /**
    * Atomic tmp+rename, mode 0600, one file per command, overwritten as the
    * run moves on; the file is synced before the rename and its directory
@@ -786,7 +835,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     const directory = join(this.config.gatewayDirectory, 'planner-evidence');
     try {
       const created = await mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
-      const target = join(directory, `${createHash('sha256').update(record.commandId, 'utf8').digest('hex')}.json`);
+      const target = this.evidencePath(record.commandId);
       const temporary = join(directory, `.evidence.${randomUUID()}.tmp`);
       const handle = await open(temporary, 'wx', FILE_MODE);
       try {
@@ -1130,14 +1179,4 @@ export async function removeCheckout(path: string): Promise<void> {
     (error: NodeJS.ErrnoException) => error.code !== 'ENOENT',
   );
   if (remains) throw new Error(`the checkout ${path} remains${failure === null ? '' : `: ${describe(failure)}`}`);
-}
-
-/** Syncs a directory, so the renames and links already made in it survive a crash. */
-export async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(path, 'r');
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
 }
