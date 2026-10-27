@@ -132,9 +132,12 @@ export {
   AgyPlannerExecutor,
   BANNED_AGY_ARGUMENTS,
   PINNED_AGY_ARGUMENTS,
+  PKILL_PATH,
   agyInputLine,
   gitCheckout,
   pgrepProbe,
+  pkillReaper,
+  sha256OfFile,
   planDocumentFrom,
   plannerPrompt,
   readOnly,
@@ -142,7 +145,9 @@ export {
   type AgyPlannerConfig,
   type AgyPlannerDeps,
   type CheckoutMaker,
+  type FileHasher,
   type Launch,
+  type PlannerReaper,
   type PlannerProcessProbe,
 } from './agy-planner-executor.js';
 export { choosePlannerExecutor, type PlannerExecutorChoice, type PlannerExecutorContext } from './planner-executor-factory.js';

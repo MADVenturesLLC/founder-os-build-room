@@ -10,9 +10,11 @@
  *   - The primary identity this daemon holds is Gateway `1880c12d`, the one
  *     Gateway the ruling binds (B1). On any other Gateway the variable is
  *     refused, and the refusal is logged.
- *   - `BUILDROOM_PLANNER_USER`, `BUILDROOM_PLANNER_AGY` and
- *     `BUILDROOM_PLANNER_CHECKOUTS` name the planner user, the agy binary
- *     the privilege rule names, and the directory checkouts are made in.
+ *   - `BUILDROOM_PLANNER_USER`, `BUILDROOM_PLANNER_AGY`,
+ *     `BUILDROOM_PLANNER_AGY_SHA256` and `BUILDROOM_PLANNER_CHECKOUTS` name
+ *     the planner user, the planner user's own agy copy the privilege rule
+ *     names, that copy's SHA-256 as the Founder's latest act records it
+ *     (Amendment 3, Part C), and the directory checkouts are made in.
  *
  * Nothing here selects a test seam: the executor is built with its real
  * collaborators, and suites construct `AgyPlannerExecutor` themselves.
@@ -45,14 +47,18 @@ export function choosePlannerExecutor(context: PlannerExecutorContext): PlannerE
   }
   const plannerUser = context.env['BUILDROOM_PLANNER_USER'];
   const agyPath = context.env['BUILDROOM_PLANNER_AGY'];
+  const agySha256 = context.env['BUILDROOM_PLANNER_AGY_SHA256'];
   const checkoutParent = context.env['BUILDROOM_PLANNER_CHECKOUTS'];
-  if (plannerUser === undefined || agyPath === undefined || checkoutParent === undefined) {
-    return { kind: 'refused', reason: 'BUILDROOM_PLANNER_USER, BUILDROOM_PLANNER_AGY and BUILDROOM_PLANNER_CHECKOUTS must all be set' };
+  if (plannerUser === undefined || agyPath === undefined || agySha256 === undefined || checkoutParent === undefined) {
+    return {
+      kind: 'refused',
+      reason: 'BUILDROOM_PLANNER_USER, BUILDROOM_PLANNER_AGY, BUILDROOM_PLANNER_AGY_SHA256 and BUILDROOM_PLANNER_CHECKOUTS must all be set',
+    };
   }
   let executor: AgyPlannerExecutor;
   try {
     executor = new AgyPlannerExecutor(
-      { sudoPath: '/usr/bin/sudo', plannerUser, agyPath, checkoutParent, gatewayDirectory: context.gatewayDirectory },
+      { sudoPath: '/usr/bin/sudo', plannerUser, agyPath, agySha256, checkoutParent, gatewayDirectory: context.gatewayDirectory },
       context.log === undefined ? {} : { log: context.log },
     );
   } catch (error) {

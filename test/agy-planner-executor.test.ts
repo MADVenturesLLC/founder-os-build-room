@@ -34,6 +34,7 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -49,6 +50,7 @@ import {
   PlannerRecordStore,
   choosePlannerExecutor,
   planDocumentFrom,
+  sha256OfFile,
   readOnly,
   removeCheckout,
   type AgyPlannerDeps,
@@ -60,6 +62,8 @@ import { readyPlanFor } from './support/synthetic-planner.js';
 import { uuid } from './gateway-helpers.js';
 
 const FAKE_AGY = fileURLToPath(new URL('./support/fake-agy.js', import.meta.url));
+/** The hash the Founder's act records for the copy, in these cases. */
+const AGY_HASH = 'e'.repeat(64);
 const roots: string[] = [];
 after(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
@@ -91,6 +95,8 @@ interface Harness {
   readonly gatewayDirectory: string;
   readonly checkouts: string[];
   launches: number;
+  /** How many times the second privilege rule ran. */
+  readonly reaps: () => number;
   /** What the fake saw: its argv and cwd, then every input line. */
   seen(): { argv: string[]; cwd: string; stdin: string[] };
 }
@@ -101,6 +107,7 @@ function harness(options: {
   probe?: AgyPlannerDeps['probe'];
   checkout?: AgyPlannerDeps['checkout'];
   timings?: AgyPlannerDeps['timings'];
+  hashFile?: AgyPlannerDeps['hashFile'];
 }): Harness {
   const root = temporary('buildroom-agy-');
   const logPath = join(root, 'fake.log');
@@ -108,7 +115,7 @@ function harness(options: {
   const checkoutParent = join(root, 'checkouts');
   mkdirSync(checkoutParent);
   const checkouts: string[] = [];
-  const state = { launches: 0 };
+  const state = { launches: 0, reaps: 0 };
   const launch: Launch = (file, args, launchOptions) => {
     state.launches += 1;
     assert.equal(file, '/usr/bin/sudo');
@@ -128,12 +135,18 @@ function harness(options: {
       sudoPath: '/usr/bin/sudo',
       plannerUser: 'buildroom-planner',
       agyPath: '/opt/agy/bin/agy',
+      agySha256: AGY_HASH,
       checkoutParent,
       gatewayDirectory,
     },
     {
       launch,
       probe: options.probe ?? (() => Promise.resolve(false)),
+      reap: () => {
+        state.reaps += 1;
+        return Promise.resolve();
+      },
+      hashFile: options.hashFile ?? (() => Promise.resolve(AGY_HASH)),
       checkout:
         options.checkout ??
         (async (_work, parent) => {
@@ -155,6 +168,7 @@ function harness(options: {
     set launches(value: number) {
       state.launches = value;
     },
+    reaps: () => state.reaps,
     seen() {
       const lines = existsSync(logPath)
         ? readFileSync(logPath, 'utf8').trim().split('\n').filter((line) => line !== '').map((line) => JSON.parse(line) as Record<string, unknown>)
@@ -201,6 +215,7 @@ describe('the command line', () => {
       '--mode',
       'plan',
       '--sandbox',
+      '--disable-slash-commands',
       '--print-timeout',
       '900s',
     ]);
@@ -227,10 +242,24 @@ describe('the command line', () => {
     assert.ok(!PINNED_AGY_ARGUMENTS.includes('--print'));
   });
 
-  it('refuses a relative path or a malformed user name', () => {
-    const base = { sudoPath: '/usr/bin/sudo', plannerUser: 'buildroom-planner', agyPath: '/opt/agy', checkoutParent: '/tmp', gatewayDirectory: '/tmp' };
+  it('reaps through exactly the second privilege rule: pkill -KILL -u, as the planner user', () => {
+    const { executor } = harness({ mode: 'ok' });
+    assert.deepEqual(executor.reapCommandLine(), ['/usr/bin/sudo', '-n', '-u', 'buildroom-planner', '--', '/usr/bin/pkill', '-KILL', '-u', 'buildroom-planner']);
+  });
+
+  it('refuses a relative path, a malformed user name or a malformed hash', () => {
+    const base = { sudoPath: '/usr/bin/sudo', plannerUser: 'buildroom-planner', agyPath: '/opt/agy', agySha256: AGY_HASH, checkoutParent: '/tmp', gatewayDirectory: '/tmp' };
     assert.throws(() => new AgyPlannerExecutor({ ...base, agyPath: 'agy' }));
     assert.throws(() => new AgyPlannerExecutor({ ...base, plannerUser: 'root; rm' }));
+    assert.throws(() => new AgyPlannerExecutor({ ...base, agySha256: 'E'.repeat(64) }));
+    assert.throws(() => new AgyPlannerExecutor({ ...base, agySha256: '' }));
+  });
+
+  it('hashes a file as sha256sum does', async () => {
+    const root = temporary('buildroom-agy-hash-');
+    const file = join(root, 'agy');
+    writeFileSync(file, 'agy 1.4.7\n');
+    assert.equal(await sha256OfFile(file), createHash('sha256').update('agy 1.4.7\n').digest('hex'));
   });
 });
 
@@ -285,6 +314,8 @@ describe('start: the init gate', () => {
     assert.equal(existsSync(h.checkouts[0] ?? ''), false, 'the checkout is removed after the run');
 
     const [evidence] = evidenceOf(h.gatewayDirectory);
+    assert.equal(h.reaps(), 1, 'the planner user is reaped after the run');
+    assert.equal(evidence?.['agySha256'], AGY_HASH);
     assert.equal(evidence?.['initModel'], 'gemini-4-argon-high');
     assert.equal(evidence?.['conversationId'], '3b2c7a4c-1bda-46b1-8dc1-44641701df02');
     assert.equal(evidence?.['sent'], true);
@@ -305,6 +336,7 @@ describe('start: the init gate', () => {
       assert.deepEqual(started, { kind: 'not_sent' });
       assert.equal(h.launches, 1);
       assert.deepEqual(h.seen().stdin, [], 'nothing was written to agy');
+      assert.equal(h.reaps(), 1, 'the planner user is reaped after a refused run too');
       assert.equal(existsSync(h.checkouts[0] ?? ''), false);
       const [evidence] = evidenceOf(h.gatewayDirectory);
       assert.equal(evidence?.['sent'], false);
@@ -343,6 +375,24 @@ describe('start: a run that fails after the work is sent', () => {
 });
 
 describe('start: refused before agy starts', () => {
+  it('when the agy copy\'s hash is not the recorded one', async () => {
+    const w = work();
+    const h = harness({ mode: 'ok', hashFile: () => Promise.resolve('f'.repeat(64)) });
+    assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
+    assert.equal(h.launches, 0);
+    const [evidence] = evidenceOf(h.gatewayDirectory);
+    assert.equal(evidence?.['outcome'], 'agy_hash_mismatch');
+    assert.equal(evidence?.['agySha256'], 'f'.repeat(64));
+  });
+
+  it('when the agy copy cannot be read', async () => {
+    const w = work();
+    const h = harness({ mode: 'ok', hashFile: () => Promise.reject(new Error('ENOENT')) });
+    assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
+    assert.equal(h.launches, 0);
+    assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['outcome'], 'agy_hash_failed');
+  });
+
   it('when a planner-user process is still running', async () => {
     const w = work();
     const h = harness({ mode: 'ok', probe: () => Promise.resolve(true) });
@@ -439,6 +489,7 @@ describe('the daemon selects the executor', () => {
     BUILDROOM_PLANNER_EXECUTOR: 'agy',
     BUILDROOM_PLANNER_USER: 'buildroom-planner',
     BUILDROOM_PLANNER_AGY: '/opt/agy/bin/agy',
+    BUILDROOM_PLANNER_AGY_SHA256: 'e'.repeat(64),
     BUILDROOM_PLANNER_CHECKOUTS: '/var/lib/buildroom-planner/checkouts',
   };
   const context = { env, platform: 'linux' as const, gatewayId: AGY_PLANNER_GATEWAY_ID, gatewayDirectory: '/tmp/gateway' };
@@ -460,5 +511,7 @@ describe('the daemon selects the executor', () => {
     assert.equal(choosePlannerExecutor({ ...context, env: { ...env, BUILDROOM_PLANNER_EXECUTOR: 'claude-code' } }).kind, 'refused');
     assert.equal(choosePlannerExecutor({ ...context, env: { ...env, BUILDROOM_PLANNER_AGY: undefined } }).kind, 'refused');
     assert.equal(choosePlannerExecutor({ ...context, env: { ...env, BUILDROOM_PLANNER_AGY: 'agy' } }).kind, 'refused');
+    assert.equal(choosePlannerExecutor({ ...context, env: { ...env, BUILDROOM_PLANNER_AGY_SHA256: undefined } }).kind, 'refused');
+    assert.equal(choosePlannerExecutor({ ...context, env: { ...env, BUILDROOM_PLANNER_AGY_SHA256: 'not-a-hash' } }).kind, 'refused');
   });
 });

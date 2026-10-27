@@ -1,7 +1,8 @@
 /**
  * The Planner's executor on Antigravity: agy, run headless on Gateway
  * `1880c12d` only (FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR and its
- * Amendments 1 and 2, recorded in FounderOS `DEC-20260827-01` Section 12).
+ * Amendments 1 and 2, recorded in FounderOS `DEC-20260827-01` Section 12,
+ * and its Amendment 3, signed in the builder's session on 2026-10-27).
  *
  * WHAT IT IS BOUND TO (the ruling's B1). One seat, `architect`; one lane,
  * `antigravity`, `gemini-4-argon`, effort high, which agy names
@@ -17,9 +18,12 @@
  * a provider. A later event that names a different model fails the run.
  * Nothing about the model is read from any other output.
  *
- * HOW agy IS STARTED (Amendment 1, Part C). Never as the Gateway's user:
- * only through the one privilege rule, `sudo -n -u <planner user> -- <agy>`
- * followed by exactly `PINNED_AGY_ARGUMENTS`. The arguments are a frozen
+ * HOW agy IS STARTED (Amendment 1, Part C; Amendment 3, Parts B and C).
+ * Never as the Gateway's user: only through the first privilege rule,
+ * `sudo -n -u <planner user> -- <agy>` followed by exactly
+ * `PINNED_AGY_ARGUMENTS`, where `<agy>` is the planner user's own root-owned
+ * copy. Before every run the executor hashes that copy, and a hash that is
+ * not the one the Founder's latest act recorded starts nothing. The arguments are a frozen
  * constant, so no command, room or caller can add one; the banned flags of
  * Amendment 1 C4 are refused at module load. Each run reads a fresh
  * checkout of the target repository at the work's base commit, made by the
@@ -28,14 +32,13 @@
  * checkout is fetched anonymously, which only a public repository allows
  * (ruling B5).
  *
- * HOW A RUN ENDS (Amendment 2, Part C). The Gateway's user cannot signal
- * the planner user's processes; it can signal `sudo`, which relays the
- * signal to agy. So the executor ends agy that way, and before every start
- * it asks the operating system whether any process of the planner user is
- * still running. If one is, nothing starts (`not_sent`): a leftover process
- * from an earlier run fails the next one closed, it is never ignored.
- * Reaping what agy itself spawned is the PC's job, set up by the Founder's
- * PC act; this check is what makes a missing reaper visible.
+ * HOW A RUN ENDS (Amendment 2, Part C; Amendment 3, Part E). The executor
+ * ends agy through `sudo`, which relays the signal, and then runs the second
+ * privilege rule, `sudo -n -u <planner user> -- /usr/bin/pkill -KILL -u
+ * <planner user>`, so the planner user ends everything it still runs. Before
+ * every start it asks the operating system whether any process of the
+ * planner user is still running. If one is, nothing starts (`not_sent`): a
+ * leftover process fails the next run closed, it is never ignored.
  *
  * EVIDENCE (Amendment 1 B2; ruling B8). For each command the executor
  * writes one record in the Gateway's directory: the `init` model and
@@ -82,14 +85,10 @@ export const AGY_PRINT_TIMEOUT = '900s';
  * The arguments the privilege rule fixes, in the order it lists them; the
  * rule matches this list character for character.
  *
- * Amendment 1 C3 also lists `--print`. agy 1.4.7 takes `--print` as the
- * flag that carries the prompt and refuses it without a value ("flag needs
- * an argument: -print"), and with `--input-format stream-json` the prompt
- * comes from standard input, which starts print mode on its own. The
- * Founder read both on the PC on 2026-10-26, 22:54Z to 22:59Z. So `--print`
- * is left out here, which narrows the command line and widens nothing; the
- * correction to C3 is the Founder's to make, and this executor is not
- * wired anywhere until it is.
+ * Amendment 3 B1 sets them, replacing Amendment 1 C3's list: `--print` is
+ * gone, because agy 1.4.7 refuses it without a value and standard input
+ * starts print mode on its own (the Founder's readings on the PC,
+ * 2026-10-26, 22:54Z to 22:59Z), and `--disable-slash-commands` is added.
  */
 export const PINNED_AGY_ARGUMENTS: readonly string[] = Object.freeze([
   '--input-format',
@@ -103,6 +102,7 @@ export const PINNED_AGY_ARGUMENTS: readonly string[] = Object.freeze([
   '--mode',
   'plan',
   '--sandbox',
+  '--disable-slash-commands',
   '--print-timeout',
   AGY_PRINT_TIMEOUT,
 ]);
@@ -139,8 +139,17 @@ const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/;
 /** How the executor launches a process. Production is `node:child_process.spawn`. */
 export type Launch = (file: string, args: readonly string[], options: { readonly cwd: string }) => ChildProcessWithoutNullStreams;
 
+/** The second privilege rule's command (Amendment 3 E1), run as the planner user. */
+export const PKILL_PATH = '/usr/bin/pkill';
+
 /** Whether any process of the planner user is running. Production asks `pgrep`. */
 export type PlannerProcessProbe = () => Promise<boolean>;
+
+/** Ends every process of the planner user. Production runs the second privilege rule. */
+export type PlannerReaper = () => Promise<void>;
+
+/** The SHA-256 of a file, as lowercase hex. */
+export type FileHasher = (path: string) => Promise<string>;
 
 /** Makes the run's read-only checkout and returns its path. Production fetches anonymously with git. */
 export type CheckoutMaker = (work: PlannerWorkWire, parent: string) => Promise<string>;
@@ -150,8 +159,10 @@ export interface AgyPlannerConfig {
   readonly sudoPath: string;
   /** The dedicated, unprivileged planner user (Amendment 1 C1). */
   readonly plannerUser: string;
-  /** Absolute path of the agy binary the privilege rule names. */
+  /** Absolute path of the planner user's root-owned agy copy, which the privilege rule names (Amendment 3 C1). */
   readonly agyPath: string;
+  /** The copy's SHA-256 as the Founder's latest act records it (Amendment 3 C3). */
+  readonly agySha256: string;
   /** A directory the Gateway's user owns and the planner user may traverse; checkouts are made below it. */
   readonly checkoutParent: string;
   /** The Gateway's own directory; evidence records are written below it. */
@@ -161,6 +172,8 @@ export interface AgyPlannerConfig {
 export interface AgyPlannerDeps {
   readonly launch?: Launch;
   readonly probe?: PlannerProcessProbe;
+  readonly reap?: PlannerReaper;
+  readonly hashFile?: FileHasher;
   readonly checkout?: CheckoutMaker;
   /** The daemon's clock boundary (contract §4). */
   readonly clock?: Clock;
@@ -273,6 +286,8 @@ interface EvidenceRecord {
   readonly commandId: string;
   readonly executionId: string;
   readonly startedAt: string;
+  /** The agy copy's SHA-256 as read before the run, or `null` when it was not read. */
+  readonly agySha256: string | null;
   readonly initModel: string | null;
   readonly conversationId: string | null;
   readonly sent: boolean;
@@ -285,6 +300,8 @@ interface EvidenceRecord {
 export class AgyPlannerExecutor implements PlannerExecutor {
   private readonly launch: Launch;
   private readonly probe: PlannerProcessProbe;
+  private readonly reap: PlannerReaper;
+  private readonly hashFile: FileHasher;
   private readonly checkout: CheckoutMaker;
   private readonly clock: Clock;
   private readonly initTimeoutMs: number;
@@ -301,8 +318,11 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       if (!value.startsWith('/')) throw new Error(`${name} must be an absolute path`);
     }
     if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(config.plannerUser)) throw new Error('plannerUser is not a user name');
+    if (!/^[0-9a-f]{64}$/.test(config.agySha256)) throw new Error('agySha256 is not a lowercase SHA-256');
     this.launch = deps.launch ?? ((file, args, options) => spawn(file, [...args], { cwd: options.cwd, stdio: 'pipe' }));
     this.probe = deps.probe ?? pgrepProbe(config.plannerUser);
+    this.reap = deps.reap ?? pkillReaper(this.reapCommandLine());
+    this.hashFile = deps.hashFile ?? sha256OfFile;
     this.checkout = deps.checkout ?? gitCheckout;
     this.clock = deps.clock ?? createDaemonClock();
     this.initTimeoutMs = deps.timings?.initTimeoutMs ?? INIT_TIMEOUT_MS;
@@ -310,9 +330,14 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     this.stopGraceMs = deps.timings?.stopGraceMs ?? STOP_GRACE_MS;
   }
 
-  /** The command line the privilege rule must match, exactly. */
+  /** The command line the first privilege rule must match, exactly. */
   commandLine(): readonly string[] {
     return [this.config.sudoPath, '-n', '-u', this.config.plannerUser, '--', this.config.agyPath, ...PINNED_AGY_ARGUMENTS];
+  }
+
+  /** The command line the second privilege rule must match, exactly (Amendment 3 E1). */
+  reapCommandLine(): readonly string[] {
+    return [this.config.sudoPath, '-n', '-u', this.config.plannerUser, '--', PKILL_PATH, '-KILL', '-u', this.config.plannerUser];
   }
 
   /** Answered from the lane alone: no process starts and no provider is contacted. */
@@ -367,6 +392,20 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       return this.refuse(work, identity, 'planner_user_has_processes');
     }
 
+    let agySha256: string;
+    try {
+      agySha256 = await this.hashFile(this.config.agyPath);
+    } catch (error) {
+      this.log('error', 'agy.hash_failed', { message: describe(error) });
+      release();
+      return this.refuse(work, identity, 'agy_hash_failed');
+    }
+    if (agySha256 !== this.config.agySha256) {
+      this.log('error', 'agy.hash_mismatch', { expected: this.config.agySha256, read: agySha256 });
+      release();
+      return this.refuse(work, identity, 'agy_hash_mismatch', agySha256);
+    }
+
     let directory: string;
     try {
       directory = await this.checkout(work, this.config.checkoutParent);
@@ -396,6 +435,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     if (init === null || init['event'] !== 'init' || initModel !== AGY_PLANNER_LANE.agyModel) {
       // Nothing was written to agy's input: the work never left this host.
       const ended = await run.stop();
+      await this.reapPlannerUser();
       await removeCheckout(directory);
       release();
       const outcome = init === null ? 'no_init_event' : init['event'] !== 'init' ? 'first_event_not_init' : 'init_model_mismatch';
@@ -403,6 +443,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
         commandId: work.commandId,
         executionId: identity.executionId,
         startedAt,
+        agySha256,
         initModel,
         conversationId,
         sent: false,
@@ -416,12 +457,13 @@ export class AgyPlannerExecutor implements PlannerExecutor {
 
     // The model is the lane's: the work goes in, and from here contact cannot be ruled out.
     run.send(agyInputLine(plannerPrompt(work)));
-    const evidenceBase = { commandId: work.commandId, executionId: identity.executionId, startedAt, initModel, conversationId, sent: true };
+    const evidenceBase = { commandId: work.commandId, executionId: identity.executionId, startedAt, agySha256, initModel, conversationId, sent: true };
     await this.evidence({ ...evidenceBase, endedAt: null, outcome: 'running', exitCode: null, signal: null });
 
     const completion = run.result(this.runTimeoutMs).then(
       async (outcome) => {
         const ended = await run.stop();
+        await this.reapPlannerUser();
         await removeCheckout(directory);
         release();
         await this.evidence({ ...evidenceBase, endedAt: this.isoNow(), outcome: outcome.kind, ...ended });
@@ -432,11 +474,30 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     return { kind: 'accepted', observed: { ...AGY_PLANNER_ROUTE }, completion };
   }
 
-  private async refuse(work: PlannerWorkWire, identity: PlannerIdentityWire, outcome: string): Promise<PlannerStart> {
+  /**
+   * The second privilege rule, then the check. A reap that fails, or a
+   * process that survives it, is logged; the next start's check refuses
+   * while anything remains.
+   */
+  private async reapPlannerUser(): Promise<void> {
+    try {
+      await this.reap();
+    } catch (error) {
+      this.log('error', 'agy.reap_failed', { message: describe(error) });
+    }
+    try {
+      if (await this.probe()) this.log('error', 'agy.planner_user_survived_reap', { plannerUser: this.config.plannerUser });
+    } catch (error) {
+      this.log('error', 'agy.probe_failed', { message: describe(error) });
+    }
+  }
+
+  private async refuse(work: PlannerWorkWire, identity: PlannerIdentityWire, outcome: string, agySha256: string | null = null): Promise<PlannerStart> {
     await this.evidence({
       commandId: work.commandId,
       executionId: identity.executionId,
       startedAt: this.isoNow(),
+      agySha256,
       initModel: null,
       conversationId: null,
       sent: false,
@@ -621,6 +682,27 @@ function execute(file: string, args: readonly string[], cwd?: string): Promise<{
       reject(error);
     });
   });
+}
+
+/** The second privilege rule. `pkill` exits 0 when it signalled a process and 1 when none matched; both are a clean reap. */
+export function pkillReaper(commandLine: readonly string[]): PlannerReaper {
+  return async () => {
+    const [file, ...args] = commandLine as [string, ...string[]];
+    const { code } = await execute(file, args);
+    if (code !== 0 && code !== 1) throw new Error(`pkill rule exited ${code}`);
+  };
+}
+
+/** The SHA-256 of a file, streamed. */
+export async function sha256OfFile(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  const handle = await open(path, 'r');
+  try {
+    for await (const chunk of handle.createReadStream()) hash.update(chunk as Buffer);
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+  return hash.digest('hex');
 }
 
 /** `pgrep -u <user>` exits 0 when the user has a process, 1 when it has none; anything else is an error. */
