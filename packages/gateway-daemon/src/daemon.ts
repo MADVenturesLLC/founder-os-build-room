@@ -101,6 +101,22 @@ export class GatewayDaemon {
 
   /** Load persisted state and adopt the primary identity from custody. */
   async boot(): Promise<void> {
+    try {
+      await this.bootLanes();
+    } finally {
+      // Executions a previous process held are unknowable here, before any poll, and
+      // the Planner's reap and check run however the lanes' recovery went (Amendment 3 C2).
+      await this.planner?.boot();
+    }
+
+    await this.ipc.start();
+    this.log('info', 'daemon.booted', {
+      primary: this.primary.laneState,
+      staging: this.staging.laneState,
+    });
+  }
+
+  private async bootLanes(): Promise<void> {
     const persisted = await this.state.read();
 
     const primarySecret = await this.custodyReadQuietly('primary');
@@ -120,15 +136,6 @@ export class GatewayDaemon {
     // (correction B5, Rev 4.7 tester) — otherwise stale persisted state blocks
     // the enrolment guard forever.
     await this.completeInterruptedStaging(persisted);
-
-    // Executions a previous process held are unknowable here, before any poll.
-    await this.planner?.boot();
-
-    await this.ipc.start();
-    this.log('info', 'daemon.booted', {
-      primary: this.primary.laneState,
-      staging: this.staging.laneState,
-    });
   }
 
   start(): void {

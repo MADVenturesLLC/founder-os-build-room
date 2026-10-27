@@ -14,7 +14,12 @@
  *     starts nothing; a recorded attestation is answered again only while
  *     the daemon still holds Gateway 1880c12d's identity; the identity
  *     check (`boundGatewayReader`) answers the Gateway only while the id held
- *     in memory and the one on disk agree;
+ *     in memory and the one on disk agree, reading memory after the file, so
+ *     a promotion that adopts while the file read is pending answers null;
+ *     `start` asks again after agy's init and after the running record is
+ *     written, the last time with nothing awaited before the input is
+ *     written, so a change at either point sends nothing (shown for a
+ *     change at launch and one during the record's write);
  *   - the work is written to agy only after its `init` event names
  *     `gemini-4-argon-high` (Amendment 1 B2). A wrong model, `auto`, a first
  *     line that is not `init` or not JSON, and an agy that waits for its input
@@ -38,11 +43,19 @@
  *     making it read-only follows no symbolic link, so a link in a hostile
  *     tree cannot change the mode of a file outside it;
  *   - the evidence record carries the init model, conversation id, agy copy
- *     hash and checkout removal, is durable before the work is sent, and a
- *     record still running at boot is closed in place; boot reaps even when
- *     an evidence record or a worker record cannot be read;
- *   - the executor's `shutdown` cancels a start at any stage, before launch,
- *     while agy announces its model, or while it works; `GatewayDaemon.stop`
+ *     hash and checkout removal, and is written before the work is sent: the
+ *     file is synced, renamed, and its directory synced (and the gateway
+ *     directory too when the evidence directory is new) before the input
+ *     line, and a sync that fails sends nothing and halts. That the syncs are
+ *     made is shown through an injected sync; that the disk keeps what was
+ *     synced across a power loss is the kernel's, not shown here. A record
+ *     still running at boot is closed in place; boot reaps even when an
+ *     evidence record or a worker record cannot be read, and
+ *     `GatewayDaemon.boot` boots the Planner even when the lanes' recovery
+ *     rejects (shown with the recovery step replaced by hand to reject);
+ *   - the executor's `shutdown` cancels a start before launch, while agy
+ *     announces its model, while the running record is written, or while agy
+ *     works; `GatewayDaemon.stop`
  *     calls it before waiting for a tick in flight (shown with a tick held
  *     open by hand, not by a running daemon);
  *   - `childEnvironment()` and `runChild()` give the allowlisted environment,
@@ -86,6 +99,7 @@ import {
   sha256OfFile,
   readOnly,
   removeCheckout,
+  syncDirectory,
   type AgyPlannerDeps,
   type Launch,
 } from '../packages/gateway-daemon/src/index.js';
@@ -145,6 +159,8 @@ function harness(options: {
   timings?: AgyPlannerDeps['timings'];
   hashFile?: AgyPlannerDeps['hashFile'];
   currentGatewayId?: AgyPlannerDeps['currentGatewayId'];
+  heldGatewayId?: AgyPlannerDeps['heldGatewayId'];
+  syncDirectory?: AgyPlannerDeps['syncDirectory'];
   removeCheckout?: AgyPlannerDeps['removeCheckout'];
   /** Stands in for the second privilege rule; the count is kept either way. */
   reap?: () => Promise<void>;
@@ -197,6 +213,8 @@ function harness(options: {
       ...(options.removeCheckout === undefined ? {} : { removeCheckout: options.removeCheckout }),
       hashFile: options.hashFile ?? (() => Promise.resolve(AGY_HASH)),
       ...(options.currentGatewayId === undefined ? {} : { currentGatewayId: options.currentGatewayId }),
+      ...(options.heldGatewayId === undefined ? {} : { heldGatewayId: options.heldGatewayId }),
+      ...(options.syncDirectory === undefined ? {} : { syncDirectory: options.syncDirectory }),
       checkout:
         options.checkout ??
         (async (_work, parent) => {
@@ -1052,5 +1070,162 @@ describe('boot always reaps and checks (Amendment 3 C2; Tier-2 N3)', () => {
       assert.equal(h.reaps(), 1, body);
       assert.equal(haltReason(h.gatewayDirectory), 'evidence_unreadable', body);
     }
+  });
+});
+
+describe('the bound Gateway is read after the file, and again before the work is written (Tier-2 R1)', () => {
+  const other = '2222132d-0000-4000-8000-000000000000';
+
+  it('answers null when a promotion adopts while the file read is pending', async () => {
+    let held: string | null = AGY_PLANNER_GATEWAY_ID;
+    const reader = boundGatewayReader(
+      () => held,
+      () =>
+        new Promise((resolve) => {
+          // The file still names 1880c12d, but memory has moved on by the time it is read.
+          held = other;
+          setImmediate(() => resolve(AGY_PLANNER_GATEWAY_ID));
+        }),
+    );
+    assert.equal(await reader(), null);
+  });
+
+  it('sends nothing when the identity changes after the start began, before agy\'s init', async () => {
+    let held: string | null = AGY_PLANNER_GATEWAY_ID;
+    const w = work();
+    const outcomes: unknown[] = [];
+    const h = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      heldGatewayId: () => held,
+      onLaunch: () => {
+        held = other;
+      },
+      syncDirectory: async (path) => {
+        const file = join(path, evidenceName(w.commandId));
+        if (existsSync(file)) outcomes.push((JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>)['outcome']);
+        await syncDirectory(path);
+      },
+    });
+    const identity = await identityFor(h.executor, w.commandId);
+    assert.deepEqual(await h.executor.start(w, identity), { kind: 'not_sent' });
+    assert.equal(h.launches, 1);
+    assert.deepEqual(h.seen().stdin, [], 'nothing was written to agy');
+    assert.deepEqual(outcomes, ['gateway_identity_changed'], 'refused at init: no running record was ever written');
+    assert.equal(h.reaps(), 1);
+  });
+
+  it('sends nothing when the identity changes while the running record is written', async () => {
+    let held: string | null = AGY_PLANNER_GATEWAY_ID;
+    const w = work();
+    const h = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      heldGatewayId: () => held,
+      syncDirectory: async (path) => {
+        // The running record is the first one written; it lands, then memory moves on.
+        if (existsSync(join(path, evidenceName(w.commandId)))) held = other;
+        await syncDirectory(path);
+      },
+    });
+    const identity = await identityFor(h.executor, w.commandId);
+    assert.deepEqual(await h.executor.start(w, identity), { kind: 'not_sent' });
+    assert.deepEqual(h.seen().stdin, [], 'nothing was written to agy');
+    const [record] = evidenceOf(h.gatewayDirectory);
+    assert.equal(record?.['outcome'], 'gateway_identity_changed');
+    assert.equal(record?.['sent'], false);
+  });
+});
+
+describe('the daemon stopping while the running record is written (Tier-2 R1 advisory 1)', () => {
+  it('sends nothing: the stop is checked after the record, with nothing awaited before the write', async () => {
+    const w = work();
+    let stopping: Promise<void> | null = null;
+    const h: Harness = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      syncDirectory: async (path) => {
+        if (stopping === null && existsSync(join(path, evidenceName(w.commandId)))) stopping = h.executor.shutdown();
+        await syncDirectory(path);
+      },
+    });
+    const identity = await identityFor(h.executor, w.commandId);
+    assert.deepEqual(await h.executor.start(w, identity), { kind: 'not_sent' });
+    await stopping;
+    assert.deepEqual(h.seen().stdin, [], 'nothing was written to agy');
+    assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['outcome'], 'cancelled_before_send');
+    assert.equal(h.reaps(), 1);
+  });
+});
+
+describe('the running record survives a crash before the work is written (Tier-2 R3)', () => {
+  it('syncs the evidence directory, and the gateway directory that gained it, before the input line', async () => {
+    const w = work();
+    const synced: { path: string; stdinSoFar: number }[] = [];
+    const h: Harness = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      syncDirectory: async (path) => {
+        synced.push({ path, stdinSoFar: h.seen().stdin.length });
+        await syncDirectory(path);
+      },
+    });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    if (started.kind === 'accepted') await started.completion;
+    const evidenceDirectory = join(h.gatewayDirectory, 'planner-evidence');
+    assert.deepEqual(synced.slice(0, 2), [
+      { path: evidenceDirectory, stdinSoFar: 0 },
+      { path: h.gatewayDirectory, stdinSoFar: 0 },
+    ]);
+    assert.equal(synced.filter((entry) => entry.path === h.gatewayDirectory).length, 1, 'the parent only when the directory is made');
+    assert.equal(synced.at(-1)?.path, evidenceDirectory, 'the final record is synced too');
+  });
+
+  it('sends nothing, and halts, when the directory cannot be synced', async () => {
+    const w = work();
+    const h = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      // Only the record's own directory fails, so the parent's sync cannot stand in for it.
+      syncDirectory: (path) => (basename(path) === 'planner-evidence' ? Promise.reject(new Error('EIO')) : syncDirectory(path)),
+    });
+    assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
+    assert.deepEqual(h.seen().stdin, [], 'nothing was written to agy');
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_write_failed');
+    assert.equal(h.reaps(), 1);
+  });
+
+  it('syncDirectory syncs a real directory, and rejects one that is not there', async () => {
+    const root = temporary('buildroom-agy-sync-');
+    await syncDirectory(root);
+    await assert.rejects(syncDirectory(join(root, 'absent')));
+  });
+});
+
+describe('daemon boot reaps and checks however the lanes\' recovery goes (Tier-2 R2)', () => {
+  it('boots the Planner when lane recovery fails, and the error still surfaces', async () => {
+    const root = temporary('buildroom-agy-daemon-boot-');
+    const events: string[] = [];
+    const executor = {
+      attest: () => Promise.reject(new Error('unused')),
+      start: () => Promise.reject(new Error('unused')),
+      boot: () => {
+        events.push('executor.boot');
+        return Promise.resolve();
+      },
+    };
+    const daemon = new GatewayDaemon({
+      paths: gatewayPaths(join(root, 'gateway')),
+      clock: { wallNow: () => Date.now(), monotonicNow: () => 1_000 },
+      custody: new Custody(new FileKeychainRunner(join(root, 'keychain'))),
+      client: new ControlPlaneClient('http://control-plane.invalid', () => Promise.reject(new Error('no network in this test'))),
+      heartbeatCadenceMs: 10_000,
+      plannerExecutor: executor,
+    });
+    // Stands in for a recovery branch that rejects (a custody delete, a state publish).
+    (daemon as unknown as { completeInterruptedStaging: () => Promise<void> }).completeInterruptedStaging = () =>
+      Promise.reject(new Error('staging recovery failed'));
+    await assert.rejects(daemon.boot(), /staging recovery failed/);
+    assert.deepEqual(events, ['executor.boot']);
   });
 });

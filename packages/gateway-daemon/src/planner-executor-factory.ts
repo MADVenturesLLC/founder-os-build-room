@@ -36,6 +36,8 @@ export interface PlannerExecutorContext {
   readonly gatewayDirectory: string;
   /** Reads the primary identity the daemon holds now; the executor asks it before each attest and start. */
   readonly currentGatewayId?: () => Promise<string | null>;
+  /** The primary identity held in memory, read synchronously; the executor checks it with nothing awaited before the work is written. */
+  readonly heldGatewayId?: () => string | null;
   readonly log?: (level: 'info' | 'warn' | 'error', at: string, fields: Record<string, unknown>) => void;
 }
 
@@ -48,8 +50,10 @@ export interface PlannerExecutorContext {
  */
 export function boundGatewayReader(held: () => string | null, persisted: () => Promise<string | null>): () => Promise<string | null> {
   return async () => {
-    const inMemory = held();
     const onDisk = await persisted();
+    // Read after the file, not before: a promotion that adopts while the read is
+    // pending must not be answered with the identity it replaced.
+    const inMemory = held();
     return inMemory !== null && inMemory === onDisk ? inMemory : null;
   };
 }
@@ -79,6 +83,7 @@ export function choosePlannerExecutor(context: PlannerExecutorContext): PlannerE
       {
         ...(context.log === undefined ? {} : { log: context.log }),
         ...(context.currentGatewayId === undefined ? {} : { currentGatewayId: context.currentGatewayId }),
+        ...(context.heldGatewayId === undefined ? {} : { heldGatewayId: context.heldGatewayId }),
       },
     );
   } catch (error) {

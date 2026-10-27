@@ -146,6 +146,7 @@ export {
   readOnly,
   removeCheckout,
   runChild,
+  syncDirectory,
   type AgyPlannerConfig,
   type AgyPlannerDeps,
   type CheckoutMaker,

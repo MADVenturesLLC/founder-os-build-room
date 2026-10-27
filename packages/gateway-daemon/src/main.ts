@@ -65,6 +65,7 @@ async function main(): Promise<number> {
   const persisted = await new GatewayStateStore(paths).read();
   // Bound below, once the daemon exists; until then it holds no identity, and the reader answers null.
   let daemonRef: GatewayDaemon | null = null;
+  const heldGatewayId = (): string | null => daemonRef?.primaryGatewayId ?? null;
   const planner = choosePlannerExecutor({
     env: process.env,
     platform: process.platform,
@@ -72,10 +73,8 @@ async function main(): Promise<number> {
     gatewayDirectory: paths.directory,
     // Asked at each attest and start: a promotion after boot can replace the primary identity,
     // in memory before its state-file write, so both must still name the same Gateway.
-    currentGatewayId: boundGatewayReader(
-      () => daemonRef?.primaryGatewayId ?? null,
-      async () => (await new GatewayStateStore(paths).read()).primary.identity.gatewayId,
-    ),
+    currentGatewayId: boundGatewayReader(heldGatewayId, async () => (await new GatewayStateStore(paths).read()).primary.identity.gatewayId),
+    heldGatewayId,
     log: (level, at, fields) => process.stderr.write(`${JSON.stringify({ level, at, ...fields })}\n`),
   });
   if (planner.kind === 'refused') process.stderr.write(`planner executor refused: ${planner.reason}\n`);

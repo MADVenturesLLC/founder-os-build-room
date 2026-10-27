@@ -69,7 +69,7 @@
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type {
   Clock,
@@ -201,6 +201,14 @@ export interface AgyPlannerDeps {
    * each time and serve only while it is `1880c12d`.
    */
   readonly currentGatewayId?: () => Promise<string | null>;
+  /**
+   * The primary Gateway identity held in memory, read synchronously. The last
+   * checks before the work is written are made with nothing awaited between
+   * them and the write, so a promotion cannot land in between.
+   */
+  readonly heldGatewayId?: () => string | null;
+  /** Makes a directory's entries durable (fsync). Production is `syncDirectory`. */
+  readonly syncDirectory?: (path: string) => Promise<void>;
   /** The daemon's clock boundary (contract §4). */
   readonly clock?: Clock;
   readonly log?: (level: 'info' | 'warn' | 'error', at: string, fields: Record<string, unknown>) => void;
@@ -414,13 +422,18 @@ export class AgyPlannerExecutor implements PlannerExecutor {
 
   /** Whether the daemon still holds Gateway 1880c12d's identity. A reader that fails is not proof that it does. */
   private async onBoundGateway(): Promise<boolean> {
-    if (this.deps.currentGatewayId === undefined) return true;
+    if (this.deps.currentGatewayId === undefined) return this.holdsBoundGateway();
     try {
-      return (await this.deps.currentGatewayId()) === AGY_PLANNER_GATEWAY_ID;
+      return (await this.deps.currentGatewayId()) === AGY_PLANNER_GATEWAY_ID && this.holdsBoundGateway();
     } catch (error) {
       this.log('error', 'agy.gateway_identity_unreadable', { message: describe(error) });
       return false;
     }
+  }
+
+  /** Whether the identity held in memory is still 1880c12d's, with nothing awaited. */
+  private holdsBoundGateway(): boolean {
+    return this.deps.heldGatewayId === undefined || this.deps.heldGatewayId() === AGY_PLANNER_GATEWAY_ID;
   }
 
   /** Answered from the lane alone: no process starts and no provider is contacted. */
@@ -525,6 +538,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     const initBody = init === null ? null : objectAt(init, 'init');
     const initModel = initBody !== null && typeof initBody['model'] === 'string' ? initBody['model'] : null;
     const conversationId = init !== null && typeof init['conversation_id'] === 'string' ? init['conversation_id'] : null;
+    // The identity was checked when the start began; a promotion can have landed since.
+    const bound = await this.onBoundGateway();
     const evidenceBase = { commandId: work.commandId, executionId: identity.executionId, startedAt, agySha256, initModel, conversationId };
     const refused =
       init === null ? 'no_init_event'
@@ -532,6 +547,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       : initModel !== AGY_PLANNER_LANE.agyModel ? 'init_model_mismatch'
       // Amendment 1 B2 needs the conversation id with the command: without one, nothing is sent.
       : conversationId === null || conversationId.trim() === '' ? 'init_missing_conversation_id'
+      : !bound ? 'gateway_identity_changed'
       : this.shuttingDown || run.stopping ? 'cancelled_before_send'
       : null;
     if (refused !== null) {
@@ -549,6 +565,19 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     if (!(await this.evidence({ ...sentBase, endedAt: null, outcome: 'running', exitCode: null, signal: null, checkoutRemoved: null }))) {
       const ended = await this.endRun(run, directory);
       await this.evidence({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: 'evidence_write_failed', ...ended });
+      return { kind: 'not_sent' };
+    }
+    // The record took time to write: ask again, and make the last checks with nothing
+    // awaited between them and the write, so neither a promotion nor a stop lands between.
+    const boundStill = await this.onBoundGateway();
+    const late =
+      !boundStill || !this.holdsBoundGateway() ? 'gateway_identity_changed'
+      : this.shuttingDown || run.stopping ? 'cancelled_before_send'
+      : null;
+    if (late !== null) {
+      const ended = await this.endRun(run, directory);
+      await this.evidence({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: late, ...ended });
+      this.log('warn', 'agy.not_sent', { outcome: late, initModel });
       return { kind: 'not_sent' };
     }
     run.send(agyInputLine(plannerPrompt(work)));
@@ -747,14 +776,16 @@ export class AgyPlannerExecutor implements PlannerExecutor {
 
   /**
    * Atomic tmp+rename, mode 0600, one file per command, overwritten as the
-   * run moves on. The record is the supplemental evidence Amendment 5 B3
-   * keeps, filed in custody beside the journal rows, so a write that fails
-   * halts the executor and answers `false`.
+   * run moves on; the file is synced before the rename and its directory
+   * after, so the record survives a crash once this answers `true`. The
+   * record is the supplemental evidence Amendment 5 B3 keeps, filed in
+   * custody beside the journal rows, so a write that fails halts the
+   * executor and answers `false`.
    */
   private async evidence(record: EvidenceRecord): Promise<boolean> {
     const directory = join(this.config.gatewayDirectory, 'planner-evidence');
     try {
-      await mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
+      const created = await mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
       const target = join(directory, `${createHash('sha256').update(record.commandId, 'utf8').digest('hex')}.json`);
       const temporary = join(directory, `.evidence.${randomUUID()}.tmp`);
       const handle = await open(temporary, 'wx', FILE_MODE);
@@ -768,6 +799,11 @@ export class AgyPlannerExecutor implements PlannerExecutor {
         await unlink(temporary).catch(() => undefined);
         throw error;
       });
+      // A rename is visible at once but survives a crash only once its directory is
+      // synced; a directory just made needs its own entry synced in the parent too.
+      const sync = this.deps.syncDirectory ?? syncDirectory;
+      await sync(directory);
+      if (created !== undefined) await sync(dirname(directory));
       return true;
     } catch (error) {
       this.log('error', 'agy.evidence_failed', { message: describe(error) });
@@ -1094,4 +1130,14 @@ export async function removeCheckout(path: string): Promise<void> {
     (error: NodeJS.ErrnoException) => error.code !== 'ENOENT',
   );
   if (remains) throw new Error(`the checkout ${path} remains${failure === null ? '' : `: ${describe(failure)}`}`);
+}
+
+/** Syncs a directory, so the renames and links already made in it survive a crash. */
+export async function syncDirectory(path: string): Promise<void> {
+  const handle = await open(path, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
 }
