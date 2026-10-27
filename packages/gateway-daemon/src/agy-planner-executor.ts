@@ -350,7 +350,14 @@ interface EvidenceRecord {
 function isEvidenceRecord(value: unknown): value is EvidenceRecord {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return typeof record['commandId'] === 'string' && record['commandId'] !== '' && typeof record['outcome'] === 'string';
+  return (
+    typeof record['commandId'] === 'string' &&
+    record['commandId'] !== '' &&
+    typeof record['outcome'] === 'string' &&
+    // Whether the work was sent is what the guard against a second run reads: a record
+    // without it says nothing either way, and is not a record.
+    typeof record['sent'] === 'boolean'
+  );
 }
 
 /** A start from its first check to its last evidence write; `run` once agy is launched. */
@@ -388,6 +395,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   private shuttingDown = false;
   /** A halt whose file could not be written still holds for this process. */
   private haltedInMemory = false;
+  /** Every evidence read and write, in order: a refusal's read-then-write is one step, so nothing lands between them. */
+  private evidenceQueue: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly config: AgyPlannerConfig,
@@ -452,7 +461,10 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   }
 
   async start(work: PlannerWorkWire, identity: PlannerIdentityWire): Promise<PlannerStart> {
-    // Everything before the work is written is refusable with `not_sent`.
+    // Everything before the work is written is refusable with `not_sent`, except for a
+    // command whose record says its work was already sent: every refusal, and the launch,
+    // first asks the record (rejectIfSent), so no path answers not_sent for such a command
+    // or writes over its record.
     if (!identityIsLane(identity)) return this.refuse(work, identity, 'identity_not_lane');
     if (!(await this.onBoundGateway())) return this.refuse(work, identity, 'gateway_identity_changed');
     if (!REPOSITORY_PATTERN.test(work.repository) || !FULL_SHA_PATTERN.test(work.baseSha)) {
@@ -484,18 +496,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
 
   private async startHeld(work: PlannerWorkWire, identity: PlannerIdentityWire, inFlight: InFlight): Promise<PlannerStart> {
     // At most one execution per command: a record that says the work was sent, by this
-    // process or one a crash ended, stands, and the command is not started again. The
-    // answer is a rejection, not `not_sent`, because the work did reach agy once; the
-    // worker records that as unknown. Neither case writes over the record.
-    const prior = await this.priorEvidence(work.commandId);
-    if (prior === 'sent') {
-      this.log('error', 'agy.already_sent', { commandId: work.commandId });
-      throw new Error('this command was already sent to agy by an earlier execution, and is not started again');
-    }
-    if (prior === 'unreadable') {
-      await this.halt('evidence_unreadable');
-      throw new Error('this command\'s evidence record cannot be read, so whether it was sent is unknown');
-    }
+    // process or one a crash ended, stands, and the command is not started again.
+    await this.serialized(() => this.rejectIfSent(work.commandId));
 
     let lingering: boolean;
     try {
@@ -778,21 +780,62 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     agySha256: string | null = null,
     checkoutRemoved: boolean | null = null,
   ): Promise<PlannerStart> {
-    await this.evidence({
-      commandId: work.commandId,
-      executionId: identity.executionId,
-      startedAt: this.isoNow(),
-      agySha256,
-      initModel: null,
-      conversationId: null,
-      sent: false,
-      endedAt: this.isoNow(),
-      outcome,
-      exitCode: null,
-      signal: null,
-      checkoutRemoved,
+    // The record is read and then written as one step: a refusal never writes `sent: false`
+    // over a record that says the work was sent, whatever refused the start.
+    await this.serialized(async () => {
+      await this.rejectIfSent(work.commandId);
+      await this.writeEvidence({
+        commandId: work.commandId,
+        executionId: identity.executionId,
+        startedAt: this.isoNow(),
+        agySha256,
+        initModel: null,
+        conversationId: null,
+        sent: false,
+        endedAt: this.isoNow(),
+        outcome,
+        exitCode: null,
+        signal: null,
+        checkoutRemoved,
+      });
     });
     return { kind: 'not_sent' };
+  }
+
+  /**
+   * Rejects when the command's record says its work was sent, or cannot say. The answer is
+   * a rejection, not `not_sent`, because the work did reach agy once, or may have; the
+   * worker records that as unknown. Neither case writes over the record.
+   */
+  private async rejectIfSent(commandId: string): Promise<void> {
+    const prior = await this.priorEvidence(commandId);
+    if (prior === 'sent') {
+      this.log('error', 'agy.already_sent', { commandId });
+      throw new Error('this command was already sent to agy by an earlier execution, and is not started again');
+    }
+    if (prior === 'unreadable') {
+      await this.halt('evidence_unreadable');
+      throw new Error('this command\'s evidence record cannot be read, so whether it was sent is unknown');
+    }
+  }
+
+  /**
+   * What this command's record says about its work, for the worker's affirmative answers:
+   * `true` when it was sent, `false` when it was not or there is no record, `null` when the
+   * record cannot be read.
+   */
+  async sent(commandId: string): Promise<boolean | null> {
+    const prior = await this.serialized(() => this.priorEvidence(commandId));
+    return prior === 'sent' ? true : prior === 'unreadable' ? null : false;
+  }
+
+  private serialized<T>(step: () => Promise<T>): Promise<T> {
+    const next = this.evidenceQueue.then(step, step);
+    this.evidenceQueue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
   }
 
   /** What this command's evidence record already says: nothing, sent, not sent, or unreadable. */
@@ -831,7 +874,11 @@ export class AgyPlannerExecutor implements PlannerExecutor {
    * custody beside the journal rows, so a write that fails halts the
    * executor and answers `false`.
    */
-  private async evidence(record: EvidenceRecord): Promise<boolean> {
+  private evidence(record: EvidenceRecord): Promise<boolean> {
+    return this.serialized(() => this.writeEvidence(record));
+  }
+
+  private async writeEvidence(record: EvidenceRecord): Promise<boolean> {
     const directory = join(this.config.gatewayDirectory, 'planner-evidence');
     try {
       const created = await mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });

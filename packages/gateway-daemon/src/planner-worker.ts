@@ -16,7 +16,10 @@
  *     run a command twice.
  *   - `not_sent` AND `never_received` ARE AFFIRMATIVE. They are answered only
  *     when the record proves the work never reached a provider: no record,
- *     an attestation only, or an executor that said it sent nothing.
+ *     an attestation only, or an executor that said it sent nothing; and,
+ *     where the executor keeps its own record (`sent`), only when that record
+ *     agrees. A record of the worker's that a crash left behind an
+ *     executor's record of sent work gets neither answer.
  *   - SILENCE WHEN UNKNOWN. A start that threw, or an execution a previous
  *     process held (`starting` or `running` at boot, now `lost`), is not
  *     knowable here: the worker answers nothing, and the control plane
@@ -67,6 +70,12 @@ export interface PlannerExecutor {
   shutdown?(): Promise<void>;
   /** Whether it would attest now. Asked before a recorded attestation is answered again. */
   serves?(): Promise<boolean>;
+  /**
+   * What the executor's own record says of a command's work: `true` sent, `false` not sent
+   * or no record, `null` when it cannot say. Asked before the worker affirms `not_sent` or
+   * `never_received`, which it then does only on `false`.
+   */
+  sent?(commandId: string): Promise<boolean | null>;
 }
 
 /** One command, as this Gateway knows it. */
@@ -319,11 +328,11 @@ export class GatewayPlannerWorker {
   private async execute(request: Extract<PlannerRequestWire, { kind: 'execute' }>): Promise<PlannerReportPayload | null> {
     const record = await this.deps.records.read(request.commandId);
     // No attestation, or a different execution than the one attested: nothing starts.
-    if (record === null || record.identity.executionId !== request.executionId) return { kind: 'not_sent' };
+    if (record === null || record.identity.executionId !== request.executionId) return this.affirm('not_sent', request.commandId);
 
     switch (record.phase) {
       case 'not_sent':
-        return { kind: 'not_sent' };
+        return this.affirm('not_sent', request.commandId);
       case 'running':
       case 'finished':
         return { kind: 'accepted', observed: record.observed };
@@ -374,13 +383,32 @@ export class GatewayPlannerWorker {
     return { kind: 'accepted', observed: { ...started.observed } };
   }
 
+  /**
+   * An affirmative answer, only while the executor's own record agrees that nothing was
+   * sent. One that says the work was sent, or cannot be read, is a contradiction of the
+   * worker's record (a crash can lose the worker's later phase), and the answer is nothing.
+   */
+  private async affirm(kind: 'not_sent' | 'never_received', commandId: string): Promise<PlannerReportPayload | null> {
+    if (this.deps.executor.sent === undefined) return { kind };
+    let sent: boolean | null;
+    try {
+      sent = await this.deps.executor.sent(commandId);
+    } catch (error) {
+      this.log('error', 'planner.evidence_unknown', { commandId, message: describe(error) });
+      return null;
+    }
+    if (sent === false) return { kind };
+    this.log('error', 'planner.evidence_contradicts', { commandId, kind, sent });
+    return null;
+  }
+
   private async status(commandId: string): Promise<PlannerReportPayload | null> {
     const record = await this.deps.records.read(commandId);
-    if (record === null) return { kind: 'never_received' };
+    if (record === null) return this.affirm('never_received', commandId);
     switch (record.phase) {
       case 'attested':
       case 'not_sent':
-        return { kind: 'never_received' };
+        return this.affirm('never_received', commandId);
       case 'running':
         return { kind: 'running', executionId: record.identity.executionId, observed: record.observed };
       case 'finished':

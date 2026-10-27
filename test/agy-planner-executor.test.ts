@@ -54,8 +54,12 @@
  *     recording the real fsyncs by inode; that the disk keeps what was synced
  *     across a power loss is the kernel's, not shown here. A command whose
  *     record says its work was sent, by this process or one a crash ended, is
- *     never started again: `start` rejects, and the record stands; a record
- *     that cannot be read halts; an earlier refusal lets a retry through. A
+ *     never started again: `start` rejects, and the record stands, whatever
+ *     refuses the start, because every refusal reads the record before it
+ *     writes (shown for each refusal before launch; that the read and the
+ *     write are one step in the executor's evidence queue is read, not
+ *     raced); a record that cannot be read, or lacks `sent`, halts, at a
+ *     start and at boot; an earlier refusal lets a retry through. A
  *     record still running at boot is closed in place; boot reaps even when an
  *     evidence record or a worker record cannot be read, and
  *     `GatewayDaemon.boot` boots the Planner even when the lanes' recovery
@@ -74,7 +78,10 @@
  *     write-ahead `starting` record is on disk, synced, before the executor
  *     is asked; a worker record that a crash left at `attested` beside
  *     evidence that says the work was sent gets no second run, and the
- *     worker answers nothing for it;
+ *     worker answers nothing for it: `not_sent` and `never_received` are
+ *     affirmed only while the executor's record agrees, and a record that
+ *     says sent, or cannot be read, gets no answer from `status` or
+ *     `execute`;
  *   - `choosePlannerExecutor` selects the executor only on Linux, on Gateway
  *     1880c12d, with every setting present. That is the factory alone: no
  *     test here starts `main.ts`, so its wiring of the factory is read, not
@@ -319,6 +326,33 @@ async function startRecordingSyncs(): Promise<{ readonly syncs: SyncSeen[]; stop
 /** `index` of the sync of this inode, a directory or not, after position `from`. */
 function syncAt(syncs: readonly SyncSeen[], ino: number, directory: boolean, from = -1): number {
   return syncs.findIndex((seen, index) => index > from && seen.directory === directory && seen.ino === ino);
+}
+
+/** An evidence record as boot leaves one whose work was sent, with `fields` over it. */
+function evidenceLine(commandId: string, executionId: string, fields: Record<string, unknown> = {}): string {
+  return `${JSON.stringify({
+    commandId,
+    executionId,
+    startedAt: '2026-10-27T00:00:00.000Z',
+    agySha256: AGY_HASH,
+    initModel: 'gemini-4-argon-high',
+    conversationId: '3b2c7a4c-1bda-46b1-8dc1-44641701df02',
+    sent: true,
+    endedAt: '2026-10-27T00:00:01.000Z',
+    outcome: 'daemon_ended_during_run',
+    exitCode: null,
+    signal: null,
+    checkoutRemoved: null,
+    ...fields,
+  })}\n`;
+}
+
+/** Puts `line` where the command's evidence record goes, and returns that path. */
+function placeEvidence(h: Harness, commandId: string, line: string): string {
+  mkdirSync(join(h.gatewayDirectory, 'planner-evidence'), { recursive: true });
+  const path = join(h.gatewayDirectory, 'planner-evidence', evidenceName(commandId));
+  writeFileSync(path, line);
+  return path;
 }
 
 describe('the command line', () => {
@@ -1138,7 +1172,7 @@ describe('boot always reaps and checks (Amendment 3 C2; Tier-2 N3)', () => {
   });
 
   it('an evidence record that parses but is not a record halts, and the reap still runs', async () => {
-    for (const body of ['null', '[]', '42', '{"commandId":"x"}']) {
+    for (const body of ['null', '[]', '42', '{"commandId":"x"}', '{"commandId":"x","outcome":"running"}']) {
       const h = harness({ mode: 'ok' });
       const directory = join(h.gatewayDirectory, 'planner-evidence');
       mkdirSync(directory, { recursive: true });
@@ -1471,6 +1505,121 @@ describe('the worker\'s records survive a crash, and no command runs twice (Tier
       assert.equal(h.launches, 0, shape);
       assert.equal(haltReason(h.gatewayDirectory), 'evidence_unreadable', shape);
       assert.equal(shape === 'a directory' ? null : readFileSync(path, 'utf8'), before, `${shape}: untouched`);
+    }
+  });
+});
+
+describe('a record that says sent stands, whatever refuses the start (Tier-2 G1)', () => {
+  it('every refusal before launch rejects instead, and leaves the record as it is', async () => {
+    const other = '2222132d-0000-4000-8000-000000000000';
+    const cases: {
+      name: string;
+      mode?: string;
+      currentGatewayId?: AgyPlannerDeps['currentGatewayId'];
+      work?: (w: PlannerWorkWire) => PlannerWorkWire;
+      identity?: (identity: PlannerIdentityWire) => PlannerIdentityWire;
+      arrange?: (h: Harness) => Promise<void>;
+    }[] = [
+      { name: 'identity off the lane', identity: (identity) => ({ ...identity, surface: 'claude-code' }) },
+      { name: 'Gateway identity changed', currentGatewayId: () => Promise.resolve(other) },
+      { name: 'work not checkoutable', work: (w) => ({ ...w, repository: 'not a repository' }) },
+      { name: 'daemon stopping', arrange: (h) => h.executor.shutdown() },
+      {
+        name: 'executor halted',
+        arrange: (h) => {
+          mkdirSync(h.gatewayDirectory, { recursive: true });
+          writeFileSync(join(h.gatewayDirectory, 'planner-halted.json'), '{"reason":"test"}\n');
+          return Promise.resolve();
+        },
+      },
+      {
+        name: 'executor busy',
+        mode: 'hang',
+        arrange: async (h) => {
+          const held = work();
+          const started = await h.executor.start(held, await identityFor(h.executor, held.commandId));
+          assert.equal(started.kind, 'accepted');
+          if (started.kind === 'accepted') started.completion.catch(() => undefined);
+        },
+      },
+    ];
+    for (const c of cases) {
+      const w = c.work?.(work()) ?? work();
+      const h = harness({ mode: c.mode ?? 'ok', ...(c.currentGatewayId === undefined ? {} : { currentGatewayId: c.currentGatewayId }) });
+      const identity = await identityFor(harness({ mode: 'ok' }).executor, w.commandId);
+      const path = placeEvidence(h, w.commandId, evidenceLine(w.commandId, identity.executionId));
+      const before = readFileSync(path, 'utf8');
+      await c.arrange?.(h);
+      const launches = h.launches;
+      await assert.rejects(h.executor.start(w, c.identity?.(identity) ?? identity), /already sent/, c.name);
+      assert.equal(h.launches, launches, `${c.name}: nothing launched`);
+      assert.equal(readFileSync(path, 'utf8'), before, `${c.name}: the record stands`);
+      assert.ok(h.logged.includes('agy.already_sent'), c.name);
+      await h.executor.shutdown();
+    }
+  });
+});
+
+describe('the worker affirms nothing against the executor\'s record (Tier-2 G2)', () => {
+  async function stale(): Promise<{ w: PlannerWorkWire; h: Harness; identity: PlannerIdentityWire; worker: GatewayPlannerWorker; records: PlannerRecordStore }> {
+    const w = work();
+    const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
+    const identity = await identityFor(h.executor, w.commandId);
+    const records = new PlannerRecordStore(plannerRecordsDirectory(temporary('buildroom-agy-records-')));
+    return { w, h, identity, records, worker: new GatewayPlannerWorker({ executor: h.executor, records }) };
+  }
+
+  it('status answers nothing, not never_received, for an attested record beside evidence that says sent', async () => {
+    const { w, h, identity, records, worker } = await stale();
+    await records.write({ commandId: w.commandId, phase: 'attested', identity });
+    placeEvidence(h, w.commandId, evidenceLine(w.commandId, identity.executionId));
+    assert.equal(await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), null);
+  });
+
+  it('execute answers nothing, not not_sent, with no worker record or another execution id, beside evidence that says sent', async () => {
+    const { w, h, identity, records, worker } = await stale();
+    placeEvidence(h, w.commandId, evidenceLine(w.commandId, identity.executionId));
+    assert.equal(await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: identity.executionId, work: w }), null, 'no record');
+    await records.write({ commandId: w.commandId, phase: 'attested', identity });
+    assert.equal(await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: uuid(), work: w }), null, 'another execution id');
+    assert.equal(h.launches, 0);
+  });
+
+  it('both answer nothing when the executor cannot read its record', async () => {
+    const { w, h, identity, records, worker } = await stale();
+    placeEvidence(h, w.commandId, '{not json');
+    assert.equal(await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), null);
+    await records.write({ commandId: w.commandId, phase: 'attested', identity });
+    assert.equal(await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: uuid(), work: w }), null);
+  });
+
+  it('with no such evidence, the affirmative answers stand', async () => {
+    const { w, identity, records, worker } = await stale();
+    assert.deepEqual(await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), { kind: 'never_received' });
+    assert.deepEqual(await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: identity.executionId, work: w }), { kind: 'not_sent' });
+    await records.write({ commandId: w.commandId, phase: 'attested', identity });
+    assert.deepEqual(await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), { kind: 'never_received' });
+  });
+});
+
+describe('a record that does not say whether the work was sent is not a record (Tier-2 G3)', () => {
+  it('halts the start, launches nothing, and halts at boot', async () => {
+    for (const fields of [{ sent: undefined }, { sent: null }, { sent: 'yes' }]) {
+      const w = work();
+      const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
+      const identity = await identityFor(h.executor, w.commandId);
+      const path = placeEvidence(h, w.commandId, evidenceLine(w.commandId, identity.executionId, fields));
+      const before = readFileSync(path, 'utf8');
+      assert.equal(JSON.stringify(JSON.parse(before)).includes('"sent":true'), false);
+      await assert.rejects(h.executor.start(w, identity), /cannot be read/, String(fields.sent));
+      assert.equal(h.launches, 0);
+      assert.equal(haltReason(h.gatewayDirectory), 'evidence_unreadable');
+      assert.equal(readFileSync(path, 'utf8'), before, 'untouched');
+      const booted = harness({ mode: 'ok' });
+      placeEvidence(booted, w.commandId, before);
+      await booted.executor.boot();
+      assert.equal(haltReason(booted.gatewayDirectory), 'evidence_unreadable', `boot: ${String(fields.sent)}`);
+      assert.equal(booted.reaps(), 1);
     }
   });
 });
