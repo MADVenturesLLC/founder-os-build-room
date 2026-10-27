@@ -2,33 +2,49 @@
  * The Planner's agy executor against a fake agy
  * (FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR, C1 second step: "tests
  * against a fake agy"). No provider, network or second user is involved:
- * the fake stands in for agy, and the test stands in for `sudo`, so the
- * whole command line the privilege rule must match reaches the fake.
+ * the fake stands in for agy, and the test stands in for `sudo` and for the
+ * second privilege rule, so the whole command line the first rule must
+ * match reaches the fake.
  *
  * What is proven:
  *   - the command line is `sudo -n -u <planner user> -- <agy>` and exactly
- *     the arguments Amendment 1 C3 fixes, none of C4's banned flags among
- *     them, in plan mode;
+ *     the arguments Amendment 3 B1(a) fixes, none of Amendment 1 C4's banned
+ *     flags among them, in plan mode; the reap is exactly rule B1(b);
  *   - `attest` answers only for the architect seat on the bound lane, and
- *     starts nothing;
+ *     starts nothing; a recorded attestation is answered again only while
+ *     the daemon still holds Gateway 1880c12d's identity;
  *   - the work is written to agy only after its `init` event names
  *     `gemini-4-argon-high` (Amendment 1 B2). A wrong model, `auto`, a first
  *     line that is not `init` or not JSON, and an agy that waits for its input
  *     before saying which model it serves all end in `not_sent`, with nothing
  *     written to agy's input;
- *   - a later event naming another model, an agy error, an answer that is
- *     not JSON, an agy that exits without a result, and a run past its time
- *     all fail the run;
- *   - a leftover planner-user process, a probe that fails, a checkout that
- *     fails, a busy executor and an identity off the lane all refuse with
- *     `not_sent` before agy is started (Amendment 2 C1);
+ *   - a later event naming another model, at any depth, an agy error, an
+ *     answer that is not JSON, an agy that exits without a result, and a run
+ *     past its time all fail the run;
+ *   - a leftover planner-user process, a probe that fails, a hash that is
+ *     not the recorded one, a checkout that fails, a busy executor and an
+ *     identity off the lane all refuse with `not_sent` before agy is started;
+ *     the leftover process and the failed probe also halt;
+ *   - ending a run never waits on agy's output pipes: an agy that ignores
+ *     SIGTERM and leaves a process holding them is still reaped, and an exit
+ *     not seen in time is reaped and halts (Amendment 3 C1);
+ *   - a process surviving the reap, a check that cannot be made after it, a
+ *     checkout left behind and an evidence record that cannot be written or
+ *     read all halt, and only removing the halt file restarts the executor;
  *   - each run's checkout is agy's working directory and is removed after;
  *     making it read-only follows no symbolic link, so a link in a hostile
  *     tree cannot change the mode of a file outside it;
- *   - the evidence record carries the init model and conversation id;
+ *   - the evidence record carries the init model, conversation id, agy copy
+ *     hash and checkout removal, is durable before the work is sent, and a
+ *     record still running at boot is closed in place;
+ *   - the daemon stopping cancels a start at any stage, before launch, while
+ *     agy announces its model, or while it works; the daemon starting reaps;
+ *   - children get the allowlisted environment, never the daemon's;
  *   - the worker drives the executor end to end: attest, execute, status;
- *   - the daemon selects the executor only on Linux, on Gateway 1880c12d,
- *     with every setting present.
+ *   - `choosePlannerExecutor` selects the executor only on Linux, on Gateway
+ *     1880c12d, with every setting present. That is the factory alone: no
+ *     test here starts `main.ts`, so its wiring of the factory is read, not
+ *     run.
  */
 
 import { after, describe, it } from 'node:test';
@@ -51,6 +67,7 @@ import {
   choosePlannerExecutor,
   planDocumentFrom,
   childEnvironment,
+  modelsNamed,
   runChild,
   sha256OfFile,
   readOnly,
@@ -94,6 +111,8 @@ function work(overrides: Partial<PlannerWorkWire> = {}): PlannerWorkWire {
 interface Harness {
   readonly executor: AgyPlannerExecutor;
   readonly logPath: string;
+  /** Every line the executor logged, by its `at`. */
+  readonly logged: string[];
   readonly gatewayDirectory: string;
   readonly checkouts: string[];
   launches: number;
@@ -111,6 +130,11 @@ function harness(options: {
   timings?: AgyPlannerDeps['timings'];
   hashFile?: AgyPlannerDeps['hashFile'];
   currentGatewayId?: AgyPlannerDeps['currentGatewayId'];
+  removeCheckout?: AgyPlannerDeps['removeCheckout'];
+  /** Stands in for the second privilege rule; the count is kept either way. */
+  reap?: () => Promise<void>;
+  /** Sees each launched child, for cases that must interfere with it. */
+  onLaunch?: (child: ReturnType<Launch>) => void;
 }): Harness {
   const root = temporary('buildroom-agy-');
   const logPath = join(root, 'fake.log');
@@ -119,10 +143,11 @@ function harness(options: {
   mkdirSync(checkoutParent);
   const checkouts: string[] = [];
   const state = { launches: 0, reaps: 0 };
+  const logged: string[] = [];
   const launch: Launch = (file, args, launchOptions) => {
     state.launches += 1;
     assert.equal(file, '/usr/bin/sudo');
-    return spawn(process.execPath, [FAKE_AGY, ...args], {
+    const child = spawn(process.execPath, [FAKE_AGY, ...args], {
       cwd: launchOptions.cwd,
       stdio: 'pipe',
       env: {
@@ -132,6 +157,8 @@ function harness(options: {
         FAKE_AGY_PLAN: JSON.stringify(options.plan ?? {}),
       },
     });
+    options.onLaunch?.(child);
+    return child;
   };
   const executor = new AgyPlannerExecutor(
     {
@@ -147,8 +174,12 @@ function harness(options: {
       probe: options.probe ?? (() => Promise.resolve(false)),
       reap: () => {
         state.reaps += 1;
-        return Promise.resolve();
+        return options.reap?.() ?? Promise.resolve();
       },
+      log: (_level, at) => {
+        logged.push(at);
+      },
+      ...(options.removeCheckout === undefined ? {} : { removeCheckout: options.removeCheckout }),
       hashFile: options.hashFile ?? (() => Promise.resolve(AGY_HASH)),
       ...(options.currentGatewayId === undefined ? {} : { currentGatewayId: options.currentGatewayId }),
       checkout:
@@ -164,6 +195,7 @@ function harness(options: {
   return {
     executor,
     logPath,
+    logged,
     gatewayDirectory,
     checkouts,
     get launches() {
@@ -189,6 +221,15 @@ function harness(options: {
 
 async function identityFor(executor: AgyPlannerExecutor, commandId: string): Promise<PlannerIdentityWire> {
   return executor.attest({ commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } });
+}
+
+function haltReason(gatewayDirectory: string): string | null {
+  const file = join(gatewayDirectory, 'planner-halted.json');
+  return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as { reason: string }).reason : null;
+}
+
+function evidenceName(commandId: string): string {
+  return `${createHash('sha256').update(commandId, 'utf8').digest('hex')}.json`;
 }
 
 function evidenceOf(gatewayDirectory: string): Record<string, unknown>[] {
@@ -405,11 +446,12 @@ describe('start: refused before agy starts', () => {
     assert.ok(existsSync(join(h.gatewayDirectory, 'planner-halted.json')), 'the executor halts');
   });
 
-  it('when the probe fails', async () => {
+  it('when the probe fails, and then halts', async () => {
     const w = work();
     const h = harness({ mode: 'ok', probe: () => Promise.reject(new Error('pgrep missing')) });
     assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
     assert.equal(h.launches, 0);
+    assert.equal(haltReason(h.gatewayDirectory), 'planner_user_check_failed_before_start', 'a check that cannot be made halts');
   });
 
   it('when the checkout fails, recording the hash it had already read', async () => {
@@ -583,15 +625,44 @@ describe('evidence at boot (act B4)', () => {
     const h = harness({ mode: 'ok' });
     const directory = join(h.gatewayDirectory, 'planner-evidence');
     mkdirSync(directory, { recursive: true });
-    const base = { executionId: uuid(), startedAt: '2026-10-27T00:00:00.000Z', agySha256: AGY_HASH, initModel: 'gemini-4-argon-high', conversationId: 'c', sent: true, exitCode: null, signal: null };
-    writeFileSync(join(directory, 'a.json'), `${JSON.stringify({ ...base, commandId: 'running-one', endedAt: null, outcome: 'running' })}\n`);
-    writeFileSync(join(directory, 'b.json'), `${JSON.stringify({ ...base, commandId: 'done-one', endedAt: '2026-10-27T00:01:00.000Z', outcome: 'plan' })}\n`);
+    const base = { executionId: uuid(), startedAt: '2026-10-27T00:00:00.000Z', agySha256: AGY_HASH, initModel: 'gemini-4-argon-high', conversationId: 'c', sent: true, exitCode: null, signal: null, checkoutRemoved: null };
+    const running = uuid();
+    const done = uuid();
+    // Named as the executor names them, so the boot rewrites the running record in place.
+    writeFileSync(join(directory, evidenceName(running)), `${JSON.stringify({ ...base, commandId: running, endedAt: null, outcome: 'running' })}\n`);
+    const doneRecord = `${JSON.stringify({ ...base, commandId: done, endedAt: '2026-10-27T00:01:00.000Z', outcome: 'plan' })}\n`;
+    writeFileSync(join(directory, evidenceName(done)), doneRecord);
     await h.executor.boot();
-    const records = evidenceOf(h.gatewayDirectory);
-    const closed = records.find((r) => r['commandId'] === 'running-one');
-    assert.equal(closed?.['outcome'], 'daemon_ended_during_run');
-    assert.match(String(closed?.['endedAt']), /^\d{4}-\d\d-\d\dT/);
-    assert.equal(records.find((r) => r['commandId'] === 'done-one')?.['outcome'], 'plan');
+    assert.deepEqual(readdirSync(directory).sort(), [evidenceName(running), evidenceName(done)].sort(), 'exactly the two records, no copy beside them');
+    const closed = JSON.parse(readFileSync(join(directory, evidenceName(running)), 'utf8')) as Record<string, unknown>;
+    assert.equal(closed['outcome'], 'daemon_ended_during_run');
+    assert.match(String(closed['endedAt']), /^\d{4}-\d\d-\d\dT/);
+    assert.equal(readFileSync(join(directory, evidenceName(done)), 'utf8'), doneRecord, 'a finished record is left byte for byte');
+    assert.ok(h.logged.includes('agy.evidence_closed_at_boot'));
+    assert.equal(haltReason(h.gatewayDirectory), null);
+  });
+
+  it('halts, and does not report the record closed, when it cannot be rewritten', async () => {
+    const h = harness({ mode: 'ok' });
+    const directory = join(h.gatewayDirectory, 'planner-evidence');
+    mkdirSync(directory, { recursive: true });
+    const commandId = uuid();
+    const record = { commandId, executionId: uuid(), startedAt: '2026-10-27T00:00:00.000Z', agySha256: AGY_HASH, initModel: 'gemini-4-argon-high', conversationId: 'c', sent: true, endedAt: null, outcome: 'running', exitCode: null, signal: null };
+    writeFileSync(join(directory, 'copied.json'), `${JSON.stringify(record)}\n`);
+    // The record's own path is a directory, so the rewrite cannot land, even for root.
+    mkdirSync(join(directory, evidenceName(commandId)));
+    await h.executor.boot();
+    assert.ok(!h.logged.includes('agy.evidence_closed_at_boot'));
+    assert.notEqual(haltReason(h.gatewayDirectory), null, 'the executor halts');
+  });
+
+  it('halts when a record cannot be read', async () => {
+    const h = harness({ mode: 'ok' });
+    const directory = join(h.gatewayDirectory, 'planner-evidence');
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, 'torn.json'), '{"commandId":');
+    await h.executor.boot();
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_unreadable');
   });
 });
 
@@ -602,8 +673,11 @@ describe('the child environment (act B5)', () => {
     const env = childEnvironment({ ...injected, PATH: '/somewhere/else', LANG: 'C.UTF-8', SSH_AUTH_SOCK: '/tmp/agent', https_proxy: 'x', ALL_PROXY: 'y', HOME: '/home/founder' });
     assert.equal(env['PATH'], '/usr/bin:/bin');
     assert.equal(env['LANG'], 'C.UTF-8');
-    for (const name of [...Object.keys(injected), 'SSH_AUTH_SOCK', 'https_proxy', 'ALL_PROXY', 'HOME']) assert.equal(env[name], undefined, name);
+    for (const name of [...Object.keys(injected), 'SSH_AUTH_SOCK', 'https_proxy', 'ALL_PROXY']) assert.equal(env[name], undefined, name);
     assert.equal(env['GIT_CONFIG_GLOBAL'], '/dev/null');
+    // The daemon's HOME never reaches a child: git's HTTP transport would read a ~/.netrc there.
+    assert.equal(env['HOME'], '/nonexistent');
+    assert.equal(existsSync('/nonexistent'), false);
   });
 
   it('keeps GIT_CONFIG_COUNT and HTTPS_PROXY in the daemon\'s environment from reaching git', async () => {
@@ -696,5 +770,189 @@ describe('the daemon selects the executor', () => {
     assert.equal(choosePlannerExecutor({ ...context, env: { ...env, BUILDROOM_PLANNER_AGY: 'agy' } }).kind, 'refused');
     assert.equal(choosePlannerExecutor({ ...context, env: { ...env, BUILDROOM_PLANNER_AGY_SHA256: undefined } }).kind, 'refused');
     assert.equal(choosePlannerExecutor({ ...context, env: { ...env, BUILDROOM_PLANNER_AGY_SHA256: 'not-a-hash' } }).kind, 'refused');
+  });
+});
+
+describe('ending a run never waits on agy\'s pipes (Amendment 3 C1; Tier-2 B1)', () => {
+  it('reaps when agy ignores SIGTERM and a process it started keeps its output open', async () => {
+    const w = work();
+    const plan = readyPlanFor({ ...w } as never);
+    let holder: number | undefined;
+    const h = harness({
+      mode: 'stubborn',
+      plan,
+      // The second privilege rule ends what the planner user still runs: here, the holder.
+      reap: () => {
+        const line = readFileSync(h.logPath, 'utf8').split('\n').find((l) => l.includes('"holder"'));
+        holder = line === undefined ? undefined : (JSON.parse(line) as { holder: number }).holder;
+        if (holder !== undefined) process.kill(holder, 'SIGKILL');
+        return Promise.resolve();
+      },
+    });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind !== 'accepted') return;
+    const begun = Date.now();
+    assert.deepEqual(await started.completion, { kind: 'plan', document: plan });
+    assert.ok(Date.now() - begun < 20_000, 'the end is bounded by the grace, not by the holder');
+    assert.ok(holder !== undefined, 'the holder was there to reap');
+    assert.equal(h.reaps(), 1);
+    assert.equal(haltReason(h.gatewayDirectory), null, 'its exit was seen and nothing survived');
+    assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['checkoutRemoved'], true);
+  });
+
+  it('still reaps, then halts, when sudo\'s exit is not seen in time', async () => {
+    const w = work();
+    const children: ReturnType<Launch>[] = [];
+    const h = harness({
+      mode: 'stubborn',
+      plan: readyPlanFor({ ...w } as never),
+      // sudo that no signal reaches: the executor's kills land nowhere.
+      onLaunch: (child) => {
+        children.push(child);
+        child.kill = () => true;
+      },
+      reap: () => {
+        for (const child of children) if (child.pid !== undefined) process.kill(child.pid, 'SIGKILL');
+        return Promise.resolve();
+      },
+    });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') await started.completion.catch(() => undefined);
+    assert.equal(h.reaps(), 1, 'the reap runs although the exit was not seen');
+    assert.equal(haltReason(h.gatewayDirectory), 'agy_exit_unconfirmed');
+    const line = readFileSync(h.logPath, 'utf8').split('\n').find((l) => l.includes('"holder"'));
+    if (line !== undefined) process.kill((JSON.parse(line) as { holder: number }).holder, 'SIGKILL');
+  });
+});
+
+describe('the evidence record is durable before the work is sent (Amendment 4 E1; Tier-2 B2)', () => {
+  it('sends nothing, and halts, when the running record cannot be written', async () => {
+    const w = work();
+    const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
+    // The record's own path is a directory: the write fails, even for root.
+    mkdirSync(join(h.gatewayDirectory, 'planner-evidence', evidenceName(w.commandId)), { recursive: true });
+    assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
+    assert.equal(h.launches, 1);
+    assert.deepEqual(h.seen().stdin, [], 'nothing was written to agy');
+    assert.equal(h.reaps(), 1);
+    assert.equal(existsSync(h.checkouts[0] ?? ''), false);
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_write_failed');
+  });
+
+  it('writes the running record before the input line', async () => {
+    const w = work();
+    let recordAtSend: Record<string, unknown> | null = null;
+    const h = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      onLaunch: (child) => {
+        const write = child.stdin.end.bind(child.stdin) as (chunk: string) => void;
+        (child.stdin as unknown as { end: (chunk: string) => void }).end = (chunk: string) => {
+          const path = join(h.gatewayDirectory, 'planner-evidence', evidenceName(w.commandId));
+          recordAtSend = existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>) : {};
+          write(chunk);
+        };
+      },
+    });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    if (started.kind === 'accepted') await started.completion;
+    assert.equal(recordAtSend?.['outcome'], 'running');
+    assert.equal(recordAtSend?.['sent'], true);
+    assert.equal(recordAtSend?.['initModel'], 'gemini-4-argon-high');
+  });
+});
+
+describe('the checkout is removed, or the executor halts (Amendment 1 C5; Tier-2 B4)', () => {
+  it('records the checkout left behind, and halts', async () => {
+    const w = work();
+    const plan = readyPlanFor({ ...w } as never);
+    const h = harness({ mode: 'ok', plan, removeCheckout: () => Promise.reject(new Error('EBUSY')) });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') assert.deepEqual(await started.completion, { kind: 'plan', document: plan });
+    assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['checkoutRemoved'], false);
+    assert.equal(haltReason(h.gatewayDirectory), 'checkout_not_removed');
+  });
+
+  it('removeCheckout succeeds on a path already gone, and checks the path is gone after', async () => {
+    await assert.doesNotReject(removeCheckout(join(temporary('buildroom-agy-gone-'), 'never-made')));
+    const tree = join(temporary('buildroom-agy-stays-'), 'run');
+    mkdirSync(join(tree, 'src'), { recursive: true });
+    await readOnly(tree);
+    await removeCheckout(tree);
+    assert.equal(existsSync(tree), false);
+  });
+});
+
+describe('a later model cannot hide at any depth (Tier-2 B5)', () => {
+  it('fails the run when a step names another model twelve levels deep', async () => {
+    const w = work();
+    const h = harness({ mode: 'deep_switch', plan: readyPlanFor({ ...w } as never) });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') await assert.rejects(started.completion, /model_switched/);
+    assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['outcome'], 'model_switched');
+  });
+
+  it('finds a model nested ten thousand levels down', () => {
+    let nested: unknown = { model: 'other' };
+    for (let level = 0; level < 10_000; level += 1) nested = [{ inner: nested }];
+    assert.deepEqual(modelsNamed({ event: 'step_update', step_update: nested }), ['other']);
+  });
+});
+
+describe('a recorded attestation is answered again only while the executor serves (Tier-2 B6)', () => {
+  it('refuses the repeated attest once the daemon holds another identity', async () => {
+    let gateway = AGY_PLANNER_GATEWAY_ID;
+    const h = harness({ mode: 'ok', currentGatewayId: () => Promise.resolve(gateway) });
+    const worker = new GatewayPlannerWorker({ executor: h.executor, records: new PlannerRecordStore(temporary('buildroom-agy-records-')) });
+    const w = work();
+    const request = { requestId: uuid(), kind: 'attest', commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } } as const;
+    const first = await worker.handle(request);
+    assert.equal(first?.kind, 'attested');
+    const again = await worker.handle({ ...request, requestId: uuid() });
+    assert.deepEqual(again, first, 'while bound, the same identity is answered again');
+    gateway = '2222132d-0000-4000-8000-000000000000';
+    assert.deepEqual(await worker.handle({ ...request, requestId: uuid() }), { kind: 'attest_failed' });
+  });
+});
+
+describe('the daemon stopping while a start is still preparing (Amendment 3 C2)', () => {
+  it('cancels a start that is waiting for agy\'s init: nothing is sent, the user is reaped', async () => {
+    const w = work();
+    const h = harness({ mode: 'slow_init', timings: { initTimeoutMs: 10_000 } });
+    const starting = h.executor.start(w, await identityFor(h.executor, w.commandId));
+    while (h.launches === 0) await new Promise((resolve) => setTimeout(resolve, 20));
+    await h.executor.shutdown();
+    assert.deepEqual(await starting, { kind: 'not_sent' });
+    assert.deepEqual(h.seen().stdin, []);
+    assert.equal(h.reaps(), 1);
+    assert.equal(existsSync(h.checkouts[0] ?? ''), false);
+    assert.ok(['no_init_event', 'cancelled_before_send'].includes(String(evidenceOf(h.gatewayDirectory)[0]?.['outcome'])));
+    const later = work();
+    assert.deepEqual(await h.executor.start(later, await identityFor(h.executor, later.commandId)), { kind: 'not_sent' });
+    assert.equal(h.launches, 1, 'nothing starts after the daemon began to stop');
+  });
+
+  it('waits for a start still making its checkout, which then launches nothing', async () => {
+    const w = work();
+    let made = (): void => undefined;
+    const h = harness({
+      mode: 'ok',
+      checkout: async (_work, parent) => {
+        await new Promise<void>((resolve) => (made = resolve));
+        return mkdtemp(join(parent, 'run-'));
+      },
+    });
+    const starting = h.executor.start(w, await identityFor(h.executor, w.commandId));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const stopping = h.executor.shutdown();
+    made();
+    await stopping;
+    assert.deepEqual(await starting, { kind: 'not_sent' });
+    assert.equal(h.launches, 0);
+    assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['outcome'], 'daemon_stopping');
   });
 });

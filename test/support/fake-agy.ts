@@ -22,6 +22,10 @@
  *   unparseable   as ok, the response not JSON
  *   hang          init, then silence after the input line
  *   exit          init, then exit 0 after the input line with no result
+ *   stubborn      as ok, but it ignores SIGTERM and leaves a child that holds
+ *                 its output open, writing the child's pid to the log
+ *   deep_switch   as ok, but a step names another model twelve levels deep
+ *   slow_init     init only after two seconds
  *
  * Whatever the mode, it first enforces what agy 1.4.7 does, as the Founder
  * read it on the PC on 2026-10-26: `--print` must carry a value and refuses
@@ -31,6 +35,7 @@
  * result; an unknown event is ignored with a warning.
  */
 
+import { spawn } from 'node:child_process';
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
@@ -105,8 +110,10 @@ function acceptInput(line: string): boolean {
   return true;
 }
 
-if (mode === 'ok' || mode === 'fenced' || mode === 'switch' || mode === 'error' || mode === 'unparseable' || mode === 'hang' || mode === 'exit') {
+if (['ok', 'fenced', 'switch', 'error', 'unparseable', 'hang', 'exit', 'stubborn', 'deep_switch'].includes(mode)) {
   init('gemini-4-argon-high');
+} else if (mode === 'slow_init') {
+  setTimeout(() => init('gemini-4-argon-high'), 2_000);
 } else if (mode === 'wrong_model') {
   init('gemini-3.8-flash-high');
 } else if (mode === 'auto') {
@@ -139,6 +146,19 @@ lines.on('line', (line) => {
       emit({ event: 'step_update', step_update: { conversation_id: conversation, model: 'gemini-3.8-flash-high' } });
       result(plan);
       break;
+    case 'deep_switch': {
+      let nested: Record<string, unknown> = { model: 'gemini-3.8-flash-high' };
+      for (let level = 0; level < 12; level += 1) nested = { inner: nested };
+      emit({ event: 'step_update', step_update: { conversation_id: conversation, detail: nested } });
+      result(plan);
+      break;
+    }
+    case 'stubborn': {
+      const holder = spawn('/bin/sleep', ['60'], { stdio: ['ignore', 'inherit', 'inherit'] });
+      if (logPath !== undefined) appendFileSync(logPath, `${JSON.stringify({ holder: holder.pid })}\n`);
+      result(plan);
+      break;
+    }
     case 'error':
       result('', 'ERROR');
       break;
@@ -158,6 +178,8 @@ lines.on('line', (line) => {
 // Hold the process open while it waits for input, as agy does.
 const keepAlive = setInterval(() => undefined, 1_000);
 lines.on('close', () => {
-  if (mode !== 'hang') clearInterval(keepAlive);
+  if (mode !== 'hang' && mode !== 'stubborn') clearInterval(keepAlive);
 });
-process.on('SIGTERM', () => process.exit(143));
+process.on('SIGTERM', () => {
+  if (mode !== 'stubborn') process.exit(143);
+});

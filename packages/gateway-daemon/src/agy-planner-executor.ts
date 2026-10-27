@@ -37,22 +37,28 @@
  * (ruling B5).
  *
  * HOW A RUN ENDS (Amendment 3, Parts B and C, which replace Amendment 2
- * C1). The executor ends agy through `sudo`, which relays the signal, and
- * then runs the second privilege rule, `sudo -n -u <planner user> --
- * /usr/bin/pkill -KILL -u <planner user>`, so the planner user ends
- * everything it still runs, and asks the operating system whether any of
- * its processes remain. If one does, or one is running before a start, the
- * executor HALTS: it writes `planner-halted.json` in the Gateway's
- * directory, logs why, and takes no further Planner work while that file
- * exists. Only the Founder's direction restarts it, by removing the file.
- * The daemon stopping is a cancellation that ends the run in flight the same
- * way; the daemon starting reaps and checks before any Planner work.
+ * C1). The executor ends agy through `sudo`, which relays SIGTERM, then
+ * SIGKILLs sudo, waiting a bounded time for it to exit and never on agy's
+ * output pipes; then it runs the second privilege rule, `sudo -n -u
+ * <planner user> -- /usr/bin/pkill -KILL -u <planner user>`, so the planner
+ * user ends everything it still runs, and asks the operating system whether
+ * any of its processes remain. The executor HALTS when one does, when one
+ * runs before a start, when either check cannot be made, when sudo's exit is
+ * not seen in time, when a checkout cannot be removed, or when an evidence
+ * record cannot be written or read: it writes `planner-halted.json` in the
+ * Gateway's directory, logs why, and takes no further Planner work while
+ * that file exists. Only the Founder's direction restarts it, by removing
+ * the file. The daemon stopping is a cancellation that ends the start in
+ * flight the same way, from its first check on; the daemon starting reaps
+ * and checks before any Planner work.
  *
- * EVIDENCE (Amendment 1 B2; ruling B8). For each command the executor
- * writes one record in the Gateway's directory: the `init` model and
- * conversation id, the times, how the run ended. The control plane's
- * journal rows are written as before; the record is what the custody filing
- * of a counted run cites beside them.
+ * EVIDENCE (Amendment 1 B2; Amendment 4 E1; ruling B8). For each command
+ * the executor writes one record in the Gateway's directory: the `init`
+ * model and conversation id, the times, the agy copy's hash, whether the
+ * checkout was removed, how the run ended. A run's record is durable before
+ * its work is written to agy; if it cannot be, nothing is sent. The control
+ * plane's journal rows are written as before; the record is what the
+ * custody filing of a counted run files beside them.
  */
 
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -182,6 +188,8 @@ export interface AgyPlannerDeps {
   readonly reap?: PlannerReaper;
   readonly hashFile?: FileHasher;
   readonly checkout?: CheckoutMaker;
+  /** Removes a run's checkout, rejecting when it remains. Production is `removeCheckout`. */
+  readonly removeCheckout?: (path: string) => Promise<void>;
   /**
    * The primary Gateway identity the daemon holds now. A promotion can
    * replace it after the executor was selected, so `attest` and `start` ask
@@ -240,12 +248,21 @@ function objectAt(value: unknown, key: string): Record<string, unknown> | null {
   return inner !== null && typeof inner === 'object' && !Array.isArray(inner) ? (inner as Record<string, unknown>) : null;
 }
 
-/** Every `model` value anywhere in an event, so a mid-run switch cannot hide in a nested field. */
-function modelsNamed(value: unknown, found: string[] = [], depth = 0): string[] {
-  if (depth > 8 || value === null || typeof value !== 'object') return found;
-  for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
-    if (key === 'model' && typeof inner === 'string') found.push(inner);
-    else modelsNamed(inner, found, depth + 1);
+/**
+ * Every `model` value anywhere in an event, at any depth, so a mid-run
+ * switch cannot hide in a nested field. A stack, not recursion: a line is at
+ * most `MAX_LINE_BYTES`, and nesting that deep must not end the scan early.
+ */
+export function modelsNamed(value: unknown): string[] {
+  const found: string[] = [];
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const next = pending.pop();
+    if (next === null || typeof next !== 'object') continue;
+    for (const [key, inner] of Object.entries(next as Record<string, unknown>)) {
+      if (key === 'model' && typeof inner === 'string') found.push(inner);
+      else pending.push(inner);
+    }
   }
   return found;
 }
@@ -312,6 +329,24 @@ interface EvidenceRecord {
   readonly outcome: string;
   readonly exitCode: number | null;
   readonly signal: string | null;
+  /** Whether the run's checkout was removed (Amendment 1 C5); `null` when there was none, or the run is still going. */
+  readonly checkoutRemoved: boolean | null;
+}
+
+/** A start from its first check to its last evidence write; `run` once agy is launched. */
+interface InFlight {
+  run: AgyRun | null;
+  readonly settled: Promise<void>;
+}
+
+/** The checkout failed and its directory could not be removed either. */
+export class CheckoutLeftBehindError extends Error {
+  constructor(
+    readonly directory: string,
+    cause: unknown,
+  ) {
+    super(`checkout failed, and ${directory} could not be removed: ${describe(cause)}`);
+  }
 }
 
 export class AgyPlannerExecutor implements PlannerExecutor {
@@ -320,14 +355,17 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   private readonly reap: PlannerReaper;
   private readonly hashFile: FileHasher;
   private readonly checkout: CheckoutMaker;
+  private readonly removeDirectory: (path: string) => Promise<void>;
   private readonly clock: Clock;
   private readonly initTimeoutMs: number;
   private readonly runTimeoutMs: number;
   private readonly stopGraceMs: number;
   /** One run at a time: the planner user is one user, and the lingering-process check reads the whole user. */
   private busy = false;
-  /** The run in flight and its settling, so a stopping daemon can cancel it (Amendment 3 C2). */
-  private inFlight: { readonly run: AgyRun; readonly settled: Promise<unknown> } | null = null;
+  /** The start in flight, from its first check to its last evidence write, so a stopping daemon can cancel it (Amendment 3 C2). */
+  private inFlight: InFlight | null = null;
+  /** Set by `shutdown`: no start begins after the daemon begins to stop. */
+  private shuttingDown = false;
   /** A halt whose file could not be written still holds for this process. */
   private haltedInMemory = false;
 
@@ -345,6 +383,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     this.reap = deps.reap ?? pkillReaper(this.reapCommandLine());
     this.hashFile = deps.hashFile ?? sha256OfFile;
     this.checkout = deps.checkout ?? gitCheckout;
+    this.removeDirectory = deps.removeCheckout ?? removeCheckout;
     this.clock = deps.clock ?? createDaemonClock();
     this.initTimeoutMs = deps.timings?.initTimeoutMs ?? INIT_TIMEOUT_MS;
     this.runTimeoutMs = deps.timings?.runTimeoutMs ?? parseSeconds(AGY_PRINT_TIMEOUT) * 1000 + RUN_GRACE_MS;
@@ -394,36 +433,42 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     if (!REPOSITORY_PATTERN.test(work.repository) || !FULL_SHA_PATTERN.test(work.baseSha)) {
       return this.refuse(work, identity, 'work_not_checkoutable');
     }
+    if (this.shuttingDown) return this.refuse(work, identity, 'daemon_stopping');
     if (await this.isHalted()) return this.refuse(work, identity, 'executor_halted');
     if (this.busy) return this.refuse(work, identity, 'executor_busy');
+    // From here until the run's evidence is written, this start is the one in flight.
     this.busy = true;
-    let released = false;
-    const release = (): void => {
-      if (!released) {
-        released = true;
-        this.busy = false;
-      }
+    let settle!: () => void;
+    const inFlight: InFlight = { run: null, settled: new Promise<void>((resolve) => (settle = resolve)) };
+    this.inFlight = inFlight;
+    const finish = (): void => {
+      if (this.inFlight === inFlight) this.inFlight = null;
+      this.busy = false;
+      settle();
     };
     try {
-      return await this.startHeld(work, identity, release);
+      const started = await this.startHeld(work, identity, inFlight);
+      if (started.kind === 'accepted') started.completion.then(finish, finish);
+      else finish();
+      return started;
     } catch (error) {
-      release();
+      finish();
       throw error;
     }
   }
 
-  private async startHeld(work: PlannerWorkWire, identity: PlannerIdentityWire, release: () => void): Promise<PlannerStart> {
+  private async startHeld(work: PlannerWorkWire, identity: PlannerIdentityWire, inFlight: InFlight): Promise<PlannerStart> {
     let lingering: boolean;
     try {
       lingering = await this.probe();
     } catch (error) {
+      // A check that cannot be made is not proof that nothing runs (Amendment 3 C3).
       this.log('error', 'agy.probe_failed', { message: describe(error) });
-      release();
+      await this.halt('planner_user_check_failed_before_start');
       return this.refuse(work, identity, 'probe_failed');
     }
     if (lingering) {
       await this.halt('planner_user_has_processes_before_start');
-      release();
       return this.refuse(work, identity, 'planner_user_has_processes');
     }
 
@@ -432,12 +477,10 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       agySha256 = await this.hashFile(this.config.agyPath);
     } catch (error) {
       this.log('error', 'agy.hash_failed', { message: describe(error) });
-      release();
       return this.refuse(work, identity, 'agy_hash_failed');
     }
     if (agySha256 !== this.config.agySha256) {
       this.log('error', 'agy.hash_mismatch', { expected: this.config.agySha256, read: agySha256 });
-      release();
       return this.refuse(work, identity, 'agy_hash_mismatch', agySha256);
     }
 
@@ -446,8 +489,12 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       directory = await this.checkout(work, this.config.checkoutParent);
     } catch (error) {
       this.log('warn', 'agy.checkout_failed', { message: describe(error) });
-      release();
-      return this.refuse(work, identity, 'checkout_failed', agySha256);
+      const left = error instanceof CheckoutLeftBehindError;
+      if (left) await this.halt('checkout_not_removed');
+      return this.refuse(work, identity, 'checkout_failed', agySha256, left ? false : null);
+    }
+    if (this.shuttingDown) {
+      return this.refuse(work, identity, 'daemon_stopping', agySha256, await this.removeRunCheckout(directory));
     }
 
     const startedAt = this.isoNow();
@@ -456,59 +503,77 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     try {
       child = this.launch(file, args, { cwd: directory });
     } catch (error) {
-      await removeCheckout(directory);
-      release();
       this.log('warn', 'agy.launch_failed', { message: describe(error) });
-      return this.refuse(work, identity, 'launch_failed', agySha256);
+      return this.refuse(work, identity, 'launch_failed', agySha256, await this.removeRunCheckout(directory));
     }
     const run = new AgyRun(child, this.stopGraceMs, this.clock);
+    inFlight.run = run;
 
     const init = await run.firstEvent(this.initTimeoutMs);
     const initBody = init === null ? null : objectAt(init, 'init');
     const initModel = initBody !== null && typeof initBody['model'] === 'string' ? initBody['model'] : null;
     const conversationId = init !== null && typeof init['conversation_id'] === 'string' ? init['conversation_id'] : null;
-    if (init === null || init['event'] !== 'init' || initModel !== AGY_PLANNER_LANE.agyModel) {
+    const evidenceBase = { commandId: work.commandId, executionId: identity.executionId, startedAt, agySha256, initModel, conversationId };
+    const refused =
+      init === null ? 'no_init_event'
+      : init['event'] !== 'init' ? 'first_event_not_init'
+      : initModel !== AGY_PLANNER_LANE.agyModel ? 'init_model_mismatch'
+      : this.shuttingDown || run.stopping ? 'cancelled_before_send'
+      : null;
+    if (refused !== null) {
       // Nothing was written to agy's input: the work never left this host.
-      const ended = await run.stop();
-      await this.reapPlannerUser();
-      await removeCheckout(directory);
-      release();
-      const outcome = init === null ? 'no_init_event' : init['event'] !== 'init' ? 'first_event_not_init' : 'init_model_mismatch';
-      await this.evidence({
-        commandId: work.commandId,
-        executionId: identity.executionId,
-        startedAt,
-        agySha256,
-        initModel,
-        conversationId,
-        sent: false,
-        endedAt: this.isoNow(),
-        outcome,
-        ...ended,
-      });
-      this.log('warn', 'agy.not_sent', { outcome, initModel });
+      const ended = await this.endRun(run, directory);
+      await this.evidence({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: refused, ...ended });
+      this.log('warn', 'agy.not_sent', { outcome: refused, initModel });
       return { kind: 'not_sent' };
     }
 
-    // The model is the lane's: the work goes in, and from here contact cannot be ruled out.
+    // The record is durable before the work goes in, so no run is ever sent without one
+    // (Amendment 4 E1). It says `sent` from here: contact cannot be ruled out once the
+    // input may have been written, and a daemon that dies now leaves this record to boot.
+    const sentBase = { ...evidenceBase, sent: true };
+    if (!(await this.evidence({ ...sentBase, endedAt: null, outcome: 'running', exitCode: null, signal: null, checkoutRemoved: null }))) {
+      const ended = await this.endRun(run, directory);
+      await this.evidence({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: 'evidence_write_failed', ...ended });
+      return { kind: 'not_sent' };
+    }
     run.send(agyInputLine(plannerPrompt(work)));
-    const evidenceBase = { commandId: work.commandId, executionId: identity.executionId, startedAt, agySha256, initModel, conversationId, sent: true };
-    await this.evidence({ ...evidenceBase, endedAt: null, outcome: 'running', exitCode: null, signal: null });
 
-    const completion = run.result(this.runTimeoutMs).then(
-      async (outcome) => {
-        this.inFlight = null;
-        const ended = await run.stop();
-        await this.reapPlannerUser();
-        await removeCheckout(directory);
-        release();
-        await this.evidence({ ...evidenceBase, endedAt: this.isoNow(), outcome: outcome.kind, ...ended });
-        if (outcome.kind !== 'plan') throw new Error(`agy run ended without a plan: ${outcome.kind}`);
-        return { kind: 'plan', document: outcome.document } satisfies PlannerResultWire;
-      },
-    );
-    this.inFlight = { run, settled: completion.catch(() => undefined) };
+    const completion = run.result(this.runTimeoutMs).then(async (outcome) => {
+      const ended = await this.endRun(run, directory);
+      await this.evidence({ ...sentBase, endedAt: this.isoNow(), outcome: outcome.kind, ...ended });
+      if (outcome.kind !== 'plan') throw new Error(`agy run ended without a plan: ${outcome.kind}`);
+      return { kind: 'plan', document: outcome.document } satisfies PlannerResultWire;
+    });
     return { kind: 'accepted', observed: { ...AGY_PLANNER_ROUTE }, completion };
+  }
+
+  /**
+   * Amendment 3 C1, after every run that started agy: end agy through sudo,
+   * use rule B1(b), check the planner user, remove the checkout. An exit not
+   * seen in time, a survivor, a failed check or a checkout left behind halts.
+   */
+  private async endRun(run: AgyRun, directory: string): Promise<{ exitCode: number | null; signal: string | null; checkoutRemoved: boolean }> {
+    const ended = await run.stop();
+    await this.reapPlannerUser();
+    if (!ended.confirmed) {
+      this.log('error', 'agy.exit_unconfirmed', { graceMs: this.stopGraceMs });
+      await this.halt('agy_exit_unconfirmed');
+    }
+    const checkoutRemoved = await this.removeRunCheckout(directory);
+    return { exitCode: ended.exitCode, signal: ended.signal, checkoutRemoved };
+  }
+
+  /** Amendment 1 C5: the checkout is removed after the run. One that remains halts. */
+  private async removeRunCheckout(directory: string): Promise<boolean> {
+    try {
+      await this.removeDirectory(directory);
+      return true;
+    } catch (error) {
+      this.log('error', 'agy.checkout_not_removed', { message: describe(error) });
+      await this.halt('checkout_not_removed');
+      return false;
+    }
   }
 
   /** Before the daemon takes any Planner work: reap and check (Amendment 3 C2). */
@@ -524,11 +589,14 @@ export class AgyPlannerExecutor implements PlannerExecutor {
    */
   private async closeStaleEvidence(): Promise<void> {
     const directory = join(this.config.gatewayDirectory, 'planner-evidence');
+    // A record that cannot be read may be one still running: it halts, as a write that fails does.
     let names: string[];
     try {
       names = await readdir(directory);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.log('error', 'agy.evidence_unreadable', { message: describe(error) });
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      this.log('error', 'agy.evidence_unreadable', { message: describe(error) });
+      await this.halt('evidence_unreadable');
       return;
     }
     const bootedAt = this.isoNow();
@@ -539,20 +607,36 @@ export class AgyPlannerExecutor implements PlannerExecutor {
         record = JSON.parse(await readFile(join(directory, name), 'utf8')) as EvidenceRecord;
       } catch (error) {
         this.log('error', 'agy.evidence_unreadable', { name, message: describe(error) });
+        await this.halt('evidence_unreadable');
         continue;
       }
       if (record.outcome !== 'running') continue;
-      await this.evidence({ ...record, endedAt: bootedAt, outcome: 'daemon_ended_during_run' });
-      this.log('warn', 'agy.evidence_closed_at_boot', { commandId: record.commandId });
+      if (await this.evidence({ ...record, endedAt: bootedAt, outcome: 'daemon_ended_during_run' })) {
+        this.log('warn', 'agy.evidence_closed_at_boot', { commandId: record.commandId });
+      }
     }
   }
 
-  /** The daemon is stopping: a run in flight is a cancellation, ended under Amendment 3 C1. */
+  /**
+   * Whether the executor would serve an attestation now: the daemon still
+   * holds Gateway 1880c12d's identity. The worker asks this before it
+   * re-answers an attestation it already recorded.
+   */
+  serves(): Promise<boolean> {
+    return this.onBoundGateway();
+  }
+
+  /**
+   * The daemon is stopping: a run in flight is a cancellation, ended under
+   * Amendment 3 C1, whether agy is still announcing its model or already
+   * working. No start begins after this.
+   */
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
     const inFlight = this.inFlight;
     if (inFlight === null) return;
     this.log('warn', 'agy.cancelled_by_shutdown', {});
-    await inFlight.run.stop();
+    if (inFlight.run !== null) await inFlight.run.stop();
     await inFlight.settled;
   }
 
@@ -615,7 +699,13 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     }
   }
 
-  private async refuse(work: PlannerWorkWire, identity: PlannerIdentityWire, outcome: string, agySha256: string | null = null): Promise<PlannerStart> {
+  private async refuse(
+    work: PlannerWorkWire,
+    identity: PlannerIdentityWire,
+    outcome: string,
+    agySha256: string | null = null,
+    checkoutRemoved: boolean | null = null,
+  ): Promise<PlannerStart> {
     await this.evidence({
       commandId: work.commandId,
       executionId: identity.executionId,
@@ -628,12 +718,17 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       outcome,
       exitCode: null,
       signal: null,
+      checkoutRemoved,
     });
     return { kind: 'not_sent' };
   }
 
-  /** Atomic tmp+rename, mode 0600, one file per command, overwritten as the run moves on. */
-  private async evidence(record: EvidenceRecord): Promise<void> {
+  /**
+   * Atomic tmp+rename, mode 0600, one file per command, overwritten as the
+   * run moves on. The record is the journal record Amendment 4 E1 names, so
+   * a write that fails halts the executor and answers `false`.
+   */
+  private async evidence(record: EvidenceRecord): Promise<boolean> {
     const directory = join(this.config.gatewayDirectory, 'planner-evidence');
     try {
       await mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
@@ -650,8 +745,11 @@ export class AgyPlannerExecutor implements PlannerExecutor {
         await unlink(temporary).catch(() => undefined);
         throw error;
       });
+      return true;
     } catch (error) {
       this.log('error', 'agy.evidence_failed', { message: describe(error) });
+      await this.halt('evidence_write_failed');
+      return false;
     }
   }
 
@@ -674,6 +772,8 @@ class AgyRun {
   private readonly waiters: (() => void)[] = [];
   private closed = false;
   private malformed = false;
+  private stopped = false;
+  private errored = false;
   private readonly exited: Promise<{ exitCode: number | null; signal: string | null }>;
 
   constructor(
@@ -681,9 +781,13 @@ class AgyRun {
     private readonly stopGraceMs: number,
     private readonly clock: Clock,
   ) {
+    // 'exit', not 'close': 'close' also waits for every holder of agy's pipes.
     this.exited = new Promise((resolve) => {
-      child.once('error', () => resolve({ exitCode: null, signal: null }));
-      child.once('close', (code, signal) => resolve({ exitCode: code, signal }));
+      child.once('error', () => {
+        this.errored = true;
+        resolve({ exitCode: null, signal: null });
+      });
+      child.once('exit', (code, signal) => resolve({ exitCode: code, signal }));
     });
     child.stdin.on('error', () => undefined);
     child.stderr.resume();
@@ -758,17 +862,49 @@ class AgyRun {
     }
   }
 
-  /** End agy: SIGTERM through sudo, then SIGKILL after the grace. Resolves when it has exited. */
-  async stop(): Promise<{ exitCode: number | null; signal: string | null }> {
-    if (this.child.exitCode === null && this.child.signalCode === null) {
+  /**
+   * End agy: SIGTERM through sudo, SIGKILL to sudo after the grace, and at
+   * most one more grace for it to exit. Never waits on agy's output pipes,
+   * which a process sudo could not signal may still hold: the reap that
+   * follows ends that process. `confirmed` is false when the exit was not
+   * seen in time, and the caller halts.
+   */
+  async stop(): Promise<{ exitCode: number | null; signal: string | null; confirmed: boolean }> {
+    this.stopped = true;
+    if (this.child.exitCode === null && this.child.signalCode === null && !this.errored) {
       this.child.stdin.destroy();
       this.child.kill('SIGTERM');
-      const timer = setTimeout(() => this.child.kill('SIGKILL'), this.stopGraceMs);
-      const ended = await this.exited;
-      clearTimeout(timer);
-      return ended;
+      const timers: NodeJS.Timeout[] = [];
+      const ended = await Promise.race([
+        this.exited,
+        new Promise<null>((resolve) => {
+          timers.push(
+            setTimeout(() => {
+              this.child.kill('SIGKILL');
+              timers.push(setTimeout(() => resolve(null), this.stopGraceMs));
+            }, this.stopGraceMs),
+          );
+        }),
+      ]);
+      for (const timer of timers) clearTimeout(timer);
+      this.release();
+      return ended === null ? { exitCode: null, signal: null, confirmed: false } : { ...ended, confirmed: true };
     }
-    return this.exited;
+    this.release();
+    return { ...(await this.exited), confirmed: true };
+  }
+
+  /** Whether `stop` has been asked, by a completion or by the daemon stopping. */
+  get stopping(): boolean {
+    return this.stopped;
+  }
+
+  /** Let go of agy's output, so a descendant that keeps a pipe open cannot keep this process waiting. */
+  private release(): void {
+    this.child.stdout.destroy();
+    this.child.stderr.destroy();
+    this.closed = true;
+    this.wake();
   }
 }
 
@@ -785,9 +921,12 @@ function describe(error: unknown): string {
 /**
  * git runs with none of the Gateway user's configuration: no global or
  * system file (so no `insteadOf` can turn the anonymous HTTPS fetch into an
- * SSH one with the Founder's key), no credential helper, no prompt.
+ * SSH one with the Founder's key), no credential helper, no prompt. `HOME`
+ * names no directory, so git's HTTP transport finds no `~/.netrc` to send:
+ * curl reads `$HOME/.netrc` and looks no further while `HOME` is set.
  */
 const ISOLATED_GIT_ENV: Readonly<Record<string, string>> = {
+  HOME: '/nonexistent',
   GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_CONFIG_NOSYSTEM: '1',
   GIT_TERMINAL_PROMPT: '0',
@@ -882,7 +1021,11 @@ export async function gitCheckout(work: PlannerWorkWire, parent: string): Promis
     await readOnly(directory);
     return directory;
   } catch (error) {
-    await removeCheckout(directory);
+    try {
+      await removeCheckout(directory);
+    } catch {
+      throw new CheckoutLeftBehindError(directory, error);
+    }
     throw error;
   }
 }
@@ -903,14 +1046,29 @@ export async function readOnly(path: string): Promise<void> {
   }
 }
 
-/** Owner write is restored on each directory first, so the tree can be removed. */
+/**
+ * Owner write is restored on each directory first, so the tree can be
+ * removed; then it is removed, and its absence is checked. Rejects when the
+ * path still exists afterwards, so a checkout left behind is never reported
+ * as removed.
+ */
 export async function removeCheckout(path: string): Promise<void> {
   const writable = async (target: string): Promise<void> => {
     const info = await lstat(target).catch(() => null);
     if (info === null || !info.isDirectory()) return;
-    await chmod(target, 0o755).catch(() => undefined);
-    for (const name of await readdir(target).catch(() => [] as string[])) await writable(join(target, name));
+    await chmod(target, 0o755);
+    for (const name of await readdir(target)) await writable(join(target, name));
   };
-  await writable(path);
-  await rm(path, { recursive: true, force: true }).catch(() => undefined);
+  let failure: unknown = null;
+  try {
+    await writable(path);
+    await rm(path, { recursive: true, force: true });
+  } catch (error) {
+    failure = error;
+  }
+  const remains = await lstat(path).then(
+    () => true,
+    (error: NodeJS.ErrnoException) => error.code !== 'ENOENT',
+  );
+  if (remains) throw new Error(`the checkout ${path} remains${failure === null ? '' : `: ${describe(failure)}`}`);
 }

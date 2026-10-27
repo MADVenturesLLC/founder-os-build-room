@@ -61,6 +61,8 @@ export interface PlannerExecutor {
   boot?(): Promise<void>;
   /** When the daemon stops: end what is in flight. */
   shutdown?(): Promise<void>;
+  /** Whether it would attest now. Asked before a recorded attestation is answered again. */
+  serves?(): Promise<boolean>;
 }
 
 /** One command, as this Gateway knows it. */
@@ -260,8 +262,15 @@ export class GatewayPlannerWorker {
 
   private async attest(request: Extract<PlannerRequestWire, { kind: 'attest' }>): Promise<PlannerReportPayload> {
     const existing = await this.deps.records.read(request.commandId);
-    // One execution per command: a repeated attest re-answers the identity already bound.
-    if (existing !== null) return { kind: 'attested', identity: existing.identity };
+    // One execution per command: a repeated attest re-answers the identity already bound,
+    // while the executor would still attest now.
+    if (existing !== null) {
+      if (this.deps.executor.serves !== undefined && !(await this.deps.executor.serves())) {
+        this.log('warn', 'planner.attest_failed', { message: 'the executor no longer serves this Gateway' });
+        return { kind: 'attest_failed' };
+      }
+      return { kind: 'attested', identity: existing.identity };
+    }
 
     let identity: PlannerIdentityWire;
     try {
