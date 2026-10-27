@@ -59,7 +59,11 @@
  *     writes (shown for each refusal before launch; that the read and the
  *     write are one step in the executor's evidence queue is read, not
  *     raced); a record that cannot be read, or lacks `sent`, halts, at a
- *     start and at boot; an earlier refusal lets a retry through. A
+ *     start, at boot, and when the worker asks; an earlier refusal lets a
+ *     retry through. Once the running record has been attempted, `not_sent`
+ *     is answered only when the record then says so: a downgrade that
+ *     cannot be written or made durable rejects instead, as the running
+ *     record's own failed write does. A
  *     record still running at boot is closed in place; boot reaps even when an
  *     evidence record or a worker record cannot be read, and
  *     `GatewayDaemon.boot` boots the Planner even when the lanes' recovery
@@ -81,7 +85,7 @@
  *     worker answers nothing for it: `not_sent` and `never_received` are
  *     affirmed only while the executor's record agrees, and a record that
  *     says sent, or cannot be read, gets no answer from `status` or
- *     `execute`;
+ *     `execute`, the executor's own `not_sent` answer included;
  *   - `choosePlannerExecutor` selects the executor only on Linux, on Gateway
  *     1880c12d, with every setting present. That is the factory alone: no
  *     test here starts `main.ts`, so its wiring of the factory is read, not
@@ -946,14 +950,14 @@ describe('ending a run never waits on agy\'s pipes (Amendment 3 C1; Tier-2 B1)',
 });
 
 describe('the evidence record is durable before the work is sent (Amendment 5 B3; Tier-2 B2)', () => {
-  it('sends nothing, and halts, when the running record cannot be written', async () => {
+  it('sends nothing, halts, and rejects rather than answer not_sent, when the running record cannot be written', async () => {
     const w = work();
     const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
     // The evidence directory is a link to nowhere: nothing can be made in it, even by
     // root, and there is no earlier record for the command to read.
     mkdirSync(h.gatewayDirectory, { recursive: true });
     symlinkSync(join(h.gatewayDirectory, 'nowhere'), join(h.gatewayDirectory, 'planner-evidence'));
-    assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
+    await assert.rejects(h.executor.start(w, await identityFor(h.executor, w.commandId)), /could not be made to say so/);
     assert.equal(h.launches, 1);
     assert.deepEqual(h.seen().stdin, [], 'nothing was written to agy');
     assert.equal(h.reaps(), 1);
@@ -1292,7 +1296,7 @@ describe('the running record survives a crash before the work is written (Tier-2
     assert.equal(synced.at(-1)?.path, evidenceDirectory, 'the final record is synced too');
   });
 
-  it('sends nothing, and halts, when the directory cannot be synced', async () => {
+  it('sends nothing, halts, and rejects rather than answer not_sent, when the directory cannot be synced', async () => {
     const w = work();
     const h = harness({
       mode: 'ok',
@@ -1300,7 +1304,7 @@ describe('the running record survives a crash before the work is written (Tier-2
       // Only the record's own directory fails, so the parent's sync cannot stand in for it.
       syncDirectory: (path) => (basename(path) === 'planner-evidence' ? Promise.reject(new Error('EIO')) : syncDirectory(path)),
     });
-    assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
+    await assert.rejects(h.executor.start(w, await identityFor(h.executor, w.commandId)), /could not be made to say so/);
     assert.deepEqual(h.seen().stdin, [], 'nothing was written to agy');
     assert.equal(haltReason(h.gatewayDirectory), 'evidence_write_failed');
     assert.equal(h.reaps(), 1);
@@ -1585,10 +1589,11 @@ describe('the worker affirms nothing against the executor\'s record (Tier-2 G2)'
     assert.equal(h.launches, 0);
   });
 
-  it('both answer nothing when the executor cannot read its record', async () => {
+  it('both answer nothing when the executor cannot read its record, and the executor halts', async () => {
     const { w, h, identity, records, worker } = await stale();
     placeEvidence(h, w.commandId, '{not json');
     assert.equal(await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), null);
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_unreadable', 'asked by the worker, an unreadable record halts too');
     await records.write({ commandId: w.commandId, phase: 'attested', identity });
     assert.equal(await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: uuid(), work: w }), null);
   });
@@ -1621,5 +1626,52 @@ describe('a record that does not say whether the work was sent is not a record (
       assert.equal(haltReason(booted.gatewayDirectory), 'evidence_unreadable', `boot: ${String(fields.sent)}`);
       assert.equal(booted.reaps(), 1);
     }
+  });
+});
+
+describe('not_sent is answered only when the record says so (Tier-2 H2)', () => {
+  it('rejects when the downgrade after the running record cannot be made durable', async () => {
+    const other = '2222132d-0000-4000-8000-000000000000';
+    let held: string | null = AGY_PLANNER_GATEWAY_ID;
+    const w = work();
+    let evidenceSyncs = 0;
+    const h = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      heldGatewayId: () => held,
+      syncDirectory: async (path) => {
+        if (basename(path) !== 'planner-evidence') return syncDirectory(path);
+        evidenceSyncs += 1;
+        // The running record lands and is synced; then the identity moves on, and the
+        // record that would say the work was not sent cannot be made durable.
+        if (evidenceSyncs === 1) {
+          held = other;
+          return syncDirectory(path);
+        }
+        throw new Error('EIO');
+      },
+    });
+    const identity = await identityFor(h.executor, w.commandId);
+    await assert.rejects(h.executor.start(w, identity), /could not be made to say so/);
+    assert.deepEqual(h.seen().stdin, [], 'nothing was written to agy');
+    assert.equal(h.reaps(), 1);
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_write_failed');
+    assert.ok(h.logged.includes('agy.not_sent') && h.logged.includes('agy.evidence_failed'));
+  });
+
+  it('the worker relays an executor\'s not_sent only while the executor\'s record agrees', async () => {
+    const w = work();
+    const identity = await identityFor(harness({ mode: 'ok' }).executor, w.commandId);
+    const executor: PlannerExecutor = {
+      attest: () => Promise.resolve(identity),
+      start: () => Promise.resolve({ kind: 'not_sent' }),
+      // An executor whose answer and record disagree: the worker affirms neither.
+      sent: () => Promise.resolve(true),
+    };
+    const records = new PlannerRecordStore(plannerRecordsDirectory(temporary('buildroom-agy-records-')));
+    const worker = new GatewayPlannerWorker({ executor, records });
+    await worker.handle({ requestId: uuid(), kind: 'attest', commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } });
+    assert.equal(await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: identity.executionId, work: w }), null);
+    assert.equal((await records.read(w.commandId))?.phase, 'not_sent', 'what the executor answered is still recorded');
   });
 });

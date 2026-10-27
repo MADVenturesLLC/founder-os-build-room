@@ -580,8 +580,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     const sentBase = { ...evidenceBase, sent: true };
     if (!(await this.evidence({ ...sentBase, endedAt: null, outcome: 'running', exitCode: null, signal: null, checkoutRemoved: null }))) {
       const ended = await this.endRun(run, directory);
-      await this.evidence({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: 'evidence_write_failed', ...ended });
-      return { kind: 'not_sent' };
+      return this.notSentOnceRecorded({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: 'evidence_write_failed', ...ended });
     }
     // The record took time to write: ask again, and make the last checks with nothing
     // awaited between them and the write, so neither a promotion nor a stop lands between.
@@ -592,9 +591,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       : null;
     if (late !== null) {
       const ended = await this.endRun(run, directory);
-      await this.evidence({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: late, ...ended });
       this.log('warn', 'agy.not_sent', { outcome: late, initModel });
-      return { kind: 'not_sent' };
+      return this.notSentOnceRecorded({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: late, ...ended });
     }
     run.send(agyInputLine(plannerPrompt(work)));
 
@@ -803,6 +801,19 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   }
 
   /**
+   * `not_sent` once the running record has been attempted: only when the record now says
+   * so. A record that could not be written, or made durable, may still say the work was
+   * sent, or say so again after a crash, so the answer is then a rejection, which the
+   * worker records as unknown; the failed write has already halted the executor.
+   */
+  private async notSentOnceRecorded(record: EvidenceRecord): Promise<PlannerStart> {
+    if (!(await this.evidence(record))) {
+      throw new Error(`the work was not sent (${record.outcome}), but the record could not be made to say so`);
+    }
+    return { kind: 'not_sent' };
+  }
+
+  /**
    * Rejects when the command's record says its work was sent, or cannot say. The answer is
    * a rejection, not `not_sent`, because the work did reach agy once, or may have; the
    * worker records that as unknown. Neither case writes over the record.
@@ -826,6 +837,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
    */
   async sent(commandId: string): Promise<boolean | null> {
     const prior = await this.serialized(() => this.priorEvidence(commandId));
+    // A record that cannot be read halts, whoever asked: the executor may be holding a run it cannot account for.
+    if (prior === 'unreadable') await this.halt('evidence_unreadable');
     return prior === 'sent' ? true : prior === 'unreadable' ? null : false;
   }
 

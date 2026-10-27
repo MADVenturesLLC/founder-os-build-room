@@ -355,7 +355,8 @@ export class GatewayPlannerWorker {
     }
     if (started.kind === 'not_sent') {
       await this.deps.records.write({ commandId: record.commandId, phase: 'not_sent', identity: record.identity });
-      return { kind: 'not_sent' };
+      // The executor's own answer, relayed only while its record agrees, as every affirmative is.
+      return this.affirm('not_sent', record.commandId);
     }
 
     const running = { commandId: record.commandId, identity: record.identity, observed: { ...started.observed } };
