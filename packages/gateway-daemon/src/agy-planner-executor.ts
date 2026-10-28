@@ -68,7 +68,7 @@
 
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, unlink } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, open, readdir, rename, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type {
@@ -80,8 +80,8 @@ import type {
 } from '../../gateway-protocol/src/index.js';
 import { PLANDOC_SCHEMA_V1 } from '../../seat-output-schema/src/index.js';
 import { createDaemonClock } from './clock.js';
-import { DIRECTORY_MODE, FILE_MODE } from './paths.js';
-import { readRegularFile, rewriteInFull, syncDirectory, syncMadeDirectories, type PlannerExecutor, type PlannerStart } from './planner-worker.js';
+import { FILE_MODE } from './paths.js';
+import { makeLeafDirectory, readRegularFile, rewriteInFull, syncDirectory, syncMadeDirectories, type PlannerExecutor, type PlannerStart } from './planner-worker.js';
 
 /** The one lane this executor serves (the ruling's B1). */
 export const AGY_PLANNER_LANE = {
@@ -406,15 +406,15 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   /** A halt whose file could not be written still holds for this process. */
   private haltedInMemory = false;
   /**
-   * A halt whose marker could not be made durable: the marker's text, and the first
-   * directory its mkdir made. Until a write of it succeeds, the marker is written again in
-   * full (a new file, synced, renamed into place, its directory synced), never synced
-   * again, before every start and at boot.
+   * A halt whose marker could not be made durable: the marker's text. Until a write of it
+   * succeeds, the marker is written again in full (a new file, synced, renamed into place,
+   * its directory synced), never synced again, at boot and before every start is answered.
    */
-  private pendingHalt: { readonly text: string; readonly created: string | undefined } | null = null;
+  private pendingHalt: string | null = null;
   /**
-   * Set when an evidence write fails, at any step, or when boot cannot sync the evidence
-   * directory: no record in it is read or written for the rest of the process. A sync
+   * Set when an evidence write fails, at any step, or when boot cannot list the evidence
+   * directory or write what it holds again: no record in it is read or written for the
+   * rest of the process. A sync
    * that fails is not tried again, because a second fsync after a failed one can report
    * success for data the kernel has already dropped.
    */
@@ -516,6 +516,9 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   }
 
   private async startEntered(work: PlannerWorkWire, identity: PlannerIdentityWire): Promise<PlannerStart> {
+    // A halt marker not yet durable is written again before any start is answered, whichever
+    // check refuses it: a refusal that lands its own record must not leave the halt unwritten.
+    if (this.pendingHalt !== null) await this.persistPendingHalt();
     if (!identityIsLane(identity)) return this.refuse(work, identity, 'identity_not_lane');
     if (!(await this.onBoundGateway())) return this.refuse(work, identity, 'gateway_identity_changed');
     if (!REPOSITORY_PATTERN.test(work.repository) || !FULL_SHA_PATTERN.test(work.baseSha)) {
@@ -717,6 +720,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       names = await readdir(directory);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      // Not one record could be written again, so none is read in this process.
+      this.evidenceFailed = true;
       this.log('error', 'agy.evidence_unreadable', { message: describe(error) });
       await this.halt('evidence_unreadable');
       return;
@@ -741,10 +746,12 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     }
     const bootedAt = this.isoNow();
     for (const name of names) {
+      // A closing write that failed latches the evidence: nothing more is read or written.
+      if (this.evidenceFailed) return;
       if (!name.endsWith('.json') || name.startsWith('.')) continue;
       let record: EvidenceRecord;
       try {
-        const parsed: unknown = JSON.parse(await readFile(join(directory, name), 'utf8'));
+        const parsed: unknown = JSON.parse((await readRegularFile(join(directory, name))).toString('utf8'));
         if (!isEvidenceRecord(parsed)) throw new Error('not an evidence record');
         // The file must be the one its command's record lives in: closing it rewrites that
         // path, and a stray file naming another command's id must not write over its record.
@@ -836,9 +843,9 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       return;
     }
     const text = `${JSON.stringify({ haltedAt: this.isoNow(), reason, plannerUser: this.config.plannerUser })}\n`;
-    let created: string | undefined;
     try {
-      created = await mkdir(this.config.gatewayDirectory, { recursive: true, mode: DIRECTORY_MODE });
+      // The Gateway's directory is the daemon's to make, and is not made here: a marker that
+      // cannot be written into it is held in memory, below, as any other failed write is.
       // Exclusive create: a path already there, link or file, is never written through.
       const handle = await open(this.haltPath(), 'wx', FILE_MODE);
       try {
@@ -850,7 +857,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       // The marker's directory entry survives a crash only once the directory is synced;
       // a halt that a crash could clear would let work through with no one's direction
       // (Amendment 3 C1).
-      await syncMadeDirectories(this.config.gatewayDirectory, created, this.deps.syncDirectory ?? syncDirectory);
+      await (this.deps.syncDirectory ?? syncDirectory)(this.config.gatewayDirectory);
     } catch (error) {
       // Already there: the executor is halted already, and the first reason stands.
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') return;
@@ -858,7 +865,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       // halted, and writes the marker again in full before every start until it lands.
       this.log('error', 'agy.halt_write_failed', { message: describe(error) });
       this.haltedInMemory = true;
-      this.pendingHalt ??= { text, created };
+      this.pendingHalt ??= text;
     }
   }
 
@@ -883,33 +890,31 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     if (text === '') {
       text = `${JSON.stringify({ haltedAt: this.isoNow(), reason: 'halt_marker_unreadable_at_boot', plannerUser: this.config.plannerUser })}\n`;
     }
-    this.pendingHalt = { text, created: undefined };
+    this.pendingHalt = text;
     await this.persistPendingHalt();
     if (this.pendingHalt !== null) this.haltedInMemory = true;
   }
 
   /**
    * Writes a halt marker that could not be made durable again, in full: a new file,
-   * synced, renamed over whatever is at the path, then its directory and every directory
-   * a mkdir made for it, synced. Not a second sync of the first file, which can report
-   * success for data already lost. The process stays halted either way.
+   * synced, renamed over whatever is at the path, then the Gateway's directory synced. Not
+   * a second sync of the first file, which can report success for data already lost. The
+   * process stays halted either way.
    */
   private async persistPendingHalt(): Promise<void> {
     const pending = this.pendingHalt;
     if (pending === null) return;
     const temporary = join(this.config.gatewayDirectory, `.planner-halted.${randomUUID()}.tmp`);
     try {
-      const created = await mkdir(this.config.gatewayDirectory, { recursive: true, mode: DIRECTORY_MODE });
       const handle = await open(temporary, 'wx', FILE_MODE);
       try {
-        await handle.writeFile(pending.text, { encoding: 'utf8' });
+        await handle.writeFile(pending, { encoding: 'utf8' });
         await handle.sync();
       } finally {
         await handle.close();
       }
       await rename(temporary, this.haltPath());
-      const shallowest = [pending.created, created].filter((path): path is string => path !== undefined).sort((a, b) => a.length - b.length)[0];
-      await syncMadeDirectories(this.config.gatewayDirectory, shallowest, this.deps.syncDirectory ?? syncDirectory);
+      await (this.deps.syncDirectory ?? syncDirectory)(this.config.gatewayDirectory);
       this.pendingHalt = null;
       this.log('warn', 'agy.halt_persisted', { haltFile: this.haltPath() });
     } catch (error) {
@@ -1006,7 +1011,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     }
     let text: string;
     try {
-      text = await readFile(this.evidencePath(commandId), 'utf8');
+      text = (await readRegularFile(this.evidencePath(commandId))).toString('utf8');
     } catch (error) {
       // No entry at the path is no record, and only a confirmed absence is: an entry that
       // cannot be read through (a link to nowhere), or an existence check that itself fails,
@@ -1059,7 +1064,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       return false;
     }
     try {
-      const created = await mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
+      const created = await makeLeafDirectory(directory);
       const target = this.evidencePath(record.commandId);
       const temporary = join(directory, `.evidence.${randomUUID()}.tmp`);
       const handle = await open(temporary, 'wx', FILE_MODE);

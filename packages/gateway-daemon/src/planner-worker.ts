@@ -34,7 +34,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/promises';
+import { mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   MAX_PLANNER_PAYLOAD_BYTES,
@@ -139,12 +139,30 @@ export async function rewriteInFull(path: string): Promise<void> {
  * on the open handle, so nothing swapped in between a check and the read is read through.
  */
 export async function readRegularFile(path: string): Promise<Buffer> {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  // Non-blocking: a named pipe at the path opens at once and is refused as not a regular
+  // file, rather than waiting for a writer that never comes.
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     if (!(await handle.stat()).isFile()) throw new Error(`${path} is not a regular file`);
     return await handle.readFile();
   } finally {
     await handle.close();
+  }
+}
+
+/**
+ * Makes `directory` if it is not there, and only it: its parent must already exist. Answers
+ * `directory` when this call made it, and undefined when it was there. The Planner's stores make
+ * nothing above their own directory, so the only directory a failed write can leave owed a sync is
+ * that one and the Gateway's directory it sits in, both of which a store syncs when it opens.
+ */
+export async function makeLeafDirectory(directory: string): Promise<string | undefined> {
+  try {
+    await mkdir(directory, { mode: DIRECTORY_MODE });
+    return directory;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    return undefined;
   }
 }
 
@@ -256,7 +274,7 @@ export class PlannerRecordStore {
   private async readNow(commandId: string): Promise<PlannerRecord | null> {
     let text: string;
     try {
-      text = await readFile(this.pathOf(commandId), 'utf8');
+      text = (await readRegularFile(this.pathOf(commandId))).toString('utf8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw error;
@@ -292,7 +310,7 @@ export class PlannerRecordStore {
   }
 
   private async writeDurably(record: PlannerRecord): Promise<void> {
-    const created = await mkdir(this.directory, { recursive: true, mode: DIRECTORY_MODE });
+    const created = await makeLeafDirectory(this.directory);
     const temporary = join(this.directory, `.record.${randomUUID()}.tmp`);
     const handle = await open(temporary, 'wx', FILE_MODE);
     try {
@@ -325,7 +343,7 @@ export class PlannerRecordStore {
     const records: PlannerRecord[] = [];
     for (const name of names) {
       if (!name.endsWith('.json') || name.startsWith('.')) continue;
-      records.push(JSON.parse(await readFile(join(this.directory, name), 'utf8')) as PlannerRecord);
+      records.push(JSON.parse((await readRegularFile(join(this.directory, name))).toString('utf8')) as PlannerRecord);
     }
     return records;
   }
@@ -373,9 +391,16 @@ export class GatewayPlannerWorker {
    * At boot, nothing is running in this process yet. A record left
    * `starting` or `running` is an execution this process cannot see the end
    * of: it becomes `lost`, and `status` answers nothing for it.
+   *
+   * The executor prepares first, so what an earlier process left in its evidence is written
+   * again in full before a `starting` record is judged by it; evidence it could not write
+   * again it answers it cannot say, and the record becomes `lost`. The records are recovered
+   * even when the executor's preparation fails, so neither depends on the other.
    */
   async boot(): Promise<void> {
     try {
+      await this.deps.executor.boot?.();
+    } finally {
       for (const record of await this.deps.records.all()) {
         if (record.phase === 'starting') {
           // A start this process never saw the end of; but when the executor's own record
@@ -392,11 +417,6 @@ export class GatewayPlannerWorker {
           });
         }
       }
-    } finally {
-      // The executor prepares last, so nothing it does is mistaken for a lost execution;
-      // and it prepares even when a record cannot be read or rewritten, so its boot
-      // cleanup never depends on the worker's own records.
-      await this.deps.executor.boot?.();
     }
   }
 

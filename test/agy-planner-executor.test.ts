@@ -116,9 +116,13 @@
  *     failed sync never being tried again; a store opened afresh, as after a
  *     restart, writes each of its records again in full, never syncing an
  *     earlier process's file again, then syncs its directory and the
- *     Gateway's, before anything else; a `running` record whose write fails does not stop the
- *     `finished` one; a `finished` record that cannot be written is never
- *     answered as running, only as nothing until it can be; a torn worker
+ *     Gateway's, before anything else; a `running` record whose write fails
+ *     does not stop the worker attempting the `finished` one, but the
+ *     production store, closed by that failure, refuses it, and `status`
+ *     answers nothing for that command for the rest of the process (the
+ *     worker's own retry is shown with a stand-in store that refuses a write
+ *     before the store's latch, not with the production store); a `finished`
+ *     record that cannot be written is never answered as running; a torn worker
  *     record is answered as nothing, not thrown out of the tick; at boot a
  *     `starting` record whose work the executor's record proves never sent
  *     becomes `not_sent`, not `lost`;
@@ -234,6 +238,8 @@ function harness(options: {
   const root = temporary('buildroom-agy-');
   const logPath = join(root, 'fake.log');
   const gatewayDirectory = join(root, 'gateway');
+  // The daemon makes the Gateway's directory before the executor runs; the executor never does.
+  mkdirSync(gatewayDirectory);
   const checkoutParent = join(root, 'checkouts');
   mkdirSync(checkoutParent);
   const checkouts: string[] = [];
@@ -1338,8 +1344,9 @@ describe('the running record survives a crash before the work is written (Tier-2
       { path: h.gatewayDirectory, stdinSoFar: 0 },
     ]);
     assert.equal(synced.filter((entry) => entry.path === h.gatewayDirectory).length, 1, 'the parent only when the directory is made');
-    assert.deepEqual(synced[2], { path: dirname(h.gatewayDirectory), stdinSoFar: 0 }, 'and the directory that gained the Gateway directory, made in the same mkdir');
-    assert.equal(synced.filter((entry) => entry.path === dirname(h.gatewayDirectory)).length, 1);
+    // The Gateway's directory is the daemon's to make: the executor makes only its own, so
+    // nothing above the Gateway's directory is ever owed a sync by it (Tier-2 A3).
+    assert.equal(synced.some((entry) => !entry.path.startsWith(h.gatewayDirectory)), false, 'nothing above the Gateway directory');
     assert.equal(synced.at(-1)?.path, evidenceDirectory, 'the final record is synced too');
   });
 
@@ -1849,7 +1856,7 @@ describe('the builder\'s own pre-review of 10f6a24, second set: the worker\'s re
     }
   });
 
-  it('a running record whose write fails does not stop the finished one: the result is still recorded and answered', async () => {
+  it('with a stand-in store that refuses a write before its latch, a failed running write does not stop the worker recording the finished one', async () => {
     const w = work();
     const identity = await identityFor(harness({ mode: 'ok' }).executor, w.commandId);
     const { executor, finish } = accepting(identity);
@@ -1866,7 +1873,7 @@ describe('the builder\'s own pre-review of 10f6a24, second set: the worker\'s re
     assert.deepEqual(await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), { kind: 'finished', executionId: identity.executionId, observed: AGY_PLANNER_ROUTE, result: plan });
   });
 
-  it('a finished record that cannot be written is never answered as running: nothing until it can be written, then finished', async () => {
+  it('with a stand-in store that refuses a write before its latch, a finished record that cannot be written is never answered as running: nothing until it can be, then finished', async () => {
     const w = work();
     const identity = await identityFor(harness({ mode: 'ok' }).executor, w.commandId);
     const { executor, finish } = accepting(identity);
@@ -1883,6 +1890,40 @@ describe('the builder\'s own pre-review of 10f6a24, second set: the worker\'s re
     records.failing.delete('finished');
     assert.deepEqual(await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), { kind: 'finished', executionId: identity.executionId, observed: AGY_PLANNER_ROUTE, result: plan });
     assert.equal((await records.read(w.commandId))?.phase, 'finished');
+  });
+
+  it('with the production store, a running write that fails closes the store: the finished one is refused, and status answers nothing for the rest of the process (Tier-2 A5)', async () => {
+    const w = work();
+    const identity = await identityFor(harness({ mode: 'ok' }).executor, w.commandId);
+    const { executor, finish } = accepting(identity);
+    const directory = plannerRecordsDirectory(temporary('buildroom-agy-records-'));
+    const records = new PlannerRecordStore(directory);
+    const worker = new GatewayPlannerWorker({ executor, records });
+    assert.equal((await worker.handle({ requestId: uuid(), kind: 'attest', commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } }))?.kind, 'attested');
+    const probe = await openFile(FAKE_AGY, 'r');
+    const prototype = Object.getPrototypeOf(probe) as unknown as { sync: (this: FileHandle) => Promise<void> };
+    await probe.close();
+    const original = prototype.sync;
+    // The execute writes `starting`, then `running`: the second file sync fails, as a disk would.
+    let fileSyncs = 0;
+    prototype.sync = async function (this: FileHandle): Promise<void> {
+      if (!(await this.stat()).isDirectory() && ++fileSyncs === 2) throw Object.assign(new Error('EIO: sync failed'), { code: 'EIO' });
+      return original.call(this);
+    };
+    try {
+      await assert.rejects(worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: identity.executionId, work: w }), /EIO/);
+    } finally {
+      prototype.sync = original;
+    }
+    const plan: PlannerResultWire = { kind: 'plan', document: readyPlanFor({ ...w } as never) };
+    finish(plan);
+    await worker.settled();
+    await assert.rejects(records.read(w.commandId), /closed until the daemon restarts/, 'the store stays closed');
+    assert.equal(await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), null, 'no answer, not finished and not running');
+    assert.equal(await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), null, 'nor later in the same process');
+    // What reached disk is the record before the failed write: a store opened afresh, as after
+    // a restart, reads it, and the finished result was never recorded.
+    assert.equal((await new PlannerRecordStore(directory).read(w.commandId))?.phase, 'starting');
   });
 
   it('attest answers attest_failed beside a record that says the work was sent, and writes nothing', async () => {
@@ -2390,3 +2431,185 @@ describe('the tenth round: what an earlier process left is written again in full
   });
 });
 
+
+/** Fails every file sync of a file whose size is `size`, until `stop`: one file's copies, and nothing else. */
+async function failingSyncsOfSize(size: number): Promise<{ stop: () => void }> {
+  const probe = await openFile(FAKE_AGY, 'r');
+  const prototype = Object.getPrototypeOf(probe) as unknown as { sync: (this: FileHandle) => Promise<void> };
+  await probe.close();
+  const original = prototype.sync;
+  prototype.sync = async function (this: FileHandle): Promise<void> {
+    const info = await this.stat();
+    if (!info.isDirectory() && info.size === size) throw Object.assign(new Error('EIO: sync failed'), { code: 'EIO' });
+    return original.call(this);
+  };
+  return {
+    stop: () => {
+      prototype.sync = original;
+    },
+  };
+}
+
+describe('the eleventh pass: Tier-2 A1 to A4 of the tenth review', () => {
+  it('A1: the worker prepares the executor before it judges a starting record by the executor\'s evidence', async () => {
+    const order: string[] = [];
+    const identity = await identityFor(harness({ mode: 'ok' }).executor, 'c-order');
+    const records = new PlannerRecordStore(plannerRecordsDirectory(temporary('buildroom-agy-records-')));
+    await records.write({ commandId: 'c-order', phase: 'starting', identity });
+    const executor: PlannerExecutor = {
+      attest: () => Promise.resolve(identity),
+      start: () => Promise.resolve({ kind: 'not_sent' }),
+      boot: () => {
+        order.push('boot');
+        return Promise.resolve();
+      },
+      sent: () => {
+        order.push('sent');
+        return Promise.resolve(false);
+      },
+    };
+    await new GatewayPlannerWorker({ executor, records }).boot();
+    assert.deepEqual(order, ['boot', 'sent']);
+  });
+
+  it('A1: the records are recovered even when the executor\'s preparation throws', async () => {
+    const identity = await identityFor(harness({ mode: 'ok' }).executor, 'c-throws');
+    const records = new PlannerRecordStore(plannerRecordsDirectory(temporary('buildroom-agy-records-')));
+    await records.write({ commandId: 'c-throws', phase: 'running', identity, observed: { ...AGY_PLANNER_ROUTE } });
+    const executor: PlannerExecutor = {
+      attest: () => Promise.resolve(identity),
+      start: () => Promise.resolve({ kind: 'not_sent' }),
+      boot: () => Promise.reject(new Error('boot failed')),
+    };
+    await assert.rejects(new GatewayPlannerWorker({ executor, records }).boot(), /boot failed/);
+    assert.equal((await records.read('c-throws'))?.phase, 'lost');
+  });
+
+  it('A1: evidence an earlier process left that boot cannot write again is never read as not sent: the starting record becomes lost', async () => {
+    const w = work();
+    const h = harness({ mode: 'ok' });
+    const identity = await identityFor(h.executor, w.commandId);
+    const line = evidenceLine(w.commandId, identity.executionId, { sent: false, outcome: 'executor_halted', initModel: null, conversationId: null });
+    placeEvidence(h, w.commandId, line);
+    const records = new PlannerRecordStore(plannerRecordsDirectory(h.gatewayDirectory));
+    await records.write({ commandId: w.commandId, phase: 'starting', identity });
+    // Only the evidence record's copies fail to sync: the worker's own records, and the halt
+    // marker, are written as usual.
+    const failing = await failingSyncsOfSize(Buffer.byteLength(line, 'utf8'));
+    try {
+      await new GatewayPlannerWorker({ executor: h.executor, records }).boot();
+    } finally {
+      failing.stop();
+    }
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_sync_failed');
+    assert.equal((await records.read(w.commandId))?.phase, 'lost', 'not not_sent: the record saying so could not be made durable here');
+  });
+
+  it('A1: once a closing write at boot fails, no further evidence record is read or written', async () => {
+    const h = harness({ mode: 'ok' });
+    const first = work();
+    const second = work();
+    const lines = [first, second].map((w) =>
+      evidenceLine(w.commandId, `exec-${w.commandId}`, { outcome: 'running', endedAt: null }),
+    );
+    placeEvidence(h, first.commandId, lines[0] ?? '');
+    placeEvidence(h, second.commandId, lines[1] ?? '');
+    // The two copies made by the rewrite sync; the first closing write's sync fails.
+    const probe = await openFile(FAKE_AGY, 'r');
+    const prototype = Object.getPrototypeOf(probe) as unknown as { sync: (this: FileHandle) => Promise<void> };
+    await probe.close();
+    const original = prototype.sync;
+    let fileSyncs = 0;
+    prototype.sync = async function (this: FileHandle): Promise<void> {
+      if (!(await this.stat()).isDirectory() && ++fileSyncs === 3) throw Object.assign(new Error('EIO: sync failed'), { code: 'EIO' });
+      return original.call(this);
+    };
+    try {
+      await h.executor.boot();
+    } finally {
+      prototype.sync = original;
+    }
+    assert.equal(h.logged.filter((at) => at === 'agy.evidence_failed').length, 1, `one failed write, then nothing: ${JSON.stringify(h.logged)}`);
+    assert.equal(h.logged.includes('agy.evidence_closed_at_boot'), false);
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_write_failed');
+  });
+
+  it('A2: a halt marker not yet durable is written again before a start that an earlier check refuses', async () => {
+    const w = work();
+    const h = harness({ mode: 'ok' });
+    mkdirSync(join(h.gatewayDirectory, 'planner-evidence'));
+    const marker = join(h.gatewayDirectory, 'planner-halted.json');
+    const text = `${JSON.stringify({ haltedAt: '2026-10-27T00:00:00.000Z', reason: 'planner_user_survived_reap', plannerUser: 'planner' })}\n`;
+    writeFileSync(marker, text);
+    const failing = await failingSyncsOfSize(Buffer.byteLength(text, 'utf8'));
+    try {
+      await h.executor.boot();
+    } finally {
+      failing.stop();
+    }
+    assert.ok(h.logged.includes('agy.halt_write_failed'));
+    rmSync(marker, { force: true });
+    const identity = await identityFor(h.executor, w.commandId);
+    // Refused at the first check, the lane, before the halt check is reached.
+    assert.deepEqual(await h.executor.start(w, { ...identity, model: 'some-other-model' }), { kind: 'not_sent' });
+    assert.equal(evidenceOf(h.gatewayDirectory).find((e) => e['commandId'] === w.commandId)?.['outcome'], 'identity_not_lane');
+    assert.equal(existsSync(marker) ? readFileSync(marker, 'utf8') : null, text, 'written again in full, with the earlier reason');
+  });
+
+  it('A3: a worker record store never makes the Gateway directory, nor anything above it', async () => {
+    const root = temporary('buildroom-agy-records-');
+    const gateway = join(root, 'missing', 'gateway');
+    const records = new PlannerRecordStore(plannerRecordsDirectory(gateway));
+    const identity = await identityFor(harness({ mode: 'ok' }).executor, 'c-a3');
+    await assert.rejects(records.write({ commandId: 'c-a3', phase: 'attested', identity }), /ENOENT/);
+    assert.equal(existsSync(join(root, 'missing')), false, 'nothing made above the store\'s own directory');
+    await assert.rejects(records.read('c-a3'), /closed until the daemon restarts/, 'and the failed write closes the store');
+  });
+
+  it('A3: the executor never makes the Gateway directory: its evidence and halt writes fail, and it holds the halt in memory', async () => {
+    const w = work();
+    const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
+    const identity = await identityFor(h.executor, w.commandId);
+    rmSync(h.gatewayDirectory, { recursive: true, force: true });
+    // A refusal before anything is sent answers not_sent; its record could not be written, so
+    // the executor's evidence answers that it cannot say, which the worker answers as nothing.
+    assert.deepEqual(await h.executor.start(w, { ...identity, model: 'some-other-model' }), { kind: 'not_sent' });
+    assert.equal(await h.executor.sent(w.commandId), null);
+    assert.equal(existsSync(h.gatewayDirectory), false, 'the Gateway directory is not made');
+    assert.ok(h.logged.includes('agy.halt_write_failed'));
+    // Once the daemon's directory is back, the held halt is written before the next start is
+    // answered; the start itself rejects, the evidence being latched for the process.
+    mkdirSync(h.gatewayDirectory);
+    const next = work();
+    await assert.rejects(h.executor.start(next, await identityFor(h.executor, next.commandId)), /cannot be read/);
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_write_failed');
+    assert.equal(h.launches, 0);
+  });
+
+  it('A4: a named pipe at the halt marker, an evidence record or a worker record is refused at once, never waited on', { timeout: 10_000 }, async () => {
+    const h = harness({ mode: 'ok' });
+    const evidenceDirectory = join(h.gatewayDirectory, 'planner-evidence');
+    mkdirSync(evidenceDirectory);
+    spawnSync('mkfifo', [join(h.gatewayDirectory, 'planner-halted.json')]);
+    spawnSync('mkfifo', [join(evidenceDirectory, evidenceName('c-fifo'))]);
+    const recordsDirectory = plannerRecordsDirectory(h.gatewayDirectory);
+    mkdirSync(recordsDirectory);
+    spawnSync('mkfifo', [join(recordsDirectory, evidenceName('c-fifo'))]);
+    assert.equal(lstatSync(join(recordsDirectory, evidenceName('c-fifo'))).isFIFO(), true, 'mkfifo made the pipes');
+    await h.executor.boot();
+    assert.equal(lstatSync(join(h.gatewayDirectory, 'planner-halted.json')).isFile(), true, 'the pipe at the marker is replaced');
+    assert.equal(haltReason(h.gatewayDirectory), 'halt_marker_unreadable_at_boot');
+    assert.ok(h.logged.includes('agy.evidence_sync_failed'), 'the pipe among the evidence records fails the rewrite');
+    assert.equal(await h.executor.sent('c-fifo'), null, 'and no evidence is read after it');
+    await assert.rejects(new PlannerRecordStore(recordsDirectory).read('c-fifo'), /not a regular file/);
+  });
+
+  it('A4: a named pipe at a command\'s evidence path is unreadable evidence, read at once', { timeout: 10_000 }, async () => {
+    const h = harness({ mode: 'ok' });
+    const evidenceDirectory = join(h.gatewayDirectory, 'planner-evidence');
+    mkdirSync(evidenceDirectory);
+    spawnSync('mkfifo', [join(evidenceDirectory, evidenceName('c-pipe'))]);
+    assert.equal(await h.executor.sent('c-pipe'), null);
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_unreadable');
+  });
+});
