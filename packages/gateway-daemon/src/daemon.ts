@@ -59,6 +59,8 @@ export class GatewayDaemon {
   private stopping = false;
   /** The tick currently in flight, if any (correction B6, Rev 4.7 tester). */
   private tickInFlight: Promise<void> | null = null;
+  /** The boot under way, so a stop that overlaps it waits for its reap and check to finish. */
+  private bootInFlight: Promise<void> | null = null;
   /** The Gateway id of the identity the primary lane holds now, set wherever it adopts one. */
   private heldPrimaryGatewayId: string | null = null;
 
@@ -100,7 +102,14 @@ export class GatewayDaemon {
   }
 
   /** Load persisted state and adopt the primary identity from custody. */
-  async boot(): Promise<void> {
+  boot(): Promise<void> {
+    this.bootInFlight = this.bootNow().finally(() => {
+      this.bootInFlight = null;
+    });
+    return this.bootInFlight;
+  }
+
+  private async bootNow(): Promise<void> {
     try {
       await this.bootLanes();
     } finally {
@@ -283,6 +292,9 @@ export class GatewayDaemon {
       clearInterval(this.cadence);
       this.cadence = null;
     }
+    // A boot under way finishes first, its reap and check included, so a stop that
+    // overlaps it never leaves the Planner's cleanup half done.
+    await this.bootInFlight?.catch(() => undefined);
     /*
      * The Planner is told first (Amendment 3 C2): a tick already past its
      * `stopping` check may be preparing a start, and the executor refuses any

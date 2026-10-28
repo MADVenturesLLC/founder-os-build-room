@@ -467,6 +467,15 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     // command whose record says its work was already sent: every refusal, and the launch,
     // first asks the record (rejectIfSent), so no path answers not_sent for such a command
     // or writes over its record.
+    //
+    // First of all: the same command again while its own start is under way is not refused,
+    // which would answer not_sent for work that may be about to go and write a record over
+    // nothing yet, but rejected, which the worker records as unknown; whatever else would
+    // have refused it.
+    if (this.inFlight?.commandId === work.commandId) {
+      this.log('error', 'agy.already_starting', { commandId: work.commandId });
+      throw new Error('this command is already being started');
+    }
     if (!identityIsLane(identity)) return this.refuse(work, identity, 'identity_not_lane');
     if (!(await this.onBoundGateway())) return this.refuse(work, identity, 'gateway_identity_changed');
     if (!REPOSITORY_PATTERN.test(work.repository) || !FULL_SHA_PATTERN.test(work.baseSha)) {
@@ -474,16 +483,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     }
     if (this.shuttingDown) return this.refuse(work, identity, 'daemon_stopping');
     if (await this.isHalted()) return this.refuse(work, identity, 'executor_halted');
-    if (this.busy) {
-      // The same command again while its own start is under way: not a refusal, which would
-      // answer not_sent for work that may be about to go, but a rejection the worker records
-      // as unknown. Nothing is written over the start in flight.
-      if (this.inFlight?.commandId === work.commandId) {
-        this.log('error', 'agy.already_starting', { commandId: work.commandId });
-        throw new Error('this command is already being started');
-      }
-      return this.refuse(work, identity, 'executor_busy');
-    }
+    if (this.busy) return this.refuse(work, identity, 'executor_busy');
     // From here until the run's evidence is written, this start is the one in flight.
     this.busy = true;
     let settle!: () => void;
@@ -875,9 +875,16 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     try {
       text = await readFile(this.evidencePath(commandId), 'utf8');
     } catch (error) {
-      // No entry at the path is no record; an entry that cannot be read through (a link to
-      // nowhere) is a record that cannot be read, as boot treats it.
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT' && (await lstat(this.evidencePath(commandId)).catch(() => null)) === null) return 'none';
+      // No entry at the path is no record, and only a confirmed absence is: an entry that
+      // cannot be read through (a link to nowhere), or an existence check that itself fails,
+      // is a record that cannot be read, as boot treats it.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        const outcome = await lstat(this.evidencePath(commandId)).then(
+          () => ({ exists: true as const }),
+          (lstatError: NodeJS.ErrnoException) => ({ exists: false as const, code: lstatError.code }),
+        );
+        if (recordAbsence(outcome) === 'none') return 'none';
+      }
       this.log('error', 'agy.evidence_unreadable', { commandId, message: describe(error) });
       return 'unreadable';
     }
@@ -1238,6 +1245,16 @@ export async function readOnly(path: string): Promise<void> {
  * path still exists afterwards, so a checkout left behind is never reported
  * as removed.
  */
+/**
+ * What a record path whose read answered ENOENT is, from the existence check that follows:
+ * `none` only when that check confirms there is no entry; an entry that exists (a link to
+ * nowhere), or a check that fails for any other reason, is a record that cannot be read.
+ */
+export function recordAbsence(outcome: { readonly exists: true } | { readonly exists: false; readonly code: string | undefined }): 'none' | 'unreadable' {
+  if (outcome.exists) return 'unreadable';
+  return outcome.code === 'ENOENT' ? 'none' : 'unreadable';
+}
+
 export async function removeCheckout(path: string): Promise<void> {
   const writable = async (target: string): Promise<void> => {
     const info = await lstat(target).catch(() => null);

@@ -60,8 +60,9 @@
  *     writes (shown for each refusal before launch; that the read and the
  *     write are one step in the executor's evidence queue is read, not
  *     raced); a second start of the command whose start is under way is
- *     rejected, not refused, so nothing is written over the start in
- *     flight and no not_sent is answered for it; a record that cannot be read, or lacks `sent`, halts, at a
+ *     rejected, not refused, before any other check, so nothing is written
+ *     over the start in flight and no not_sent is answered for it, whatever
+ *     else would have refused it; a record that cannot be read, or lacks `sent`, halts, at a
  *     start, at boot, and when the worker asks; an earlier refusal lets a
  *     retry through. Once the running record has been attempted, `not_sent`
  *     is answered only when the record then says so: a downgrade that
@@ -69,7 +70,8 @@
  *     record's own failed write does; a run whose closing record cannot be
  *     written rejects its completion rather than deliver a result its record
  *     contradicts; a link to nowhere at a record's path is a record that
- *     cannot be read; a halt raised since the start began is seen again
+ *     cannot be read, and so is a path whose existence check itself fails:
+ *     only a confirmed absence is no record; a halt raised since the start began is seen again
  *     after the running record, before the input. A
  *     record still running at boot is closed in place, and only one that is
  *     at its command's own path, so a stray file naming a command never
@@ -81,7 +83,8 @@
  *     announces its model, while the running record is written, or while agy
  *     works; `GatewayDaemon.stop`
  *     calls it before waiting for a tick in flight (shown with a tick held
- *     open by hand, not by a running daemon);
+ *     open by hand, not by a running daemon), and waits for a boot under way
+ *     to finish, its reap and check included, before stopping;
  *   - `childEnvironment()` and `runChild()` give the allowlisted environment,
  *     never the daemon's. The production launch passes `childEnvironment()`
  *     to `spawn`, but every test injects its own launch, so that call is read,
@@ -97,7 +100,8 @@
  *     `execute`, the executor's own `not_sent` answer included, and no
  *     attestation from `attest`; the worker's records are read and written
  *     in order, so a read never sees a record whose directory entry is not
- *     yet synced; a `running` record whose write fails does not stop the
+ *     yet synced, and a record whose directory sync failed after its rename
+ *     stays unreadable until a sync succeeds; a `running` record whose write fails does not stop the
  *     `finished` one; a `finished` record that cannot be written is never
  *     answered as running, only as nothing until it can be; a torn worker
  *     record is answered as nothing, not thrown out of the tick; at boot a
@@ -139,6 +143,7 @@ import {
   runChild,
   sha256OfFile,
   readOnly,
+  recordAbsence,
   removeCheckout,
   syncDirectory,
   syncMadeDirectories,
@@ -784,17 +789,14 @@ describe('evidence at boot (act B4)', () => {
   });
 
   it('halts, and does not report the record closed, when it cannot be rewritten', async () => {
-    const h = harness({ mode: 'ok' });
-    const directory = join(h.gatewayDirectory, 'planner-evidence');
-    mkdirSync(directory, { recursive: true });
+    // The rewrite's directory sync fails, so the closing record cannot be made durable.
+    const h = harness({ mode: 'ok', syncDirectory: (path) => (basename(path) === 'planner-evidence' ? Promise.reject(new Error('EIO')) : syncDirectory(path)) });
     const commandId = uuid();
-    const record = { commandId, executionId: uuid(), startedAt: '2026-10-27T00:00:00.000Z', agySha256: AGY_HASH, initModel: 'gemini-4-argon-high', conversationId: 'c', sent: true, endedAt: null, outcome: 'running', exitCode: null, signal: null };
-    writeFileSync(join(directory, 'copied.json'), `${JSON.stringify(record)}\n`);
-    // The record's own path is a directory, so the rewrite cannot land, even for root.
-    mkdirSync(join(directory, evidenceName(commandId)));
+    placeEvidence(h, commandId, evidenceLine(commandId, uuid(), { outcome: 'running', endedAt: null }));
     await h.executor.boot();
     assert.ok(!h.logged.includes('agy.evidence_closed_at_boot'));
-    assert.notEqual(haltReason(h.gatewayDirectory), null, 'the executor halts');
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_write_failed');
+    assert.equal(h.reaps(), 1);
   });
 
   it('halts when a record cannot be read', async () => {
@@ -1954,5 +1956,118 @@ describe('the builder\'s own pre-review of 10f6a24, third set: the executor\'s c
     assert.deepEqual(h.seen().stdin, [], 'nothing was written to agy');
     assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['outcome'], 'executor_halted');
     assert.equal(h.reaps(), 1);
+  });
+});
+
+describe('the seventh Tier-2 (I1 to I3) and its advisories', () => {
+  it('I1: the command whose start is under way is rejected before any other check, even with an identity that would be refused', async () => {
+    const w = work();
+    let release = (): void => undefined;
+    const parked = new Promise<void>((resolve) => (release = resolve));
+    const h = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      checkout: async (_work, parent) => {
+        await parked;
+        return mkdtemp(join(parent, 'run-'));
+      },
+    });
+    const identity = await identityFor(h.executor, w.commandId);
+    const first = h.executor.start(w, identity);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Off the lane: on its own this would be refused with not_sent and a record written.
+    await assert.rejects(h.executor.start(w, { ...identity, surface: 'claude-code' }), /already being started/);
+    assert.equal(existsSync(join(h.gatewayDirectory, 'planner-evidence', evidenceName(w.commandId))), false, 'nothing was written for the command');
+    release();
+    const started = await first;
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') await started.completion;
+    assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['outcome'], 'plan');
+  });
+
+  it('I2: a worker record whose directory sync failed after its rename is unreadable until a sync succeeds, so no finished is reported from it', async () => {
+    const w = work();
+    const identity = await identityFor(harness({ mode: 'ok' }).executor, w.commandId);
+    let finish: (result: PlannerResultWire) => void = () => undefined;
+    const completion = new Promise<PlannerResultWire>((resolve) => (finish = resolve));
+    const executor: PlannerExecutor = {
+      attest: () => Promise.resolve(identity),
+      start: () => Promise.resolve({ kind: 'accepted', observed: { ...AGY_PLANNER_ROUTE }, completion }),
+      sent: () => Promise.resolve(false),
+    };
+    const directory = plannerRecordsDirectory(temporary('buildroom-agy-records-'));
+    const records = new PlannerRecordStore(directory);
+    const worker = new GatewayPlannerWorker({ executor, records });
+    await worker.handle({ requestId: uuid(), kind: 'attest', commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } });
+    assert.equal((await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: identity.executionId, work: w }))?.kind, 'accepted');
+    // The next directory sync of the records directory fails: the finished record is renamed into place but not durable.
+    const probe = await openFile(FAKE_AGY, 'r');
+    const prototype = Object.getPrototypeOf(probe) as unknown as { sync: (this: FileHandle) => Promise<void> };
+    await probe.close();
+    const original = prototype.sync;
+    const directoryIno = statSync(directory).ino;
+    let failing = true;
+    prototype.sync = async function (this: FileHandle): Promise<void> {
+      const info = await this.stat();
+      if (failing && info.isDirectory() && info.ino === directoryIno) throw new Error('EIO');
+      return original.call(this);
+    };
+    const plan: PlannerResultWire = { kind: 'plan', document: readyPlanFor({ ...w } as never) };
+    try {
+      finish(plan);
+      await worker.settled();
+      assert.equal((JSON.parse(readFileSync(join(directory, evidenceName(w.commandId)), 'utf8')) as { phase: string }).phase, 'finished', 'visible on disk');
+      assert.equal(await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), null, 'not reported while the write is not durable');
+      failing = false;
+      assert.deepEqual(await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), { kind: 'finished', executionId: identity.executionId, observed: AGY_PLANNER_ROUTE, result: plan });
+    } finally {
+      prototype.sync = original;
+    }
+  });
+
+  it('I3: only a confirmed absence is no record; an entry, or an existence check that fails, is unreadable', () => {
+    assert.equal(recordAbsence({ exists: false, code: 'ENOENT' }), 'none');
+    assert.equal(recordAbsence({ exists: true }), 'unreadable');
+    assert.equal(recordAbsence({ exists: false, code: 'EIO' }), 'unreadable');
+    assert.equal(recordAbsence({ exists: false, code: 'EACCES' }), 'unreadable');
+    assert.equal(recordAbsence({ exists: false, code: undefined }), 'unreadable');
+  });
+
+  it('advisory 5: a stop that overlaps a boot waits for the boot, reap and check included', async () => {
+    const root = temporary('buildroom-agy-daemon-boot-stop-');
+    const events: string[] = [];
+    let finishBoot = (): void => undefined;
+    const executor = {
+      attest: () => Promise.reject(new Error('unused')),
+      start: () => Promise.reject(new Error('unused')),
+      boot: () =>
+        new Promise<void>((resolve) => {
+          finishBoot = () => {
+            events.push('executor.boot');
+            resolve();
+          };
+        }),
+      shutdown: () => {
+        events.push('executor.shutdown');
+        return Promise.resolve();
+      },
+    };
+    const daemon = new GatewayDaemon({
+      paths: gatewayPaths(join(root, 'gateway')),
+      clock: { wallNow: () => Date.now(), monotonicNow: () => 1_000 },
+      custody: new Custody(new FileKeychainRunner(join(root, 'keychain'))),
+      client: new ControlPlaneClient('http://control-plane.invalid', () => Promise.reject(new Error('no network in this test'))),
+      heartbeatCadenceMs: 10_000,
+      plannerExecutor: executor,
+    });
+    const booting = daemon.boot();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const stopping = daemon.stop();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(events, [], 'stop waits for the boot');
+    finishBoot();
+    await booting;
+    await stopping;
+    assert.deepEqual(events, ['executor.boot', 'executor.shutdown']);
   });
 });

@@ -146,6 +146,7 @@ export {
   planDocumentFrom,
   plannerPrompt,
   readOnly,
+  recordAbsence,
   removeCheckout,
   runChild,
   type AgyPlannerConfig,

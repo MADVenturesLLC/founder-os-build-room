@@ -139,6 +139,8 @@ export async function syncMadeDirectories(
 export class PlannerRecordStore {
   /** Reads and writes in order: a read never sees a record renamed into place whose directory entry is not yet synced. */
   private queue: Promise<unknown> = Promise.resolve();
+  /** Commands whose last write was renamed into place but whose directory sync failed: unreadable until a sync succeeds. */
+  private readonly undurable = new Set<string>();
 
   constructor(private readonly directory: string) {}
 
@@ -161,6 +163,12 @@ export class PlannerRecordStore {
   }
 
   private async readNow(commandId: string): Promise<PlannerRecord | null> {
+    if (this.undurable.has(commandId)) {
+      // The file at the path may say more than the disk will after a crash: it is not read
+      // until its directory is synced, and a sync that fails again leaves it unreadable.
+      await syncMadeDirectories(this.directory, undefined);
+      this.undurable.delete(commandId);
+    }
     let text: string;
     try {
       text = await readFile(this.pathOf(commandId), 'utf8');
@@ -203,7 +211,12 @@ export class PlannerRecordStore {
       await unlink(temporary).catch(() => undefined);
       throw error;
     }
-    await syncMadeDirectories(this.directory, created);
+    try {
+      await syncMadeDirectories(this.directory, created);
+    } catch (error) {
+      this.undurable.add(record.commandId);
+      throw error;
+    }
   }
 
   all(): Promise<PlannerRecord[]> {
@@ -510,6 +523,7 @@ export class GatewayPlannerWorker {
       case 'running':
         return this.recordUnrecorded(record);
       case 'finished':
+        this.unrecorded.delete(commandId);
         return {
           kind: 'finished',
           executionId: record.identity.executionId,
