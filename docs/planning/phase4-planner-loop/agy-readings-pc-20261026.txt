@@ -1,0 +1,387 @@
+agy readings on the PC for the Planner executor (Build Room pull request 131)
+
+What these are. The Founder's own readings of agy on the PC (Gateway 1880c12d's
+host), run by hand as the Founder's user and pasted into the builder's session
+on 2026-10-26, verbatim except that the shell prompt's user and host name are
+masked as <founder>@<PC> and the home directory as /home/<founder>. They are
+the evidence Amendment 1 B2 of FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR asks
+for: whether agy emits its stream-json init event before it reads the work,
+shown against the real agy before the pull request merges. Each block is
+headed by the time the paste reached the session (UTC), which is shortly after
+the commands ran.
+
+What they show, as the builder reads them:
+1. agy was 1.3.6 at 10:52Z and 1.4.7 by 22:54Z the same day: it updated itself.
+2. On 1.4.7, in both start forms tried, the init event naming
+   gemini-4-argon-high was written about 12 seconds before any input was
+   sent, while agy waited for its input (22:57Z and 22:58Z blocks).
+3. --print must carry a value: as the first argument it takes the next flag as
+   its prompt and agy exits; as the last it is refused ("flag needs an
+   argument"). Without --print, standard input starts print mode.
+4. The only accepted input line is {"event":"user","message":{...}}; with
+   {"role":"user","content":...} as the message, agy ran one turn on
+   gemini-4-argon-high and answered SUCCESS, "OK" (23:36Z block).
+5. agy 1.4.7 offers no argument that limits a run to read-only tools
+   (Amendment 1 C6); the help lists --disable-slash-commands, which disables
+   slash commands and skill expansion in print mode.
+6. The Founder's own agy has plugins enabled, among them gdrive, gdocs and
+   data-agent-kit with 11 MCP servers; agy mcp list shows no MCP server
+   configured.
+
+=================== MORNING, agy 1.3.6 (also in the Tier-2 bundle of FounderOS pull request 408) ===================
+--- message at 2026-10-26T10:52:03.204Z
+<founder>@<PC>:~$ agy --version; agy config get model; agy models 2>/dev/null | head -5
+1.3.6
+Error: unexpected argument "config".
+Prompts are read only from -p/--print, -i/--prompt-interactive, or stdin, so this argument would have been ignored.
+gemini-4-argon-medium	Gemini 4 Argon (Medium)
+gemini-4-argon-high	Gemini 4 Argon (High)
+gemini-4-argon-low	Gemini 4 Argon (Low)
+gemini-3.8-flash-high	Gemini 3.8 Flash (High)
+gemini-3.8-flash-medium	Gemini 3.8 Flash (Medium)
+--- message at 2026-10-26T11:11:40.846Z
+<founder>@<PC>:~$ agy --help 2>&1 | head -60
+Usage of agy:
+  --add-dir                       Add a directory to the workspace (repeatable) (default [])
+  --agent                         Agent for the current CLI session
+  -c                              Short alias for --continue
+  --continue                      Continue the most recent conversation
+  --conversation                  Resume a previous conversation by ID
+  --dangerously-skip-permissions  Auto-approve all tool permission requests without prompting
+  --disable-slash-commands        Disable slash command and skill expansion in print mode
+  --effort                        Reasoning effort for the current CLI session (low|medium|high|xhigh|max)
+  -i                              Short alias for --prompt-interactive
+  --input-format                  Input format for print mode (text, stream-json). stream-json reads one NDJSON message per line from stdin and runs a turn for each; it requires --output-format stream-json (default text)
+  --json-schema                   Optional JSON schema string or path to a schema file to enforce structured output (for stream-json, only applicable to the final result)
+  --log-file                      Override CLI log file path
+  --mode                          Set the agent execution mode for this session (accept-edits, auto, plan)
+  --model                         Model for the current CLI session
+  --new-project                   Create a new project for this session
+  --output-format                 Output format for print mode (text, json, stream-json) (default text)
+  -p                              Short alias for --print
+  --print                         Run a single prompt non-interactively and print the response
+  --print-timeout                 Optional time limit for print mode; 0 waits until the turn completes (default 0s)
+  --project                       Project ID or project name for the current CLI session
+  --prompt                        Alias for --print
+  --prompt-interactive            Run an initial prompt interactively and continue the session
+  --remote-control                Create a remote connection for the CLI session on start up
+  --sandbox                       Run in a sandbox with terminal restrictions enabled
+
+Available subcommands:
+  agent           List available agents
+  agents          List available agents
+  changelog       Show changelog and release notes
+  help            Show help for subcommands
+  install         Configure environment paths and shell settings
+  mcp             Manage MCP servers (add, remove, list, enable, disable)
+  mic-serve       Serve this machine's microphone to a CLI on another host
+  models          List available models
+  plugin          Manage plugins (install, uninstall, list, enable, disable)
+  plugins         Alias for plugin
+  remote-control  Manage the remote-control background daemon (start, status, stop)
+  update          Update CLI
+--- message at 2026-10-26T11:14:54.576Z
+<founder>@<PC>:~$ agy -p "Reply with the single word OK" --model gemini-4-argon-high --effort high --mode plan --output-format stream-json 2>&1 | head -8
+{"event":"init","conversation_id":"3b2c7a4c-1bda-46b1-8dc1-44641701df02","init":{"model":"gemini-4-argon-high","cwd":"/home/<founder>","tools":["ask_custom_permission","ask_permission","ask_question","browser_click_element","browser_drag_pixel_to_pixel","browser_get_dom","browser_get_network_request","browser_input","browser_list_network_requests","browser_mouse_down","browser_mouse_up","browser_move_mouse","browser_press_key","browser_refresh_page","browser_resize_window","browser_scroll","browser_scroll_dom","browser_select_option","browser_subagent","call_mcp_tool","capture_browser_console_logs","capture_browser_screenshot","click_browser_pixel","command_status","define_subagent","delete_knowledge","execute_browser_javascript","find_by_name","finish","generate_image","grep_search","invoke_subagent","list_browser_pages","list_dir","list_permissions","list_plugin_accounts","list_resources","manage_inbox","manage_subagents","manage_task","multi_replace_file_content","notebook_edit","notebook_execution","open_browser_url","read_browser_page","read_resource","read_url_content","replace_file_content","run_command","run_workflow","schedule","search_marketplace","search_web","sed_file","send_command_input","send_message","view_file","wait","wait_5_seconds","write_to_file"],"permission_mode":"always-proceed","expanded_commands":[{"name":"plan","type":"system"}]}}
+{"event":"step_update","step_update":{"conversation_id":"3b2c7a4c-1bda-46b1-8dc1-44641701df02","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"3b2c7a4c-1bda-46b1-8dc1-44641701df02","step_index":1,"state":"DONE","step_type":"unknown","duration_seconds":0.000058099}}
+{"event":"step_update","step_update":{"conversation_id":"3b2c7a4c-1bda-46b1-8dc1-44641701df02","step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"OK"}}
+{"event":"step_update","step_update":{"conversation_id":"3b2c7a4c-1bda-46b1-8dc1-44641701df02","step_index":2,"state":"DONE","step_type":"agent_response","text_delta":"\n","duration_seconds":17.387973363,"usage":{"input_tokens":19034,"output_tokens":1123,"thinking_tokens":1118,"cache_read_tokens":0,"total_tokens":20157}}}
+{"event":"result","result":{"conversation_id":"3b2c7a4c-1bda-46b1-8dc1-44641701df02","status":"SUCCESS","response":"OK\n","duration_seconds":26.815116553,"num_turns":1,"usage":{"input_tokens":19034,"output_tokens":1123,"thinking_tokens":1118,"cache_read_tokens":0,"total_tokens":20157}}}
+
+=================== EVENING, agy 1.4.7 ===================
+--- the Founder's paste in session at 2026-10-26T22:54:39.563Z
+<founder>@<PC>:~$ agy --version
+agy --help 2>&1
+agy agents 2>&1 | head -20
+agy mcp list 2>&1 | head -20
+agy plugin list 2>&1 | head -20
+1.4.7
+Usage of agy:
+  --add-dir                       Add a directory to the workspace (repeatable) (default [])
+  --agent                         Agent for the current CLI session
+  -c                              Short alias for --continue
+  --continue                      Continue the most recent conversation
+  --conversation                  Resume a previous conversation by ID
+  --dangerously-skip-permissions  Auto-approve all tool permission requests without prompting
+  --disable-slash-commands        Disable slash command and skill expansion in print mode
+  --effort                        Reasoning effort for the current CLI session (low|medium|high|xhigh|max)
+  -i                              Short alias for --prompt-interactive
+  --input-format                  Input format for print mode (text, stream-json). stream-json reads one NDJSON message per line from stdin and runs a turn for each; it requires --output-format stream-json (default text)
+  --json-schema                   Optional JSON schema string or path to a schema file to enforce structured output (for stream-json, only applicable to the final result)
+  --log-file                      Override CLI log file path
+  --mode                          Set the agent execution mode for this session (accept-edits, auto, plan)
+  --model                         Model for the current CLI session
+  --new-project                   Create a new project for this session
+  --output-format                 Output format for print mode (text, json, stream-json) (default text)
+  -p                              Short alias for --print
+  --print                         Run a single prompt non-interactively and print the response
+  --print-timeout                 Optional time limit for print mode; 0 waits until the turn completes (default 0s)
+  --project                       Project ID or project name for the current CLI session
+  --prompt                        Alias for --print
+  --prompt-interactive            Run an initial prompt interactively and continue the session
+  --remote-control                Create a remote connection for the CLI session on start up
+  --sandbox                       Run in a sandbox with terminal restrictions enabled
+
+Available subcommands:
+  agent           List available agents
+  agents          List available agents
+  changelog       Show changelog and release notes
+  help            Show help for subcommands
+  install         Configure environment paths and shell settings
+  mcp             Manage MCP servers (add, remove, list, enable, disable)
+  mic-serve       Serve this machine's microphone to a CLI on another host
+  models          List available models
+  plugin          Manage plugins (install, uninstall, list, enable, disable)
+  plugins         Alias for plugin
+  remote-control  Manage the remote-control background daemon (start, status, stop)
+  update          Update CLI
+flutter_a11y_agent
+No MCP servers configured.
+Installed plugins:
+- chrome-devtools-plugin (enabled, 1.10.1)
+    Source:     antigravity-plugins-official
+    Components: 6 skills
+- data-agent-kit-plugin (enabled, 1.1.0)
+    Source:     antigravity-plugins-official
+    Components: 37 skills, 11 MCP servers, 2 hooks
+- flutter (enabled, 1.0.6)
+    Source:     antigravity-plugins-official
+    Components: 25 skills, 1 agent, 2 rules, 1 MCP server
+- gdocs (enabled, 0.0.7)
+    Source:     antigravity-plugins-official
+    Components: 1 skill
+- gdrive (enabled, 0.0.7)
+    Source:     antigravity-plugins-official
+    Components: 1 skill
+- gemini-api (enabled, 2.3.0)
+    Source:     antigravity-plugins-official
+    Components: 3 skills, 1 MCP server
+- google-antigravity-sdk (enabled, 0.0.9)
+--- the Founder's paste in session at 2026-10-26T22:55:07.559Z
+<founder>@<PC>:~$ cd "$(mktemp -d)" && mkfifo in
+( agy --print --input-format stream-json --output-format stream-json --model gemini-4-argon-high --effort high --mode plan --sandbox --print-timeout 120s < in 2>&1 | while IFS= read -r l; do printf '%s %s\n' "$(date -u +%T.%3N)" "${l:0:300}"; done ) &
+exec 3>in; sleep 15; echo "$(date -u +%T.%3N) SENDING"
+printf '%s\n' '{"type":"user","message":{"role":"user","content":"Reply with the single word OK"}}' >&3
+sleep 45; exec 3>&-; wait
+[1] 615091
+22:54:41.728 Error: --print took "--input-format" as its prompt, so the intended prompt was left as an argument and ignored.
+22:54:41.754 Attach the prompt to the flag (--print='your prompt') and move --input-format elsewhere on the command line.
+--- the Founder's paste in session at 2026-10-26T22:57:15.297Z
+<founder>@<PC>:~$ bash -c '
+cd "$(mktemp -d)" && mkfifo in
+( agy --input-format stream-json --output-format stream-json --model gemini-4-argon-high --effort high --mode plan --sandbox --print-timeout 120s --print < in 2>&1 | while IFS= read -r l; do printf "%s %s\n" "$(date -u +%T.%3N)" "${l:0:300}"; done ) &
+exec 3>in; sleep 15; echo "$(date -u +%T.%3N) SENDING"
+printf "%s\n" "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Reply with the single word OK\"}}" >&3 || echo "$(date -u +%T.%3N) WRITE FAILED (agy already exited)"
+sleep 45; exec 3>&-; wait
+'
+22:57:07.446 flag needs an argument: -print
+22:57:07.448 Usage of agy:
+22:57:07.450   --add-dir                       Add a directory to the workspace (repeatable) (default [])
+22:57:07.452   --agent                         Agent for the current CLI session
+22:57:07.453   -c                              Short alias for --continue
+22:57:07.455   --continue                      Continue the most recent conversation
+22:57:07.457   --conversation                  Resume a previous conversation by ID
+22:57:07.458   --dangerously-skip-permissions  Auto-approve all tool permission requests without prompting
+22:57:07.460   --disable-slash-commands        Disable slash command and skill expansion in print mode
+22:57:07.461   --effort                        Reasoning effort for the current CLI session (low|medium|high|xhigh|max)
+22:57:07.463   -i                              Short alias for --prompt-interactive
+22:57:07.464   --input-format                  Input format for print mode (text, stream-json). stream-json reads one NDJSON message per line from stdin and runs a turn for each; it requires --output-format stream-json (default text)
+22:57:07.466   --json-schema                   Optional JSON schema string or path to a schema file to enforce structured output (for stream-json, only applicable to the final result)
+22:57:07.467   --log-file                      Override CLI log file path
+22:57:07.469   --mode                          Set the agent execution mode for this session (accept-edits, auto, plan)
+22:57:07.470   --model                         Model for the current CLI session
+22:57:07.471   --new-project                   Create a new project for this session
+22:57:07.473   --output-format                 Output format for print mode (text, json, stream-json) (default text)
+22:57:07.474   -p                              Short alias for --print
+22:57:07.476   --print                         Run a single prompt non-interactively and print the response
+22:57:07.477   --print-timeout                 Optional time limit for print mode; 0 waits until the turn completes (default 0s)
+22:57:07.479   --project                       Project ID or project name for the current CLI session
+22:57:07.480   --prompt                        Alias for --print
+22:57:07.482   --prompt-interactive            Run an initial prompt interactively and continue the session
+22:57:07.483   --remote-control                Create a remote connection for the CLI session on start up
+22:57:07.485   --sandbox                       Run in a sandbox with terminal restrictions enabled
+22:57:07.486 
+22:57:07.488 Available subcommands:
+22:57:07.489   agent           List available agents
+22:57:07.491   agents          List available agents
+22:57:07.492   changelog       Show changelog and release notes
+22:57:07.494   help            Show help for subcommands
+22:57:07.495   install         Configure environment paths and shell settings
+22:57:07.497   mcp             Manage MCP servers (add, remove, list, enable, disable)
+22:57:07.499   mic-serve       Serve this machine's microphone to a CLI on another host
+22:57:07.500   models          List available models
+22:57:07.501   plugin          Manage plugins (install, uninstall, list, enable, disable)
+22:57:07.503   plugins         Alias for plugin
+22:57:07.504   remote-control  Manage the remote-control background daemon (start, status, stop)
+22:57:07.505   update          Update CLI
+--- the Founder's paste in session at 2026-10-26T22:59:49.765Z
+<founder>@<PC>:~$ bash -c '
+probe() {
+  echo "===== VARIANT $1"
+  d=$(mktemp -d); cd "$d" && mkfifo in
+  ( agy "${@:2}" --input-format stream-json --output-format stream-json --model gemini-4-argon-high --effort high --mode plan --sandbox --print-timeout 120s < in 2>&1 | while IFS= read -r l; do printf "%s %s\n" "$(date -u +%T.%3N)" "${l:0:300}"; done ) &
+  exec 3>in; sleep 15; echo "$(date -u +%T.%3N) SENDING"
+  printf "%s\n" "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Reply with the single word OK\"}}" >&3 || echo "$(date -u +%T.%3N) WRITE FAILED (agy already exited)"
+  sleep 40; exec 3>&-; wait
+}
+probe A-no-print
+probe B-empty-print --print ""
+'
+===== VARIANT A-no-print
+22:57:46.891 {"event":"init","conversation_id":"104d000f-074b-4428-8c27-bea85cfc4b90","init":{"model":"gemini-4-argon-high","cwd":"/tmp/tmp.jjlex30q6w","tools":["ask_custom_permission","ask_permission","ask_question","browser_click_element","browser_drag_pixel_to_pixel","browser_get_dom","browser_get_network_req
+22:57:58.480 SENDING
+22:57:58.483 error: stream input message is missing the "event" field
+22:57:58.484 {"event":"result","result":{"conversation_id":"104d000f-074b-4428-8c27-bea85cfc4b90","status":"ERROR","response":"","error":"stream input message is missing the \"event\" field","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"
+===== VARIANT B-empty-print
+22:58:40.910 {"event":"init","conversation_id":"4eb849d5-58cf-4cea-94c8-cd988064b9b2","init":{"model":"gemini-4-argon-high","cwd":"/tmp/tmp.4JwdWIzD97","tools":["ask_custom_permission","ask_permission","ask_question","browser_click_element","browser_drag_pixel_to_pixel","browser_get_dom","browser_get_network_req
+22:58:53.492 SENDING
+22:58:53.495 error: stream input message is missing the "event" field
+22:58:53.497 {"event":"result","result":{"conversation_id":"4eb849d5-58cf-4cea-94c8-cd988064b9b2","status":"ERROR","response":"","error":"stream input message is missing the \"event\" field","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"
+--- the Founder's paste in session at 2026-10-26T23:01:10.130Z
+<founder>@<PC>:~$ agy changelog 2>&1 | grep -i -n -B2 -A6 'stream-json\|input-format\|stream input' | head -80
+agy help 2>&1 | head -30
+for m in \
+  '{"event":"user","user":{"text":"Reply with the single word OK"}}' \
+  '{"event":"user_message","user_message":{"text":"Reply with the single word OK"}}' \
+  '{"event":"message","message":{"role":"user","content":"Reply with the single word OK"}}' \
+  '{"event":"prompt","prompt":{"text":"Reply with the single word OK"}}' ; do
+  echo "===== $m"
+  printf '%s\n' "$m" | (cd "$(mktemp -d)" && agy --input-format stream-json --output-format stream-json --model gemini-4-argon-high --effort high --mode plan --sandbox --print-timeout 90s 2>&1 | grep -v '"event":"init"' | cut -c1-300 | tail -5)
+done
+278-· Fixed pressing `Esc` while the suggestions dropdown is open interrupting the agent's turn; it now closes the dropdown, and a second `Esc` interrupts
+279-· Fixed Mermaid diagrams and LaTeX leaving a blank gap inside `tmux` or GNU `screen` when the outer terminal supports Kitty graphics; the CLI now falls back to ASCII diagrams unless images actually reach the terminal, and `CLI_GRAPHICS=kitty` still forces image mode for setups with image passthrough configured
+280:· Fixed headless (`-p` / `--prompt`) runs that streamed part of a response and then ended on a model or agent error exiting with code 0; they now exit with code `3` and print the `AGY_ERROR` line, and JSON error output includes the partial response, while multi-turn `stream-json` sessions still warn and continue
+281-· Fixed machines set up with the old Remote Control installer script crash-looping after an upgrade; when the CLI is launched by that deprecated background service it now unregisters the service and points to `remote-control start` instead of restarting repeatedly
+282-· Fixed files that subagents write inside their own Git worktree being treated as artifacts, which demanded artifact metadata and left `.metadata.json` files in the worktree; subagent worktrees now live under a `worktrees/` directory in the app data directory
+283-
+284-1.2.9:
+285-· Added `@<subagent> <message>` prompt syntax to send a message directly to a subagent conversation, with autocomplete listing running and completed subagents
+286-· Added Vim numeric count multipliers so counts apply to operators, motions, and actions in Normal and Visual modes, including `3dw`, `2d3w`, `3dd`, `3x`, `3rX`, `3p`, `3u`, `[count]G`/`gg`/`$`, and counted text objects such as `2di(`
+--
+515-· Improved permission management by automatically granting workspace-scoped read access under the default review mode, eliminating repetitive approval prompts for reading or listing files within the workspace root while strictly maintaining confirmation prompts for file modifications and external access.
+516-· Improved Git repository inspection performance by skipping recursive submodule worktree scans while continuing to track commit pointer updates to eliminate status latency in repositories with submodules.
+517:· Fixed print mode (`-p`/`--print`, including `--output-format json` and `stream-json`) treating benign tool execution errors and permission denials as fatal run failures with non-zero exit codes, ensuring headless exit codes reflect only cascade-level failures and match interactive session behavior.
+518-· Fixed the CLI overwriting and discarding unparsed configuration in `settings.json` when encountering an unrecognized setting value or syntax error on startup, preserving the existing configuration file on disk instead of saving a truncated version.
+519-· Fixed `/skills`, `/plugins`, `/agents`, and `/hooks` commands reporting that no customizations were found when invoked without an explicit agent configuration by mounting built-in customizations in listing views.
+520-· Fixed CJK draft jitter in the main prompt by normalizing boundary whitespace in streaming transcript updates, preventing unwanted spaces from being inserted characters.
+521-· Fixed the conversation spinner animation loop continuing to tick indefinitely in the background after turns completed, eliminating unnecessary CPU wakeups while the CLI is idle.
+522-
+523-1.1.19:
+--
+567-
+568-1.1.15:
+569:· Added `--input-format stream-json` to print mode, which reads newline-delimited JSON prompts from stdin and runs one turn per message in a single conversation, so a driver can keep a session open.
+570-· Added a `rules:` key to markdown agent frontmatter, so an agent can name rule files directly instead of inheriting your whole rule tree; a rule named this way always applies.
+571-· Added plugin support for a top-level `rules.json`, so a plugin can declare the rule files it ships the same way it already declares its skills.
+572-· Added a more specific hint on the spinner line, which now names the tool call the agent is currently running.
+573-· Fixed the CLI aborting at startup on hosts that preload their own allocator through `LD_PRELOAD`, such as Cloud TPU VM images, where it died before the interface appeared.
+574-· Fixed personal accounts hitting a resource-exhausted error at startup when saved credentials were restored from the system keyring, and cut the repeated account checks that followed.
+575-· Fixed your billing project, and the license tier it selects, being lost when the CLI restarted and restored saved credentials from the system keyring.
+--
+578-· Fixed the `/model` picker misaligning its columns for model names that are not plain ASCII, by measuring column widths in display cells rather than bytes.
+579-· Fixed the spinner line flickering to a generic label between quick tool calls.
+580:· Fixed streamed text corrupting non-ASCII characters into replacement characters, in both the interactive display and `--output-format stream-json` text deltas.
+581-· Fixed artifacts written into a subdirectory of a conversation's artifact directory, such as `scratch/`, never appearing in the artifact list.
+582-· Fixed reading a `.wav` file failing as an unsupported media type, by normalizing non-canonical MIME types such as `audio/wave` before they reach the model.
+583-
+584-1.1.14:
+585-· Added a faster return path for enterprise sign-in, so a returning user is offered a single `Continue with ...` option naming the method they last used.
+586-· Added support for OAuth client ID metadata documents when connecting to an MCP server, so servers implementing that part of the specification no longer require a manually supplied client ID or dynamic client registration.
+--
+623-1.1.12:
+624-· Added a heading outline to the artifact viewer, opened with `t`, so a long markdown document's structure is visible at a glance and you can jump straight to a section instead of scrolling.
+625:· Added non-interactive answers for more read-only slash commands in print mode, so `-p "/permissions"`, `/hooks`, `/help`, `/changelog` and `/config` each emit one tab-separated record per line — or a structured payload under `--output-format json` and `stream-json` — without starting an agent turn, spending quota or leaving a conversation behind, with `/help` listing exactly the commands print mode answers and `/changelog` printing the release notes.
+626:· Added machine-readable output to the `models` and `agents` subcommands through an `--output-format` flag accepting `json` and `stream-json`, and moved their error messages and progress spinner off stdout so captured output contains only the list.
+627-· Added a `disable-slash-command: true` flag for a skill's `SKILL.md` frontmatter, which hides that skill from the `/` menu and from `/name` resolution while leaving it discoverable and invocable by the model, so a large skill library no longer floods the command menu.
+628-· Added rendering for alert callouts (`[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`) and for carousel blocks in markdown artifacts, which previously showed as raw markup.
+629-· Improved terminal hyperlink support, enabling clickable links over SSH and in hyperlink-capable `tmux`, keeping word-wrapped URLs clickable past their first line, linking URLs that the markdown renderer had left as plain text including ones inside code blocks, no longer highlighting unrelated links together on hover, and fixing horizontal scrolling and text selection on lines that contain a link.
+630-· Improved tool call headers so every native and MCP tool call carries a short summary of what it is doing instead of a bare name or a raw argument blob, with the same summary naming background tasks and subagents in the activity list and the matching action phrase describing the request in permission prompts.
+631-· Improved headroom for large toolsets by raising the per-session limit on tool declarations, so heavy MCP, plugin and skill setups stop being rejected for having too many tools.
+632-· Improved sign-in with Application Default Credentials by resolving the quota project automatically, so service-account logins work without extra configuration.
+--
+653-· Added Vim-aware submission so a prompt can be sent without leaving modal editing, through an `Editor Mode > Insert First` toggle that opens the prompt in Insert mode where a bare `Enter` submits and a modified key such as `shift+enter` or `ctrl+j` inserts a newline, `ctrl+s` and `ctrl+enter` keys that submit from Normal mode, an `Enter` binding available as `vim.insert.submit`, and the full set of `vim.*` scopes in `keybindings.json` for remapping any of it.
+654-· Added Vim editing to the comment editors in the diff and artifact-detail views, whose footer hints follow the active mode rather than showing one fixed set of bindings, and made a collapsed block behave as a single unit under Vim motions.
+655:· Added non-interactive answers for the read-only slash commands in print mode, so `-p "/usage"`, `/quota`, `/credits`, `/model`, `/effort` and `/skills` emit one tab-separated record per line — or a structured payload under `--output-format json` and `stream-json` — without starting an agent turn, spending quota, or leaving a conversation behind.
+656-· Added an explicit refusal for the remaining interactive-only slash commands in print mode, which previously fell through as literal prompt text and let the model answer as though the command had run, so `-p "/clear"` reported the context cleared while nothing was cleared; each now fails with the flag or subcommand that replaces it.
+657-· Improved plugin enable and disable so `config.json` is the only place enablement lives, seeded once from each plugin's manifest, which stops a plugin that later ships `"disabled": true` from switching itself off under someone who was already running it and stops a shipped-default change from moving every user on the next release.
+658-· Improved the artifact detail view by wrapping long lines in code files instead of clipping them at the right edge.
+659-· Improved model retries by honoring the server-supplied retry delay instead of the client's own backoff, so a retry after a rate limit or an overload waits exactly as long as the server asks.
+660-· Improved model-loading errors so a permission failure such as a missing license or a missing IAM role is shown as itself, with a troubleshooting link, instead of a generic failure during the run.
+661-· Fixed an allowlist entry that tokenizes to zero command words — `command(time)`, a comment-only entry, or an empty compound such as `()` — matching every command and silently auto-approving anything the agent ran; such an entry now matches nothing.
+--
+699-· Fixed deleting into a collapsed paste placeholder removing one character at a time, which left a visible fragment in the prompt while the full pasted content was still submitted; the block is now deleted atomically.
+700-· Fixed the artifact viewer losing syntax highlighting when returning from the editor view, and returning to the wrong panel when exiting the artifact detail view.
+701:· Fixed the headless `stream-json` `init` event advertising tools that are not available in your build.
+702-· Fixed MCP servers forcing a full re-authentication after a dropped connection.
+703-
+704-1.1.8:
+705:· Print mode (`-p` / `--print`) now supports structured, machine-readable output via the `--output-format` flag (`text` (default), `json`, or `stream-json`), so headless runs in CI, eval harnesses, and scripts can consume the CLI's output programmatically; these flags are now discoverable in `--help`.
+706:· Added the `stream-json` output format: a strongly-typed NDJSON event stream that emits typed `init`, `step_update`, and terminal `result` events with a stable, closed-vocabulary `step_type` discriminator, so consumers receive progress incrementally instead of waiting for the whole run to finish.
+707:· Added the `--json-schema` flag to enforce a custom JSON schema on the structured output, accepting either an inline schema string or a path to a schema file; for `stream-json` the schema applies to the final `result` event.
+708-· Enriched the structured stream with a `tool_info` object for each tool call (canonical tool name, parameters, and output) and a `subagent_info` payload for delegated subagents (including `conversation_id` and `log_uri`) so consumers can correlate child trajectories.
+709:· The JSON usage object emitted by `json` and `stream-json` now reports token accounting including `cache_read_tokens`, so non-interactive consumers can attribute prompt-cache hits.
+710-· Added a `copyOnSelect` setting (default on, toggleable in `/settings`) that controls whether releasing a mouse text-selection auto-copies it to the system clipboard in the TUI's altscreen rendering mode; disable it to stop the automatic copy on release — useful when the auto-copy is unwanted or corrupts certain payloads.
+711-· Improved compound-command permissions so an exact chained command (such as `git fetch && git rebase`) can be saved as an allow-always rule and no longer re-prompts on the next identical run.
+712-
+713-1.1.7:
+714-· Improved permission prompts for compound shell commands so the full command is shown when any part of it needs approval.
+715-· Fixed disabled plugins still running their hooks and contributing other customizations, which could keep a broken hook active and break file-editing tools even after the plugin was turned off.
+Usage of agy:
+  --add-dir                       Add a directory to the workspace (repeatable) (default [])
+  --agent                         Agent for the current CLI session
+  -c                              Short alias for --continue
+  --continue                      Continue the most recent conversation
+  --conversation                  Resume a previous conversation by ID
+  --dangerously-skip-permissions  Auto-approve all tool permission requests without prompting
+  --disable-slash-commands        Disable slash command and skill expansion in print mode
+  --effort                        Reasoning effort for the current CLI session (low|medium|high|xhigh|max)
+  -i                              Short alias for --prompt-interactive
+  --input-format                  Input format for print mode (text, stream-json). stream-json reads one NDJSON message per line from stdin and runs a turn for each; it requires --output-format stream-json (default text)
+  --json-schema                   Optional JSON schema string or path to a schema file to enforce structured output (for stream-json, only applicable to the final result)
+  --log-file                      Override CLI log file path
+  --mode                          Set the agent execution mode for this session (accept-edits, auto, plan)
+  --model                         Model for the current CLI session
+  --new-project                   Create a new project for this session
+  --output-format                 Output format for print mode (text, json, stream-json) (default text)
+  -p                              Short alias for --print
+  --print                         Run a single prompt non-interactively and print the response
+  --print-timeout                 Optional time limit for print mode; 0 waits until the turn completes (default 0s)
+  --project                       Project ID or project name for the current CLI session
+  --prompt                        Alias for --print
+  --prompt-interactive            Run an initial prompt interactively and continue the session
+  --remote-control                Create a remote connection for the CLI session on start up
+  --sandbox                       Run in a sandbox with terminal restrictions enabled
+
+Available subcommands:
+  agent           List available agents
+  agents          List available agents
+  changelog       Show changelog and release notes
+===== {"event":"user","user":{"text":"Reply with the single word OK"}}
+error: stream input "user" message is missing the "message" field
+{"event":"result","result":{"conversation_id":"95b5bf0c-46d0-4c36-8887-148bf4cb3c34","status":"ERROR","response":"","error":"stream input \"user\" message is missing the \"message\" field","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_
+===== {"event":"user_message","user_message":{"text":"Reply with the single word OK"}}
+warning: ignoring unsupported stream input message event "user_message"
+===== {"event":"message","message":{"role":"user","content":"Reply with the single word OK"}}
+warning: ignoring unsupported stream input message event "message"
+===== {"event":"prompt","prompt":{"text":"Reply with the single word OK"}}
+warning: ignoring unsupported stream input message event "prompt"
+--- the Founder's paste in session at 2026-10-26T23:36:30.213Z
+<founder>@<PC>:~$ for m in \
+  '{"event":"user","message":"Reply with the single word OK"}' \
+  '{"event":"user","message":{"role":"user","content":"Reply with the single word OK"}}' \
+  '{"event":"user","user":{"message":"Reply with the single word OK"}}' ; do
+  echo "===== $m"
+  printf '%s\n' "$m" | (cd "$(mktemp -d)" && agy --input-format stream-json --output-format stream-json --model gemini-4-argon-high --effort high --mode plan --sandbox --print-timeout 90s 2>&1 | grep -v '"event":"init"' | cut -c1-300 | tail -4)
+done
+===== {"event":"user","message":"Reply with the single word OK"}
+error: failed to decode stream input: json: cannot unmarshal string into Go struct field StreamInputMessage.message of type printmode.StreamInputUserMessage
+{"event":"result","result":{"conversation_id":"2ff24272-ff6f-4223-b124-aa58703aafee","status":"ERROR","response":"","error":"failed to decode stream input: json: cannot unmarshal string into Go struct field StreamInputMessage.message of type printmode.StreamInputUserMessage","duration_seconds":0,"nu
+===== {"event":"user","message":{"role":"user","content":"Reply with the single word OK"}}
+{"event":"step_update","step_update":{"conversation_id":"979f11a1-6e75-4273-834b-304464ea66ad","step_index":1,"state":"DONE","step_type":"unknown","duration_seconds":0.000046158}}
+{"event":"step_update","step_update":{"conversation_id":"979f11a1-6e75-4273-834b-304464ea66ad","step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"OK"}}
+{"event":"step_update","step_update":{"conversation_id":"979f11a1-6e75-4273-834b-304464ea66ad","step_index":2,"state":"DONE","step_type":"agent_response","text_delta":"\n","duration_seconds":44.286084321,"usage":{"input_tokens":19046,"output_tokens":3469,"thinking_tokens":3464,"cache_read_tokens":0,
+{"event":"result","result":{"conversation_id":"979f11a1-6e75-4273-834b-304464ea66ad","status":"SUCCESS","response":"OK\n","duration_seconds":53.700935775,"num_turns":1,"usage":{"input_tokens":19046,"output_tokens":3469,"thinking_tokens":3464,"cache_read_tokens":0,"total_tokens":22515}}}
+===== {"event":"user","user":{"message":"Reply with the single word OK"}}
+error: stream input "user" message is missing the "message" field
+{"event":"result","result":{"conversation_id":"35188b68-5ee8-4f82-9a86-d170a9be39b2","status":"ERROR","response":"","error":"stream input \"user\" message is missing the \"message\" field","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_

@@ -34,8 +34,8 @@ export interface GatewayDaemonDeps {
   readonly heartbeatCadenceMs: number;
   /**
    * The Planner's executor (plan r1 Q2b). Absent, the daemon never polls for
-   * planner work: no executor ships, because `DEC-20260827-01` §3.4
-   * authorizes no provider binding.
+   * planner work. `main.ts` injects one only where
+   * `planner-executor-factory.ts` selects it.
    */
   readonly plannerExecutor?: PlannerExecutor;
 }
@@ -59,6 +59,10 @@ export class GatewayDaemon {
   private stopping = false;
   /** The tick currently in flight, if any (correction B6, Rev 4.7 tester). */
   private tickInFlight: Promise<void> | null = null;
+  /** The boot under way, so a stop that overlaps it waits for its reap and check to finish. */
+  private bootInFlight: Promise<void> | null = null;
+  /** The Gateway id of the identity the primary lane holds now, set wherever it adopts one. */
+  private heldPrimaryGatewayId: string | null = null;
 
   constructor(private readonly deps: GatewayDaemonDeps) {
     this.primary = new PrimaryLane(deps.client, deps.clock, null);
@@ -83,8 +87,45 @@ export class GatewayDaemon {
     });
   }
 
+  /**
+   * The Gateway id the primary lane holds in memory, which a promotion sets
+   * before its state-file write. The Planner executor checks it beside the
+   * persisted one, so neither alone can keep it serving another Gateway.
+   */
+  get primaryGatewayId(): string | null {
+    return this.heldPrimaryGatewayId;
+  }
+
+  private adoptPrimary(identity: GatewayIdentity): void {
+    this.primary.adopt(identity);
+    this.heldPrimaryGatewayId = identity.gatewayId;
+  }
+
   /** Load persisted state and adopt the primary identity from custody. */
-  async boot(): Promise<void> {
+  boot(): Promise<void> {
+    this.bootInFlight = this.bootNow().finally(() => {
+      this.bootInFlight = null;
+    });
+    return this.bootInFlight;
+  }
+
+  private async bootNow(): Promise<void> {
+    try {
+      await this.bootLanes();
+    } finally {
+      // Executions a previous process held are unknowable here, before any poll, and
+      // the Planner's reap and check run however the lanes' recovery went (Amendment 3 C2).
+      await this.planner?.boot();
+    }
+
+    await this.ipc.start();
+    this.log('info', 'daemon.booted', {
+      primary: this.primary.laneState,
+      staging: this.staging.laneState,
+    });
+  }
+
+  private async bootLanes(): Promise<void> {
     const persisted = await this.state.read();
 
     const primarySecret = await this.custodyReadQuietly('primary');
@@ -104,15 +145,6 @@ export class GatewayDaemon {
     // (correction B5, Rev 4.7 tester) — otherwise stale persisted state blocks
     // the enrolment guard forever.
     await this.completeInterruptedStaging(persisted);
-
-    // Executions a previous process held are unknowable here, before any poll.
-    await this.planner?.boot();
-
-    await this.ipc.start();
-    this.log('info', 'daemon.booted', {
-      primary: this.primary.laneState,
-      staging: this.staging.laneState,
-    });
   }
 
   start(): void {
@@ -232,7 +264,7 @@ export class GatewayDaemon {
     const persisted = await this.state.read();
     const gatewayId = persisted.staging.identity.gatewayId;
     if (promotedSecret !== null && gatewayId !== null) {
-      this.primary.adopt(identityFromSecret(gatewayId, promotedSecret));
+      this.adoptPrimary(identityFromSecret(gatewayId, promotedSecret));
     }
 
     await this.state.write({
@@ -260,12 +292,26 @@ export class GatewayDaemon {
       clearInterval(this.cadence);
       this.cadence = null;
     }
+    // A boot under way finishes first, its reap and check included, so a stop that
+    // overlaps it never leaves the Planner's cleanup half done.
+    await this.bootInFlight?.catch(() => undefined);
+    /*
+     * The Planner is told first (Amendment 3 C2): a tick already past its
+     * `stopping` check may be preparing a start, and the executor refuses any
+     * start once told, and cancels the one in flight. Waiting for the tick
+     * first would let that start launch agy and send its work.
+     */
+    const plannerStopped = this.planner?.shutdown().catch((error: unknown) =>
+      this.log('error', 'planner.shutdown_failed', { message: error instanceof Error ? error.message : String(error) }),
+    );
     /*
      * (correction 5, finding #10) stop() settles only after a tick it overlapped
      * has settled — otherwise the caller tears down the very paths a tick that
      * is still running is about to write to.
      */
     await this.tickInFlight?.catch(() => undefined);
+    // A Planner run in flight is cancelled and ended before the daemon exits.
+    await plannerStopped;
     await this.ipc.stop();
     this.log('info', 'daemon.stopped', {});
   }
@@ -410,7 +456,7 @@ export class GatewayDaemon {
      */
     try {
       await this.underStagingLock('promotion-recovery', async () => {
-        this.primary.adopt(identityFromSecret(gatewayId, primarySecret));
+        this.adoptPrimary(identityFromSecret(gatewayId, primarySecret));
         await this.state.write({
           ...persisted,
           primary: {
@@ -457,7 +503,7 @@ export class GatewayDaemon {
   private adoptRecoverably(lane: 'primary' | 'staging', gatewayId: string, secret: string): void {
     try {
       const identity = identityFromSecret(gatewayId, secret);
-      if (lane === 'primary') this.primary.adopt(identity);
+      if (lane === 'primary') this.adoptPrimary(identity);
       else this.staging.adopt(identity);
     } catch (error) {
       this.log('error', 'custody.secret_unparsable', { lane, message: describe(error) });
