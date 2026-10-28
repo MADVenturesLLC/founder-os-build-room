@@ -1,0 +1,241 @@
+{
+  "specs": [
+    "BRJ:c:1",
+    "BRJ:c:2",
+    "BRJ:d:1"
+  ],
+  "generated_by": "test/support/generate-journal-vectors.ts",
+  "genesis": "0000000000000000000000000000000000000000000000000000000000000000",
+  "rows": [
+    {
+      "name": "BRJ:c:1 journaled before the cutover",
+      "record_class": "command",
+      "spec": "BRJ:c:1",
+      "input": {
+        "seq": "1",
+        "eventType": "journaled",
+        "commandId": "cmd_example_0101",
+        "actorId": "agent.planner",
+        "roleId": "planner",
+        "repository": "example-org/example-repo",
+        "scopeRef": "scope_example_0001",
+        "commandEnvelope": {
+          "envelopeVersion": "1",
+          "commandKind": "planner.invoke",
+          "argv": [
+            "--goal",
+            "goal_example_0001",
+            "--mode",
+            "plan"
+          ],
+          "targetRepository": "example-org/example-repo",
+          "scopeRef": "scope_example_0001"
+        },
+        "envelopeDigest": "b289932390ef94fedc14393433930e74160148f754abb5aabd9df0b652ca0641",
+        "authorizationRef": "auth_example_0001",
+        "intendedProvider": "example-provider",
+        "intendedModel": "example-model-1",
+        "intendedSurface": "example-surface",
+        "evidenceRefs": [],
+        "recordedAt": "2026-09-01T12:00:21.000000Z",
+        "roomId": "room_example_0101"
+      },
+      "canonical_hex": "0000000742524a3a633a31010100000007636f6d6d616e64020100000001310301000000096a6f75726e616c6564040100000010636d645f6578616d706c655f30313031050100000011726f6f6d5f6578616d706c655f303130310600070008010000000d6167656e742e706c616e6e6572090100000007706c616e6e65720a01000000186578616d706c652d6f72672f6578616d706c652d7265706f0b010000001273636f70655f6578616d706c655f303030310c01000000930000000742524a3a613a310101000000013102010000000e706c616e6e65722e696e766f6b65030100000004000000062d2d676f616c00000011676f616c5f6578616d706c655f30303031000000062d2d6d6f646500000004706c616e0401000000186578616d706c652d6f72672f6578616d706c652d7265706f05010000001273636f70655f6578616d706c655f303030310d0100000040623238393933323339306566393466656463313433393334333339333065373431363031343866373534616262356161626439646630623635326361303634310e0100000011617574685f6578616d706c655f303030310f01000000106578616d706c652d70726f766964657210010000000f6578616d706c652d6d6f64656c2d3111010000000f6578616d706c652d7375726661636512001300140015001600170018001901000000001a010000001b323032362d30392d30315431323a30303a32312e3030303030305a",
+      "row_sha256": "dedfe1eed2b00f714a18fa5a535f6c5443be003e1a32980676c5177fb600b4be",
+      "prior_chain_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "chain_hash": "56d001993b211fe0bcf22e0eb5e82a623242699149eaac087d2ccb6ba5f50929"
+    },
+    {
+      "name": "BRJ:c:1 dispatched before the cutover, with no init fields",
+      "record_class": "command",
+      "spec": "BRJ:c:1",
+      "input": {
+        "seq": "2",
+        "eventType": "dispatched",
+        "commandId": "cmd_example_0101",
+        "provider": "example-provider",
+        "model": "example-model-1",
+        "executionSurface": "example-surface",
+        "evidenceRefs": [],
+        "recordedAt": "2026-09-01T12:00:22.000000Z"
+      },
+      "canonical_hex": "0000000742524a3a633a31010100000007636f6d6d616e640201000000013203010000000a64697370617463686564040100000010636d645f6578616d706c655f30313031050006000700080009000a000b000c000d000e000f00100011001201000000106578616d706c652d70726f766964657213010000000f6578616d706c652d6d6f64656c2d3114010000000f6578616d706c652d7375726661636515001600170018001901000000001a010000001b323032362d30392d30315431323a30303a32322e3030303030305a",
+      "row_sha256": "9e4d46550e907c89017740e7a75e54da0e0077c53efb4500d8185c36f0b3d4fc",
+      "prior_chain_hash": "56d001993b211fe0bcf22e0eb5e82a623242699149eaac087d2ccb6ba5f50929",
+      "chain_hash": "27760a8113ae9a0abb27a04ec3ce9e68cc3670fa5712d183a9a6b2b598da88c8"
+    },
+    {
+      "name": "decision founder.cancel pre-plan, between the two versions",
+      "record_class": "decision",
+      "spec": "BRJ:d:1",
+      "input": {
+        "seq": "3",
+        "decision": "founder.cancel",
+        "actorId": "founder",
+        "recordedState": "ROOM_CREATED",
+        "authorizationRef": "auth_example_0101",
+        "lifecycleEventRef": {
+          "roomId": "room_example_0102",
+          "eventId": "evt_example_0101"
+        },
+        "recordedAt": "2026-09-01T12:00:23.000000Z"
+      },
+      "canonical_hex": "0000000742524a3a643a310101000000086465636973696f6e0201000000013303010000000e666f756e6465722e63616e63656c040100000007666f756e64657205010000000c524f4f4d5f4352454154454406000700080100000011617574685f6578616d706c655f30313031090100000011726f6f6d5f6578616d706c655f30313032000000106576745f6578616d706c655f303130310a010000001b323032362d30392d30315431323a30303a32332e3030303030305a",
+      "row_sha256": "29333e1e706fa7b8c2078e3155e4e0f97f0fe64292311a4322d8abedf13ea675",
+      "prior_chain_hash": "27760a8113ae9a0abb27a04ec3ce9e68cc3670fa5712d183a9a6b2b598da88c8",
+      "chain_hash": "95bf49347e9fc7013a109a18ca68fd6e3532d35bf685bbd6f110ca577904d2a0"
+    },
+    {
+      "name": "BRJ:c:2 journaled after the cutover, the init fields absent",
+      "record_class": "command",
+      "spec": "BRJ:c:2",
+      "input": {
+        "seq": "4",
+        "eventType": "journaled",
+        "commandId": "cmd_example_0102",
+        "actorId": "agent.planner",
+        "roleId": "planner",
+        "repository": "example-org/example-repo",
+        "scopeRef": "scope_example_0001",
+        "commandEnvelope": {
+          "envelopeVersion": "1",
+          "commandKind": "planner.invoke",
+          "argv": [
+            "--goal",
+            "goal_example_0001",
+            "--mode",
+            "plan"
+          ],
+          "targetRepository": "example-org/example-repo",
+          "scopeRef": "scope_example_0001"
+        },
+        "envelopeDigest": "b289932390ef94fedc14393433930e74160148f754abb5aabd9df0b652ca0641",
+        "authorizationRef": "auth_example_0001",
+        "intendedProvider": "example-provider",
+        "intendedModel": "example-model-1",
+        "intendedSurface": "example-surface",
+        "evidenceRefs": [],
+        "recordedAt": "2026-09-01T12:00:24.000000Z"
+      },
+      "canonical_hex": "0000000742524a3a633a32010100000007636f6d6d616e64020100000001340301000000096a6f75726e616c6564040100000010636d645f6578616d706c655f3031303205000600070008010000000d6167656e742e706c616e6e6572090100000007706c616e6e65720a01000000186578616d706c652d6f72672f6578616d706c652d7265706f0b010000001273636f70655f6578616d706c655f303030310c01000000930000000742524a3a613a310101000000013102010000000e706c616e6e65722e696e766f6b65030100000004000000062d2d676f616c00000011676f616c5f6578616d706c655f30303031000000062d2d6d6f646500000004706c616e0401000000186578616d706c652d6f72672f6578616d706c652d7265706f05010000001273636f70655f6578616d706c655f303030310d0100000040623238393933323339306566393466656463313433393334333339333065373431363031343866373534616262356161626439646630623635326361303634310e0100000011617574685f6578616d706c655f303030310f01000000106578616d706c652d70726f766964657210010000000f6578616d706c652d6d6f64656c2d3111010000000f6578616d706c652d7375726661636512001300140015001600170018001901000000001a010000001b323032362d30392d30315431323a30303a32342e3030303030305a1b001c00",
+      "row_sha256": "39bd5b3c411da1817fa2b7341209aa41b7ef866442057436720cf3b7858e8689",
+      "prior_chain_hash": "95bf49347e9fc7013a109a18ca68fd6e3532d35bf685bbd6f110ca577904d2a0",
+      "chain_hash": "d0d0f5689fbf986bcf2f6d1c993f6f75306b0f96c72ad53419ad32a71586eb33"
+    },
+    {
+      "name": "BRJ:c:2 dispatched carrying init_model and provider_conversation_id",
+      "record_class": "command",
+      "spec": "BRJ:c:2",
+      "input": {
+        "seq": "5",
+        "eventType": "dispatched",
+        "commandId": "cmd_example_0102",
+        "runId": "run_example_0102",
+        "provider": "example-provider",
+        "model": "example-model-1",
+        "executionSurface": "example-surface",
+        "evidenceRefs": [
+          "plandoc/example_0102"
+        ],
+        "recordedAt": "2026-09-01T12:00:25.000000Z",
+        "initModel": "example-model-1",
+        "providerConversationId": "conv_example_0102"
+      },
+      "canonical_hex": "0000000742524a3a633a32010100000007636f6d6d616e640201000000013503010000000a64697370617463686564040100000010636d645f6578616d706c655f30313032050006010000001072756e5f6578616d706c655f303130320700080009000a000b000c000d000e000f00100011001201000000106578616d706c652d70726f766964657213010000000f6578616d706c652d6d6f64656c2d3114010000000f6578616d706c652d73757266616365150016001700180019010000000100000014706c616e646f632f6578616d706c655f303130321a010000001b323032362d30392d30315431323a30303a32352e3030303030305a1b010000000f6578616d706c652d6d6f64656c2d311c0100000011636f6e765f6578616d706c655f30313032",
+      "row_sha256": "f2a17575dfa44313bd1d58056eb0ed0b6dd3ebe0874a9617fdd8620f2291af7f",
+      "prior_chain_hash": "d0d0f5689fbf986bcf2f6d1c993f6f75306b0f96c72ad53419ad32a71586eb33",
+      "chain_hash": "03ec9d68eb32cc8b61676fc4798f36a896c1c20d1ed446bb6695cc6ef0f9e691"
+    },
+    {
+      "name": "BRJ:c:2 completed",
+      "record_class": "command",
+      "spec": "BRJ:c:2",
+      "input": {
+        "seq": "6",
+        "eventType": "completed",
+        "commandId": "cmd_example_0102",
+        "evidenceRefs": [
+          "evidence_example_0102"
+        ],
+        "recordedAt": "2026-09-01T12:00:26.000000Z"
+      },
+      "canonical_hex": "0000000742524a3a633a32010100000007636f6d6d616e6402010000000136030100000009636f6d706c65746564040100000010636d645f6578616d706c655f30313032050006000700080009000a000b000c000d000e000f001000110012001300140015001600170018001901000000010000001565766964656e63655f6578616d706c655f303130321a010000001b323032362d30392d30315431323a30303a32362e3030303030305a1b001c00",
+      "row_sha256": "40d9b159a3054e5e96038eb33220106c4037b0ef73ae38277662a51542228772",
+      "prior_chain_hash": "03ec9d68eb32cc8b61676fc4798f36a896c1c20d1ed446bb6695cc6ef0f9e691",
+      "chain_hash": "a109650193b7ec48b331e3e636749e3ccabb73c7bbc40bc2024efcdf498714bc"
+    },
+    {
+      "name": "BRJ:c:2 journaled for a lane whose executor reports no init event",
+      "record_class": "command",
+      "spec": "BRJ:c:2",
+      "input": {
+        "seq": "7",
+        "eventType": "journaled",
+        "commandId": "cmd_example_0103",
+        "actorId": "agent.planner",
+        "roleId": "planner",
+        "repository": "example-org/example-repo",
+        "scopeRef": "scope_example_0001",
+        "commandEnvelope": {
+          "envelopeVersion": "1",
+          "commandKind": "planner.invoke",
+          "argv": [
+            "--goal",
+            "goal_example_0001",
+            "--mode",
+            "plan"
+          ],
+          "targetRepository": "example-org/example-repo",
+          "scopeRef": "scope_example_0001"
+        },
+        "envelopeDigest": "b289932390ef94fedc14393433930e74160148f754abb5aabd9df0b652ca0641",
+        "authorizationRef": "auth_example_0001",
+        "intendedProvider": "example-provider",
+        "intendedModel": "example-model-1",
+        "intendedSurface": "example-surface",
+        "evidenceRefs": [],
+        "recordedAt": "2026-09-01T12:00:27.000000Z"
+      },
+      "canonical_hex": "0000000742524a3a633a32010100000007636f6d6d616e64020100000001370301000000096a6f75726e616c6564040100000010636d645f6578616d706c655f3031303305000600070008010000000d6167656e742e706c616e6e6572090100000007706c616e6e65720a01000000186578616d706c652d6f72672f6578616d706c652d7265706f0b010000001273636f70655f6578616d706c655f303030310c01000000930000000742524a3a613a310101000000013102010000000e706c616e6e65722e696e766f6b65030100000004000000062d2d676f616c00000011676f616c5f6578616d706c655f30303031000000062d2d6d6f646500000004706c616e0401000000186578616d706c652d6f72672f6578616d706c652d7265706f05010000001273636f70655f6578616d706c655f303030310d0100000040623238393933323339306566393466656463313433393334333339333065373431363031343866373534616262356161626439646630623635326361303634310e0100000011617574685f6578616d706c655f303030310f01000000106578616d706c652d70726f766964657210010000000f6578616d706c652d6d6f64656c2d3111010000000f6578616d706c652d7375726661636512001300140015001600170018001901000000001a010000001b323032362d30392d30315431323a30303a32372e3030303030305a1b001c00",
+      "row_sha256": "41fd6a37586837ee520f7db7c2c691915474c87ad5d733a6c09bcaf910859adc",
+      "prior_chain_hash": "a109650193b7ec48b331e3e636749e3ccabb73c7bbc40bc2024efcdf498714bc",
+      "chain_hash": "605c7a6684c0a349083b55cb12cab0943947f54c71fee1f301c7bb6f30802290"
+    },
+    {
+      "name": "BRJ:c:2 dispatched carrying neither init field",
+      "record_class": "command",
+      "spec": "BRJ:c:2",
+      "input": {
+        "seq": "8",
+        "eventType": "dispatched",
+        "commandId": "cmd_example_0103",
+        "provider": "example-provider",
+        "model": "example-model-1",
+        "executionSurface": "example-surface",
+        "evidenceRefs": [],
+        "recordedAt": "2026-09-01T12:00:28.000000Z"
+      },
+      "canonical_hex": "0000000742524a3a633a32010100000007636f6d6d616e640201000000013803010000000a64697370617463686564040100000010636d645f6578616d706c655f30313033050006000700080009000a000b000c000d000e000f00100011001201000000106578616d706c652d70726f766964657213010000000f6578616d706c652d6d6f64656c2d3114010000000f6578616d706c652d7375726661636515001600170018001901000000001a010000001b323032362d30392d30315431323a30303a32382e3030303030305a1b001c00",
+      "row_sha256": "49bce30c5d3fff824f9cabe1a91a8c14ed8427b87d0c04a22895139add1bc7ee",
+      "prior_chain_hash": "605c7a6684c0a349083b55cb12cab0943947f54c71fee1f301c7bb6f30802290",
+      "chain_hash": "080150185da931a8536f6c0f92ccda1c99214da6b76a25c3d277f1ec71802aa7"
+    },
+    {
+      "name": "BRJ:c:2 failed after dispatch",
+      "record_class": "command",
+      "spec": "BRJ:c:2",
+      "input": {
+        "seq": "9",
+        "eventType": "failed",
+        "commandId": "cmd_example_0103",
+        "failureClassification": "route_mismatch",
+        "evidenceRefs": [],
+        "recordedAt": "2026-09-01T12:00:29.000000Z"
+      },
+      "canonical_hex": "0000000742524a3a633a32010100000007636f6d6d616e64020100000001390301000000066661696c6564040100000010636d645f6578616d706c655f30313033050006000700080009000a000b000c000d000e000f001000110012001300140015010000000e726f7574655f6d69736d617463681600170018001901000000001a010000001b323032362d30392d30315431323a30303a32392e3030303030305a1b001c00",
+      "row_sha256": "ae7c6997facc87004bb7036f96d123859f9788b73158e0140c0148c50ff239e6",
+      "prior_chain_hash": "080150185da931a8536f6c0f92ccda1c99214da6b76a25c3d277f1ec71802aa7",
+      "chain_hash": "dbb3d9b5607004348ba46a02db2c667134104f1596a1a54cde00710e6fd9cc3d"
+    }
+  ]
+}

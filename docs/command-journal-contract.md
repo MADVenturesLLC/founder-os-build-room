@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.17 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.18 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). The two clauses
@@ -138,7 +138,7 @@ reconciled.
 | 1 | command identity | `command_id` | dedicated `cmd_` namespace; generator never shared with another kind |
 | 2 | room / run / execution identity | `room_id`, `run_id`, `execution_id` | where applicable; null only before the identity exists, never backfilled with a guess |
 | 3 | actor and role | `actor_id`, `role_id` | registry-valid values only |
-| 4 | actual provider, model, execution surface | `intended_provider`, `intended_model`, `intended_surface` on `journaled`; `provider`, `model`, `execution_surface` on `dispatched` | intent labeled as intent pre-dispatch; the observed actual identity is recorded on `dispatched`, is authoritative for this element, and is never backfilled from configuration |
+| 4 | actual provider, model, execution surface | `intended_provider`, `intended_model`, `intended_surface` on `journaled`; `provider`, `model`, `execution_surface` on `dispatched`; from `BRJ:c:2`, `init_model` and `provider_conversation_id` on `dispatched` where the executor reports an init event | intent labeled as intent pre-dispatch; the observed actual identity is recorded on `dispatched`, is authoritative for this element, and is never backfilled from configuration; `init_model` is the model the executor's init event named before the work was sent, and `provider_conversation_id` the provider's conversation id from that event (v0.18) |
 | 5 | repository and governed scope | `repository`, `scope_ref` | the run's immutable scope input |
 | 6 | authorized command / normalized envelope | `command_envelope`, `envelope_digest` | §6 normalization; raw commands that would expose secrets are never stored |
 | 7 | governing authorization or approval | `authorization_ref` | e.g. the plan-approval decision record; must be **resolvable**, not merely well-formed (§5.3) |
@@ -507,6 +507,14 @@ as written.
      the row's record class determines.
    The golden vectors for each specification verify against exactly
    these definitions.
+   **Specification (c) has two versions (v0.18).** `BRJ:c:1`
+   (`packages/journal/specs/serialization-c-command-row.md`) and
+   `BRJ:c:2` (`packages/journal/specs/serialization-c-command-row-v2.md`),
+   which adds `init_model` and `provider_conversation_id` on
+   `dispatched`. Each row's bytes begin with the identifier of the version
+   that encodes them, and a reader selects the version by it, never by
+   which fields are present. A chain's command rows move from `BRJ:c:1` to
+   `BRJ:c:2` once and never back; existing rows are never rewritten.
 3. Security-negative obligation: seeded credential-shaped values in
    command envelopes must never reach a persisted row (stop-gate §7.3).
 4. Committed exports or diagnostics derived from the journal follow the
@@ -720,6 +728,15 @@ decision-act write path is unblocked by those landings.
 
 ## Changelog
 
+- **v0.18 (2026-10-28):** the init model and conversation id in the
+  journal, under FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR Amendment 5
+  B1 and FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS with its
+  Amendment 1. §2 element 4 gains `init_model` and
+  `provider_conversation_id` on `dispatched`. §6.2 names the second
+  version of specification (c), `BRJ:c:2`, how a reader selects the
+  version of each row, and that a chain moves to it once and never back.
+  The fields live in rows' canonical bytes, so the stored schema is
+  unchanged. No other clause changes.
 - **v0.17 (2026-09-01):** claim-versus-requirement correction,
   **Founder-found**: §2's totality sentence asserted "T19 stores
   `prior_state` on entry" as a fact about the machine, but

@@ -1,9 +1,12 @@
 /**
  * Serialization contract (c) — the complete command-class event row.
  *
- * Spec: `packages/journal/specs/serialization-c-command-row.md`, version 1.
+ * Spec: `packages/journal/specs/serialization-c-command-row.md`, version 1
+ * (`BRJ:c:1`), and `packages/journal/specs/serialization-c-command-row-v2.md`,
+ * version 2 (`BRJ:c:2`), which adds two fields a `dispatched` event may carry.
  * The chain hash covers these bytes framed with the prior row's chain hash
- * (contract §4.1, §6.2; framing in `chain.ts`).
+ * (contract §4.1, §6.2; framing in `chain.ts`). Each row's bytes begin with
+ * the spec id that encodes them, and a reader chooses the decoder by it.
  *
  * The record class is an explicit field in the canonical byte input — the
  * first encoded field — never inferred from absent fields (contract §2, §6.2).
@@ -32,6 +35,10 @@ import {
 } from './envelope.js';
 
 export const SPEC_ID_C = 'BRJ:c:1';
+/** Version 2 of spec (c): version 1's fields, then `init_model` and `provider_conversation_id`. */
+export const SPEC_ID_C2 = 'BRJ:c:2';
+
+export type CommandRowSpec = typeof SPEC_ID_C | typeof SPEC_ID_C2;
 
 export const RECORD_CLASS_COMMAND = 'command';
 
@@ -93,6 +100,10 @@ export interface CommandEventRow {
   readonly evidenceRefs: readonly string[];
   /** Canonical RFC 3339 UTC, six fractional digits. */
   readonly recordedAt: string;
+  /** `BRJ:c:2` only: the model the executor's init event named, on `dispatched`. */
+  readonly initModel?: string;
+  /** `BRJ:c:2` only: the provider's conversation id from the same init event, on `dispatched`. */
+  readonly providerConversationId?: string;
 }
 
 const TAG_RECORD_CLASS = 0x01;
@@ -121,6 +132,8 @@ const TAG_RESOLUTION_SEMANTICS = 0x17;
 const TAG_LIFECYCLE_EVENT_REF = 0x18;
 const TAG_EVIDENCE_REFS = 0x19;
 const TAG_RECORDED_AT = 0x1a;
+const TAG_INIT_MODEL = 0x1b;
+const TAG_PROVIDER_CONVERSATION_ID = 0x1c;
 
 type OptionalFieldName =
   | 'roomId'
@@ -215,7 +228,30 @@ function requireNonEmpty(name: string, value: string): void {
   }
 }
 
-function validateRow(row: CommandEventRow): void {
+/**
+ * `BRJ:c:2`'s two fields: carried by `dispatched` alone, both or neither, each non-empty.
+ * `BRJ:c:1` has neither field, so a row carrying one has no version 1 form.
+ */
+function validateInitFields(row: CommandEventRow, spec: CommandRowSpec): void {
+  const carried = [row.initModel, row.providerConversationId].filter((value) => value !== undefined).length;
+  if (carried === 0) return;
+  if (spec === SPEC_ID_C) {
+    throw new RangeError(`init_model and provider_conversation_id have no ${SPEC_ID_C} form; encode under ${SPEC_ID_C2}`);
+  }
+  if (row.eventType !== 'dispatched') {
+    throw new RangeError(`init_model and provider_conversation_id are not carried by a ${row.eventType} event`);
+  }
+  if (carried !== 2) {
+    throw new RangeError('init_model and provider_conversation_id are carried together or not at all');
+  }
+  requireString('init_model', row.initModel);
+  requireNonEmpty('init_model', row.initModel as string);
+  requireString('provider_conversation_id', row.providerConversationId);
+  requireNonEmpty('provider_conversation_id', row.providerConversationId as string);
+}
+
+function validateRow(row: CommandEventRow, spec: CommandRowSpec): void {
+  validateInitFields(row, spec);
   if (!(COMMAND_EVENT_TYPES as readonly string[]).includes(row.eventType)) {
     throw new RangeError(`not a command event type: ${String(row.eventType)}`);
   }
@@ -313,9 +349,49 @@ function validateRow(row: CommandEventRow): void {
 
 /** Canonical byte sequence of a command-class event row, spec (c) v1. */
 export function encodeCommandEventRow(row: CommandEventRow): Uint8Array {
-  validateRow(row);
+  validateRow(row, SPEC_ID_C);
+  return concatBytes(v1Fields(SPEC_ID_C, row));
+}
+
+/**
+ * Canonical byte sequence of a command-class event row, spec (c) v2: version 1's
+ * fields in version 1's order, under the version 2 spec id, then the two init fields.
+ */
+export function encodeCommandEventRowV2(row: CommandEventRow): Uint8Array {
+  validateRow(row, SPEC_ID_C2);
   return concatBytes([
-    lpString(SPEC_ID_C),
+    ...v1Fields(SPEC_ID_C2, row),
+    stringField(TAG_INIT_MODEL, row.initModel),
+    stringField(TAG_PROVIDER_CONVERSATION_ID, row.providerConversationId),
+  ]);
+}
+
+/** Encodes a row under the spec named, the one its bytes are to begin with. */
+export function encodeCommandEventRowAs(spec: CommandRowSpec, row: CommandEventRow): Uint8Array {
+  return spec === SPEC_ID_C2 ? encodeCommandEventRowV2(row) : encodeCommandEventRow(row);
+}
+
+/**
+ * A chain's command rows may move from `BRJ:c:1` to `BRJ:c:2` once and never back:
+ * the reason the command row at `index` breaks that, or null. Decision rows are
+ * not in `specs`; it lists the command rows' spec ids in `seq` order.
+ */
+export function commandSpecOrderDefect(specs: readonly string[]): string | null {
+  let seenV2 = false;
+  for (const [index, spec] of specs.entries()) {
+    if (spec === SPEC_ID_C2) seenV2 = true;
+    else if (spec === SPEC_ID_C && seenV2) {
+      return `command row ${index} is ${SPEC_ID_C} after a ${SPEC_ID_C2} command row`;
+    } else if (spec !== SPEC_ID_C) {
+      return `command row ${index} names no command row spec: ${JSON.stringify(spec)}`;
+    }
+  }
+  return null;
+}
+
+function v1Fields(spec: CommandRowSpec, row: CommandEventRow): Uint8Array[] {
+  return [
+    lpString(spec),
     stringField(TAG_RECORD_CLASS, RECORD_CLASS_COMMAND),
     stringField(TAG_SEQ, row.seq),
     stringField(TAG_EVENT_TYPE, row.eventType),
@@ -350,5 +426,5 @@ export function encodeCommandEventRow(row: CommandEventRow): Uint8Array {
     ),
     arrayField(TAG_EVIDENCE_REFS, row.evidenceRefs),
     stringField(TAG_RECORDED_AT, row.recordedAt),
-  ]);
+  ];
 }
