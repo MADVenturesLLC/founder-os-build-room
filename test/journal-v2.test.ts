@@ -208,11 +208,19 @@ describe('a chain moves from BRJ:c:1 to BRJ:c:2 once and never back', () => {
   });
 
   it('refuses a version 1 command row after a version 2 one', () => {
-    assert.equal(commandSpecOrderDefect([SPEC_ID_C, SPEC_ID_C2, SPEC_ID_C]), 'command row 2 is BRJ:c:1 after a BRJ:c:2 command row');
+    assert.equal(commandSpecOrderDefect([SPEC_ID_C, SPEC_ID_C2, SPEC_ID_C]), 'row 2 is a BRJ:c:1 command row after a BRJ:c:2 one');
   });
 
-  it('refuses a spec id that names no command row spec', () => {
-    assert.match(commandSpecOrderDefect([SPEC_ID_C, 'BRJ:d:1']) ?? '', /command row 1 names no command row spec/);
+  it('skips decision rows wherever they sit, and still refuses a downgrade across one (Tier-2 F1)', () => {
+    assert.equal(commandSpecOrderDefect([SPEC_ID_C, 'BRJ:d:1', SPEC_ID_C2]), null);
+    assert.equal(commandSpecOrderDefect(['BRJ:d:1', SPEC_ID_C2, 'BRJ:d:1', SPEC_ID_C2]), null);
+    assert.equal(commandSpecOrderDefect(['BRJ:d:1']), null);
+    assert.equal(commandSpecOrderDefect([SPEC_ID_C2, 'BRJ:d:1', SPEC_ID_C]), 'row 2 is a BRJ:c:1 command row after a BRJ:c:2 one');
+  });
+
+  it('refuses a spec id that names no journal row spec', () => {
+    assert.match(commandSpecOrderDefect([SPEC_ID_C, 'BRJ:x:1']) ?? '', /row 1 names no journal row spec/);
+    assert.match(commandSpecOrderDefect([SPEC_ID_C, 'BRJ:d:2']) ?? '', /row 1 names no journal row spec/);
   });
 });
 
@@ -257,8 +265,8 @@ describe('the committed BRJ:c:2 cutover chain', () => {
   });
 
   it('moves from BRJ:c:1 to BRJ:c:2 once, with a decision row between, and covers both init shapes', () => {
+    assert.equal(commandSpecOrderDefect(parsed.rows.map((r) => r.spec)), null, 'the whole chain, decision row included');
     const commandSpecs = parsed.rows.filter((r) => r.record_class === 'command').map((r) => r.spec);
-    assert.equal(commandSpecOrderDefect(commandSpecs), null);
     assert.ok(commandSpecs.includes(SPEC_ID_C) && commandSpecs.includes(SPEC_ID_C2), 'both versions on one chain');
     assert.ok(parsed.rows.some((r) => r.record_class === 'decision'), 'a decision row on the same chain');
     const v2Dispatched = parsed.rows.filter((r) => r.spec === SPEC_ID_C2 && r.input.eventType === 'dispatched');
