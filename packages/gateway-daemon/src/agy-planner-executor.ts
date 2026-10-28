@@ -405,6 +405,20 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   private shuttingDown = false;
   /** A halt whose file could not be written still holds for this process. */
   private haltedInMemory = false;
+  /**
+   * A halt whose marker could not be made durable: the marker's text, and the first
+   * directory its mkdir made. Until a write of it succeeds, the marker is written again in
+   * full (a new file, synced, renamed into place, its directory synced), never synced
+   * again, before every start and at boot.
+   */
+  private pendingHalt: { readonly text: string; readonly created: string | undefined } | null = null;
+  /**
+   * Set when an evidence write fails, at any step, or when boot cannot sync the evidence
+   * directory: no record in it is read or written for the rest of the process. A sync
+   * that fails is not tried again, because a second fsync after a failed one can report
+   * success for data the kernel has already dropped.
+   */
+  private evidenceFailed = false;
   /** Every evidence read and write, in order: a refusal's read-then-write is one step, so nothing lands between them. */
   private evidenceQueue: Promise<unknown> = Promise.resolve();
 
@@ -682,6 +696,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
    */
   async boot(): Promise<void> {
     try {
+      await this.persistPendingHalt();
       await this.closeStaleEvidence();
     } finally {
       await this.reapPlannerUser();
@@ -703,6 +718,27 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       this.log('error', 'agy.evidence_unreadable', { message: describe(error) });
       await this.halt('evidence_unreadable');
+      return;
+    }
+    // What an earlier process left, whose own sync may have failed, is synced before it is
+    // read: each record, then the directory, then the Gateway's directory above it.
+    try {
+      for (const name of names) {
+        if (!name.endsWith('.json') || name.startsWith('.')) continue;
+        const handle = await open(join(directory, name), 'r');
+        try {
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+      }
+      const sync = this.deps.syncDirectory ?? syncDirectory;
+      await sync(directory);
+      await sync(this.config.gatewayDirectory);
+    } catch (error) {
+      this.evidenceFailed = true;
+      this.log('error', 'agy.evidence_sync_failed', { message: describe(error) });
+      await this.halt('evidence_sync_failed');
       return;
     }
     const bootedAt = this.isoNow();
@@ -776,7 +812,10 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   }
 
   private async isHalted(): Promise<boolean> {
-    if (this.haltedInMemory) return true;
+    if (this.haltedInMemory) {
+      await this.persistPendingHalt();
+      return true;
+    }
     try {
       await lstat(this.haltPath());
       return true;
@@ -792,12 +831,20 @@ export class AgyPlannerExecutor implements PlannerExecutor {
    */
   private async halt(reason: string): Promise<void> {
     this.log('error', 'agy.halted', { reason, haltFile: this.haltPath(), plannerUser: this.config.plannerUser });
+    // A halt already held whose marker is not yet durable: the first reason stands, and
+    // its marker is written again.
+    if (this.pendingHalt !== null) {
+      await this.persistPendingHalt();
+      return;
+    }
+    const text = `${JSON.stringify({ haltedAt: this.isoNow(), reason, plannerUser: this.config.plannerUser })}\n`;
+    let created: string | undefined;
     try {
-      const created = await mkdir(this.config.gatewayDirectory, { recursive: true, mode: DIRECTORY_MODE });
+      created = await mkdir(this.config.gatewayDirectory, { recursive: true, mode: DIRECTORY_MODE });
       // Exclusive create: a path already there, link or file, is never written through.
       const handle = await open(this.haltPath(), 'wx', FILE_MODE);
       try {
-        await handle.writeFile(`${JSON.stringify({ haltedAt: this.isoNow(), reason, plannerUser: this.config.plannerUser })}\n`, { encoding: 'utf8' });
+        await handle.writeFile(text, { encoding: 'utf8' });
         await handle.sync();
       } finally {
         await handle.close();
@@ -809,9 +856,41 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     } catch (error) {
       // Already there: the executor is halted already, and the first reason stands.
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') return;
-      // The file may or may not be there to be found after a crash; this process stays halted.
+      // The file may or may not be there to be found after a crash; this process stays
+      // halted, and writes the marker again in full before every start until it lands.
       this.log('error', 'agy.halt_write_failed', { message: describe(error) });
       this.haltedInMemory = true;
+      this.pendingHalt ??= { text, created };
+    }
+  }
+
+  /**
+   * Writes a halt marker that could not be made durable again, in full: a new file,
+   * synced, renamed over whatever is at the path, then its directory and every directory
+   * a mkdir made for it, synced. Not a second sync of the first file, which can report
+   * success for data already lost. The process stays halted either way.
+   */
+  private async persistPendingHalt(): Promise<void> {
+    const pending = this.pendingHalt;
+    if (pending === null) return;
+    const temporary = join(this.config.gatewayDirectory, `.planner-halted.${randomUUID()}.tmp`);
+    try {
+      const created = await mkdir(this.config.gatewayDirectory, { recursive: true, mode: DIRECTORY_MODE });
+      const handle = await open(temporary, 'wx', FILE_MODE);
+      try {
+        await handle.writeFile(pending.text, { encoding: 'utf8' });
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await rename(temporary, this.haltPath());
+      const shallowest = [pending.created, created].filter((path): path is string => path !== undefined).sort((a, b) => a.length - b.length)[0];
+      await syncMadeDirectories(this.config.gatewayDirectory, shallowest, this.deps.syncDirectory ?? syncDirectory);
+      this.pendingHalt = null;
+      this.log('warn', 'agy.halt_persisted', { haltFile: this.haltPath() });
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      this.log('error', 'agy.halt_write_failed', { message: describe(error) });
     }
   }
 
@@ -897,6 +976,10 @@ export class AgyPlannerExecutor implements PlannerExecutor {
 
   /** What this command's evidence record already says: nothing, sent, not sent, or unreadable. */
   private async priorEvidence(commandId: string): Promise<'none' | 'sent' | 'not_sent' | 'unreadable'> {
+    if (this.evidenceFailed) {
+      this.log('error', 'agy.evidence_unreadable', { commandId, message: 'an evidence write could not be made durable; no record is read until the daemon restarts' });
+      return 'unreadable';
+    }
     let text: string;
     try {
       text = await readFile(this.evidencePath(commandId), 'utf8');
@@ -946,6 +1029,11 @@ export class AgyPlannerExecutor implements PlannerExecutor {
 
   private async writeEvidence(record: EvidenceRecord): Promise<boolean> {
     const directory = join(this.config.gatewayDirectory, 'planner-evidence');
+    if (this.evidenceFailed) {
+      this.log('error', 'agy.evidence_failed', { message: 'an earlier evidence write could not be made durable; nothing is written until the daemon restarts' });
+      await this.halt('evidence_write_failed');
+      return false;
+    }
     try {
       const created = await mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
       const target = this.evidencePath(record.commandId);
@@ -966,6 +1054,9 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       await syncMadeDirectories(directory, created, this.deps.syncDirectory ?? syncDirectory);
       return true;
     } catch (error) {
+      // Whatever step failed, the file at the path may say more than the disk will after a
+      // crash: no record is read or written again in this process.
+      this.evidenceFailed = true;
       this.log('error', 'agy.evidence_failed', { message: describe(error) });
       await this.halt('evidence_write_failed');
       return false;

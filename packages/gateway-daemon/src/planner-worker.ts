@@ -101,6 +101,10 @@ export type PlannerRecord =
 
 const PHASES = new Set(['attested', 'starting', 'not_sent', 'running', 'finished', 'lost']);
 
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** The planner records' directory, beside the daemon's state file. */
 export function plannerRecordsDirectory(gatewayDirectory: string): string {
   return join(gatewayDirectory, 'planner');
@@ -139,18 +143,28 @@ export async function syncMadeDirectories(
 export class PlannerRecordStore {
   /** Reads and writes in order: a read never sees a record renamed into place whose directory entry is not yet synced. */
   private queue: Promise<unknown> = Promise.resolve();
-  /** Commands whose last write was renamed into place but whose directory sync failed: unreadable until a sync succeeds. */
-  private readonly undurable = new Set<string>();
   /**
-   * The shallowest directory a write's mkdir made whose ancestry has not yet been synced
-   * up to the directory that existed: kept until a sync of that ancestry succeeds, so a
-   * later read or write syncs the same ancestors, not only this directory.
+   * Set when a write fails, at any step: the store is closed for the rest of the process,
+   * and every read and write rejects. A sync that fails is not tried again, because a
+   * second fsync after a failed one can report success for data the kernel has already
+   * dropped; what a failed write left on disk is read only by a store opened afresh, after
+   * a restart, which syncs it first.
    */
-  private pendingCreated: string | undefined;
+  private failure: string | null = null;
+  /** The sync a store makes once, before its first read or write; see `openNow`. */
+  private opened: Promise<void> | null = null;
 
   constructor(private readonly directory: string) {}
 
-  private serialized<T>(step: () => Promise<T>): Promise<T> {
+  private serialized<T>(operation: () => Promise<T>): Promise<T> {
+    const step = async (): Promise<T> => {
+      this.opened ??= this.openNow();
+      await this.opened;
+      if (this.failure !== null) {
+        throw new Error(`the planner record store is closed until the daemon restarts: a write could not be made durable (${this.failure})`);
+      }
+      return operation();
+    };
     const next = this.queue.then(step, step);
     this.queue = next.then(
       () => undefined,
@@ -168,13 +182,38 @@ export class PlannerRecordStore {
     return this.serialized(() => this.readNow(commandId));
   }
 
-  private async readNow(commandId: string): Promise<PlannerRecord | null> {
-    if (this.undurable.has(commandId)) {
-      // The file at the path may say more than the disk will after a crash: it is not read
-      // until its directory is synced, and a sync that fails again leaves it unreadable.
-      await this.syncDurable(undefined);
-      this.undurable.delete(commandId);
+  /**
+   * Before its first read or write, a store syncs every record file it holds, then its
+   * directory, then the directory above it (the Gateway's), so nothing an earlier process
+   * left behind, whose own sync may have failed, is read or answered from until it is on
+   * disk. A sync that fails closes the store, as a failed write does.
+   */
+  private async openNow(): Promise<void> {
+    try {
+      let names: string[];
+      try {
+        names = await readdir(this.directory);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw error;
+      }
+      for (const name of names) {
+        if (!name.endsWith('.json') || name.startsWith('.')) continue;
+        const handle = await open(join(this.directory, name), 'r');
+        try {
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+      }
+      await syncDirectory(this.directory);
+      await syncDirectory(dirname(this.directory));
+    } catch (error) {
+      this.failure = describeError(error);
     }
+  }
+
+  private async readNow(commandId: string): Promise<PlannerRecord | null> {
     let text: string;
     try {
       text = await readFile(this.pathOf(commandId), 'utf8');
@@ -202,6 +241,17 @@ export class PlannerRecordStore {
   }
 
   private async writeNow(record: PlannerRecord): Promise<void> {
+    try {
+      await this.writeDurably(record);
+    } catch (error) {
+      // Whatever step failed, the file at the path may say more than the disk will after a
+      // crash, and a directory this write made may not be on disk: the store closes.
+      this.failure = describeError(error);
+      throw error;
+    }
+  }
+
+  private async writeDurably(record: PlannerRecord): Promise<void> {
     const created = await mkdir(this.directory, { recursive: true, mode: DIRECTORY_MODE });
     const temporary = join(this.directory, `.record.${randomUUID()}.tmp`);
     const handle = await open(temporary, 'wx', FILE_MODE);
@@ -217,25 +267,7 @@ export class PlannerRecordStore {
       await unlink(temporary).catch(() => undefined);
       throw error;
     }
-    try {
-      await this.syncDurable(created);
-    } catch (error) {
-      this.undurable.add(record.commandId);
-      throw error;
-    }
-  }
-
-  /**
-   * Syncs this directory and every directory `created` (this write's mkdir) or an earlier
-   * write's unfinished mkdir added, up to the one that existed. The ancestry stays pending
-   * until a sync of it succeeds, whichever read or write performs it.
-   */
-  private async syncDurable(created: string | undefined): Promise<void> {
-    if (created !== undefined && (this.pendingCreated === undefined || created.length < this.pendingCreated.length)) {
-      this.pendingCreated = created;
-    }
-    await syncMadeDirectories(this.directory, this.pendingCreated);
-    this.pendingCreated = undefined;
+    await syncMadeDirectories(this.directory, created);
   }
 
   all(): Promise<PlannerRecord[]> {
