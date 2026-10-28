@@ -393,6 +393,14 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   private busy = false;
   /** The start in flight, from its first check to its last evidence write, so a stopping daemon can cancel it (Amendment 3 C2). */
   private inFlight: InFlight | null = null;
+  /**
+   * The commands whose start is under way, from the moment start() is entered, before
+   * anything is awaited, until the start has refused, rejected, or run to its completion
+   * (its cleanup included). A second start of such a command is rejected at entry, so two
+   * starts of one command that arrive together cannot both pass the checks before either
+   * has reserved the executor.
+   */
+  private readonly underWay = new Set<string>();
   /** Set by `shutdown`: no start begins after the daemon begins to stop. */
   private shuttingDown = false;
   /** A halt whose file could not be written still holds for this process. */
@@ -468,14 +476,32 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     // first asks the record (rejectIfSent), so no path answers not_sent for such a command
     // or writes over its record.
     //
-    // First of all: the same command again while its own start is under way is not refused,
-    // which would answer not_sent for work that may be about to go and write a record over
-    // nothing yet, but rejected, which the worker records as unknown; whatever else would
-    // have refused it.
-    if (this.inFlight?.commandId === work.commandId) {
+    // First of all, and before anything is awaited: the same command again while its own
+    // start is under way is not refused, which would answer not_sent for work that may be
+    // about to go and write a record over nothing yet, but rejected, which the worker
+    // records as unknown; whatever else would have refused it. The command is held as under
+    // way synchronously here, so two starts of it that arrive together cannot both pass.
+    if (this.underWay.has(work.commandId)) {
       this.log('error', 'agy.already_starting', { commandId: work.commandId });
       throw new Error('this command is already being started');
     }
+    this.underWay.add(work.commandId);
+    const release = (): void => {
+      this.underWay.delete(work.commandId);
+    };
+    try {
+      const started = await this.startEntered(work, identity);
+      // An accepted run keeps the command under way until its completion, cleanup included.
+      if (started.kind === 'accepted') started.completion.then(release, release);
+      else release();
+      return started;
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+
+  private async startEntered(work: PlannerWorkWire, identity: PlannerIdentityWire): Promise<PlannerStart> {
     if (!identityIsLane(identity)) return this.refuse(work, identity, 'identity_not_lane');
     if (!(await this.onBoundGateway())) return this.refuse(work, identity, 'gateway_identity_changed');
     if (!REPOSITORY_PATTERN.test(work.repository) || !FULL_SHA_PATTERN.test(work.baseSha)) {

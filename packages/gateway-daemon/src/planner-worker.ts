@@ -141,6 +141,12 @@ export class PlannerRecordStore {
   private queue: Promise<unknown> = Promise.resolve();
   /** Commands whose last write was renamed into place but whose directory sync failed: unreadable until a sync succeeds. */
   private readonly undurable = new Set<string>();
+  /**
+   * The shallowest directory a write's mkdir made whose ancestry has not yet been synced
+   * up to the directory that existed: kept until a sync of that ancestry succeeds, so a
+   * later read or write syncs the same ancestors, not only this directory.
+   */
+  private pendingCreated: string | undefined;
 
   constructor(private readonly directory: string) {}
 
@@ -166,7 +172,7 @@ export class PlannerRecordStore {
     if (this.undurable.has(commandId)) {
       // The file at the path may say more than the disk will after a crash: it is not read
       // until its directory is synced, and a sync that fails again leaves it unreadable.
-      await syncMadeDirectories(this.directory, undefined);
+      await this.syncDurable(undefined);
       this.undurable.delete(commandId);
     }
     let text: string;
@@ -212,11 +218,24 @@ export class PlannerRecordStore {
       throw error;
     }
     try {
-      await syncMadeDirectories(this.directory, created);
+      await this.syncDurable(created);
     } catch (error) {
       this.undurable.add(record.commandId);
       throw error;
     }
+  }
+
+  /**
+   * Syncs this directory and every directory `created` (this write's mkdir) or an earlier
+   * write's unfinished mkdir added, up to the one that existed. The ancestry stays pending
+   * until a sync of it succeeds, whichever read or write performs it.
+   */
+  private async syncDurable(created: string | undefined): Promise<void> {
+    if (created !== undefined && (this.pendingCreated === undefined || created.length < this.pendingCreated.length)) {
+      this.pendingCreated = created;
+    }
+    await syncMadeDirectories(this.directory, this.pendingCreated);
+    this.pendingCreated = undefined;
   }
 
   all(): Promise<PlannerRecord[]> {

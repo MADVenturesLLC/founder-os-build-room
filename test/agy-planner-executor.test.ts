@@ -60,9 +60,10 @@
  *     writes (shown for each refusal before launch; that the read and the
  *     write are one step in the executor's evidence queue is read, not
  *     raced); a second start of the command whose start is under way is
- *     rejected, not refused, before any other check, so nothing is written
- *     over the start in flight and no not_sent is answered for it, whatever
- *     else would have refused it; a record that cannot be read, or lacks `sent`, halts, at a
+ *     rejected, not refused, before any other check and before anything is
+ *     awaited, so two starts of one command that arrive together cannot
+ *     both pass, nothing is written over the start in flight and no
+ *     not_sent is answered for it, whatever else would have refused it; a record that cannot be read, or lacks `sent`, halts, at a
  *     start, at boot, and when the worker asks; an earlier refusal lets a
  *     retry through. Once the running record has been attempted, `not_sent`
  *     is answered only when the record then says so: a downgrade that
@@ -101,7 +102,9 @@
  *     attestation from `attest`; the worker's records are read and written
  *     in order, so a read never sees a record whose directory entry is not
  *     yet synced, and a record whose directory sync failed after its rename
- *     stays unreadable until a sync succeeds; a `running` record whose write fails does not stop the
+ *     stays unreadable until a sync succeeds, the directories that write's
+ *     mkdir made staying to be synced, by the next read or write, until they
+ *     are; a `running` record whose write fails does not stop the
  *     `finished` one; a `finished` record that cannot be written is never
  *     answered as running, only as nothing until it can be; a torn worker
  *     record is answered as nothing, not thrown out of the tick; at boot a
@@ -2069,5 +2072,110 @@ describe('the seventh Tier-2 (I1 to I3) and its advisories', () => {
     await booting;
     await stopping;
     assert.deepEqual(events, ['executor.boot', 'executor.shutdown']);
+  });
+});
+
+describe('the eighth Tier-2 (J1 and J2)', () => {
+  it('J1: two starts of one command that arrive together: the second is rejected before either has reserved the executor', async () => {
+    const w = work();
+    let release = (): void => undefined;
+    const parked = new Promise<void>((resolve) => (release = resolve));
+    const h = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      checkout: async (_work, parent) => {
+        await parked;
+        return mkdtemp(join(parent, 'run-'));
+      },
+    });
+    const identity = await identityFor(h.executor, w.commandId);
+    // No await between the two calls: both are entered before the first has awaited anything.
+    const first = h.executor.start(w, identity);
+    const second = h.executor.start(w, identity);
+    await assert.rejects(second, /already being started/);
+    assert.equal(existsSync(join(h.gatewayDirectory, 'planner-evidence', evidenceName(w.commandId))), false, 'nothing was written for the command');
+    release();
+    const started = await first;
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') await started.completion;
+    const records = evidenceOf(h.gatewayDirectory);
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.['outcome'], 'plan');
+    // Once the run has completed, the command may be started again, and its record then refuses it.
+    await assert.rejects(h.executor.start(w, identity), /already sent to agy/);
+  });
+
+  /** A record store whose directory is two levels below a root that exists, with the root's fsync failing while `failing` is set. */
+  async function storeUnderNewAncestry(): Promise<{ records: PlannerRecordStore; rootIno: number; gatewayIno: () => number; directoryIno: () => number; syncs: SyncSeen[]; failing: { on: boolean }; stop: () => void }> {
+    const root = temporary('buildroom-agy-records-ancestry-');
+    const directory = join(root, 'gateway', 'planner-records');
+    const probe = await openFile(FAKE_AGY, 'r');
+    const prototype = Object.getPrototypeOf(probe) as unknown as { sync: (this: FileHandle) => Promise<void> };
+    await probe.close();
+    const original = prototype.sync;
+    const rootIno = statSync(root).ino;
+    const syncs: SyncSeen[] = [];
+    const failing = { on: true };
+    prototype.sync = async function (this: FileHandle): Promise<void> {
+      const info = await this.stat();
+      syncs.push({ directory: info.isDirectory(), ino: info.ino });
+      if (failing.on && info.isDirectory() && info.ino === rootIno) throw new Error('EIO');
+      return original.call(this);
+    };
+    return {
+      records: new PlannerRecordStore(directory),
+      rootIno,
+      gatewayIno: () => statSync(join(root, 'gateway')).ino,
+      directoryIno: () => statSync(directory).ino,
+      syncs,
+      failing,
+      stop: () => {
+        prototype.sync = original;
+      },
+    };
+  }
+
+  it('J2: the directories a write made stay to be synced by the next read when the sync of their ancestry failed', async () => {
+    const w = work();
+    const identity = await identityFor(harness({ mode: 'ok' }).executor, w.commandId);
+    const store = await storeUnderNewAncestry();
+    try {
+      // The first write makes gateway/ and gateway/planner-records; the sync of their parent, the root, fails.
+      await assert.rejects(store.records.write({ commandId: w.commandId, phase: 'attested', identity }), /EIO/);
+      assert.notEqual(syncAt(store.syncs, store.rootIno, true), -1, 'the root was asked to sync and failed');
+      store.failing.on = false;
+      store.syncs.length = 0;
+      const record = await store.records.read(w.commandId);
+      assert.equal(record?.phase, 'attested');
+      const directory = syncAt(store.syncs, store.directoryIno(), true);
+      const gateway = syncAt(store.syncs, store.gatewayIno(), true, directory);
+      const root = syncAt(store.syncs, store.rootIno, true, gateway);
+      assert.ok(directory !== -1 && gateway !== -1 && root !== -1, `the read synced the directory, then gateway/, then the root: ${JSON.stringify(store.syncs)}`);
+    } finally {
+      store.stop();
+    }
+  });
+
+  it('J2: the next write syncs that ancestry too, though its own mkdir made nothing', async () => {
+    const w = work();
+    const other = work();
+    const identity = await identityFor(harness({ mode: 'ok' }).executor, w.commandId);
+    const store = await storeUnderNewAncestry();
+    try {
+      await assert.rejects(store.records.write({ commandId: w.commandId, phase: 'attested', identity }), /EIO/);
+      store.failing.on = false;
+      store.syncs.length = 0;
+      await store.records.write({ commandId: other.commandId, phase: 'attested', identity });
+      const directory = syncAt(store.syncs, store.directoryIno(), true);
+      const gateway = syncAt(store.syncs, store.gatewayIno(), true, directory);
+      const root = syncAt(store.syncs, store.rootIno, true, gateway);
+      assert.ok(directory !== -1 && gateway !== -1 && root !== -1, `the write synced the directory, then gateway/, then the root: ${JSON.stringify(store.syncs)}`);
+      // Once synced, a further write syncs only this directory.
+      store.syncs.length = 0;
+      await store.records.write({ commandId: other.commandId, phase: 'starting', identity });
+      assert.equal(syncAt(store.syncs, store.rootIno, true), -1, 'the root is not synced again');
+    } finally {
+      store.stop();
+    }
   });
 });
