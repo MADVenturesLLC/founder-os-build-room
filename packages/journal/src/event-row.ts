@@ -366,9 +366,14 @@ export function encodeCommandEventRowV2(row: CommandEventRow): Uint8Array {
   ]);
 }
 
-/** Encodes a row under the spec named, the one its bytes are to begin with. */
+/**
+ * Encodes a row under the spec named, the one its bytes are to begin with. A value
+ * naming neither command row spec is refused, never read as version 1.
+ */
 export function encodeCommandEventRowAs(spec: CommandRowSpec, row: CommandEventRow): Uint8Array {
-  return spec === SPEC_ID_C2 ? encodeCommandEventRowV2(row) : encodeCommandEventRow(row);
+  if (spec === SPEC_ID_C2) return encodeCommandEventRowV2(row);
+  if (spec === SPEC_ID_C) return encodeCommandEventRow(row);
+  throw new RangeError(`not a command row spec: ${JSON.stringify(spec)}`);
 }
 
 /**

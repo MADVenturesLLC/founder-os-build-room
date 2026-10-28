@@ -121,6 +121,16 @@ describe('BRJ:c:2 grammar', () => {
     assert.deepEqual(encodeCommandEventRowAs(SPEC_ID_C, dispatched()), encodeCommandEventRow(dispatched()));
     assert.deepEqual(encodeCommandEventRowAs(SPEC_ID_C2, withInit()), encodeCommandEventRowV2(withInit()));
   });
+
+  it('refuses a spec naming neither command row version, from an untyped caller, rather than encode version 1', () => {
+    for (const spec of ['BRJ:d:1', 'BRJ:c:3', '', undefined]) {
+      assert.throws(
+        () => encodeCommandEventRowAs(spec as unknown as typeof SPEC_ID_C, dispatched()),
+        /not a command row spec/,
+        String(spec),
+      );
+    }
+  });
 });
 
 describe('BRJ:c:2 field rules', () => {
