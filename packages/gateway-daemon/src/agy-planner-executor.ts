@@ -81,7 +81,7 @@ import type {
 import { PLANDOC_SCHEMA_V1 } from '../../seat-output-schema/src/index.js';
 import { createDaemonClock } from './clock.js';
 import { DIRECTORY_MODE, FILE_MODE } from './paths.js';
-import { syncDirectory, syncMadeDirectories, type PlannerExecutor, type PlannerStart } from './planner-worker.js';
+import { readRegularFile, rewriteInFull, syncDirectory, syncMadeDirectories, type PlannerExecutor, type PlannerStart } from './planner-worker.js';
 
 /** The one lane this executor serves (the ruling's B1). */
 export const AGY_PLANNER_LANE = {
@@ -696,6 +696,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
    */
   async boot(): Promise<void> {
     try {
+      await this.rewriteHaltMarkerAtBoot();
       await this.persistPendingHalt();
       await this.closeStaleEvidence();
     } finally {
@@ -720,17 +721,14 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       await this.halt('evidence_unreadable');
       return;
     }
-    // What an earlier process left, whose own sync may have failed, is synced before it is
-    // read: each record, then the directory, then the Gateway's directory above it.
+    // What an earlier process left, whose own write may have failed, is written again in full
+    // before it is read, each record, and then the directory and the Gateway's directory
+    // above it are synced: rewritten, not synced again, because a second sync can confirm
+    // data an earlier process's failed write already lost.
     try {
       for (const name of names) {
         if (!name.endsWith('.json') || name.startsWith('.')) continue;
-        const handle = await open(join(directory, name), 'r');
-        try {
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
+        await rewriteInFull(join(directory, name));
       }
       const sync = this.deps.syncDirectory ?? syncDirectory;
       await sync(directory);
@@ -862,6 +860,32 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       this.haltedInMemory = true;
       this.pendingHalt ??= { text, created };
     }
+  }
+
+  /**
+   * A halt marker an earlier process left is written again in full at boot, as the evidence
+   * records are, and its directory synced: that process's own write of it may have failed,
+   * and a sync made here could not prove it on disk. A marker that is not a regular file, or
+   * cannot be read, is replaced by one that says so. If the rewrite fails, this process holds
+   * the halt in memory and writes the marker again before every start, as for a halt it
+   * raised itself.
+   */
+  private async rewriteHaltMarkerAtBoot(): Promise<void> {
+    let text: string;
+    try {
+      text = (await readRegularFile(this.haltPath())).toString('utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      // Not a regular file (a link is refused at the open, ELOOP), or not readable: it still
+      // halts, and is replaced by a marker that says so.
+      text = '';
+    }
+    if (text === '') {
+      text = `${JSON.stringify({ haltedAt: this.isoNow(), reason: 'halt_marker_unreadable_at_boot', plannerUser: this.config.plannerUser })}\n`;
+    }
+    this.pendingHalt = { text, created: undefined };
+    await this.persistPendingHalt();
+    if (this.pendingHalt !== null) this.haltedInMemory = true;
   }
 
   /**

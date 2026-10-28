@@ -33,6 +33,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
 import { mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
@@ -105,6 +106,48 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Writes the file at `path` again, in full, from the bytes it now holds: a new file in the same
+ * directory, written, synced, and renamed over the path. The caller syncs the directory after.
+ *
+ * A file an earlier process wrote cannot be proven on disk by syncing it again: on Linux a sync
+ * of a file opened after a writeback error was already reported, to the earlier process, does
+ * not report that error, so it can succeed for data the disk never received. A write made here
+ * is synced here, so its sync is the proof. Anything at the path but a regular file is refused:
+ * it is never written through, nor replaced by what it points to.
+ */
+export async function rewriteInFull(path: string): Promise<void> {
+  const bytes = await readRegularFile(path);
+  const temporary = join(dirname(path), `.rewrite.${randomUUID()}.tmp`);
+  try {
+    const handle = await open(temporary, 'wx', FILE_MODE);
+    try {
+      await handle.writeFile(bytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(temporary, path);
+  } catch (error) {
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * The bytes of the regular file at `path`, opened without following a symbolic link and checked
+ * on the open handle, so nothing swapped in between a check and the read is read through.
+ */
+export async function readRegularFile(path: string): Promise<Buffer> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    if (!(await handle.stat()).isFile()) throw new Error(`${path} is not a regular file`);
+    return await handle.readFile();
+  } finally {
+    await handle.close();
+  }
+}
+
 /** The planner records' directory, beside the daemon's state file. */
 export function plannerRecordsDirectory(gatewayDirectory: string): string {
   return join(gatewayDirectory, 'planner');
@@ -148,10 +191,10 @@ export class PlannerRecordStore {
    * and every read and write rejects. A sync that fails is not tried again, because a
    * second fsync after a failed one can report success for data the kernel has already
    * dropped; what a failed write left on disk is read only by a store opened afresh, after
-   * a restart, which syncs it first.
+   * a restart, which writes it again in full first.
    */
   private failure: string | null = null;
-  /** The sync a store makes once, before its first read or write; see `openNow`. */
+  /** The rewrite and syncs a store makes once, before its first read or write; see `openNow`. */
   private opened: Promise<void> | null = null;
 
   constructor(private readonly directory: string) {}
@@ -183,10 +226,12 @@ export class PlannerRecordStore {
   }
 
   /**
-   * Before its first read or write, a store syncs every record file it holds, then its
-   * directory, then the directory above it (the Gateway's), so nothing an earlier process
-   * left behind, whose own sync may have failed, is read or answered from until it is on
-   * disk. A sync that fails closes the store, as a failed write does.
+   * Before its first read or write, a store writes every record file it holds again in full
+   * (`rewriteInFull`), then syncs its directory, then the directory above it (the Gateway's),
+   * so nothing an earlier process left behind, whose own write may have failed, is read or
+   * answered from until a write made here has put it on disk. It is rewritten, not synced
+   * again: a second sync can confirm data an earlier process's failed write already lost. A
+   * step that fails closes the store, as a failed write does.
    */
   private async openNow(): Promise<void> {
     try {
@@ -199,12 +244,7 @@ export class PlannerRecordStore {
       }
       for (const name of names) {
         if (!name.endsWith('.json') || name.startsWith('.')) continue;
-        const handle = await open(join(this.directory, name), 'r');
-        try {
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
+        await rewriteInFull(join(this.directory, name));
       }
       await syncDirectory(this.directory);
       await syncDirectory(dirname(this.directory));

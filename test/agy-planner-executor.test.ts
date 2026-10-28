@@ -43,7 +43,10 @@
  *     there after a crash, and a marker that cannot be made durable keeps
  *     this process halted even once the file is gone, and is written again
  *     in full (a new file, synced, renamed, its directory synced) before the
- *     next start, never synced again;
+ *     next start, never synced again; a marker an earlier process left is
+ *     written again in full at boot the same way, a failure there holding
+ *     the halt in memory, and one that is not a regular file is replaced by
+ *     a marker saying so, never read or written through;
  *   - each run's checkout is agy's working directory and is removed after;
  *     making it read-only follows no symbolic link, so a link in a hostile
  *     tree cannot change the mode of a file outside it;
@@ -54,9 +57,10 @@
  *     the same mkdir made) before the input line, and a sync that fails
  *     sends nothing and halts; after an evidence write fails, at any step,
  *     no record is read or written again in this process: `sent` answers
- *     that it cannot say, and every start rejects; at boot the records,
- *     their directory and the Gateway's are synced before any is read, and a
- *     sync that fails there halts the same way. The directory
+ *     that it cannot say, and every start rejects; at boot each record is
+ *     written again in full, never synced again, and then their directory and
+ *     the Gateway's are synced, before any is read, and a step that fails
+ *     there halts the same way. The directory
  *     syncs are shown through an injected sync, and the file's own sync by
  *     recording the real fsyncs by inode; that the disk keeps what was synced
  *     across a power loss is the kernel's, not shown here. A command whose
@@ -110,8 +114,9 @@
  *     yet synced; a write that fails at any step closes the store for the
  *     rest of the process, so no read, write or `all` answers from it, the
  *     failed sync never being tried again; a store opened afresh, as after a
- *     restart, syncs its records, its directory and the Gateway's before
- *     anything else; a `running` record whose write fails does not stop the
+ *     restart, writes each of its records again in full, never syncing an
+ *     earlier process's file again, then syncs its directory and the
+ *     Gateway's, before anything else; a `running` record whose write fails does not stop the
  *     `finished` one; a `finished` record that cannot be written is never
  *     answered as running, only as nothing until it can be; a torn worker
  *     record is answered as nothing, not thrown out of the tick; at boot a
@@ -127,7 +132,7 @@ import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp, open as openFile, type FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -2219,18 +2224,23 @@ describe('the ninth Tier-2 (K1 to K3): a sync that fails is not tried again', ()
     assert.equal(h.launches, 0);
   });
 
-  it('K2: at boot the evidence records, their directory and the Gateway\'s are synced before any is read; a sync that fails halts and closes them', async () => {
+  it('K2: at boot the evidence records are written again in full, then their directory and the Gateway\'s synced, before any is read; a step that fails halts and closes them', async () => {
     const commandId = uuid();
     const ok = harness({ mode: 'ok' });
     const file = placeEvidence(ok, commandId, evidenceLine(commandId, uuid(), { outcome: 'running', endedAt: null }));
     const fileIno = statSync(file).ino;
+    // A hard link holds the earlier file's inode, so no file made at boot can reuse its number.
+    linkSync(file, join(temporary('buildroom-agy-held-'), 'earlier.json'));
     const control = await failingSyncs();
     try {
       await ok.executor.boot();
-      const record = syncAt(control.syncs, fileIno, false);
-      const directory = syncAt(control.syncs, statSync(join(ok.gatewayDirectory, 'planner-evidence')).ino, true, record);
+      // The file an earlier process wrote is not synced again: a second sync proves nothing.
+      assert.equal(syncAt(control.syncs, fileIno, false), -1, `the earlier process's file is not synced again: ${JSON.stringify(control.syncs)}`);
+      const rewritten = control.syncs.findIndex((seen) => !seen.directory && seen.ino !== fileIno);
+      const directory = syncAt(control.syncs, statSync(join(ok.gatewayDirectory, 'planner-evidence')).ino, true, rewritten);
       const above = syncAt(control.syncs, statSync(ok.gatewayDirectory).ino, true, directory);
-      assert.ok(record !== -1 && directory !== -1 && above !== -1, `record, directory, then the Gateway's: ${JSON.stringify(control.syncs)}`);
+      assert.ok(rewritten !== -1 && directory !== -1 && above !== -1, `a new copy synced, then the directory, then the Gateway's: ${JSON.stringify(control.syncs)}`);
+      assert.notEqual(statSync(file).ino, fileIno, 'the record at the path is the copy written here');
     } finally {
       control.stop();
     }
@@ -2279,3 +2289,104 @@ describe('the ninth Tier-2 (K1 to K3): a sync that fails is not tried again', ()
     assert.equal(h.launches, 0);
   });
 });
+
+describe('the tenth round: what an earlier process left is written again in full at boot, never synced again', () => {
+  it('a worker record store writes each record an earlier process left again in full before its first read, then syncs its directory and the Gateway\'s', async () => {
+    const w = work();
+    const identity = await identityFor(harness({ mode: 'ok' }).executor, w.commandId);
+    const root = temporary('buildroom-agy-records-earlier-');
+    const directory = plannerRecordsDirectory(root);
+    mkdirSync(directory, { recursive: true });
+    const file = join(directory, evidenceName(w.commandId));
+    const text = `${JSON.stringify({ commandId: w.commandId, phase: 'attested', identity })}\n`;
+    writeFileSync(file, text);
+    const fileIno = statSync(file).ino;
+    linkSync(file, join(temporary('buildroom-agy-held-'), 'earlier.json'));
+    const recording = await startRecordingSyncs();
+    let record: PlannerRecord | null;
+    try {
+      record = await new PlannerRecordStore(directory).read(w.commandId);
+    } finally {
+      recording.stop();
+    }
+    assert.equal(record?.phase, 'attested');
+    assert.equal(syncAt(recording.syncs, fileIno, false), -1, 'the earlier process\'s file is not synced again');
+    const copy = statSync(file).ino;
+    assert.notEqual(copy, fileIno, 'the record at the path is the copy written here');
+    assert.equal(readFileSync(file, 'utf8'), text, 'with the same bytes');
+    const copied = syncAt(recording.syncs, copy, false);
+    const directoryAt = syncAt(recording.syncs, statSync(directory).ino, true, copied);
+    const above = syncAt(recording.syncs, statSync(root).ino, true, directoryAt);
+    assert.ok(copied !== -1 && directoryAt !== -1 && above !== -1, `the copy, then its directory, then the Gateway's: ${JSON.stringify(recording.syncs)}`);
+  });
+
+  it('a halt marker an earlier process left is written again in full at boot, then its directory synced; the executor stays halted', async () => {
+    const w = work();
+    const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
+    mkdirSync(h.gatewayDirectory, { recursive: true });
+    const marker = join(h.gatewayDirectory, 'planner-halted.json');
+    const text = `${JSON.stringify({ haltedAt: '2026-10-27T00:00:00.000Z', reason: 'planner_user_survived_reap', plannerUser: 'planner' })}\n`;
+    writeFileSync(marker, text);
+    const markerIno = statSync(marker).ino;
+    linkSync(marker, join(temporary('buildroom-agy-held-'), 'earlier-marker.json'));
+    const recording = await startRecordingSyncs();
+    try {
+      await h.executor.boot();
+    } finally {
+      recording.stop();
+    }
+    assert.equal(syncAt(recording.syncs, markerIno, false), -1, 'the earlier marker is not synced again');
+    const copy = statSync(marker).ino;
+    assert.notEqual(copy, markerIno, 'the marker at the path is the copy written here');
+    assert.equal(readFileSync(marker, 'utf8'), text, 'with the same reason');
+    const copied = syncAt(recording.syncs, copy, false);
+    assert.ok(copied !== -1 && syncAt(recording.syncs, statSync(h.gatewayDirectory).ino, true, copied) !== -1, `the copy, then the Gateway's directory: ${JSON.stringify(recording.syncs)}`);
+    assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
+    assert.equal(h.launches, 0);
+  });
+
+  it('a halt marker an earlier process left that cannot be rewritten at boot holds the halt in memory, and is written again before the next start', async () => {
+    const w = work();
+    const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never) });
+    // The evidence directory is there and empty, so boot writes no file but the marker's copy.
+    mkdirSync(join(h.gatewayDirectory, 'planner-evidence'), { recursive: true });
+    const marker = join(h.gatewayDirectory, 'planner-halted.json');
+    const text = `${JSON.stringify({ haltedAt: '2026-10-27T00:00:00.000Z', reason: 'planner_user_survived_reap', plannerUser: 'planner' })}\n`;
+    writeFileSync(marker, text);
+    // During boot only, every file sync fails: the marker's copy cannot be made durable.
+    const probe = await openFile(FAKE_AGY, 'r');
+    const prototype = Object.getPrototypeOf(probe) as unknown as { sync: (this: FileHandle) => Promise<void> };
+    await probe.close();
+    const original = prototype.sync;
+    prototype.sync = async function (this: FileHandle): Promise<void> {
+      if (!(await this.stat()).isDirectory()) throw new Error('EIO');
+      return original.call(this);
+    };
+    try {
+      await h.executor.boot();
+    } finally {
+      prototype.sync = original;
+    }
+    assert.ok(h.logged.includes('agy.halt_write_failed'));
+    // The file is gone, but the halt boot could not make durable holds in this process, and the
+    // next start's halt check writes the marker again in full before it refuses.
+    rmSync(marker, { force: true });
+    assert.deepEqual(await h.executor.start(w, await identityFor(h.executor, w.commandId)), { kind: 'not_sent' });
+    assert.equal(h.launches, 0);
+    assert.equal(readFileSync(marker, 'utf8'), text, 'written again in full, with the earlier reason');
+  });
+
+  it('a halt marker at boot that is not a regular file is never read or written through: it is replaced by a marker that says so', async () => {
+    const h = harness({ mode: 'ok' });
+    mkdirSync(h.gatewayDirectory, { recursive: true });
+    const elsewhere = join(temporary('buildroom-agy-elsewhere-'), 'target.json');
+    writeFileSync(elsewhere, 'not a marker\n');
+    const marker = join(h.gatewayDirectory, 'planner-halted.json');
+    symlinkSync(elsewhere, marker);
+    await h.executor.boot();
+    assert.equal(lstatSync(marker).isFile(), true, 'the link is replaced by a regular file');
+    assert.equal(haltReason(h.gatewayDirectory), 'halt_marker_unreadable_at_boot');
+    assert.equal(readFileSync(elsewhere, 'utf8'), 'not a marker\n', 'what the link pointed to is untouched');
+  });
+});
+
