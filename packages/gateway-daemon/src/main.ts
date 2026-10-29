@@ -86,6 +86,7 @@ async function main(): Promise<number> {
     client: new ControlPlaneClient(urlVerdict.url),
     heartbeatCadenceMs: HEARTBEAT_CADENCE_MS,
     ...(planner.kind === 'agy' ? { plannerExecutor: planner.executor } : {}),
+    ...(planner.kind === 'refused' && planner.bootReap !== undefined ? { plannerBootReap: planner.bootReap } : {}),
   });
   daemonRef = daemon;
 

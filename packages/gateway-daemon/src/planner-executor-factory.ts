@@ -16,16 +16,31 @@
  *     names, that copy's SHA-256 as the Founder's latest act records it
  *     (Amendment 4, Part C), and the directory checkouts are made in.
  *
+ * When `BUILDROOM_PLANNER_EXECUTOR` is `agy` and `BUILDROOM_PLANNER_USER` names a
+ * user but the executor is not selected, the refusal carries a boot reap: the
+ * daemon still runs the second privilege rule and the check at boot, so a
+ * planner-user process an earlier daemon left does not wait for one that
+ * selects the executor (FOUNDER-ACT-20261029-BR-PLANNER-READINESS C1).
+ *
  * Nothing here selects a test seam: the executor is built with its real
  * collaborators, and suites construct `AgyPlannerExecutor` themselves.
  */
 
-import { AGY_PLANNER_GATEWAY_ID, AgyPlannerExecutor } from './agy-planner-executor.js';
+import {
+  AGY_PLANNER_GATEWAY_ID,
+  AgyPlannerExecutor,
+  isPlannerUserName,
+  pgrepProbe,
+  pkillReaper,
+  reapCommandLine,
+  type PlannerProcessProbe,
+  type PlannerReaper,
+} from './agy-planner-executor.js';
 import type { PlannerExecutor } from './planner-worker.js';
 
 export type PlannerExecutorChoice =
   | { readonly kind: 'none' }
-  | { readonly kind: 'refused'; readonly reason: string }
+  | { readonly kind: 'refused'; readonly reason: string; readonly bootReap?: () => Promise<void> }
   | { readonly kind: 'agy'; readonly executor: PlannerExecutor; readonly commandLine: readonly string[] };
 
 export interface PlannerExecutorContext {
@@ -58,23 +73,57 @@ export function boundGatewayReader(held: () => string | null, persisted: () => P
   };
 }
 
+type Log = NonNullable<PlannerExecutorContext['log']>;
+
+/**
+ * The second privilege rule and the check, for a daemon configured for the agy
+ * executor that does not run it. It starts no Planner work; a reap that fails, a
+ * check that cannot be made, or a process that remains is logged as an error.
+ */
+export function plannerBootReap(
+  plannerUser: string,
+  log: Log,
+  deps: { readonly reap?: PlannerReaper; readonly probe?: PlannerProcessProbe } = {},
+): () => Promise<void> {
+  const reap = deps.reap ?? pkillReaper(reapCommandLine('/usr/bin/sudo', plannerUser));
+  const probe = deps.probe ?? pgrepProbe(plannerUser);
+  return async () => {
+    try {
+      await reap();
+    } catch (error) {
+      log('error', 'planner.boot_reap_failed', { plannerUser, message: error instanceof Error ? error.message : String(error) });
+    }
+    let remains: boolean;
+    try {
+      remains = await probe();
+    } catch (error) {
+      log('error', 'planner.boot_check_failed', { plannerUser, message: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    if (remains) log('error', 'planner.boot_reap_left_processes', { plannerUser });
+    else log('info', 'planner.boot_reaped', { plannerUser });
+  };
+}
+
 export function choosePlannerExecutor(context: PlannerExecutorContext): PlannerExecutorChoice {
   const selected = context.env['BUILDROOM_PLANNER_EXECUTOR'];
   if (selected === undefined || selected === '') return { kind: 'none' };
   if (selected !== 'agy') return { kind: 'refused', reason: `BUILDROOM_PLANNER_EXECUTOR=${selected} is not a known executor` };
-  if (context.platform !== 'linux') return { kind: 'refused', reason: 'the agy executor runs on Linux only' };
-  if (context.gatewayId !== AGY_PLANNER_GATEWAY_ID) {
-    return { kind: 'refused', reason: 'the agy executor is bound to Gateway 1880c12d, and this daemon holds another identity or none' };
-  }
   const plannerUser = context.env['BUILDROOM_PLANNER_USER'];
+  // Configured for the executor: whatever refuses it below, the daemon still reaps at boot.
+  const refused = (reason: string): PlannerExecutorChoice =>
+    plannerUser !== undefined && isPlannerUserName(plannerUser)
+      ? { kind: 'refused', reason, bootReap: plannerBootReap(plannerUser, context.log ?? (() => undefined)) }
+      : { kind: 'refused', reason };
+  if (context.platform !== 'linux') return refused('the agy executor runs on Linux only');
+  if (context.gatewayId !== AGY_PLANNER_GATEWAY_ID) {
+    return refused('the agy executor is bound to Gateway 1880c12d, and this daemon holds another identity or none');
+  }
   const agyPath = context.env['BUILDROOM_PLANNER_AGY'];
   const agySha256 = context.env['BUILDROOM_PLANNER_AGY_SHA256'];
   const checkoutParent = context.env['BUILDROOM_PLANNER_CHECKOUTS'];
   if (plannerUser === undefined || agyPath === undefined || agySha256 === undefined || checkoutParent === undefined) {
-    return {
-      kind: 'refused',
-      reason: 'BUILDROOM_PLANNER_USER, BUILDROOM_PLANNER_AGY, BUILDROOM_PLANNER_AGY_SHA256 and BUILDROOM_PLANNER_CHECKOUTS must all be set',
-    };
+    return refused('BUILDROOM_PLANNER_USER, BUILDROOM_PLANNER_AGY, BUILDROOM_PLANNER_AGY_SHA256 and BUILDROOM_PLANNER_CHECKOUTS must all be set');
   }
   let executor: AgyPlannerExecutor;
   try {
@@ -87,7 +136,7 @@ export function choosePlannerExecutor(context: PlannerExecutorContext): PlannerE
       },
     );
   } catch (error) {
-    return { kind: 'refused', reason: error instanceof Error ? error.message : String(error) };
+    return refused(error instanceof Error ? error.message : String(error));
   }
   return { kind: 'agy', executor, commandLine: executor.commandLine() };
 }

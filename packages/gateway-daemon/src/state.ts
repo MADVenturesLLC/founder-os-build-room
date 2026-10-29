@@ -194,7 +194,7 @@ export class GatewayStateStore {
     }
   }
 
-  /** Atomic tmp+rename, fsynced, mode 0600. */
+  /** Atomic tmp+rename, the file fsynced before the rename and its directory after, mode 0600. */
   async write(state: GatewayState): Promise<void> {
     await mkdir(this.paths.directory, { recursive: true, mode: DIRECTORY_MODE });
     const temporary = join(this.paths.directory, `.state.${randomUUID()}.tmp`);
@@ -212,6 +212,14 @@ export class GatewayStateStore {
     } catch (error) {
       await unlink(temporary).catch(() => undefined);
       throw error;
+    }
+    // The rename is in the directory's entries, which a crash can lose until the directory
+    // itself is synced (FOUNDER-ACT-20261029-BR-PLANNER-READINESS C3).
+    const directory = await open(this.paths.directory, 'r');
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
     }
   }
 

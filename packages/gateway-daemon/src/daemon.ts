@@ -13,12 +13,14 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
 import type { Clock } from '../../gateway-protocol/src/index.js';
 import type { GatewayCustody } from './custody.js';
 import { StagingLockBusy, acquireStagingLock, type StagingOperation } from './staging-lock.js';
+import { acquireDaemonLock, type HeldDaemonLock } from './daemon-lock.js';
 import type { ControlPlaneClient } from './client.js';
 import { PrimaryLane, StagingLane, type StagingOutcome } from './lanes.js';
-import type { GatewayPaths } from './paths.js';
+import { DIRECTORY_MODE, type GatewayPaths } from './paths.js';
 import { RingBuffer } from './ring-buffer.js';
 import { IpcServer } from './ipc.js';
 import { RoomRuntime } from './room-runtime.js';
@@ -38,6 +40,12 @@ export interface GatewayDaemonDeps {
    * `planner-executor-factory.ts` selects it.
    */
   readonly plannerExecutor?: PlannerExecutor;
+  /**
+   * The reap and check a daemon runs at boot when the agy executor is configured
+   * but not selected (FOUNDER-ACT-20261029-BR-PLANNER-READINESS C1). Absent where
+   * an executor is injected, whose own boot reaps, or where none is configured.
+   */
+  readonly plannerBootReap?: () => Promise<void>;
 }
 
 export class GatewayDaemon {
@@ -63,6 +71,8 @@ export class GatewayDaemon {
   private bootInFlight: Promise<void> | null = null;
   /** The Gateway id of the identity the primary lane holds now, set wherever it adopts one. */
   private heldPrimaryGatewayId: string | null = null;
+  /** One daemon per Gateway directory, held from boot to stop (`daemon-lock.ts`). */
+  private directoryLock: HeldDaemonLock | null = null;
 
   constructor(private readonly deps: GatewayDaemonDeps) {
     this.primary = new PrimaryLane(deps.client, deps.clock, null);
@@ -110,12 +120,19 @@ export class GatewayDaemon {
   }
 
   private async bootNow(): Promise<void> {
+    // The directory first, so the Planner's records and the lock have one to live in.
+    await mkdir(this.deps.paths.directory, { recursive: true, mode: DIRECTORY_MODE });
+    // Before anything reads the lanes, reaps or touches the socket: a second daemon on
+    // this directory stops here, having changed nothing.
+    this.directoryLock = await acquireDaemonLock(this.deps.paths.directory);
     try {
       await this.bootLanes();
     } finally {
       // Executions a previous process held are unknowable here, before any poll, and
       // the Planner's reap and check run however the lanes' recovery went (Amendment 3 C2).
-      await this.planner?.boot();
+      // A daemon configured for the executor but not running it still reaps and checks.
+      if (this.planner !== null) await this.planner.boot();
+      else await this.deps.plannerBootReap?.();
     }
 
     await this.ipc.start();
@@ -313,6 +330,8 @@ export class GatewayDaemon {
     // A Planner run in flight is cancelled and ended before the daemon exits.
     await plannerStopped;
     await this.ipc.stop();
+    await this.directoryLock?.release();
+    this.directoryLock = null;
     this.log('info', 'daemon.stopped', {});
   }
 

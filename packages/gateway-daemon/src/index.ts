@@ -140,8 +140,10 @@ export {
   childEnvironment,
   gitCheckout,
   modelsNamed,
+  isPlannerUserName,
   pgrepProbe,
   pkillReaper,
+  reapCommandLine,
   sha256OfFile,
   planDocumentFrom,
   plannerPrompt,
@@ -157,7 +159,14 @@ export {
   type PlannerReaper,
   type PlannerProcessProbe,
 } from './agy-planner-executor.js';
-export { boundGatewayReader, choosePlannerExecutor, type PlannerExecutorChoice, type PlannerExecutorContext } from './planner-executor-factory.js';
+export {
+  boundGatewayReader,
+  choosePlannerExecutor,
+  plannerBootReap,
+  type PlannerExecutorChoice,
+  type PlannerExecutorContext,
+} from './planner-executor-factory.js';
+export { DaemonLockHeld, acquireDaemonLock, linuxLockName, type HeldDaemonLock } from './daemon-lock.js';
 
 /**
  * Room Runtime Phase 1 (fixture occupancy only) — the Gateway-side room
