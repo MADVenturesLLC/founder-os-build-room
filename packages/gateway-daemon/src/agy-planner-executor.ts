@@ -662,7 +662,16 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       if (outcome.kind !== 'plan') throw new Error(`agy run ended without a plan: ${outcome.kind}`);
       return { kind: 'plan', document: outcome.document } satisfies PlannerResultWire;
     });
-    return { kind: 'accepted', observed: { ...AGY_PLANNER_ROUTE }, completion };
+    // Both were checked above, the model against the lane and the conversation id non-empty,
+    // or the start was refused: they go to the control plane with the acceptance, for the
+    // canonical journal (Amendment 5 B1; FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS B2).
+    return {
+      kind: 'accepted',
+      observed: { ...AGY_PLANNER_ROUTE },
+      initModel: initModel as string,
+      conversationId: conversationId as string,
+      completion,
+    };
   }
 
   /**

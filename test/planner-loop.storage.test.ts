@@ -52,7 +52,7 @@ import {
   type PlannerLoopDeps,
   type RoomRoleAssignment,
 } from '../packages/control-plane/src/planner-loop.js';
-import type { CommandEventRow } from '../packages/journal/src/index.js';
+import { journalRowSpec, type CommandEventRow } from '../packages/journal/src/index.js';
 import type { LifecycleEvent } from '../packages/ledger/src/index.js';
 import { founderGoalDigest, prepareFounderGoal } from '../packages/control-plane/src/founder-goal.js';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -456,6 +456,33 @@ describe('planner loop on PostgreSQL', { skip: SKIP_REASON }, () => {
     assert.equal((await rowsOf(diverged.commandId))[2]!.model, 'substituted-model', 'the observed route is recorded as observed');
     assert.equal(planner.calls.awaited.length, 0);
     assert.equal(await stateOf(diverged.roomId), 'PLANNING');
+  });
+
+  it('the init model and conversation id ride on dispatched under BRJ:c:2; on the agy lane, an acceptance without them is unresolved, never dispatched (journal act B1, B2)', async () => {
+    const init = { initModel: 'synthetic-init-model', conversationId: 'conv-synthetic-0001' };
+    const carried = await roundOne({ init });
+    assert.equal(carried.outcome.kind, 'plan_review', JSON.stringify(carried.outcome));
+    const dispatched = (await rowsOf(carried.commandId)).find((row) => row.eventType === 'dispatched');
+    assert.equal(dispatched?.initModel, init.initModel);
+    assert.equal(dispatched?.providerConversationId, init.conversationId);
+    const { rows } = await admin!.query<{ row_bytes: Buffer }>(
+      `SELECT row_bytes FROM command_journal_events WHERE command_id = $1 ORDER BY seq`,
+      [carried.commandId],
+    );
+    assert.deepEqual(rows.map((row) => journalRowSpec(new Uint8Array(row.row_bytes))), ['BRJ:c:2', 'BRJ:c:2', 'BRJ:c:2', 'BRJ:c:2'], 'every command row is written as BRJ:c:2');
+
+    const neither = await roundOne();
+    const plain = (await rowsOf(neither.commandId)).find((row) => row.eventType === 'dispatched');
+    assert.equal(plain?.initModel, undefined, 'a lane that reports no init event journals neither field');
+
+    const agy = { provider: 'google', model: SYNTHETIC_ROUTE.model, executionSurface: 'antigravity' };
+    const bare = await roundOne({ observed: agy });
+    assert.equal(bare.outcome.kind, 'unresolved');
+    assert.deepEqual(await eventTypes(bare.commandId), ['journaled', 'identity_bound', 'unresolved']);
+    assert.equal(planner.calls.awaited.length, 0, 'nothing is awaited for it');
+    const withInit = await roundOne({ observed: agy, init });
+    assert.deepEqual(await eventTypes(withInit.commandId), ['journaled', 'identity_bound', 'dispatched', 'failed'], 'with both, it is dispatched, then fails on the route it was not meant to take');
+    assert.equal((await rowsOf(withInit.commandId))[2]?.initModel, init.initModel);
   });
 
   it('the result: a wait that throws is unresolved; a reported failure, an invalid plan or one outside the captured scope is failed', async () => {

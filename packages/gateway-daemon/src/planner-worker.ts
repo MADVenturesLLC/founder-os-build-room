@@ -42,6 +42,7 @@ import {
   validatePlannerReportPayload,
   validatePlannerRequest,
   type PlannerIdentityWire,
+  type PlannerInitWire,
   type PlannerReportPayload,
   type PlannerRequestWire,
   type PlannerResultWire,
@@ -53,12 +54,12 @@ import { DIRECTORY_MODE, FILE_MODE } from './paths.js';
 export type PlannerStart =
   /** The executor proves the work never reached a provider. */
   | { readonly kind: 'not_sent' }
-  | {
+  | ({
       readonly kind: 'accepted';
       readonly observed: PlannerRouteWire;
       /** Settles with the plan, or rejects when the run fails. */
       readonly completion: Promise<PlannerResultWire>;
-    };
+    } & PlannerInitWire);
 
 /** What runs the Planner on this Gateway. `attest` contacts no provider. */
 export interface PlannerExecutor {
@@ -84,23 +85,36 @@ export type PlannerRecord =
   | { readonly commandId: string; readonly phase: 'attested'; readonly identity: PlannerIdentityWire }
   | { readonly commandId: string; readonly phase: 'starting'; readonly identity: PlannerIdentityWire }
   | { readonly commandId: string; readonly phase: 'not_sent'; readonly identity: PlannerIdentityWire }
-  | {
+  | ({
       readonly commandId: string;
       readonly phase: 'running';
       readonly identity: PlannerIdentityWire;
       readonly observed: PlannerRouteWire;
-    }
-  | {
+    } & PlannerInitWire)
+  | ({
       readonly commandId: string;
       readonly phase: 'finished';
       readonly identity: PlannerIdentityWire;
       readonly observed: PlannerRouteWire;
       readonly result: PlannerResultWire;
-    }
+    } & PlannerInitWire)
   /** Started, or starting, in a way this process cannot see the end of. */
   | { readonly commandId: string; readonly phase: 'lost'; readonly identity: PlannerIdentityWire; readonly observed?: PlannerRouteWire };
 
 const PHASES = new Set(['attested', 'starting', 'not_sent', 'running', 'finished', 'lost']);
+
+/**
+ * The init model and conversation id an executor or a record carries, both or neither:
+ * a pair with either half missing or empty is carried as neither, so no answer holds half
+ * of one. The control plane requires both on the agy lane, and an answer without them is
+ * journaled there as unresolved, never with a guess.
+ */
+function initOf(source: PlannerInitWire): PlannerInitWire {
+  const { initModel, conversationId } = source;
+  if (typeof initModel !== 'string' || initModel.trim() === '') return {};
+  if (typeof conversationId !== 'string' || conversationId.trim() === '') return {};
+  return { initModel, conversationId };
+}
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -367,6 +381,7 @@ function boundedResult(result: PlannerResultWire, record: Omit<Extract<PlannerRe
     kind: 'finished',
     executionId: record.identity.executionId,
     observed: record.observed,
+    ...initOf(record),
     result,
   };
   const bytes = new TextEncoder().encode(JSON.stringify(payload)).length;
@@ -516,7 +531,7 @@ export class GatewayPlannerWorker {
         return this.affirm('not_sent', request.commandId);
       case 'running':
       case 'finished':
-        return { kind: 'accepted', observed: record.observed };
+        return { kind: 'accepted', observed: record.observed, ...initOf(record) };
       case 'starting':
       case 'lost':
         return null;
@@ -540,7 +555,7 @@ export class GatewayPlannerWorker {
       return this.affirm('not_sent', record.commandId);
     }
 
-    const running = { commandId: record.commandId, identity: record.identity, observed: { ...started.observed } };
+    const running = { commandId: record.commandId, identity: record.identity, observed: { ...started.observed }, ...initOf(started) };
     /*
      * The completion is handled BEFORE anything else is awaited: a run that
      * fails at once must not be an unhandled rejection while the `running`
@@ -554,9 +569,10 @@ export class GatewayPlannerWorker {
         return { kind: 'failed' };
       },
     );
-    // The store writes in order, so `finished` lands after `running` whether or not the
-    // `running` write succeeds; a `finished` that cannot be written is kept in memory and
-    // answered once it can be, never as still running.
+    // The store writes in order, so `finished` is written after `running`. A `running`
+    // write that fails closes the store for the rest of the process, so the `finished`
+    // write is then refused too, and `status` answers nothing. A `finished` that cannot be
+    // written is kept in memory and answered once it can be, never as still running.
     const written = this.deps.records.write({ ...running, phase: 'running' });
     const settle = outcome.then(async (result) => {
       try {
@@ -569,7 +585,7 @@ export class GatewayPlannerWorker {
     this.settling.add(settle);
     void settle.finally(() => this.settling.delete(settle));
     await written;
-    return { kind: 'accepted', observed: { ...started.observed } };
+    return { kind: 'accepted', observed: { ...started.observed }, ...initOf(started) };
   }
 
   /**
@@ -612,7 +628,9 @@ export class GatewayPlannerWorker {
   /** A result whose `finished` record failed to write: written now if it can be; `null` otherwise, never `running`. */
   private async recordUnrecorded(record: Extract<PlannerRecord, { phase: 'running' }>): Promise<PlannerReportPayload | null> {
     const result = this.unrecorded.get(record.commandId);
-    if (result === undefined) return { kind: 'running', executionId: record.identity.executionId, observed: record.observed };
+    if (result === undefined) {
+      return { kind: 'running', executionId: record.identity.executionId, observed: record.observed, ...initOf(record) };
+    }
     try {
       await this.deps.records.write({ ...record, phase: 'finished', result });
     } catch (error) {
@@ -620,7 +638,7 @@ export class GatewayPlannerWorker {
       return null;
     }
     this.unrecorded.delete(record.commandId);
-    return { kind: 'finished', executionId: record.identity.executionId, observed: record.observed, result };
+    return { kind: 'finished', executionId: record.identity.executionId, observed: record.observed, ...initOf(record), result };
   }
 
   private async status(commandId: string): Promise<PlannerReportPayload | null> {
@@ -639,6 +657,7 @@ export class GatewayPlannerWorker {
           kind: 'finished',
           executionId: record.identity.executionId,
           observed: record.observed,
+          ...initOf(record),
           result: record.result,
         };
       case 'starting':

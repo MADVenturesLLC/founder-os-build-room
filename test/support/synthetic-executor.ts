@@ -8,6 +8,7 @@
 
 import type {
   PlannerIdentityWire,
+  PlannerInitWire,
   PlannerResultWire,
   PlannerRouteWire,
   PlannerWorkWire,
@@ -22,6 +23,13 @@ export interface ExecutorBehaviour {
   /** `hold`: the run settles only when `release()` is called. */
   result: 'plan' | 'failed' | 'reject' | 'hold' | 'oversized';
   planOverrides: Record<string, unknown>;
+  /**
+   * The init pair an accepted start reports. Left unset, the executor reports
+   * a synthetic pair on the agy lane (`antigravity` serving `google`), as the
+   * real agy executor always does, and none on any other lane. `null` reports
+   * none on every lane.
+   */
+  init?: PlannerInitWire | null;
 }
 
 const DEFAULT_BEHAVIOUR: ExecutorBehaviour = {
@@ -102,6 +110,14 @@ export class SyntheticExecutor implements PlannerExecutor {
         });
         break;
     }
-    return { kind: 'accepted', observed: { ...this.behaviour.observed }, completion };
+    return { kind: 'accepted', observed: { ...this.behaviour.observed }, ...this.initFor(work), completion };
+  }
+
+  private initFor(work: PlannerWorkWire): PlannerInitWire {
+    const { init, observed } = this.behaviour;
+    if (init === null) return {};
+    if (init !== undefined) return { ...init };
+    if (observed.executionSurface !== 'antigravity' || observed.provider !== 'google') return {};
+    return { initModel: `${observed.model}-synthetic`, conversationId: `conv-synthetic-${work.commandId}` };
   }
 }

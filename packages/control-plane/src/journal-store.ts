@@ -119,14 +119,16 @@ import {
   boundDecisionDefect,
   chainHash,
   commandSequenceDefect,
+  commandSpecOrderDefect,
   containsCredentialMaterial,
   decodeJournalRow,
   deriveCommandState,
-  encodeCommandEventRow,
+  encodeCommandEventRowV2,
   encodeDecisionRecordRow,
   envelopeDigest,
   isCanonicalRecordedAt,
   isCanonicalSeq,
+  journalRowSpec,
   normalizeForJournal,
   type BoundEntry,
   type CommandEventRow,
@@ -622,7 +624,7 @@ export class JournalStore {
     }
     // Validate before any statement: the encoder's field rules do not depend
     // on `seq`, so a row it refuses here is refused without touching the store.
-    encodeCommandEventRow({ ...row, seq: '1' });
+    encodeCommandEventRowV2({ ...row, seq: '1' });
     return row;
   }
 
@@ -658,7 +660,9 @@ export class JournalStore {
       recordClass: RECORD_CLASS_COMMAND,
       commandId: rowInput.commandId,
       eventType: rowInput.eventType,
-      encodeAt: (seq) => encodeCommandEventRow({ ...rowInput, seq }),
+      // Every command row from the cutover is BRJ:c:2, whether or not it carries the
+      // init fields (FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS Amendment 1 B2).
+      encodeAt: (seq) => encodeCommandEventRowV2({ ...rowInput, seq }),
       check: async () => {
         if (rowInput.lifecycleEventRef !== undefined) {
           await requireLifecycleEvent(client, rowInput.lifecycleEventRef, null);
@@ -913,7 +917,7 @@ function buildJournaledRow(
   };
   // Validated before any statement, as `laterRow` does: a binding the row
   // shape refuses is refused without touching the store.
-  encodeCommandEventRow({ ...row, seq: '1' });
+  encodeCommandEventRowV2({ ...row, seq: '1' });
   // The whole row, not just the envelope: `actorId`, `authorizationRef`,
   // the routing identities and `commandId` are all caller-supplied and all
   // reach the chained bytes (contract §6.3).
@@ -970,6 +974,8 @@ function credentialSurfaceOf(row: Omit<CommandEventRow, 'seq'>): string[] {
     row.provider,
     row.model,
     row.executionSurface,
+    row.initModel,
+    row.providerConversationId,
     row.failureClassification,
     row.lifecycleEventRef?.roomId,
     row.lifecycleEventRef?.eventId,
@@ -1125,6 +1131,8 @@ async function scanChain(client: PoolClient): Promise<{ result: JournalVerifyRes
   let prior = GENESIS_CHAIN_HASH;
   let expected = 1n;
   const byCommand = new Map<string, JournalRecord[]>();
+  // Every row's spec id in seq order: command rows move from BRJ:c:1 to BRJ:c:2 once.
+  const specs: string[] = [];
   for (;;) {
     const { rows } = await client.query<StoredRow>(PAGE_SQL, [String(expected - 1n), SCAN_PAGE]);
     for (const stored of rows) {
@@ -1135,6 +1143,7 @@ async function scanChain(client: PoolClient): Promise<{ result: JournalVerifyRes
       }
       const outcome = decodeStored(stored);
       if ('defect' in outcome) return fail(outcome.defect, seq);
+      specs.push(journalRowSpec(new Uint8Array(stored.row_bytes)));
       records.push(outcome.record);
       const group = byCommand.get(stored.command_id) ?? [];
       group.push(outcome.record);
@@ -1147,6 +1156,19 @@ async function scanChain(client: PoolClient): Promise<{ result: JournalVerifyRes
   const tailSeq = String(expected - 1n);
   if (String(headRow.seq) !== tailSeq || headRow.chain_hash !== prior) {
     return fail(`chain head (seq ${String(headRow.seq)}) disagrees with the recomputed tail (seq ${tailSeq})`, String(headRow.seq));
+  }
+  // One pass over the whole chain. Only when it fails is the first failing prefix found,
+  // to name its seq: row i of the scan is seq i + 1, the scan having refused any gap.
+  const order = commandSpecOrderDefect(specs);
+  if (order !== null) {
+    let at = specs.length;
+    for (let i = 1; i <= specs.length; i += 1) {
+      if (commandSpecOrderDefect(specs.slice(0, i)) !== null) {
+        at = i;
+        break;
+      }
+    }
+    return fail(`spec order: ${order}`, String(at));
   }
   for (const [commandId, entries] of byCommand) {
     const reason = soundnessDefect(entries);

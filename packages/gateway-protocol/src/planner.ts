@@ -76,24 +76,35 @@ export type PlannerRequestWire =
 
 export type PlannerResultWire = { readonly kind: 'plan'; readonly document: unknown } | { readonly kind: 'failed' };
 
+/**
+ * What the executor read from its init event before it sent the work: the model the event
+ * named and the provider's conversation id (FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR
+ * Amendment 5 B1; FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS B2). An answer carries both
+ * or neither: an executor that reports no init event sends neither.
+ */
+export interface PlannerInitWire {
+  readonly initModel?: string;
+  readonly conversationId?: string;
+}
+
 export type PlannerReportPayload =
   /** `attest`: the execution that would run the command. */
   | { readonly kind: 'attested'; readonly identity: PlannerIdentityWire }
   /** `attest`: no attestation could be read. Nothing ran. */
   | { readonly kind: 'attest_failed' }
   /** `execute`: the work started, on this route. */
-  | { readonly kind: 'accepted'; readonly observed: PlannerRouteWire }
+  | ({ readonly kind: 'accepted'; readonly observed: PlannerRouteWire } & PlannerInitWire)
   /** `execute`: affirmative evidence the work never reached a provider. */
   | { readonly kind: 'not_sent' }
   /** `status`: the Gateway holds no record of this command. */
   | { readonly kind: 'never_received' }
-  | { readonly kind: 'running'; readonly executionId: string; readonly observed: PlannerRouteWire }
-  | {
+  | ({ readonly kind: 'running'; readonly executionId: string; readonly observed: PlannerRouteWire } & PlannerInitWire)
+  | ({
       readonly kind: 'finished';
       readonly executionId: string;
       readonly observed: PlannerRouteWire;
       readonly result: PlannerResultWire;
-    };
+    } & PlannerInitWire);
 
 export type PlannerRequestKind = PlannerRequestWire['kind'];
 
@@ -189,6 +200,15 @@ function isWork(value: unknown): value is PlannerWorkWire {
   );
 }
 
+const INIT_KEYS = ['initModel', 'conversationId'] as const;
+
+/** Both init fields or neither, each bounded text: one without the other is not an answer. */
+function initPairHolds(record: Record<string, unknown>): boolean {
+  const present = INIT_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(record, key));
+  if (present.length === 0) return true;
+  return present.length === 2 && isText(record['initModel']) && isText(record['conversationId']);
+}
+
 function isResult(value: unknown): value is PlannerResultWire {
   const record = asRecord(value);
   if (record === null) return false;
@@ -236,18 +256,22 @@ export function validatePlannerReportPayload(value: unknown): PlannerReportPaylo
     case 'never_received':
       return exactKeys(record, ['kind']) ? (record as unknown as PlannerReportPayload) : null;
     case 'accepted':
-      return exactKeys(record, ['kind', 'observed']) && isRoute(record['observed'])
+      return exactKeys(record, ['kind', 'observed'], INIT_KEYS) && isRoute(record['observed']) && initPairHolds(record)
         ? (record as unknown as PlannerReportPayload)
         : null;
     case 'running':
-      return exactKeys(record, ['kind', 'executionId', 'observed']) && isText(record['executionId']) && isRoute(record['observed'])
+      return exactKeys(record, ['kind', 'executionId', 'observed'], INIT_KEYS) &&
+        isText(record['executionId']) &&
+        isRoute(record['observed']) &&
+        initPairHolds(record)
         ? (record as unknown as PlannerReportPayload)
         : null;
     case 'finished':
-      return exactKeys(record, ['kind', 'executionId', 'observed', 'result']) &&
+      return exactKeys(record, ['kind', 'executionId', 'observed', 'result'], INIT_KEYS) &&
         isText(record['executionId']) &&
         isRoute(record['observed']) &&
-        isResult(record['result'])
+        isResult(record['result']) &&
+        initPairHolds(record)
         ? (record as unknown as PlannerReportPayload)
         : null;
     default:

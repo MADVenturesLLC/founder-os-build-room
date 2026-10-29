@@ -171,12 +171,14 @@ import {
   type PlannerExecutor,
   type PlannerRecord,
 } from '../packages/gateway-daemon/src/index.js';
-import type { PlannerIdentityWire, PlannerResultWire, PlannerWorkWire } from '../packages/gateway-protocol/src/index.js';
+import { validatePlannerReportPayload, type PlannerIdentityWire, type PlannerResultWire, type PlannerWorkWire } from '../packages/gateway-protocol/src/index.js';
 import { judgePlanDoc } from '../packages/control-plane/src/plan-doc.js';
 import { readyPlanFor } from './support/synthetic-planner.js';
 import { uuid } from './gateway-helpers.js';
 import { FileKeychainRunner } from './fake-keychain.js';
 
+/** The init event's model and conversation id as the fake agy reports them (`test/support/fake-agy.ts`). */
+const FAKE_INIT = { initModel: 'gemini-4-argon-high', conversationId: '3b2c7a4c-1bda-46b1-8dc1-44641701df02' } as const;
 const FAKE_AGY = fileURLToPath(new URL('./support/fake-agy.js', import.meta.url));
 /** The hash the Founder's act records for the copy, in these cases. */
 const AGY_HASH = 'e'.repeat(64);
@@ -907,10 +909,51 @@ describe('the worker drives the executor', () => {
     assert.equal(attested?.kind, 'attested');
     if (attested?.kind !== 'attested') return;
     const accepted = await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: attested.identity.executionId, work: w });
-    assert.deepEqual(accepted, { kind: 'accepted', observed: AGY_PLANNER_ROUTE });
+    assert.deepEqual(accepted, { kind: 'accepted', observed: AGY_PLANNER_ROUTE, ...FAKE_INIT });
     await worker.settled();
     const status = await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId });
-    assert.deepEqual(status, { kind: 'finished', executionId: attested.identity.executionId, observed: AGY_PLANNER_ROUTE, result: { kind: 'plan', document: plan } });
+    assert.deepEqual(status, { kind: 'finished', executionId: attested.identity.executionId, observed: AGY_PLANNER_ROUTE, ...FAKE_INIT, result: { kind: 'plan', document: plan } });
+  });
+
+  it('carries the init model and conversation id agy reported on every answer that says the work was sent (journal act B2)', async () => {
+    const w = work();
+    const plan = readyPlanFor({ ...w } as never);
+    const h = harness({ mode: 'ok', plan });
+    const recordsDirectory = temporary('buildroom-agy-records-');
+    const worker = new GatewayPlannerWorker({ executor: h.executor, records: new PlannerRecordStore(recordsDirectory) });
+    const attested = await worker.handle({ requestId: uuid(), kind: 'attest', commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } });
+    if (attested?.kind !== 'attested') return assert.fail('not attested');
+    const execute = { requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: attested.identity.executionId, work: w } as const;
+    const accepted = await worker.handle(execute);
+    assert.deepEqual(accepted, { kind: 'accepted', observed: AGY_PLANNER_ROUTE, ...FAKE_INIT });
+    assert.ok(validatePlannerReportPayload(accepted), 'the control plane accepts the answer');
+    assert.deepEqual(await worker.handle({ ...execute, requestId: uuid() }), accepted, 'an execute asked again replays the same answer from the record');
+    await worker.settled();
+    const finished = await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId });
+    assert.ok(finished !== null && finished.kind === 'finished' && finished.initModel === FAKE_INIT.initModel && finished.conversationId === FAKE_INIT.conversationId);
+    // A daemon restarted after the run reads the fields from its record.
+    const reread = new GatewayPlannerWorker({ executor: h.executor, records: new PlannerRecordStore(recordsDirectory) });
+    assert.deepEqual(await reread.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId }), finished);
+  });
+
+  it('carries neither field when an executor reports only one, or an empty one, so no answer holds half a pair', async () => {
+    for (const partial of [{ initModel: 'example-model' }, { conversationId: 'conv-1' }, { initModel: ' ', conversationId: 'conv-1' }]) {
+      const w = work();
+      const identity = await identityFor(harness({ mode: 'ok' }).executor, w.commandId);
+      let finish: (result: PlannerResultWire) => void = () => undefined;
+      const completion = new Promise<PlannerResultWire>((resolve) => (finish = resolve));
+      const executor: PlannerExecutor = {
+        attest: () => Promise.resolve(identity),
+        start: () => Promise.resolve({ kind: 'accepted', observed: { ...AGY_PLANNER_ROUTE }, ...partial, completion }),
+        sent: () => Promise.resolve(false),
+      };
+      const worker = new GatewayPlannerWorker({ executor, records: new PlannerRecordStore(temporary('buildroom-agy-records-')) });
+      await worker.handle({ requestId: uuid(), kind: 'attest', commandId: w.commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } });
+      const accepted = await worker.handle({ requestId: uuid(), kind: 'execute', commandId: w.commandId, executionId: identity.executionId, work: w });
+      assert.deepEqual(accepted, { kind: 'accepted', observed: AGY_PLANNER_ROUTE }, JSON.stringify(partial));
+      finish({ kind: 'failed' });
+      await worker.settled();
+    }
   });
 });
 

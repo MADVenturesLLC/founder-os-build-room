@@ -66,12 +66,15 @@ import { randomUUID } from 'node:crypto';
 import type { CommandEventRow } from '../../journal/src/index.js';
 import {
   PLANNER_FAILURES,
+  initFields,
+  initRequired,
   judgeRoundPlan,
   plannerRoundsOf,
   readRoundInputs,
   submitRoundPlan,
   type ObservedRoute,
   type PlannerFailure,
+  type PlannerInit,
   type PlannerPort,
   type PlannerReconciliation,
   type PlannerRoute,
@@ -202,10 +205,15 @@ export class PlannerRecovery {
     if (bound !== undefined && bound !== answer.executionId) {
       return this.markUnresolved(commandId, 'mismatch', 'the Planner reports another execution than the one bound');
     }
+    // The agy lane's report without the init model and conversation id: what served the
+    // work cannot be journaled, so the command is not recorded as dispatched (act B2).
+    if (initRequired(answer.observed) && answer.init === undefined) {
+      return this.markUnresolved(commandId, 'ambiguous', 'the Planner reports the work sent on the agy lane without the init model and conversation id');
+    }
     if (bound === undefined) {
       await this.deps.journal.appendCommandEvent({ eventType: 'identity_bound', commandId, executionId: answer.executionId, evidenceRefs: [] });
     }
-    await this.appendDispatched(commandId, answer.observed);
+    await this.appendDispatched(commandId, answer.observed, answer.init);
     if (!routeMatches(open.rows[0] as CommandEventRow, answer.observed)) return this.fail(commandId, 'route_mismatch');
     if (answer.kind === 'running') return { kind: 'pending', commandId, reason: 'dispatched, reconciled from the Planner; the plan is not ready' };
     return this.finish(roomId, open, answer.observed, answer.result, 'completed');
@@ -294,16 +302,27 @@ export class PlannerRecovery {
     ) {
       return 'the Planner reports another route than the one recorded as dispatched';
     }
+    // On the agy lane the dispatched row holds what served the work (act B2): the
+    // Planner's later answer must name the same init model and conversation id.
+    if (dispatched !== undefined && initRequired(answer.observed)) {
+      if (dispatched.initModel === undefined || dispatched.providerConversationId === undefined) {
+        return 'the command was recorded as dispatched on the agy lane without the init model and conversation id';
+      }
+      if (answer.init?.initModel !== dispatched.initModel || answer.init?.conversationId !== dispatched.providerConversationId) {
+        return 'the Planner reports another init model or conversation id than the one recorded as dispatched';
+      }
+    }
     return null;
   }
 
-  private async appendDispatched(commandId: string, observed: ObservedRoute): Promise<void> {
+  private async appendDispatched(commandId: string, observed: ObservedRoute, init: PlannerInit | undefined): Promise<void> {
     await this.deps.journal.appendCommandEvent({
       eventType: 'dispatched',
       commandId,
       provider: observed.provider,
       model: observed.model,
       executionSurface: observed.executionSurface,
+      ...initFields(init),
       evidenceRefs: ['planner-reconciliation'],
     });
   }

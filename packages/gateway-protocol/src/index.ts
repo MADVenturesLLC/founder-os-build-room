@@ -173,6 +173,7 @@ export {
   validatePlannerReportPayload,
   validatePlannerRequest,
   type PlannerIdentityWire,
+  type PlannerInitWire,
   type PlannerReportPayload,
   type PlannerRequestKind,
   type PlannerRequestWire,

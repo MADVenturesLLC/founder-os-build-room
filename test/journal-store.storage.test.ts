@@ -17,7 +17,7 @@
  * routine's EXECUTE grant is to `br_app_runtime` alone.
  *
  * What is proven here, in order: the persisted bytes are exactly
- * `encodeCommandEventRow` of the submitted fields at the persisted `seq`
+ * `encodeCommandEventRowV2` of the submitted fields at the persisted `seq`
  * with the injected clock's `recordedAt`; the chain hash frames as
  * `packages/journal` frames; concurrent appends stay gapless; a seq race
  * is retried by RE-ENCODING at the new seq (with a rolled-back control
@@ -61,7 +61,7 @@ import { closeServer } from './support/close-server.js';
 import {
   GENESIS_CHAIN_HASH,
   chainHash,
-  encodeCommandEventRow,
+  encodeCommandEventRowV2,
   envelopeDigest,
   normalizeForJournal,
   type CommandEventRow,
@@ -246,7 +246,7 @@ function expectedRow(req: GovernedCommandRequest, seq: string, recordedAt = RECO
 }
 
 function expectedBytes(req: GovernedCommandRequest, seq: string, recordedAt = RECORDED_AT): Uint8Array {
-  return encodeCommandEventRow(expectedRow(req, seq, recordedAt));
+  return encodeCommandEventRowV2(expectedRow(req, seq, recordedAt));
 }
 
 /** Every command this suite appends, by whatever path, so the final sweep can re-encode each persisted row. */
@@ -535,6 +535,9 @@ describe('journal store — identity and the happy path (contract §3, §4.1, §
     assert.equal(who.rows[0]?.s, false);
   });
 
+  // The title is cited verbatim by docs/phase4-stop-gate-test-map.md (item 3), so it keeps its
+  // wording. Every command row from the BRJ:c:2 cutover is encodeCommandEventRowV2's, which is
+  // what this checks (FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS Amendment 1 B2).
   it('persists exactly encodeCommandEventRow of the submitted fields at the persisted seq with the injected clock, chained as packages/journal chains', async () => {
     // Two redaction paths in one argv: a secret-bearing flag's value and a
     // token-SHAPED entry (clearly synthetic: a prefix and repeated x's).

@@ -324,6 +324,64 @@ describe('planner recovery on PostgreSQL', { skip: SKIP_REASON }, () => {
     assert.equal(approved.appended.result.ok && approved.appended.result.outcome, 'transition');
   });
 
+  it('dispatched from the Planner’s answer carries its init model and conversation id; on the agy lane, an answer without them is unresolved (journal act B1, B2)', async () => {
+    const init = { initModel: 'synthetic-init-model', conversationId: 'conv-synthetic-recovery' };
+    const carried = await interruptedRound({ init }, { journal: journalFailingOn('dispatched') });
+    assert.deepEqual(await eventTypes(carried.commandId), ['journaled', 'identity_bound']);
+    assert.equal((await recover().recoverRoom(carried.roomId)).kind, 'plan_review');
+    const dispatched = (await rowsOf(carried.commandId))[2]!;
+    assert.equal(dispatched.eventType, 'dispatched');
+    assert.deepEqual([dispatched.initModel, dispatched.providerConversationId], [init.initModel, init.conversationId]);
+
+    // The loop's own unresolved write fails, so recovery meets the agy lane's bare answer.
+    const agy = { provider: 'google', model: SYNTHETIC_ROUTE.model, executionSurface: 'antigravity' };
+    const bare = await interruptedRound({ observed: agy }, { journal: journalFailingOn('unresolved') });
+    assert.ok(bare.threw instanceof JournalStoreUnavailableError);
+    assert.deepEqual(await eventTypes(bare.commandId), ['journaled', 'identity_bound']);
+    const outcome = await recover().recoverRoom(bare.roomId);
+    assert.deepEqual(outcome.kind === 'unresolved' && [outcome.reading, outcome.appended], ['ambiguous', true]);
+    assert.match(outcome.kind === 'unresolved' ? outcome.reason : '', /without the init model and conversation id/);
+    assert.deepEqual(await eventTypes(bare.commandId), ['journaled', 'identity_bound', 'unresolved'], 'never recorded as dispatched');
+  });
+
+  it('dispatched on the agy lane: a later answer naming another init pair, or none, is a mismatch, and the round finishes once it names the journaled one (journal act B2)', async () => {
+    const agy = { provider: 'google', model: SYNTHETIC_ROUTE.model, executionSurface: 'antigravity' };
+    const agyRoute = { ...route, intendedProvider: agy.provider, intendedSurface: agy.executionSurface };
+    const init = { initModel: 'synthetic-init-model', conversationId: 'conv-synthetic-agy' };
+    const { roomId, commandId } = await interruptedRound(
+      { observed: agy, init, result: 'running', attest: { provider: agy.provider, surface: 'antigravity' } },
+      { route: agyRoute, journal: journalFailingOn('dispatched') },
+    );
+    const first = await recover({ route: agyRoute }).recoverRoom(roomId);
+    assert.equal(first.kind, 'pending');
+    assert.equal((await rowsOf(commandId))[2]?.providerConversationId, init.conversationId);
+
+    planner.reset({ result: 'running', reconcileInit: null });
+    const bare = await recover({ route: agyRoute }).recoverRoom(roomId);
+    assert.deepEqual(bare.kind === 'unresolved' && [bare.reading, bare.appended], ['mismatch', true]);
+    assert.match(bare.kind === 'unresolved' ? bare.reason : '', /another init model or conversation id/);
+
+    planner.reset({ reconcileInit: { ...init, conversationId: 'conv-synthetic-other' } });
+    const other = await recover({ route: agyRoute }).recoverRoom(roomId);
+    assert.deepEqual(other.kind === 'unresolved' && [other.reading, other.appended], ['mismatch', false]);
+    assert.deepEqual(await eventTypes(commandId), ['journaled', 'identity_bound', 'dispatched', 'unresolved'], 'the unresolved command stays unresolved');
+
+    planner.reset();
+    const done = await recover({ route: agyRoute }).recoverRoom(roomId);
+    assert.equal(done.kind, 'plan_review');
+    assert.deepEqual(await eventTypes(commandId), ['journaled', 'identity_bound', 'dispatched', 'unresolved', 'resolved']);
+
+    // A dispatched row on the agy lane that holds neither field, as one written before BRJ:c:2 would.
+    const legacy = await interruptedRound(
+      { observed: agy, init, result: 'running', attest: { provider: agy.provider, surface: 'antigravity' } },
+      { route: agyRoute, journal: journalFailingOn('dispatched') },
+    );
+    await journal!.appendCommandEvent({ eventType: 'dispatched', commandId: legacy.commandId, ...agy, evidenceRefs: [] });
+    const unproven = await recover({ route: agyRoute }).recoverRoom(legacy.roomId);
+    assert.deepEqual(unproven.kind === 'unresolved' && [unproven.reading, unproven.appended], ['mismatch', true]);
+    assert.match(unproven.kind === 'unresolved' ? unproven.reason : '', /recorded as dispatched on the agy lane without/);
+  });
+
   it('accepted and still running: dispatched and pending; a later pass finishes the round', async () => {
     const { roomId, commandId } = await interruptedRound({}, { journal: journalFailingOn('dispatched') });
     planner.reset({ result: 'running' });
