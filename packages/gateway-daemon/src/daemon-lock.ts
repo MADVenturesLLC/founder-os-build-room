@@ -1,35 +1,36 @@
 /**
  * One daemon per Gateway directory (FOUNDER-ACT-20261029-BR-PLANNER-READINESS C2).
  *
- * Before boot reads the lanes, reaps the planner user, or touches the socket,
- * the daemon takes this lock. A second daemon on the same directory finds it
- * held and refuses to start, having changed nothing: without it, its socket
- * start would unlink and take over the live daemon's socket, and its boot would
- * reap the planner user and rewrite the live daemon's records.
+ * Before anything reads the lanes, reaps the planner user, or touches the
+ * socket, the daemon takes this lock. A second daemon on the same directory
+ * finds it held and refuses to start, having changed nothing: without it, its
+ * socket start would unlink and take over the live daemon's socket, and its
+ * boot would reap the planner user and rewrite the live daemon's records.
  *
- * The lock is a file, `daemon.lock`, in the Gateway directory, naming the
- * process that holds it. It is not a socket or any other endpoint: Room Runtime
- * Phase 1 gives the daemon one socket, `ipc.sock`, and no other named endpoint
- * (r3 §16; test T9). The directory is mode 0700, so no other user, the planner
- * user included, can create, replace or remove it.
+ * The lock is the kernel's exclusive `flock` on `daemon.lock`, a file in the
+ * Gateway directory. The kernel takes it atomically and releases it when the
+ * last descriptor on it closes, which happens when its holder ends, however it
+ * ends: nothing is left behind that holds the directory, and no code ever
+ * decides whether another process is still alive or removes anything another
+ * process holds. The file itself is never removed, since removing a locked
+ * file would let a second daemon lock a new one beside it.
  *
- * - Taking it: the record (pid, the process's start, a token) is written in full
- *   to a temporary file, then linked to `daemon.lock`. The link is atomic and
- *   refuses an existing path, so no reader ever sees a partial lock.
- * - Held: while the process the record names is alive. On Linux the process's
- *   start time is read from `/proc` and must match the record, so a pid the
- *   kernel reused for another process does not hold the directory. On other
- *   platforms the pid alone is checked.
- * - Released: by the holder, which removes the file only if it still names it,
- *   or, however the holder ends, by its process ending: the operating system
- *   ends the process, and a record whose process has ended holds nothing, so
- *   neither a crash nor a restart needs anyone to remove it.
- * - Stale: a record whose process has ended is replaced only by a daemon that
- *   holds `daemon.lock.takeover`, taken by the same atomic link: under it, the
- *   lock is read again and removed only if its holder has still ended, so two
- *   daemons never replace one at once. A takeover file whose holder ended
- *   mid-way is moved aside and checked to be the record read before it is
- *   removed. No code removes a lock or takeover whose holder is alive.
+ * - macOS: the daemon opens the file with `O_EXLOCK | O_NONBLOCK`, which takes
+ *   the lock in the open itself, and keeps the descriptor for its life.
+ * - Linux has no such flag, and Node exposes no `flock` call, so the lock is
+ *   held by one helper process the daemon starts with its pipe on the helper's
+ *   standard input: a shell that opens the file, locks it with util-linux
+ *   `flock`, says so, and becomes `cat`, which holds the descriptor until that
+ *   pipe closes, at the daemon's release or its exit, however it exits. The
+ *   helper ignores SIGINT, SIGTERM and SIGHUP, so a Ctrl-C or a service stop
+ *   that reaches it with the daemon leaves the lock held until the daemon has
+ *   finished stopping; SIGKILL alone ends it early, and the daemon is told
+ *   (`lost`).
+ *
+ * It is not a socket or any other endpoint (Room Runtime Phase 1 gives the
+ * daemon one socket, `ipc.sock`, and no other named endpoint; test T9). The
+ * directory is mode 0700, so no other user, the planner user included, can
+ * open, lock, replace or remove the file.
  *
  * Unlike the staging lock (`staging-lock.ts`), which a crash leaves held on
  * purpose, this one cannot be left held by a crash: the daemon is restarted by
@@ -37,10 +38,26 @@
  * down until someone removed it.
  */
 
-import { randomBytes } from 'node:crypto';
-import { link, open, readFile, rename, unlink } from 'node:fs/promises';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import { constants } from 'node:fs';
+import { open, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Readable, Writable } from 'node:stream';
 import { FILE_MODE } from './paths.js';
+
+/** `O_EXLOCK` from Darwin's `<sys/fcntl.h>`, where Node does not export it. */
+const DARWIN_O_EXLOCK = 0x20;
+/** The util-linux `flock` the Linux lock is taken with. */
+export const FLOCK_PATH = '/usr/bin/flock';
+/** `flock --conflict-exit-code`: the lock is held by another. */
+const FLOCK_CONFLICT = 75;
+/**
+ * The Linux helper, with the lock file as `$1`. The lock is on the descriptor
+ * the shell opens (9), which `cat` inherits; `flock` only takes it and exits.
+ */
+const LINUX_HOLDER = `trap '' INT TERM HUP; exec 9<>"$1" || exit 1; ${FLOCK_PATH} --nonblock --conflict-exit-code ${String(FLOCK_CONFLICT)} 9 || exit $?; echo held; exec /bin/cat`;
+/** How long the Linux helper may take to report the lock taken or held. */
+const FLOCK_START_TIMEOUT_MS = 10_000;
 
 export class DaemonLockHeld extends Error {
   override readonly name = 'DaemonLockHeld';
@@ -51,166 +68,91 @@ export class DaemonLockHeld extends Error {
 }
 
 export interface HeldDaemonLock {
-  /** Removes the lock if it still names this holder. The holder's exit releases it too. */
+  /** Releases the lock and settles once it is free. The holder's exit releases it too. */
   release(): Promise<void>;
+  /** Settles if the lock is lost before its release: on Linux, its helper was killed. */
+  readonly lost: Promise<void>;
 }
 
-export interface DaemonLockSteps {
-  /**
-   * Runs after a stale record is read and before the takeover is taken: where another
-   * daemon racing for the same stale lock could replace it. Suites use it to put that
-   * daemon there; the daemon passes nothing.
-   */
-  readonly afterStaleRead?: () => Promise<void>;
-}
-
-interface LockRecord {
-  readonly pid: number;
-  /** The process's start, as the platform reports it, or `null` where it cannot be read. */
-  readonly start: string | null;
-  readonly token: string;
-}
-
-/** The lock's path in a Gateway directory. */
+/** The lock's file in a Gateway directory. */
 export function daemonLockPath(directory: string): string {
   return join(directory, 'daemon.lock');
 }
 
-/**
- * When the process started, in clock ticks since boot (field 22 of `/proc/<pid>/stat`),
- * on Linux; `null` elsewhere, or when the process does not exist.
- */
-export async function processStart(pid: number, platform: NodeJS.Platform = process.platform): Promise<string | null> {
-  if (platform !== 'linux') return null;
-  let stat: string;
-  try {
-    stat = await readFile(`/proc/${String(pid)}/stat`, 'utf8');
-  } catch {
-    return null;
-  }
-  // The command name, field 2, is in parentheses and may hold spaces or parentheses.
-  const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-  return fields[19] ?? null;
-}
-
-/** Whether the process a record names is the one alive now. */
-async function holderAlive(record: LockRecord): Promise<boolean> {
-  try {
-    process.kill(record.pid, 0);
-  } catch (error) {
-    // EPERM: a process exists, of another user; only its start can tell it from the holder.
-    if ((error as NodeJS.ErrnoException).code !== 'EPERM') return false;
-  }
-  if (process.platform !== 'linux') return true;
-  const start = await processStart(record.pid);
-  return start !== null && start === record.start;
-}
-
-function parseRecord(text: string): LockRecord | null {
-  try {
-    const value = JSON.parse(text) as Record<string, unknown>;
-    if (typeof value['pid'] !== 'number' || !Number.isInteger(value['pid']) || value['pid'] <= 0) return null;
-    if (value['start'] !== null && typeof value['start'] !== 'string') return null;
-    if (typeof value['token'] !== 'string') return null;
-    return { pid: value['pid'], start: value['start'], token: value['token'] };
-  } catch {
-    return null;
-  }
-}
-
-async function readText(path: string): Promise<string | null> {
-  try {
-    return await readFile(path, 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
-/**
- * Moves a record whose holder has ended out of `path`, if `path` still holds the text read
- * as stale. Anything else found there is linked back, and `false` is returned.
- */
-async function removeStale(path: string, seen: string, aside: string): Promise<boolean> {
-  try {
-    await rename(path, aside);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
-    throw error;
-  }
-  const moved = await readText(aside);
-  if (moved !== seen) {
-    await link(aside, path).catch(() => undefined);
-    await unlink(aside).catch(() => undefined);
-    return false;
-  }
-  await unlink(aside).catch(() => undefined);
-  return true;
-}
-
-/** Whether `text` is a record whose holder is alive. */
-async function namesLiveHolder(text: string): Promise<boolean> {
-  const holder = parseRecord(text);
-  return holder !== null && (await holderAlive(holder));
-}
-
 /** Takes the lock on `directory`, which must exist, or throws `DaemonLockHeld`. */
-export async function acquireDaemonLock(directory: string, steps: DaemonLockSteps = {}): Promise<HeldDaemonLock> {
+export async function acquireDaemonLock(directory: string, platform: NodeJS.Platform = process.platform): Promise<HeldDaemonLock> {
+  if (platform === 'darwin') return acquireDarwin(directory);
+  if (platform === 'linux') return acquireLinux(directory);
+  throw new Error(`no Gateway daemon lock exists for ${platform}: the daemon does not start here`);
+}
+
+async function acquireDarwin(directory: string): Promise<HeldDaemonLock> {
+  const flags = constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK | DARWIN_O_EXLOCK;
+  let handle: FileHandle;
+  try {
+    handle = await open(daemonLockPath(directory), flags, FILE_MODE);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EWOULDBLOCK' || code === 'EAGAIN') throw new DaemonLockHeld(directory);
+    throw error;
+  }
+  let released = false;
+  return {
+    release: async () => {
+      if (released) return;
+      released = true;
+      await handle.close();
+    },
+    // The descriptor is the daemon's own: nothing but its release or its exit closes it.
+    lost: new Promise<void>(() => undefined),
+  };
+}
+
+async function acquireLinux(directory: string): Promise<HeldDaemonLock> {
   const path = daemonLockPath(directory);
-  const takeoverPath = `${path}.takeover`;
-  const token = randomBytes(16).toString('hex');
-  const record: LockRecord = { pid: process.pid, start: await processStart(process.pid), token };
-  const text = `${JSON.stringify(record)}\n`;
-  const temporary = join(directory, `.daemon.lock.${token}.tmp`);
-  const aside = join(directory, `.daemon.lock.${token}.stale`);
-  const handle = await open(temporary, 'wx', FILE_MODE);
-  try {
-    await handle.writeFile(text, 'utf8');
-  } finally {
-    await handle.close();
+  // The file is made here, 0600, and never through a link, so the helper opens one that exists.
+  await (await open(path, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, FILE_MODE)).close();
+  const helper: ChildProcessByStdio<Writable, Readable, null> = spawn('/bin/sh', ['-c', LINUX_HOLDER, 'daemon-lock', path], {
+    stdio: ['pipe', 'pipe', 'ignore'],
+    env: { PATH: '/usr/bin:/bin' },
+  });
+  // The helper's standard output closes when it ends, and with it the lock is free.
+  const ended = new Promise<void>((resolve) => helper.stdout.once('close', () => resolve()));
+  const taken = await new Promise<'taken' | 'held' | Error>((resolve) => {
+    let settled = false;
+    const settle = (value: 'taken' | 'held' | Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => settle(new Error('the lock helper did not report the lock in time')), FLOCK_START_TIMEOUT_MS);
+    helper.stdout.once('data', () => settle('taken'));
+    helper.once('error', (error) => settle(error));
+    helper.once('exit', (code) => settle(code === FLOCK_CONFLICT ? 'held' : new Error(`the lock helper exited ${String(code)}`)));
+  });
+  if (taken !== 'taken') {
+    helper.stdin.destroy();
+    helper.kill('SIGKILL');
+    if (taken === 'held') throw new DaemonLockHeld(directory);
+    throw taken;
   }
-  try {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        await link(temporary, path);
-        return {
-          release: async () => {
-            // Only a lock that still names this holder is removed.
-            if ((await readText(path)) === text) await unlink(path).catch(() => undefined);
-          },
-        };
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  // The helper holds no event loop open: the daemon lives as long as its IPC socket.
+  helper.unref();
+  (helper.stdin as unknown as { unref?: () => void }).unref?.();
+  (helper.stdout as unknown as { unref?: () => void }).unref?.();
+  helper.stdout.resume();
+  let released = false;
+  return {
+    release: async () => {
+      if (!released) {
+        released = true;
+        // Held open again until the helper has ended, so the release can wait for it.
+        (helper.stdout as unknown as { ref?: () => void }).ref?.();
+        helper.stdin.end();
       }
-      const seen = await readText(path);
-      if (seen === null) continue;
-      if (await namesLiveHolder(seen)) throw new DaemonLockHeld(directory);
-      await steps.afterStaleRead?.();
-      // A stale lock is replaced only under the takeover file, so two daemons never replace
-      // one at once: under it, the lock is read again and removed only if still stale.
-      try {
-        await link(temporary, takeoverPath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        const taking = await readText(takeoverPath);
-        if (taking === null) continue;
-        if (await namesLiveHolder(taking)) throw new DaemonLockHeld(directory);
-        // A takeover whose holder ended mid-way holds nothing either.
-        if (!(await removeStale(takeoverPath, taking, aside))) throw new DaemonLockHeld(directory);
-        continue;
-      }
-      try {
-        const now = await readText(path);
-        if (now !== null) {
-          if (await namesLiveHolder(now)) throw new DaemonLockHeld(directory);
-          await unlink(path);
-        }
-      } finally {
-        if ((await readText(takeoverPath)) === text) await unlink(takeoverPath).catch(() => undefined);
-      }
-    }
-    throw new DaemonLockHeld(directory);
-  } finally {
-    await unlink(temporary).catch(() => undefined);
-  }
+      await ended;
+    },
+    lost: ended.then(() => (released ? new Promise<void>(() => undefined) : undefined)),
+  };
 }

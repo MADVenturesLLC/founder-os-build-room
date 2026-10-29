@@ -46,6 +46,12 @@ export interface GatewayDaemonDeps {
    * an executor is injected, whose own boot reaps, or where none is configured.
    */
   readonly plannerBootReap?: () => Promise<void>;
+  /**
+   * The directory lock, when the caller took it before reading anything in the
+   * directory (`main.ts`). The daemon owns it from here: its first boot uses it
+   * in place of taking one, and its stop or a failed boot releases it.
+   */
+  readonly directoryLock?: HeldDaemonLock;
 }
 
 export class GatewayDaemon {
@@ -73,8 +79,11 @@ export class GatewayDaemon {
   private heldPrimaryGatewayId: string | null = null;
   /** One daemon per Gateway directory, held from boot to stop (`daemon-lock.ts`). */
   private directoryLock: HeldDaemonLock | null = null;
+  /** The caller's lock, until the first boot takes it over. */
+  private providedLock: HeldDaemonLock | null;
 
   constructor(private readonly deps: GatewayDaemonDeps) {
+    this.providedLock = deps.directoryLock ?? null;
     this.primary = new PrimaryLane(deps.client, deps.clock, null);
     this.staging = new StagingLane(deps.client, deps.clock);
     this.state = new GatewayStateStore(deps.paths);
@@ -124,7 +133,15 @@ export class GatewayDaemon {
     await mkdir(this.deps.paths.directory, { recursive: true, mode: DIRECTORY_MODE });
     // Before anything reads the lanes, reaps or touches the socket: a second daemon on
     // this directory stops here, having changed nothing.
-    this.directoryLock = await acquireDaemonLock(this.deps.paths.directory);
+    const lock = this.providedLock ?? (await acquireDaemonLock(this.deps.paths.directory));
+    this.providedLock = null;
+    this.directoryLock = lock;
+    // A lock lost while the daemon runs no longer keeps a second daemon out: this one stops.
+    void lock.lost.then(() => {
+      if (this.directoryLock !== lock || this.stopping) return;
+      this.log('error', 'daemon.directory_lock_lost', {});
+      void this.stop();
+    });
     try {
       try {
         await this.bootLanes();
@@ -139,7 +156,9 @@ export class GatewayDaemon {
       await this.ipc.start();
     } catch (error) {
       // A boot that fails gives the directory back: a caller that catches the failure and
-      // boots again, here or in a new daemon, is not refused by this daemon's lock.
+      // boots again, here or in a new daemon, is not refused by this daemon's lock. Its socket,
+      // if it bound one, is closed and removed first, while no other daemon can bind it.
+      await this.ipc.stop();
       await this.releaseDirectoryLock();
       throw error;
     }
@@ -341,10 +360,12 @@ export class GatewayDaemon {
     this.log('info', 'daemon.stopped', {});
   }
 
+  /** Releases the lock this daemon holds, or the caller's it never booted with. */
   private async releaseDirectoryLock(): Promise<void> {
-    const lock = this.directoryLock;
+    const locks = [this.directoryLock, this.providedLock];
     this.directoryLock = null;
-    await lock?.release();
+    this.providedLock = null;
+    for (const lock of locks) await lock?.release();
   }
 
   private async underStagingLock(operation: StagingOperation, body: () => Promise<void>): Promise<void> {

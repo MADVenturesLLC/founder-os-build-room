@@ -24,11 +24,13 @@
  * release, so there is nothing else it owes anyone on the way out.
  */
 
+import { mkdir } from 'node:fs/promises';
 import { GatewayDaemon } from './daemon.js';
 import { ControlPlaneClient, validateControlPlaneUrl } from './client.js';
 import { defaultGatewayCustody } from './custody-factory.js';
 import { createDaemonClock } from './clock.js';
-import { gatewayPaths } from './paths.js';
+import { DaemonLockHeld, acquireDaemonLock, type HeldDaemonLock } from './daemon-lock.js';
+import { DIRECTORY_MODE, gatewayPaths } from './paths.js';
 import { boundGatewayReader, choosePlannerExecutor } from './planner-executor-factory.js';
 import { GatewayStateStore } from './state.js';
 
@@ -58,6 +60,20 @@ async function main(): Promise<number> {
 
   const paths = gatewayPaths();
   /*
+   * The directory lock before anything reads the directory
+   * (FOUNDER-ACT-20261029-BR-PLANNER-READINESS C2): a second daemon stops here,
+   * having read no state and chosen no executor. The daemon owns it from here.
+   */
+  await mkdir(paths.directory, { recursive: true, mode: DIRECTORY_MODE });
+  let directoryLock: HeldDaemonLock;
+  try {
+    directoryLock = await acquireDaemonLock(paths.directory);
+  } catch (error) {
+    if (!(error instanceof DaemonLockHeld)) throw error;
+    process.stderr.write(`${error.message}\n`);
+    return 1;
+  }
+  /*
    * The Planner executor, only where the Founder's ruling binds one
    * (`planner-executor-factory.ts`). A refused selection is logged and the
    * daemon runs without one: heartbeats are not held hostage to it.
@@ -85,18 +101,19 @@ async function main(): Promise<number> {
     custody: defaultGatewayCustody(paths),
     client: new ControlPlaneClient(urlVerdict.url),
     heartbeatCadenceMs: HEARTBEAT_CADENCE_MS,
+    directoryLock,
     ...(planner.kind === 'agy' ? { plannerExecutor: planner.executor } : {}),
     ...(planner.kind === 'refused' && planner.bootReap !== undefined ? { plannerBootReap: planner.bootReap } : {}),
   });
   daemonRef = daemon;
 
   let stopping = false;
-  const stop = (): void => {
+  const stop = (code: number): void => {
     if (stopping) return; // A second signal during shutdown changes nothing.
     stopping = true;
     void daemon.stop().then(
       () => {
-        process.exit(0);
+        process.exit(code);
       },
       (error: unknown) => {
         process.stderr.write(`daemon shutdown failed: ${describe(error)}\n`);
@@ -104,8 +121,13 @@ async function main(): Promise<number> {
       },
     );
   };
-  process.on('SIGTERM', stop);
-  process.on('SIGINT', stop);
+  process.on('SIGTERM', () => stop(0));
+  process.on('SIGINT', () => stop(0));
+  // A lost lock no longer keeps a second daemon out: this one stops, and says it failed.
+  void directoryLock.lost.then(() => {
+    process.stderr.write('the Gateway directory lock was lost: the daemon stops\n');
+    stop(1);
+  });
 
   await daemon.boot();
   daemon.start();

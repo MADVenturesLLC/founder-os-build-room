@@ -19,7 +19,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,7 +35,9 @@ const DAEMON_ENTRY = fileURLToPath(new URL('../packages/gateway-daemon/src/main.
 
 interface Launch {
   readonly child: ReturnType<typeof spawn>;
+  readonly home: string;
   readonly socketPath: string;
+  readonly statePath: string;
   readonly stderr: () => string;
   readonly cleanup: () => void;
 }
@@ -92,8 +94,8 @@ function daemonTempBase(): string {
   );
 }
 
-function launch(): Launch {
-  const home = mkdtempSync(join(daemonTempBase(), 'buildroom-daemon-home-'));
+function launch(options: { home?: string; env?: Record<string, string> } = {}): Launch {
+  const home = options.home ?? mkdtempSync(join(daemonTempBase(), 'buildroom-daemon-home-'));
   const paths = gatewayPaths(join(home, 'Library', 'Application Support', 'founder-os', 'gateway'));
   // Asserted, not assumed. If the chain ever outgrows the chosen base this
   // fails in one sentence naming the length, rather than as three tests
@@ -104,6 +106,7 @@ function launch(): Launch {
       ...process.env,
       HOME: home,
       BUILDROOM_CONTROL_PLANE_URL: 'http://127.0.0.1:1',
+      ...options.env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -113,7 +116,9 @@ function launch(): Launch {
   });
   return {
     child,
+    home,
     socketPath: paths.socketPath,
+    statePath: paths.statePath,
     stderr: () => stderr,
     cleanup: () => {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
@@ -134,6 +139,12 @@ async function waitForIpc(socketPath: string): Promise<boolean> {
 
 function exitOf(child: Launch['child']): Promise<number | null> {
   return new Promise((resolve) => child.once('exit', (code) => resolve(code)));
+}
+
+/** The child's exit code, or `timedOut` if it has not exited within `ms`. */
+async function exitWithin(child: Launch['child'], ms: number): Promise<number | null | 'timedOut'> {
+  if (child.exitCode !== null) return child.exitCode;
+  return Promise.race([exitOf(child), new Promise<'timedOut'>((resolve) => setTimeout(() => resolve('timedOut'), ms))]);
 }
 
 describe('gateway-daemon · the shipped executable is a runnable lifecycle', () => {
@@ -185,6 +196,45 @@ describe('gateway-daemon · the shipped executable is a runnable lifecycle', () 
       ]);
       assert.equal(race.timedOut, false, 'the daemon exited on SIGINT rather than hanging');
       assert.equal(race.code, 0, `clean exit — stderr: ${l.stderr()}`);
+    } finally {
+      l.cleanup();
+    }
+  });
+});
+
+describe('gateway-daemon · one entry point per Gateway directory (FOUNDER-ACT-20261029-BR-PLANNER-READINESS C2)', () => {
+  it('daemon:a-second-entry-point-on-a-held-directory-exits-one-before-it-reads-state', async () => {
+    const live = launch();
+    let second: Launch | null = null;
+    try {
+      assert.ok(await waitForIpc(live.socketPath), `never reached IPC — stderr: ${live.stderr()}`);
+      // A state file nothing writes to: a process that reads it before the lock never gets past the read.
+      rmSync(live.statePath, { force: true });
+      assert.equal(spawnSync('mkfifo', ['-m', '600', live.statePath]).status, 0, 'mkfifo');
+      second = launch({ home: live.home, env: { BUILDROOM_PLANNER_EXECUTOR: 'agy' } });
+      const code = await exitWithin(second.child, 10_000);
+      assert.equal(code, 1, `the second daemon exits 1 — stderr: ${second.stderr()}`);
+      assert.match(second.stderr(), /another Gateway daemon holds .*: this one does not start/);
+      assert.doesNotMatch(second.stderr(), /planner executor/, 'it chose no executor');
+      assert.ok(existsSync(live.socketPath), 'the live daemon keeps its socket');
+      assert.equal((await ipcRequest(live.socketPath, { op: 'status' }, 500)).ok, true, 'and still answers on it');
+    } finally {
+      if (second !== null && second.child.exitCode === null) second.child.kill('SIGKILL');
+      live.cleanup();
+    }
+  });
+
+  it('daemon:a-lost-directory-lock-stops-the-daemon-and-exits-one', { skip: process.platform !== 'linux' }, async () => {
+    const l = launch();
+    try {
+      assert.ok(await waitForIpc(l.socketPath), `never reached IPC — stderr: ${l.stderr()}`);
+      const helper = spawnSync('/usr/bin/pgrep', ['-P', String(l.child.pid), '-x', 'cat'], { encoding: 'utf8' }).stdout.trim();
+      assert.match(helper, /^\d+$/, 'one lock helper holds the directory');
+      process.kill(Number(helper), 'SIGKILL');
+      const code = await exitWithin(l.child, 10_000);
+      assert.equal(code, 1, `the daemon exits 1 — stderr: ${l.stderr()}`);
+      assert.match(l.stderr(), /the Gateway directory lock was lost: the daemon stops/);
+      assert.ok(!existsSync(l.socketPath), 'its socket was closed and removed');
     } finally {
       l.cleanup();
     }
