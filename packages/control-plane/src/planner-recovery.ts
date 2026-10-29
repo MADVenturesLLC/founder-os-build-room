@@ -302,6 +302,16 @@ export class PlannerRecovery {
     ) {
       return 'the Planner reports another route than the one recorded as dispatched';
     }
+    // On the agy lane the dispatched row holds what served the work (act B2): the
+    // Planner's later answer must name the same init model and conversation id.
+    if (dispatched !== undefined && initRequired(answer.observed)) {
+      if (dispatched.initModel === undefined || dispatched.providerConversationId === undefined) {
+        return 'the command was recorded as dispatched on the agy lane without the init model and conversation id';
+      }
+      if (answer.init?.initModel !== dispatched.initModel || answer.init?.conversationId !== dispatched.providerConversationId) {
+        return 'the Planner reports another init model or conversation id than the one recorded as dispatched';
+      }
+    }
     return null;
   }
 

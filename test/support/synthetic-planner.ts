@@ -75,6 +75,8 @@ export interface SyntheticBehaviour {
   result: 'plan' | 'failed' | 'throw' | 'running';
   /** Applied to the ready plan the Planner returns. */
   planOverrides: Record<string, unknown>;
+  /** When set, `reconcile` reports this init pair, or none for `null`, instead of the one held. */
+  reconcileInit?: PlannerInit | null;
   /** `truth` answers from what the Planner holds; the others override it. */
   reconcile: 'truth' | 'throw' | 'wrong_execution' | 'never_received';
   /** When set, `awaitPlan` waits for it first: a Planner still working. */
@@ -180,7 +182,8 @@ export class SyntheticPlanner implements PlannerPort {
     const executionId = this.behaviour.reconcile === 'wrong_execution' ? 'exec-synthetic-other' : held.executionId;
     // A wait that threw ('throw') still leaves the plan ready to report.
     const result = this.behaviour.result === 'throw' ? { kind: 'plan' as const, document: readyPlanFor(held.work, this.behaviour.planOverrides) } : this.resultFor(commandId);
-    if (result === 'running') return { kind: 'running', executionId, observed: held.observed, ...initOf(held.init) };
-    return { kind: 'finished', executionId, observed: held.observed, ...initOf(held.init), result };
+    const reported = this.behaviour.reconcileInit === undefined ? held.init : this.behaviour.reconcileInit ?? undefined;
+    if (result === 'running') return { kind: 'running', executionId, observed: held.observed, ...initOf(reported) };
+    return { kind: 'finished', executionId, observed: held.observed, ...initOf(reported), result };
   }
 }
