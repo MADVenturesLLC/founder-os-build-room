@@ -10,6 +10,7 @@ import type { ExecutionIdentity } from '../../packages/madbridge-consumed/src/ad
 import type {
   ObservedRoute,
   PlannerDispatchReceipt,
+  PlannerInit,
   PlannerPort,
   PlannerReconciliation,
   PlannerResult,
@@ -68,6 +69,8 @@ export interface SyntheticBehaviour {
    */
   dispatch: 'accept' | 'not_sent' | 'throw' | 'lost_response';
   observed: ObservedRoute;
+  /** The init model and conversation id the Planner reports with the work, when it reports them. */
+  init?: PlannerInit;
   /** `running`: the plan is not ready, and `awaitPlan` throws. */
   result: 'plan' | 'failed' | 'throw' | 'running';
   /** Applied to the ready plan the Planner returns. */
@@ -91,6 +94,11 @@ interface Held {
   readonly work: PlannerWork;
   readonly executionId: string;
   readonly observed: ObservedRoute;
+  readonly init: PlannerInit | undefined;
+}
+
+function initOf(init: PlannerInit | undefined): { init?: PlannerInit } {
+  return init === undefined ? {} : { init: { ...init } };
 }
 
 export class SyntheticPlanner implements PlannerPort {
@@ -141,9 +149,9 @@ export class SyntheticPlanner implements PlannerPort {
     if (this.behaviour.dispatch === 'throw') throw new Error('synthetic transport timeout');
     if (this.behaviour.dispatch === 'not_sent') return { kind: 'not_sent' };
     if (this.held.has(work.commandId)) throw new Error(`synthetic planner: ${work.commandId} dispatched twice`);
-    this.held.set(work.commandId, { work, executionId: this.lastExecutionId, observed: this.behaviour.observed });
+    this.held.set(work.commandId, { work, executionId: this.lastExecutionId, observed: this.behaviour.observed, init: this.behaviour.init });
     if (this.behaviour.dispatch === 'lost_response') throw new Error('synthetic response lost');
-    return { kind: 'accepted', observed: this.behaviour.observed };
+    return { kind: 'accepted', observed: this.behaviour.observed, ...initOf(this.behaviour.init) };
   }
 
   private resultFor(commandId: string): PlannerResult | 'running' {
@@ -172,7 +180,7 @@ export class SyntheticPlanner implements PlannerPort {
     const executionId = this.behaviour.reconcile === 'wrong_execution' ? 'exec-synthetic-other' : held.executionId;
     // A wait that threw ('throw') still leaves the plan ready to report.
     const result = this.behaviour.result === 'throw' ? { kind: 'plan' as const, document: readyPlanFor(held.work, this.behaviour.planOverrides) } : this.resultFor(commandId);
-    if (result === 'running') return { kind: 'running', executionId, observed: held.observed };
-    return { kind: 'finished', executionId, observed: held.observed, result };
+    if (result === 'running') return { kind: 'running', executionId, observed: held.observed, ...initOf(held.init) };
+    return { kind: 'finished', executionId, observed: held.observed, ...initOf(held.init), result };
   }
 }

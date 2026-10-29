@@ -29,7 +29,7 @@ import {
   PlannerChannelUnansweredError,
   createSystemClock,
 } from '../packages/control-plane/src/gateway/index.js';
-import { GatewayPlannerWorker, PlannerRecordStore } from '../packages/gateway-daemon/src/index.js';
+import { GatewayPlannerWorker, PlannerRecordStore, type PlannerExecutor } from '../packages/gateway-daemon/src/index.js';
 import type { PlannerPort, PlannerWork } from '../packages/control-plane/src/planner-loop.js';
 import { SYNTHETIC_ROUTE } from './support/synthetic-planner.js';
 import { SyntheticExecutor } from './support/synthetic-executor.js';
@@ -129,6 +129,27 @@ describe('gateway-planner-channel · a round over the channel', () => {
       stop();
     }
     assert.equal(channel.openCount, 0);
+  });
+
+  it('carries the init model and conversation id from the Gateway into the receipt and the reconciliation (journal act B2)', async () => {
+    const init = { initModel: 'synthetic-init-model', conversationId: 'conv-channel-0001' };
+    const reporting: PlannerExecutor = {
+      attest: (request) => executor.attest(request),
+      start: async (w) => {
+        const started = await executor.start(w);
+        return started.kind === 'accepted' ? { ...started, ...init } : started;
+      },
+    };
+    const stop = pump(channel, GATEWAY, new GatewayPlannerWorker({ executor: reporting, records: new PlannerRecordStore(recordsDir()) }));
+    try {
+      await port.attest('cmd_init');
+      assert.deepEqual(await port.dispatch(work('cmd_init')), { kind: 'accepted', observed: SYNTHETIC_ROUTE, init });
+      assert.equal((await port.awaitPlan('cmd_init')).kind, 'plan');
+      const reconciled = await port.reconcile('cmd_init');
+      assert.deepEqual(reconciled.kind === 'finished' && reconciled.init, init);
+    } finally {
+      stop();
+    }
   });
 
   it('waits on a running plan, asking status until it finishes', async () => {

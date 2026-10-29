@@ -38,6 +38,7 @@ import {
 } from './support/owned-postgres.js';
 import {
   encodeCommandEventRow,
+  encodeCommandEventRowV2,
   envelopeDigest,
   normalizeForJournal,
   type GovernedCommandRequest,
@@ -437,7 +438,7 @@ describe('journal writer — decisions commit with their own lifecycle event (co
           // A competing append around the store, on its own connection, committed now.
           const seq = String(BigInt((result.rows[0] as { seq: string }).seq) + 1n);
           const envelope = normalizeForJournal(request(competitorId));
-          const bytes = encodeCommandEventRow({
+          const bytes = encodeCommandEventRowV2({
             ...request(competitorId),
             seq,
             eventType: 'journaled',
@@ -541,5 +542,35 @@ describe('journal writer — verify() and reconstruct() over the stored bytes (c
     const { seq } = await head();
     assert.equal(records.length, Number(seq));
     records.forEach((record, i) => assert.equal(record.seq, String(i + 1)));
+  });
+
+  // Last in the file: the routine appends, and nothing removes the row it appends.
+  it('finds a BRJ:c:1 command row appended after BRJ:c:2 ones, at its seq (journal act Amendment 1 B2)', async () => {
+    assert.equal((await store!.verify()).ok, true, 'the store wrote BRJ:c:2 rows above, and the chain verifies');
+    const commandId = 'cmd_jw_spec_downgrade';
+    const seq = String(BigInt((await head()).seq) + 1n);
+    const envelope = normalizeForJournal(request(commandId));
+    const bytes = encodeCommandEventRow({
+      ...request(commandId),
+      seq,
+      eventType: 'journaled',
+      commandId,
+      commandEnvelope: envelope,
+      envelopeDigest: envelopeDigest(envelope),
+      evidenceRefs: [],
+      recordedAt: '2026-10-29T09:00:00.000000Z',
+    } as never);
+    const client = await runtimePool!.connect();
+    try {
+      await client.query(`SELECT 1 FROM public.command_journal_append('command', $1, 'journaled', $2, $3)`, [commandId, seq, Buffer.from(bytes)]);
+    } finally {
+      client.release();
+    }
+    const verdict = await store!.verify();
+    assert.equal(verdict.ok, false);
+    if (!verdict.ok) {
+      assert.match(verdict.reason, /spec order: row \d+ is a BRJ:c:1 command row after a BRJ:c:2 one/);
+      assert.equal(verdict.atSeq, seq);
+    }
   });
 });

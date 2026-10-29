@@ -324,6 +324,26 @@ describe('planner recovery on PostgreSQL', { skip: SKIP_REASON }, () => {
     assert.equal(approved.appended.result.ok && approved.appended.result.outcome, 'transition');
   });
 
+  it('dispatched from the Planner’s answer carries its init model and conversation id; on the agy lane, an answer without them is unresolved (journal act B1, B2)', async () => {
+    const init = { initModel: 'synthetic-init-model', conversationId: 'conv-synthetic-recovery' };
+    const carried = await interruptedRound({ init }, { journal: journalFailingOn('dispatched') });
+    assert.deepEqual(await eventTypes(carried.commandId), ['journaled', 'identity_bound']);
+    assert.equal((await recover().recoverRoom(carried.roomId)).kind, 'plan_review');
+    const dispatched = (await rowsOf(carried.commandId))[2]!;
+    assert.equal(dispatched.eventType, 'dispatched');
+    assert.deepEqual([dispatched.initModel, dispatched.providerConversationId], [init.initModel, init.conversationId]);
+
+    // The loop's own unresolved write fails, so recovery meets the agy lane's bare answer.
+    const agy = { provider: 'google', model: SYNTHETIC_ROUTE.model, executionSurface: 'antigravity' };
+    const bare = await interruptedRound({ observed: agy }, { journal: journalFailingOn('unresolved') });
+    assert.ok(bare.threw instanceof JournalStoreUnavailableError);
+    assert.deepEqual(await eventTypes(bare.commandId), ['journaled', 'identity_bound']);
+    const outcome = await recover().recoverRoom(bare.roomId);
+    assert.deepEqual(outcome.kind === 'unresolved' && [outcome.reading, outcome.appended], ['ambiguous', true]);
+    assert.match(outcome.kind === 'unresolved' ? outcome.reason : '', /without the init model and conversation id/);
+    assert.deepEqual(await eventTypes(bare.commandId), ['journaled', 'identity_bound', 'unresolved'], 'never recorded as dispatched');
+  });
+
   it('accepted and still running: dispatched and pending; a later pass finishes the round', async () => {
     const { roomId, commandId } = await interruptedRound({}, { journal: journalFailingOn('dispatched') });
     planner.reset({ result: 'running' });

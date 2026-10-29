@@ -220,6 +220,27 @@ describe('gateway-planner-protocol · requests and reports', () => {
     assert.equal(validatePlannerReportPayload({ kind: 'running', executionId: '', observed: ROUTE }), null);
   });
 
+  it('carries the init model and conversation id on accepted, running and finished, both or neither, bounded (journal act B2)', () => {
+    const init = { initModel: 'gemini-4-argon-high', conversationId: '3b2c7a4c-1bda-46b1-8dc1-44641701df02' };
+    const answers = [
+      { kind: 'accepted', observed: ROUTE },
+      { kind: 'running', executionId: 'exec-1', observed: ROUTE },
+      { kind: 'finished', executionId: 'exec-1', observed: ROUTE, result: { kind: 'failed' } },
+    ];
+    for (const answer of answers) {
+      assert.ok(validatePlannerReportPayload({ ...answer, ...init }), `${answer.kind} with both`);
+      assert.ok(validatePlannerReportPayload(answer), `${answer.kind} with neither`);
+      assert.equal(validatePlannerReportPayload({ ...answer, initModel: init.initModel }), null, `${answer.kind} with initModel alone`);
+      assert.equal(validatePlannerReportPayload({ ...answer, conversationId: init.conversationId }), null, `${answer.kind} with conversationId alone`);
+      assert.equal(validatePlannerReportPayload({ ...answer, ...init, initModel: ' ' }), null, `${answer.kind} with an empty initModel`);
+      assert.equal(validatePlannerReportPayload({ ...answer, ...init, conversationId: 'x'.repeat(257) }), null, `${answer.kind} with an overlong conversationId`);
+      assert.equal(validatePlannerReportPayload({ ...answer, ...init, initModel: 7 }), null, `${answer.kind} with a non-string initModel`);
+    }
+    for (const kind of ['attest_failed', 'not_sent', 'never_received']) {
+      assert.equal(validatePlannerReportPayload({ kind, ...init }), null, `${kind} carries no init fields`);
+    }
+  });
+
   it('pairs each request kind with only its own answers', () => {
     assert.ok(answersRequest('attest', 'attested'));
     assert.ok(answersRequest('execute', 'not_sent'));

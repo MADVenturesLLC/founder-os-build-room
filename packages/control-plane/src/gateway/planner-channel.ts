@@ -41,6 +41,7 @@ import type { ExecutionIdentity } from '../../../madbridge-consumed/src/adapter/
 import type {
   ObservedRoute,
   PlannerDispatchReceipt,
+  PlannerInit,
   PlannerPort,
   PlannerReconciliation,
   PlannerResult,
@@ -186,6 +187,12 @@ function routeOf(route: PlannerRouteWire): ObservedRoute {
   return { provider: route.provider, model: route.model, executionSurface: route.executionSurface };
 }
 
+/** The init pair an answer carries, which the wire validator holds to both or neither. */
+function initOf(payload: { readonly initModel?: string; readonly conversationId?: string }): { init?: PlannerInit } {
+  if (payload.initModel === undefined || payload.conversationId === undefined) return {};
+  return { init: { initModel: payload.initModel, conversationId: payload.conversationId } };
+}
+
 /** Every wait here is bounded and cleared on settlement, so none is unref'd: a pending question is real work. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -254,7 +261,7 @@ class GatewayPlannerPort implements PlannerPort {
     }
     if (asked.payload.kind === 'not_sent') return { kind: 'not_sent' };
     if (asked.payload.kind !== 'accepted') throw new PlannerChannelUnansweredError('unexpected execute answer');
-    return { kind: 'accepted', observed: routeOf(asked.payload.observed) };
+    return { kind: 'accepted', observed: routeOf(asked.payload.observed), ...initOf(asked.payload) };
   }
 
   async awaitPlan(commandId: string): Promise<PlannerResult> {
@@ -293,12 +300,13 @@ class GatewayPlannerPort implements PlannerPort {
       case 'never_received':
         return { kind: 'never_received' };
       case 'running':
-        return { kind: 'running', executionId: payload.executionId, observed: routeOf(payload.observed) };
+        return { kind: 'running', executionId: payload.executionId, observed: routeOf(payload.observed), ...initOf(payload) };
       case 'finished':
         return {
           kind: 'finished',
           executionId: payload.executionId,
           observed: routeOf(payload.observed),
+          ...initOf(payload),
           result: payload.result.kind === 'plan' ? { kind: 'plan', document: payload.result.document } : { kind: 'failed' },
         };
       default:
