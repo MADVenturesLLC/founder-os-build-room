@@ -126,16 +126,23 @@ export class GatewayDaemon {
     // this directory stops here, having changed nothing.
     this.directoryLock = await acquireDaemonLock(this.deps.paths.directory);
     try {
-      await this.bootLanes();
-    } finally {
-      // Executions a previous process held are unknowable here, before any poll, and
-      // the Planner's reap and check run however the lanes' recovery went (Amendment 3 C2).
-      // A daemon configured for the executor but not running it still reaps and checks.
-      if (this.planner !== null) await this.planner.boot();
-      else await this.deps.plannerBootReap?.();
-    }
+      try {
+        await this.bootLanes();
+      } finally {
+        // Executions a previous process held are unknowable here, before any poll, and
+        // the Planner's reap and check run however the lanes' recovery went (Amendment 3 C2).
+        // A daemon configured for the executor but not running it still reaps and checks.
+        if (this.planner !== null) await this.planner.boot();
+        else await this.deps.plannerBootReap?.();
+      }
 
-    await this.ipc.start();
+      await this.ipc.start();
+    } catch (error) {
+      // A boot that fails gives the directory back: a caller that catches the failure and
+      // boots again, here or in a new daemon, is not refused by this daemon's lock.
+      await this.releaseDirectoryLock();
+      throw error;
+    }
     this.log('info', 'daemon.booted', {
       primary: this.primary.laneState,
       staging: this.staging.laneState,
@@ -330,9 +337,14 @@ export class GatewayDaemon {
     // A Planner run in flight is cancelled and ended before the daemon exits.
     await plannerStopped;
     await this.ipc.stop();
-    await this.directoryLock?.release();
-    this.directoryLock = null;
+    await this.releaseDirectoryLock();
     this.log('info', 'daemon.stopped', {});
+  }
+
+  private async releaseDirectoryLock(): Promise<void> {
+    const lock = this.directoryLock;
+    this.directoryLock = null;
+    await lock?.release();
   }
 
   private async underStagingLock(operation: StagingOperation, body: () => Promise<void>): Promise<void> {

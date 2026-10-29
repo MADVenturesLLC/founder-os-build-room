@@ -1,10 +1,10 @@
 /**
  * FOUNDER-ACT-20261029-BR-PLANNER-READINESS, Part C.
  *
- * C2: one daemon per Gateway directory. The lock is real here, on whichever
- *     platform runs the suite (an abstract-namespace socket on Linux, an
- *     `O_EXLOCK` open on macOS), and a holder in another process is killed
- *     with SIGKILL to show the operating system frees it.
+ * C2: one daemon per Gateway directory. The lock is real here, on Linux and on
+ *     macOS alike (a Unix socket listening in the Gateway directory), and a
+ *     holder in another process is killed with SIGKILL to show that what it
+ *     leaves behind does not hold the directory.
  * C1: a daemon configured for the agy executor that does not select it still
  *     reaps and checks at boot, and logs what it found.
  * C3: the state file's directory is synced after its rename.
@@ -14,7 +14,7 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { type FileHandle, open as openFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -29,8 +29,8 @@ import {
   GatewayStateStore,
   acquireDaemonLock,
   choosePlannerExecutor,
+  daemonLockPath,
   gatewayPaths,
-  linuxLockName,
   plannerBootReap,
   reapCommandLine,
   type PlannerExecutor,
@@ -117,13 +117,24 @@ describe('C2: one daemon per Gateway directory', () => {
     await killed(child);
   });
 
-  it('a holder killed with SIGKILL frees the lock, with nothing left for anyone to remove', async () => {
+  it('a holder killed with SIGKILL frees the lock: the path it leaves answers nothing, and is taken again', async () => {
     const directory = temporary();
     const child = await holder(directory);
     await assert.rejects(acquireDaemonLock(directory), DaemonLockHeld);
     await killed(child);
+    assert.equal(lstatSync(daemonLockPath(directory)).isSocket(), true, 'the dead holder left its path');
     const mine = await acquireDaemonLock(directory);
     await mine.release();
+  });
+
+  it('the lock lives in the Gateway directory, mode 0600, and a release removes it', async () => {
+    const directory = temporary();
+    const held = await acquireDaemonLock(directory);
+    assert.equal(daemonLockPath(directory), join(directory, 'lock.sock'));
+    assert.equal(lstatSync(daemonLockPath(directory)).mode & 0o777, 0o600);
+    await held.release();
+    await held.release();
+    assert.equal(existsSync(daemonLockPath(directory)), false);
   });
 
   it('a released lock can be taken again, and two directories never share one', async () => {
@@ -137,15 +148,26 @@ describe('C2: one daemon per Gateway directory', () => {
     await second.release();
   });
 
-  it('the Linux name is the directory\'s real path, digested, in the abstract namespace', () => {
-    const name = linuxLockName('/home/someone/Library/Application Support/founder-os/gateway');
-    assert.equal(name.startsWith('\0buildroom-gateway-daemon:'), true);
-    assert.match(name.slice('\0buildroom-gateway-daemon:'.length), /^[0-9a-f]{64}$/);
-    assert.notEqual(name, linuxLockName('/home/someone/other'));
+  it('of daemons that take a free lock at once, or replace one left behind at once, exactly one holds it', async () => {
+    for (const leftBehind of [false, true]) {
+      const directory = temporary();
+      if (leftBehind) await killed(await holder(directory));
+      const results = await Promise.allSettled([1, 2, 3, 4].map(() => acquireDaemonLock(directory)));
+      const held = results.filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof acquireDaemonLock>>> => r.status === 'fulfilled');
+      assert.equal(held.length, 1, `${leftBehind ? 'replacing a stale path' : 'a free path'}: ${JSON.stringify(results.map((r) => r.status))}`);
+      for (const r of results) if (r.status === 'rejected') assert.ok(r.reason instanceof DaemonLockHeld);
+      assert.equal(lstatSync(daemonLockPath(directory)).isSocket(), true, 'the holder\'s path is still there');
+      await assert.rejects(acquireDaemonLock(directory), DaemonLockHeld, 'and still holds');
+      await held[0]?.value.release();
+    }
   });
 
-  it('a platform with no lock does not start', async () => {
-    await assert.rejects(acquireDaemonLock(temporary(), 'win32'), /no Gateway daemon lock exists for win32/);
+  it('a file left at the path that nothing answers on does not hold the directory', async () => {
+    const directory = temporary();
+    writeFileSync(daemonLockPath(directory), '');
+    const held = await acquireDaemonLock(directory);
+    assert.equal(lstatSync(daemonLockPath(directory)).isSocket(), true);
+    await held.release();
   });
 
   it('a second daemon on a live daemon\'s directory stops before its lanes, its Planner, its reap or the socket', async () => {
@@ -183,6 +205,24 @@ describe('C2: one daemon per Gateway directory', () => {
     await next.boot();
     assert.deepEqual(secondEvents, ['executor.boot'], 'once the live daemon stopped, the next one boots');
     await next.stop();
+  });
+});
+
+describe('C2: a boot that fails gives the directory back', () => {
+  it('a daemon whose lanes\' recovery rejects releases the lock, and the next boot on the directory proceeds', async () => {
+    const directory = join(temporary(), 'gateway');
+    const failing = daemonOn(directory);
+    (failing as unknown as { completeInterruptedStaging: () => Promise<void> }).completeInterruptedStaging = () =>
+      Promise.reject(new Error('staging recovery failed'));
+    await assert.rejects(failing.boot(), /staging recovery failed/);
+    assert.equal(existsSync(daemonLockPath(directory)), false, 'the lock was released');
+    const next = daemonOn(directory);
+    try {
+      await next.boot();
+    } finally {
+      await next.stop();
+      await failing.stop();
+    }
   });
 });
 
@@ -249,9 +289,12 @@ describe('C1: the boot reap of a daemon that does not run the executor', () => {
         return Promise.resolve();
       },
     });
-    await plain.boot();
-    assert.equal(reaped, 1);
-    await plain.stop();
+    try {
+      await plain.boot();
+      assert.equal(reaped, 1);
+    } finally {
+      await plain.stop();
+    }
 
     const events: string[] = [];
     const withExecutor = daemonOn(join(temporary(), 'gateway'), {
@@ -261,10 +304,13 @@ describe('C1: the boot reap of a daemon that does not run the executor', () => {
         return Promise.resolve();
       },
     });
-    await withExecutor.boot();
-    assert.deepEqual(events, ['executor.boot']);
-    assert.equal(reaped, 1, 'the executor\'s own boot reaps; the boot reap is not run beside it');
-    await withExecutor.stop();
+    try {
+      await withExecutor.boot();
+      assert.deepEqual(events, ['executor.boot']);
+      assert.equal(reaped, 1, 'the executor\'s own boot reaps; the boot reap is not run beside it');
+    } finally {
+      await withExecutor.stop();
+    }
   });
 
   it('it runs even when the lanes\' recovery rejects', async () => {
@@ -277,9 +323,12 @@ describe('C1: the boot reap of a daemon that does not run the executor', () => {
     });
     (daemon as unknown as { completeInterruptedStaging: () => Promise<void> }).completeInterruptedStaging = () =>
       Promise.reject(new Error('staging recovery failed'));
-    await assert.rejects(daemon.boot(), /staging recovery failed/);
-    assert.equal(reaped, 1);
-    await daemon.stop();
+    try {
+      await assert.rejects(daemon.boot(), /staging recovery failed/);
+      assert.equal(reaped, 1);
+    } finally {
+      await daemon.stop();
+    }
   });
 });
 
@@ -296,9 +345,12 @@ describe('C3 and C4: the Gateway directory', () => {
         },
       } as unknown as PlannerExecutor,
     });
-    await daemon.boot();
-    assert.equal(existedAtPlannerBoot, true);
-    await daemon.stop();
+    try {
+      await daemon.boot();
+      assert.equal(existedAtPlannerBoot, true);
+    } finally {
+      await daemon.stop();
+    }
   });
 
   it('a state write syncs the file before its rename and the directory after it', async () => {

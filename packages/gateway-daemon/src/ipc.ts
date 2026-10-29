@@ -237,10 +237,11 @@ export class IpcServer {
       server.once('error', reject);
       server.listen(this.paths.socketPath, () => resolve());
     });
-    // 0600: the socket is as sensitive as the state file it reports on.
-    await chmod(this.paths.socketPath, FILE_MODE);
+    // Held before anything else can fail, so a stop() after a failed start still closes it.
     this.server = server;
     this.bound = true;
+    // 0600: the socket is as sensitive as the state file it reports on.
+    await chmod(this.paths.socketPath, FILE_MODE);
     // R5 §7: the adapter registers itself as the runtime's delivery
     // notifier at start() — the explicit registration seam (the runtime
     // owns no sockets/timers; it only invokes this after mutations).

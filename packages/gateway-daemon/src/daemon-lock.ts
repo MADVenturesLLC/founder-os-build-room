@@ -7,31 +7,38 @@
  * start would unlink and take over the live daemon's socket, and its boot would
  * reap the planner user and rewrite the live daemon's records.
  *
+ * The lock is a Unix socket, `lock.sock`, listening in the Gateway directory.
+ * The directory is mode 0700, so no other user can reach the path: the planner
+ * user cannot take the lock first and keep the daemon from starting. (A name in
+ * Linux's abstract namespace has no owner, so any user could bind it first.)
+ *
+ * - Taking it: bind the path. Binding is atomic; an existing path refuses it.
+ * - Held: a connection to the path is answered. The holder answers with the
+ *   token it chose, and a daemon that has just bound the path checks the answer
+ *   is its own, so two daemons that raced to replace a stale path cannot both
+ *   go on.
+ * - Released: by the holder in `stop()`, which closes the socket and removes
+ *   the path, or by the operating system when the holder ends however it ends,
+ *   after which nothing answers on the path.
+ * - Stale: a path nothing answers on, left by a holder that died, is removed
+ *   and bound again. A path that answers, or whose answer cannot be ruled out
+ *   in time, is never removed: no code deletes a lock a live process holds.
+ *
  * Unlike the staging lock (`staging-lock.ts`), which a crash leaves behind on
- * purpose, this one is released by the operating system when its holder ends,
- * however it ends. The daemon is restarted by its service on failure, and a lock
- * a crash left behind would keep the Gateway down until someone removed it.
- * Nothing here deletes a lock another process holds.
- *
- * - Linux: a socket bound in the abstract namespace, under a name derived from
- *   the directory's real path. Binding is atomic, and the kernel releases the
- *   name when the last descriptor on it closes, a process's death included.
- * - macOS: an open of `daemon.lock` in the directory with `O_EXLOCK` and
- *   `O_NONBLOCK`, an exclusive `flock` taken in the open itself and released
- *   when the descriptor closes.
- *
- * Any other platform has no lock, and the daemon does not start there.
+ * purpose, this one cannot be left held by a crash: the daemon is restarted by
+ * its service on failure, and a lock a crash left held would keep the Gateway
+ * down until someone removed it.
  */
 
-import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
-import { open, realpath, type FileHandle } from 'node:fs/promises';
-import { createServer, type Server } from 'node:net';
+import { randomBytes } from 'node:crypto';
+import { chmod, unlink } from 'node:fs/promises';
+import { connect, createServer, type Server } from 'node:net';
 import { join } from 'node:path';
+import { assertSocketPathFits } from './ipc.js';
 import { FILE_MODE } from './paths.js';
 
-/** `O_EXLOCK` from Darwin's `<sys/fcntl.h>`, where Node does not export it. */
-const DARWIN_O_EXLOCK = 0x20;
+/** How long a connection may take to be answered before the path is taken as held. */
+const ANSWER_TIMEOUT_MS = 2_000;
 
 export class DaemonLockHeld extends Error {
   override readonly name = 'DaemonLockHeld';
@@ -42,50 +49,96 @@ export class DaemonLockHeld extends Error {
 }
 
 export interface HeldDaemonLock {
-  /** Releases the lock. The holder's exit releases it too. */
+  /** Releases the lock and removes its path. The holder's exit releases it too. */
   release(): Promise<void>;
 }
 
-/** The abstract-namespace name the Linux lock binds, one per real directory path. */
-export function linuxLockName(realDirectory: string): string {
-  return `\0buildroom-gateway-daemon:${createHash('sha256').update(realDirectory, 'utf8').digest('hex')}`;
+/** The lock's path in a Gateway directory. */
+export function daemonLockPath(directory: string): string {
+  return join(directory, 'lock.sock');
+}
+
+function listenOn(path: string, token: string): Promise<Server> {
+  // A connection is answered with the holder's token and closed: it carries nothing else.
+  const server = createServer((socket) => {
+    socket.on('error', () => undefined);
+    socket.end(token);
+  });
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(path, () => {
+      server.removeListener('error', reject);
+      resolve(server);
+    });
+  });
+}
+
+/** What answers on the path: `null` when nothing does, the answer's text when something does. */
+function answerOn(path: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    let text = '';
+    let settled = false;
+    const settle = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(value);
+    };
+    const socket = connect(path);
+    // A listener that does not answer in time is still a listener: the path is held.
+    socket.setTimeout(ANSWER_TIMEOUT_MS, () => settle(text));
+    socket.on('data', (chunk: Buffer) => {
+      text += chunk.toString('utf8');
+    });
+    socket.once('end', () => settle(text));
+    socket.once('error', (error: NodeJS.ErrnoException) => {
+      // Only a refused connection, or no path, proves nothing listens. Anything else is held.
+      settle(error.code === 'ECONNREFUSED' || error.code === 'ENOENT' ? null : text);
+    });
+  });
+}
+
+function close(server: Server): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()));
 }
 
 /** Takes the lock on `directory`, which must exist, or throws `DaemonLockHeld`. */
-export async function acquireDaemonLock(directory: string, platform: NodeJS.Platform = process.platform): Promise<HeldDaemonLock> {
-  if (platform === 'linux') return acquireLinux(directory);
-  if (platform === 'darwin') return acquireDarwin(directory);
-  throw new Error(`no Gateway daemon lock exists for ${platform}: the daemon does not start here`);
-}
-
-async function acquireLinux(directory: string): Promise<HeldDaemonLock> {
-  const name = linuxLockName(await realpath(directory));
-  // A connection to the name is closed at once: it carries nothing.
-  const server: Server = createServer((socket) => socket.destroy());
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', (error: NodeJS.ErrnoException) => {
-      reject(error.code === 'EADDRINUSE' ? new DaemonLockHeld(directory) : error);
-    });
-    server.listen(name, () => resolve());
-  });
+export async function acquireDaemonLock(directory: string): Promise<HeldDaemonLock> {
+  const path = daemonLockPath(directory);
+  assertSocketPathFits(path);
+  const token = randomBytes(16).toString('hex');
+  let server: Server;
+  try {
+    server = await listenOn(path, token);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error;
+    if ((await answerOn(path)) !== null) throw new DaemonLockHeld(directory);
+    // Nothing answers: a holder that died left the path. It is removed and bound once more;
+    // a daemon that binds it first meanwhile makes this bind fail, and this one stops.
+    await unlink(path).catch(() => undefined);
+    try {
+      server = await listenOn(path, token);
+    } catch (retry) {
+      if ((retry as NodeJS.ErrnoException).code === 'EADDRINUSE') throw new DaemonLockHeld(directory);
+      throw retry;
+    }
+  }
   // The lock holds no event loop open: the daemon lives as long as its IPC socket.
   server.unref();
-  return {
-    release: () => new Promise<void>((resolve) => server.close(() => resolve())),
-  };
-}
-
-async function acquireDarwin(directory: string): Promise<HeldDaemonLock> {
-  const flags = constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_NONBLOCK | DARWIN_O_EXLOCK;
-  let handle: FileHandle;
-  try {
-    handle = await open(join(directory, 'daemon.lock'), flags, FILE_MODE);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'EWOULDBLOCK' || code === 'EAGAIN') throw new DaemonLockHeld(directory);
-    throw error;
+  // Two daemons that both found the path stale can each remove it and bind: the one whose
+  // path was replaced no longer answers on it, and stops here.
+  if ((await answerOn(path)) !== token) {
+    // Not closed: closing a Unix socket server removes its path, which is now the other
+    // daemon's. Its own socket, no longer reachable by any path, ends with this process.
+    throw new DaemonLockHeld(directory);
   }
+  await chmod(path, FILE_MODE).catch(() => undefined);
+  let released = false;
   return {
-    release: () => handle.close(),
+    release: async () => {
+      if (released) return;
+      released = true;
+      await close(server);
+    },
   };
 }

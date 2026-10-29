@@ -2732,10 +2732,15 @@ describe('the eleventh pass: Tier-2 A1 to A4 of the tenth review', () => {
   it('C2: an evidence directory that cannot be listed at boot halts the executor and latches its evidence', async () => {
     const h = harness({ mode: 'ok' });
     // A file where the directory should be: listing it fails with ENOTDIR.
-    writeFileSync(join(h.gatewayDirectory, 'planner-evidence'), '');
+    const evidenceDirectory = join(h.gatewayDirectory, 'planner-evidence');
+    writeFileSync(evidenceDirectory, '');
     await h.executor.boot();
     assert.ok(h.logged.includes('agy.evidence_unreadable'));
     assert.equal(haltReason(h.gatewayDirectory), 'evidence_unreadable');
+    // The directory is sound again, and the halt is cleared: only the latch still refuses.
+    rmSync(evidenceDirectory);
+    mkdirSync(evidenceDirectory);
+    rmSync(join(h.gatewayDirectory, 'planner-halted.json'));
     const w = work();
     await assert.rejects(h.executor.start(w, await identityFor(h.executor, w.commandId)), /cannot be read/);
     assert.equal(h.launches, 0);

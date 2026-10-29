@@ -166,7 +166,7 @@ export {
   type PlannerExecutorChoice,
   type PlannerExecutorContext,
 } from './planner-executor-factory.js';
-export { DaemonLockHeld, acquireDaemonLock, linuxLockName, type HeldDaemonLock } from './daemon-lock.js';
+export { DaemonLockHeld, acquireDaemonLock, daemonLockPath, type HeldDaemonLock } from './daemon-lock.js';
 
 /**
  * Room Runtime Phase 1 (fixture occupancy only) — the Gateway-side room
