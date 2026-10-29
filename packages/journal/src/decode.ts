@@ -22,8 +22,11 @@ import { SPEC_ID_A, encodeEnvelope, type NormalizedCommandEnvelope } from './env
 import {
   RECORD_CLASS_COMMAND,
   SPEC_ID_C,
+  SPEC_ID_C2,
   encodeCommandEventRow,
+  encodeCommandEventRowV2,
   type CommandEventRow,
+  type CommandRowSpec,
   type LifecycleEventRef,
 } from './event-row.js';
 import {
@@ -170,11 +173,20 @@ export function decodeEnvelope(bytes: Uint8Array): NormalizedCommandEnvelope {
 
 /** Spec (c) v1. */
 export function decodeCommandEventRow(bytes: Uint8Array): CommandEventRow {
+  return decodeCommandRowAs(bytes, SPEC_ID_C);
+}
+
+/** Spec (c) v2: version 1's fields, then `init_model` and `provider_conversation_id`. */
+export function decodeCommandEventRowV2(bytes: Uint8Array): CommandEventRow {
+  return decodeCommandRowAs(bytes, SPEC_ID_C2);
+}
+
+function decodeCommandRowAs(bytes: Uint8Array, spec: CommandRowSpec): CommandEventRow {
   const r = new Reader(bytes);
-  readSpec(r, SPEC_ID_C);
+  readSpec(r, spec);
   const recordClass = r.requiredString(0x01);
   if (recordClass !== RECORD_CLASS_COMMAND) {
-    throw new JournalDecodeError(`${SPEC_ID_C} carries record class ${RECORD_CLASS_COMMAND}, found ${JSON.stringify(recordClass)}`);
+    throw new JournalDecodeError(`${spec} carries record class ${RECORD_CLASS_COMMAND}, found ${JSON.stringify(recordClass)}`);
   }
   const seq = r.requiredString(0x02);
   const eventType = r.requiredString(0x03);
@@ -201,6 +213,8 @@ export function decodeCommandEventRow(bytes: Uint8Array): CommandEventRow {
   const lifecycleEventRef = r.optionalPair(0x18);
   const evidenceRefs = r.requiredArray(0x19);
   const recordedAt = r.requiredString(0x1a);
+  const initModel = spec === SPEC_ID_C2 ? r.optionalString(0x1b) : undefined;
+  const providerConversationId = spec === SPEC_ID_C2 ? r.optionalString(0x1c) : undefined;
   r.end();
   const row = compact({
     seq,
@@ -228,8 +242,10 @@ export function decodeCommandEventRow(bytes: Uint8Array): CommandEventRow {
     lifecycleEventRef,
     evidenceRefs,
     recordedAt,
+    initModel,
+    providerConversationId,
   }) as unknown as CommandEventRow;
-  return roundTrip(bytes, row, encodeCommandEventRow, SPEC_ID_C);
+  return roundTrip(bytes, row, spec === SPEC_ID_C2 ? encodeCommandEventRowV2 : encodeCommandEventRow, spec);
 }
 
 /** Spec (d) v1. */
@@ -269,10 +285,19 @@ export type DecodedJournalRow =
   | { readonly recordClass: typeof RECORD_CLASS_COMMAND; readonly row: CommandEventRow }
   | { readonly recordClass: typeof RECORD_CLASS_DECISION; readonly row: DecisionRecordRow };
 
+/**
+ * The spec id a row's bytes begin with, read and not otherwise checked: what a verifier
+ * needs to hold a chain's command rows to `BRJ:c:1` then `BRJ:c:2`, never back.
+ */
+export function journalRowSpec(bytes: Uint8Array): string {
+  return new Reader(bytes).lpString();
+}
+
 /** Either class, chosen by the spec id the bytes open with — never by which fields are absent (contract §2). */
 export function decodeJournalRow(bytes: Uint8Array): DecodedJournalRow {
   const spec = new Reader(bytes).lpString();
   if (spec === SPEC_ID_C) return { recordClass: RECORD_CLASS_COMMAND, row: decodeCommandEventRow(bytes) };
+  if (spec === SPEC_ID_C2) return { recordClass: RECORD_CLASS_COMMAND, row: decodeCommandEventRowV2(bytes) };
   if (spec === SPEC_ID_D) return { recordClass: RECORD_CLASS_DECISION, row: decodeDecisionRecordRow(bytes) };
   throw new JournalDecodeError(`not a journal row spec: ${JSON.stringify(spec)}`);
 }
