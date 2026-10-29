@@ -2,7 +2,7 @@
  * FOUNDER-ACT-20261029-BR-PLANNER-READINESS, Part C.
  *
  * C2: one daemon per Gateway directory. The lock is real here, on Linux and on
- *     macOS alike (a Unix socket listening in the Gateway directory), and a
+ *     macOS alike (a file naming its holder in the Gateway directory), and a
  *     holder in another process is killed with SIGKILL to show that what it
  *     leaves behind does not hold the directory.
  * C1: a daemon configured for the agy executor that does not select it still
@@ -14,7 +14,7 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { type FileHandle, open as openFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -32,6 +32,7 @@ import {
   daemonLockPath,
   gatewayPaths,
   plannerBootReap,
+  processStart,
   reapCommandLine,
   type PlannerExecutor,
 } from '../packages/gateway-daemon/src/index.js';
@@ -68,6 +69,10 @@ async function killed(child: ChildProcess): Promise<void> {
   const exited = new Promise((resolve) => child.once('exit', resolve));
   child.kill('SIGKILL');
   await exited;
+}
+
+function lockRecord(directory: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(daemonLockPath(directory), 'utf8')) as Record<string, unknown>;
 }
 
 function daemonOn(directory: string, extra: { plannerExecutor?: PlannerExecutor; plannerBootReap?: () => Promise<void> } = {}): GatewayDaemon {
@@ -117,24 +122,37 @@ describe('C2: one daemon per Gateway directory', () => {
     await killed(child);
   });
 
-  it('a holder killed with SIGKILL frees the lock: the path it leaves answers nothing, and is taken again', async () => {
+  it('a holder killed with SIGKILL holds nothing: the record it leaves names a process that has ended, and is replaced', async () => {
     const directory = temporary();
     const child = await holder(directory);
     await assert.rejects(acquireDaemonLock(directory), DaemonLockHeld);
     await killed(child);
-    assert.equal(lstatSync(daemonLockPath(directory)).isSocket(), true, 'the dead holder left its path');
+    assert.equal(lockRecord(directory)['pid'], child.pid, 'the dead holder left its record');
     const mine = await acquireDaemonLock(directory);
+    assert.equal(lockRecord(directory)['pid'], process.pid);
     await mine.release();
   });
 
-  it('the lock lives in the Gateway directory, mode 0600, and a release removes it', async () => {
+  it('the lock is a file in the Gateway directory, mode 0600, never a socket; a release removes it, and the directory holds nothing else of it', async () => {
     const directory = temporary();
     const held = await acquireDaemonLock(directory);
-    assert.equal(daemonLockPath(directory), join(directory, 'lock.sock'));
-    assert.equal(lstatSync(daemonLockPath(directory)).mode & 0o777, 0o600);
+    assert.equal(daemonLockPath(directory), join(directory, 'daemon.lock'));
+    const stat = lstatSync(daemonLockPath(directory));
+    assert.equal(stat.isFile(), true);
+    assert.equal(stat.mode & 0o777, 0o600);
+    assert.deepEqual(readdirSync(directory), ['daemon.lock'], 'no temporary file is left beside it');
     await held.release();
     await held.release();
-    assert.equal(existsSync(daemonLockPath(directory)), false);
+    assert.deepEqual(readdirSync(directory), []);
+  });
+
+  it('a release removes only a lock that still names its holder', async () => {
+    const directory = temporary();
+    const held = await acquireDaemonLock(directory);
+    const other = `${JSON.stringify({ pid: process.pid, start: null, token: 'someone-else' })}\n`;
+    writeFileSync(daemonLockPath(directory), other);
+    await held.release();
+    assert.equal(readFileSync(daemonLockPath(directory), 'utf8'), other);
   });
 
   it('a released lock can be taken again, and two directories never share one', async () => {
@@ -154,38 +172,67 @@ describe('C2: one daemon per Gateway directory', () => {
       if (leftBehind) await killed(await holder(directory));
       const results = await Promise.allSettled([1, 2, 3, 4].map(() => acquireDaemonLock(directory)));
       const held = results.filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof acquireDaemonLock>>> => r.status === 'fulfilled');
-      assert.equal(held.length, 1, `${leftBehind ? 'replacing a stale path' : 'a free path'}: ${JSON.stringify(results.map((r) => r.status))}`);
-      for (const r of results) if (r.status === 'rejected') assert.ok(r.reason instanceof DaemonLockHeld);
-      assert.equal(lstatSync(daemonLockPath(directory)).isSocket(), true, 'the holder\'s path is still there');
-      await assert.rejects(acquireDaemonLock(directory), DaemonLockHeld, 'and still holds');
+      assert.equal(held.length, 1, `${leftBehind ? 'replacing a stale lock' : 'a free lock'}: ${JSON.stringify(results.map((r) => r.status))}`);
+      for (const r of results) if (r.status === 'rejected') assert.ok(r.reason instanceof DaemonLockHeld, String(r.reason));
+      await assert.rejects(acquireDaemonLock(directory), DaemonLockHeld, 'and it still holds');
       await held[0]?.value.release();
+      assert.deepEqual(readdirSync(directory), [], 'nothing left behind');
     }
   });
 
-  it('a daemon whose path another replaced between its bind and its check stops, and leaves the other\'s path in place', async () => {
+  it('a daemon whose stale lock another replaced after its read finds the new holder under the takeover and stops', async () => {
     const directory = temporary();
+    await killed(await holder(directory));
     let winner: Awaited<ReturnType<typeof acquireDaemonLock>> | null = null;
-    // The other daemon found the path stale too: it removes this one's path and binds its own.
     await assert.rejects(
       acquireDaemonLock(directory, {
-        afterBind: async () => {
-          rmSync(daemonLockPath(directory));
+        afterStaleRead: async () => {
           winner = await acquireDaemonLock(directory);
         },
       }),
       DaemonLockHeld,
     );
-    assert.ok(winner !== null, 'the other daemon holds the lock');
-    assert.equal(lstatSync(daemonLockPath(directory)).isSocket(), true, 'its path was not removed by the one that stopped');
+    assert.ok(winner !== null, 'the other daemon took the lock');
+    assert.equal(lockRecord(directory)['pid'], process.pid, 'its record is back in place');
     await assert.rejects(acquireDaemonLock(directory), DaemonLockHeld, 'and it still holds the directory');
     await (winner as unknown as { release: () => Promise<void> }).release();
+    assert.deepEqual(readdirSync(directory), [], 'nothing left behind');
   });
 
-  it('a file left at the path that nothing answers on does not hold the directory', async () => {
+  it('a takeover file its holder left mid-way holds nothing, and is cleared', async () => {
     const directory = temporary();
-    writeFileSync(daemonLockPath(directory), '');
+    const child = await holder(directory);
+    await killed(child);
+    // The dead holder's record, as a takeover left behind beside its stale lock.
+    writeFileSync(`${daemonLockPath(directory)}.takeover`, readFileSync(daemonLockPath(directory), 'utf8'));
     const held = await acquireDaemonLock(directory);
-    assert.equal(lstatSync(daemonLockPath(directory)).isSocket(), true);
+    assert.equal(lockRecord(directory)['pid'], process.pid);
+    await held.release();
+    assert.deepEqual(readdirSync(directory), [], 'the takeover file is gone too');
+  });
+
+  it('a live takeover holds the directory', async () => {
+    const directory = temporary();
+    const child = await holder(directory);
+    await killed(child);
+    writeFileSync(`${daemonLockPath(directory)}.takeover`, `${JSON.stringify({ pid: process.pid, start: await processStart(process.pid), token: 'live-takeover' })}\n`);
+    await assert.rejects(acquireDaemonLock(directory), DaemonLockHeld);
+  });
+
+  it('a record no process answers to holds nothing: unreadable, or naming no process', async () => {
+    for (const text of ['', 'not json', '{"pid":"7"}', `${JSON.stringify({ pid: 2 ** 22 + 7, start: null, token: 't' })}\n`]) {
+      const directory = temporary();
+      writeFileSync(daemonLockPath(directory), text);
+      const held = await acquireDaemonLock(directory);
+      await held.release();
+    }
+  });
+
+  it('on Linux a live pid whose process started at another time is not the holder: the kernel reused it', { skip: process.platform !== 'linux' }, async () => {
+    const directory = temporary();
+    assert.notEqual(await processStart(process.pid), null, 'the start is read from /proc');
+    writeFileSync(daemonLockPath(directory), `${JSON.stringify({ pid: process.pid, start: 'another start', token: 't' })}\n`);
+    const held = await acquireDaemonLock(directory);
     await held.release();
   });
 
