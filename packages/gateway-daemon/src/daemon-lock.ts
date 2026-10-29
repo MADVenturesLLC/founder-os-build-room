@@ -102,8 +102,17 @@ function close(server: Server): Promise<void> {
   return new Promise((resolve) => server.close(() => resolve()));
 }
 
+export interface DaemonLockSteps {
+  /**
+   * Runs after the bind and before the check that the path answers with this daemon's
+   * token: where another daemon racing for a stale path could replace it. Suites use it
+   * to put that daemon there; the daemon passes nothing.
+   */
+  readonly afterBind?: () => Promise<void>;
+}
+
 /** Takes the lock on `directory`, which must exist, or throws `DaemonLockHeld`. */
-export async function acquireDaemonLock(directory: string): Promise<HeldDaemonLock> {
+export async function acquireDaemonLock(directory: string, steps: DaemonLockSteps = {}): Promise<HeldDaemonLock> {
   const path = daemonLockPath(directory);
   assertSocketPathFits(path);
   const token = randomBytes(16).toString('hex');
@@ -125,6 +134,7 @@ export async function acquireDaemonLock(directory: string): Promise<HeldDaemonLo
   }
   // The lock holds no event loop open: the daemon lives as long as its IPC socket.
   server.unref();
+  await steps.afterBind?.();
   // Two daemons that both found the path stale can each remove it and bind: the one whose
   // path was replaced no longer answers on it, and stops here.
   if ((await answerOn(path)) !== token) {

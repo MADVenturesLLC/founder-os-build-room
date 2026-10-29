@@ -162,6 +162,25 @@ describe('C2: one daemon per Gateway directory', () => {
     }
   });
 
+  it('a daemon whose path another replaced between its bind and its check stops, and leaves the other\'s path in place', async () => {
+    const directory = temporary();
+    let winner: Awaited<ReturnType<typeof acquireDaemonLock>> | null = null;
+    // The other daemon found the path stale too: it removes this one's path and binds its own.
+    await assert.rejects(
+      acquireDaemonLock(directory, {
+        afterBind: async () => {
+          rmSync(daemonLockPath(directory));
+          winner = await acquireDaemonLock(directory);
+        },
+      }),
+      DaemonLockHeld,
+    );
+    assert.ok(winner !== null, 'the other daemon holds the lock');
+    assert.equal(lstatSync(daemonLockPath(directory)).isSocket(), true, 'its path was not removed by the one that stopped');
+    await assert.rejects(acquireDaemonLock(directory), DaemonLockHeld, 'and it still holds the directory');
+    await (winner as unknown as { release: () => Promise<void> }).release();
+  });
+
   it('a file left at the path that nothing answers on does not hold the directory', async () => {
     const directory = temporary();
     writeFileSync(daemonLockPath(directory), '');
