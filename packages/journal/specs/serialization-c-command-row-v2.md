@@ -54,8 +54,10 @@ The rule of when the fields must be present is not a byte rule. Under
 FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS B2, the control plane
 requires both on the `dispatched` event of a command on the agy lane
 (`antigravity:google`, Gateway 1880c12d), and refuses an accepted answer
-that lacks either or carries an empty or overlong one. The fields are
-absent for every other lane.
+that lacks either or carries an empty or overlong one. On every other
+lane the control plane journals the fields exactly when the Gateway's
+answer carries them, and refuses nothing for their absence (the act's
+Amendment 2 B2; its B3 ratified this correction).
 
 ## Reading a chain of both versions
 
