@@ -148,7 +148,12 @@ import {
   BANNED_AGY_ARGUMENTS,
   GatewayPlannerWorker,
   PINNED_AGY_ARGUMENTS,
+  PLANNER_STOP_BUDGET_MS,
   PlannerRecordStore,
+  REAP_ANSWER_MS,
+  REAP_SETTLE_MS,
+  STOP_GRACE_MS,
+  answerWithin,
   plannerRecordsDirectory,
   boundGatewayReader,
   choosePlannerExecutor,
@@ -159,6 +164,8 @@ import {
   planDocumentFrom,
   childEnvironment,
   modelsNamed,
+  pgrepProbe,
+  pkillReaper,
   runChild,
   sha256OfFile,
   readOnly,
@@ -328,6 +335,13 @@ function harness(options: {
 async function identityFor(executor: AgyPlannerExecutor, commandId: string): Promise<PlannerIdentityWire> {
   return executor.attest({ commandId, role: 'architect', intended: { ...AGY_PLANNER_ROUTE } });
 }
+
+/** A command that waits a minute whatever its arguments: a pgrep or sudo that never answers. */
+const HANGING_COMMAND = (() => {
+  const path = join(mkdtempSync(join(tmpdir(), 'hanging-')), 'hang');
+  writeFileSync(path, '#!/bin/sh\nexec sleep 60\n', { mode: 0o755 });
+  return path;
+})();
 
 function haltReason(gatewayDirectory: string): string | null {
   const file = join(gatewayDirectory, 'planner-halted.json');
@@ -829,15 +843,116 @@ describe('the check after the reap waits for killed processes to finish exiting 
   });
 
   it('remainsAfterReap refuses bounds that would never end, before any check; the executor then halts', async () => {
-    for (const [settle, recheck] of [[1_000, 0], [1_000, -1], [Number.NaN, 100], [Number.POSITIVE_INFINITY, 100], [1_000, Number.NaN], [-1, 100]] as const) {
+    const refused: (readonly [number, number, number?])[] = [
+      [1_000, 0], [1_000, -1], [Number.NaN, 100], [Number.POSITIVE_INFINITY, 100], [1_000, Number.NaN], [-1, 100],
+      // Finite, but their quotient is not: Tier-2 finding 2 at 90a04ed.
+      [1, Number.MIN_VALUE], [Number.MAX_VALUE, 1],
+      // An answer time that is no bound, and bounds no timer can hold (Node fires those at once).
+      [1_000, 100, 0], [1_000, 100, Number.NaN], [1_000, 100, Number.POSITIVE_INFINITY], [2_147_483_647, 100, 1], [1_000, 2_147_483_648],
+    ];
+    for (const [settle, recheck, answer] of refused) {
       let calls = 0;
-      await assert.rejects(remainsAfterReap(() => { calls += 1; return Promise.resolve(true); }, settle, recheck), RangeError, `${String(settle)}, ${String(recheck)}`);
+      await assert.rejects(remainsAfterReap(() => { calls += 1; return Promise.resolve(true); }, settle, recheck, answer), RangeError, `${String(settle)}, ${String(recheck)}, ${String(answer)}`);
       assert.equal(calls, 0);
     }
     const h = harness({ mode: 'ok', probe: () => Promise.resolve(true), timings: { reapSettleMs: Number.POSITIVE_INFINITY } });
     await h.executor.boot();
     assert.equal(haltReason(h.gatewayDirectory), 'planner_user_survived_reap', 'a bound that cannot be used fails closed');
     assert.ok(h.logged.includes('agy.probe_failed'));
+  });
+
+  it('a check that never answers rejects when the settle and answer time are up (Tier-2 finding 1 at 90a04ed)', async () => {
+    let calls = 0;
+    const began = Date.now();
+    await assert.rejects(
+      remainsAfterReap(() => {
+        calls += 1;
+        return calls === 1 ? Promise.resolve(true) : new Promise<boolean>(() => undefined);
+      }, 20, 10, 50),
+      /did not answer within 70 ms/,
+    );
+    const waited = Date.now() - began;
+    assert.equal(calls, 2, 'the second check is the one left pending');
+    assert.ok(waited >= 60 && waited < 1_000, `bounded by one timer (${String(waited)} ms)`);
+    await assert.rejects(remainsAfterReap(() => new Promise<boolean>(() => undefined), 0, 100, 30), /did not answer within 30 ms/, 'the first check too');
+  });
+
+  it('checks that answer slowly still end at the bound, a process still listed then remaining', async () => {
+    let calls = 0;
+    const began = Date.now();
+    const slow = (): Promise<boolean> => {
+      calls += 1;
+      return new Promise((resolve) => setTimeout(() => resolve(true), 40));
+    };
+    assert.equal(await remainsAfterReap(slow, 100, 10, 50), true);
+    const waited = Date.now() - began;
+    assert.ok(waited < 1_000, `ended by the bound, not by the number of checks (${String(waited)} ms)`);
+    assert.ok(calls < 11, `fewer checks than the count allows (${String(calls)})`);
+  });
+
+  it('the executor halts within its bound when the check never answers, at boot and at a run\'s end', async () => {
+    const hung = harness({ mode: 'ok', probe: () => new Promise<boolean>(() => undefined), timings: { reapSettleMs: 100, reapAnswerMs: 100 } });
+    const began = Date.now();
+    await hung.executor.boot();
+    assert.ok(Date.now() - began < 2_000);
+    assert.equal(haltReason(hung.gatewayDirectory), 'planner_user_survived_reap');
+    assert.ok(hung.logged.includes('agy.probe_failed'));
+
+    let reaped = false;
+    const w = work();
+    const atEnd = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...w } as never),
+      probe: () => (reaped ? new Promise<boolean>(() => undefined) : Promise.resolve(false)),
+      reap: () => {
+        reaped = true;
+        return Promise.resolve();
+      },
+      timings: { reapSettleMs: 100, reapAnswerMs: 100 },
+    });
+    const started = await atEnd.executor.start(w, await identityFor(atEnd.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') await started.completion.catch(() => undefined);
+    assert.equal(haltReason(atEnd.gatewayDirectory), 'planner_user_survived_reap');
+  });
+
+  it('a second privilege rule that never answers is a failed reap within its bound, and the check still runs', async () => {
+    let checks = 0;
+    const h = harness({
+      mode: 'ok',
+      reap: () => new Promise<void>(() => undefined),
+      probe: () => {
+        checks += 1;
+        return Promise.resolve(false);
+      },
+      timings: { reapAnswerMs: 100 },
+    });
+    const began = Date.now();
+    await h.executor.boot();
+    assert.ok(Date.now() - began < 2_000);
+    assert.ok(h.logged.includes('agy.reap_failed'));
+    assert.equal(checks, 1);
+    assert.equal(haltReason(h.gatewayDirectory), null, 'nothing remained');
+    await assert.rejects(answerWithin(new Promise(() => undefined), 20, 'the rule'), /the rule did not answer within 20 ms/);
+    assert.equal(await answerWithin(Promise.resolve(7), 20, 'the rule'), 7);
+  });
+
+  it('the real pgrep and pkill calls are killed when they have not answered in REAP_ANSWER_MS', async () => {
+    const began = Date.now();
+    const [checked, reaped] = await Promise.allSettled([
+      // `sleep -u x` refuses at once, so a stand-in that ignores its arguments and waits.
+      pgrepProbe('buildroom-planner', HANGING_COMMAND)(),
+      pkillReaper([HANGING_COMMAND])(),
+    ]);
+    const waited = Date.now() - began;
+    assert.equal(checked.status, 'rejected');
+    assert.equal(reaped.status, 'rejected');
+    assert.ok(waited >= REAP_ANSWER_MS - 100 && waited < REAP_ANSWER_MS + 3_000, `killed at the answer time (${String(waited)} ms)`);
+  });
+
+  it('ending a run fits the PC service\'s stop timeout, with time left for the rest of the daemon\'s stop', () => {
+    assert.equal(PLANNER_STOP_BUDGET_MS, 2 * STOP_GRACE_MS + REAP_ANSWER_MS + REAP_SETTLE_MS + REAP_ANSWER_MS);
+    assert.ok(PLANNER_STOP_BUDGET_MS <= 18_000, `TimeoutStopSec=20 less 2 seconds (${String(PLANNER_STOP_BUDGET_MS)} ms)`);
   });
 
   it('a real process killed with SIGKILL is still there the instant after the kill, and gone within the settle time', async () => {
@@ -1136,6 +1251,7 @@ describe('ending a run never waits on agy\'s pipes (Amendment 3 C1; Tier-2 B1)',
   it('still reaps, then halts, when sudo\'s exit is not seen in time', async () => {
     const w = work();
     const children: ReturnType<Launch>[] = [];
+    let markedBeforeReap: string | null = null;
     const h = harness({
       mode: 'stubborn',
       plan: readyPlanFor({ ...w } as never),
@@ -1145,6 +1261,7 @@ describe('ending a run never waits on agy\'s pipes (Amendment 3 C1; Tier-2 B1)',
         child.kill = () => true;
       },
       reap: () => {
+        markedBeforeReap = haltReason(h.gatewayDirectory);
         for (const child of children) if (child.pid !== undefined) process.kill(child.pid, 'SIGKILL');
         return Promise.resolve();
       },
@@ -1153,6 +1270,40 @@ describe('ending a run never waits on agy\'s pipes (Amendment 3 C1; Tier-2 B1)',
     assert.equal(started.kind, 'accepted');
     if (started.kind === 'accepted') await started.completion.catch(() => undefined);
     assert.equal(h.reaps(), 1, 'the reap runs although the exit was not seen');
+    assert.equal(haltReason(h.gatewayDirectory), 'agy_exit_unconfirmed');
+    assert.equal(markedBeforeReap, 'agy_exit_unconfirmed', 'the marker is durable before the reap takes its time');
+    const line = readFileSync(h.logPath, 'utf8').split('\n').find((l) => l.includes('"holder"'));
+    if (line !== undefined) process.kill((JSON.parse(line) as { holder: number }).holder, 'SIGKILL');
+  });
+
+  it('the daemon stopping while sudo\'s exit goes unseen waits the graces once and halts within the stop budget', async () => {
+    const w = work();
+    const children: ReturnType<Launch>[] = [];
+    const signals: string[] = [];
+    const h = harness({
+      mode: 'stubborn',
+      plan: readyPlanFor({ ...w } as never),
+      onLaunch: (child) => {
+        children.push(child);
+        child.kill = (signal) => {
+          signals.push(String(signal));
+          return true;
+        };
+      },
+      reap: () => {
+        for (const child of children) if (child.pid !== undefined) process.kill(child.pid, 'SIGKILL');
+        return Promise.resolve();
+      },
+      timings: { stopGraceMs: 300, reapSettleMs: 100, reapAnswerMs: 100 },
+    });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    const began = Date.now();
+    await h.executor.shutdown();
+    const waited = Date.now() - began;
+    if (started.kind === 'accepted') await started.completion.catch(() => undefined);
+    assert.deepEqual(signals, ['SIGTERM', 'SIGKILL'], 'one SIGTERM, one SIGKILL: the run\'s end does not stop agy again');
+    assert.ok(waited < 2 * 300 + 100 + 100 + 100 + 500, `two graces, the rule and the check, not four graces (${String(waited)} ms)`);
     assert.equal(haltReason(h.gatewayDirectory), 'agy_exit_unconfirmed');
     const line = readFileSync(h.logPath, 'utf8').split('\n').find((l) => l.includes('"holder"'));
     if (line !== undefined) process.kill((JSON.parse(line) as { holder: number }).holder, 'SIGKILL');

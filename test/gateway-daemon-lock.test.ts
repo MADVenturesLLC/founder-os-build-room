@@ -411,6 +411,16 @@ describe('C1: the boot reap of a daemon that does not run the executor', () => {
     assert.deepEqual(await run(() => Promise.resolve(), () => Promise.reject(new Error('pgrep missing'))), ['error:planner.boot_check_failed']);
     const listed = [true, true];
     assert.deepEqual(await run(() => Promise.resolve(), () => Promise.resolve(listed.shift() ?? false)), ['info:planner.boot_reaped'], 'a killed process still exiting at the first checks is not left over');
+    const hung = (): Promise<never> => new Promise<never>(() => undefined);
+    const bounded = async (reap: () => Promise<void>, probe: () => Promise<boolean>): Promise<string[]> => {
+      const logged: string[] = [];
+      const began = Date.now();
+      await plannerBootReap('buildroom-planner', (level, at) => logged.push(`${level}:${at}`), { reap, probe, settleMs: 100, answerMs: 100 })();
+      assert.ok(Date.now() - began < 2_000, 'bounded');
+      return logged;
+    };
+    assert.deepEqual(await bounded(hung, () => Promise.resolve(false)), ['error:planner.boot_reap_failed', 'info:planner.boot_reaped'], 'a rule that never answers');
+    assert.deepEqual(await bounded(() => Promise.resolve(), hung), ['error:planner.boot_check_failed'], 'a check that never answers');
   });
 
   it('the daemon runs it at boot, after the lanes, when it has no executor; one with an executor boots that instead', async () => {

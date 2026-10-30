@@ -44,7 +44,9 @@
  * <planner user> -- /usr/bin/pkill -KILL -u <planner user>`, so the planner
  * user ends everything it still runs, and asks the operating system whether
  * any of its processes remain, again for up to REAP_SETTLE_MS while a killed
- * one finishes exiting (`remainsAfterReap`). The executor HALTS when one does, when one
+ * one finishes exiting (`remainsAfterReap`). Each of these privileged calls and
+ * checks has REAP_ANSWER_MS to answer, so ending a run fits PLANNER_STOP_BUDGET_MS,
+ * inside the PC service's stop timeout. The executor HALTS when one does, when one
  * runs before a start, when either check cannot be made, when sudo's exit is
  * not seen in time, when a checkout cannot be removed, or when an evidence
  * record cannot be written or read: it writes `planner-halted.json` in the
@@ -147,12 +149,23 @@ if (PINNED_AGY_ARGUMENTS[PINNED_AGY_ARGUMENTS.indexOf('--mode') + 1] !== 'plan')
 const INIT_TIMEOUT_MS = 60_000;
 /** A run that outlives agy's own limit by this much is ended by the executor. */
 const RUN_GRACE_MS = 60_000;
-/** After SIGTERM, how long agy has before SIGKILL. */
-const STOP_GRACE_MS = 10_000;
+/** After SIGTERM, how long agy has before SIGKILL; and after SIGKILL, how long sudo has to exit. */
+export const STOP_GRACE_MS = 4_000;
 /** After the second privilege rule, how long a killed process has to finish exiting. */
 export const REAP_SETTLE_MS = 5_000;
 /** How often the check is asked again within that time. */
 export const REAP_RECHECK_MS = 100;
+/** How long the second privilege rule, and the check after the settle time, have to answer. */
+export const REAP_ANSWER_MS = 2_000;
+/**
+ * The longest the executor takes to end a run, as when the daemon stops: both
+ * stop graces, the second privilege rule, and the settle time with the last
+ * check's answer. The PC's service gives the daemon 20 seconds to stop before
+ * SIGKILL (TimeoutStopSec=20), and every halt marker is written within this.
+ */
+export const PLANNER_STOP_BUDGET_MS = 2 * STOP_GRACE_MS + REAP_ANSWER_MS + REAP_SETTLE_MS + REAP_ANSWER_MS;
+/** The longest a timer can wait: Node fires a longer one at once. */
+const MAX_TIMER_MS = 2_147_483_647;
 /** One stream-json line is never larger than this; a larger one fails the run. */
 const MAX_LINE_BYTES = 1024 * 1024;
 
@@ -218,7 +231,7 @@ export interface AgyPlannerDeps {
   readonly clock?: Clock;
   readonly log?: (level: 'info' | 'warn' | 'error', at: string, fields: Record<string, unknown>) => void;
   /** Bounds, for suites that cannot wait a minute. Production uses the constants above. */
-  readonly timings?: { readonly initTimeoutMs?: number; readonly runTimeoutMs?: number; readonly stopGraceMs?: number; readonly reapSettleMs?: number };
+  readonly timings?: { readonly initTimeoutMs?: number; readonly runTimeoutMs?: number; readonly stopGraceMs?: number; readonly reapSettleMs?: number; readonly reapAnswerMs?: number };
 }
 
 /** The route the control plane must intend, and the route a run is observed on. */
@@ -395,6 +408,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   private readonly runTimeoutMs: number;
   private readonly stopGraceMs: number;
   private readonly reapSettleMs: number;
+  private readonly reapAnswerMs: number;
   /** One run at a time: the planner user is one user, and the lingering-process check reads the whole user. */
   private busy = false;
   /** The start in flight, from its first check to its last evidence write, so a stopping daemon can cancel it (Amendment 3 C2). */
@@ -450,6 +464,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     this.runTimeoutMs = deps.timings?.runTimeoutMs ?? parseSeconds(AGY_PRINT_TIMEOUT) * 1000 + RUN_GRACE_MS;
     this.stopGraceMs = deps.timings?.stopGraceMs ?? STOP_GRACE_MS;
     this.reapSettleMs = deps.timings?.reapSettleMs ?? REAP_SETTLE_MS;
+    this.reapAnswerMs = deps.timings?.reapAnswerMs ?? REAP_ANSWER_MS;
   }
 
   /** The command line the first privilege rule must match, exactly. */
@@ -687,14 +702,16 @@ export class AgyPlannerExecutor implements PlannerExecutor {
    * Amendment 3 C1, after every run that started agy: end agy through sudo,
    * use rule B1(b), check the planner user, remove the checkout. An exit not
    * seen in time, a survivor, a failed check or a checkout left behind halts.
+   * An exit not seen halts before the reap, so its marker is written as soon
+   * as it is known, not after the reap and the check have taken their time.
    */
   private async endRun(run: AgyRun, directory: string): Promise<{ exitCode: number | null; signal: string | null; checkoutRemoved: boolean }> {
     const ended = await run.stop();
-    await this.reapPlannerUser();
     if (!ended.confirmed) {
       this.log('error', 'agy.exit_unconfirmed', { graceMs: this.stopGraceMs });
       await this.halt('agy_exit_unconfirmed');
     }
+    await this.reapPlannerUser();
     const checkoutRemoved = await this.removeRunCheckout(directory);
     return { exitCode: ended.exitCode, signal: ended.signal, checkoutRemoved };
   }
@@ -816,13 +833,13 @@ export class AgyPlannerExecutor implements PlannerExecutor {
    */
   private async reapPlannerUser(): Promise<void> {
     try {
-      await this.reap();
+      await answerWithin(this.reap(), this.reapAnswerMs, 'the second privilege rule');
     } catch (error) {
       this.log('error', 'agy.reap_failed', { message: describe(error) });
     }
     let remains: boolean;
     try {
-      remains = await remainsAfterReap(this.probe, this.reapSettleMs);
+      remains = await remainsAfterReap(this.probe, this.reapSettleMs, REAP_RECHECK_MS, this.reapAnswerMs);
     } catch (error) {
       this.log('error', 'agy.probe_failed', { message: describe(error) });
       remains = true;
@@ -1138,6 +1155,7 @@ class AgyRun {
   private closed = false;
   private malformed = false;
   private stopped = false;
+  private stopOnce: Promise<{ exitCode: number | null; signal: string | null; confirmed: boolean }> | null = null;
   private errored = false;
   private readonly exited: Promise<{ exitCode: number | null; signal: string | null }>;
 
@@ -1234,7 +1252,12 @@ class AgyRun {
    * follows ends that process. `confirmed` is false when the exit was not
    * seen in time, and the caller halts.
    */
-  async stop(): Promise<{ exitCode: number | null; signal: string | null; confirmed: boolean }> {
+  stop(): Promise<{ exitCode: number | null; signal: string | null; confirmed: boolean }> {
+    // Asked twice, by the daemon stopping and then by the run's end, it waits its graces once.
+    return (this.stopOnce ??= this.stopNow());
+  }
+
+  private async stopNow(): Promise<{ exitCode: number | null; signal: string | null; confirmed: boolean }> {
     this.stopped = true;
     if (this.child.exitCode === null && this.child.signalCode === null && !this.errored) {
       this.child.stdin.destroy();
@@ -1322,9 +1345,12 @@ export function runChild(file: string, args: readonly string[], cwd?: string): P
   return execute(file, args, cwd);
 }
 
-function execute(file: string, args: readonly string[], cwd?: string): Promise<{ code: number }> {
+/** How long git and the other children may run before they are killed and the call rejects. */
+const COMMAND_TIMEOUT_MS = 300_000;
+
+function execute(file: string, args: readonly string[], cwd?: string, timeoutMs: number = COMMAND_TIMEOUT_MS): Promise<{ code: number }> {
   return new Promise((resolve, reject) => {
-    execFile(file, [...args], { cwd, timeout: 300_000, env: childEnvironment() }, (error) => {
+    execFile(file, [...args], { cwd, timeout: timeoutMs, env: childEnvironment() }, (error) => {
       if (error === null) return resolve({ code: 0 });
       const code = (error as NodeJS.ErrnoException & { code?: unknown }).code;
       if (typeof code === 'number') return resolve({ code });
@@ -1347,7 +1373,7 @@ export function reapCommandLine(sudoPath: string, plannerUser: string): readonly
 export function pkillReaper(commandLine: readonly string[]): PlannerReaper {
   return async () => {
     const [file, ...args] = commandLine as [string, ...string[]];
-    const { code } = await execute(file, args);
+    const { code } = await execute(file, args, undefined, REAP_ANSWER_MS);
     if (code !== 0 && code !== 1) throw new Error(`pkill rule exited ${code}`);
   };
 }
@@ -1371,26 +1397,63 @@ export async function sha256OfFile(path: string): Promise<string> {
  * the instant after the kill can list a process that is already dead, as the
  * PC's first boot reap did (2026-10-30). So the check is asked again, every
  * `recheckMs`, until no process is listed or `settleMs` has passed; a process
- * still listed then remains. The bound is a number of checks, not a clock, so
- * it ends whatever the clock does; bounds that would not end it are refused.
- * A check that cannot be made rejects.
+ * still listed then remains. The number of checks is fixed before the first,
+ * and the whole check is bounded by one timer of `settleMs + answerMs`, so it
+ * ends whatever the clock does and however long a check takes: a check still
+ * unanswered when that timer fires rejects, as one that cannot be made does.
+ * Bounds that would not end it, or that no timer can hold, are refused.
  */
-export async function remainsAfterReap(probe: PlannerProcessProbe, settleMs: number = REAP_SETTLE_MS, recheckMs: number = REAP_RECHECK_MS): Promise<boolean> {
-  if (!Number.isFinite(settleMs) || settleMs < 0 || !Number.isFinite(recheckMs) || recheckMs <= 0) {
-    throw new RangeError(`the settle time must be finite and not negative, and the recheck interval finite and positive (${String(settleMs)}, ${String(recheckMs)})`);
-  }
+export async function remainsAfterReap(
+  probe: PlannerProcessProbe,
+  settleMs: number = REAP_SETTLE_MS,
+  recheckMs: number = REAP_RECHECK_MS,
+  answerMs: number = REAP_ANSWER_MS,
+): Promise<boolean> {
   const rechecks = Math.ceil(settleMs / recheckMs);
-  for (let attempt = 0; ; attempt += 1) {
-    if (!(await probe())) return false;
-    if (attempt >= rechecks) return true;
-    await new Promise((resolve) => setTimeout(resolve, recheckMs));
+  const limitMs = settleMs + answerMs;
+  if (
+    !(settleMs >= 0) || !(recheckMs > 0) || !(answerMs > 0) ||
+    !Number.isSafeInteger(rechecks) || !(recheckMs <= MAX_TIMER_MS) || !(limitMs <= MAX_TIMER_MS)
+  ) {
+    throw new RangeError(
+      `the settle time must not be negative, the recheck interval and answer time must be positive, and every bound must fit a timer (${String(settleMs)}, ${String(recheckMs)}, ${String(answerMs)})`,
+    );
+  }
+  const timers: NodeJS.Timeout[] = [];
+  const limit = new Promise<'limit'>((resolve) => timers.push(setTimeout(() => resolve('limit'), limitMs)));
+  try {
+    for (let attempt = 0; ; attempt += 1) {
+      const answer = await Promise.race([probe(), limit]);
+      if (answer === 'limit') throw new Error(`the check did not answer within ${String(limitMs)} ms`);
+      if (!answer) return false;
+      if (attempt >= rechecks) return true;
+      const waited = await Promise.race([new Promise<'waited'>((resolve) => timers.push(setTimeout(() => resolve('waited'), recheckMs))), limit]);
+      if (waited === 'limit') return true;
+    }
+  } finally {
+    for (const timer of timers) clearTimeout(timer);
+  }
+}
+
+/** `call`'s answer, or a rejection naming `what` when it has none within `ms`. */
+export async function answerWithin<T>(call: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      call,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${what} did not answer within ${String(ms)} ms`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 /** `pgrep -u <user>` exits 0 when the user has a process, 1 when it has none; anything else is an error. */
 export function pgrepProbe(user: string, pgrep = '/usr/bin/pgrep'): PlannerProcessProbe {
   return async () => {
-    const { code } = await execute(pgrep, ['-u', user]);
+    const { code } = await execute(pgrep, ['-u', user], undefined, REAP_ANSWER_MS);
     if (code === 0) return true;
     if (code === 1) return false;
     throw new Error(`pgrep exited ${code}`);
