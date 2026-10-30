@@ -828,6 +828,18 @@ describe('the check after the reap waits for killed processes to finish exiting 
     assert.equal(await remainsAfterReap(() => Promise.resolve(true), 0), true, 'no settle time: one check');
   });
 
+  it('remainsAfterReap refuses bounds that would never end, before any check; the executor then halts', async () => {
+    for (const [settle, recheck] of [[1_000, 0], [1_000, -1], [Number.NaN, 100], [Number.POSITIVE_INFINITY, 100], [1_000, Number.NaN], [-1, 100]] as const) {
+      let calls = 0;
+      await assert.rejects(remainsAfterReap(() => { calls += 1; return Promise.resolve(true); }, settle, recheck), RangeError, `${String(settle)}, ${String(recheck)}`);
+      assert.equal(calls, 0);
+    }
+    const h = harness({ mode: 'ok', probe: () => Promise.resolve(true), timings: { reapSettleMs: Number.POSITIVE_INFINITY } });
+    await h.executor.boot();
+    assert.equal(haltReason(h.gatewayDirectory), 'planner_user_survived_reap', 'a bound that cannot be used fails closed');
+    assert.ok(h.logged.includes('agy.probe_failed'));
+  });
+
   it('a real process killed with SIGKILL is still there the instant after the kill, and gone within the settle time', async () => {
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], { stdio: 'ignore' });
     await new Promise<void>((resolve, reject) => {

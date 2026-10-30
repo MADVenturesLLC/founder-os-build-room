@@ -1372,10 +1372,14 @@ export async function sha256OfFile(path: string): Promise<string> {
  * PC's first boot reap did (2026-10-30). So the check is asked again, every
  * `recheckMs`, until no process is listed or `settleMs` has passed; a process
  * still listed then remains. The bound is a number of checks, not a clock, so
- * it ends whatever the clock does. A check that cannot be made rejects.
+ * it ends whatever the clock does; bounds that would not end it are refused.
+ * A check that cannot be made rejects.
  */
 export async function remainsAfterReap(probe: PlannerProcessProbe, settleMs: number = REAP_SETTLE_MS, recheckMs: number = REAP_RECHECK_MS): Promise<boolean> {
-  const rechecks = Math.max(0, Math.ceil(settleMs / recheckMs));
+  if (!Number.isFinite(settleMs) || settleMs < 0 || !Number.isFinite(recheckMs) || recheckMs <= 0) {
+    throw new RangeError(`the settle time must be finite and not negative, and the recheck interval finite and positive (${String(settleMs)}, ${String(recheckMs)})`);
+  }
+  const rechecks = Math.ceil(settleMs / recheckMs);
   for (let attempt = 0; ; attempt += 1) {
     if (!(await probe())) return false;
     if (attempt >= rechecks) return true;
