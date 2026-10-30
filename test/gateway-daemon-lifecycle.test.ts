@@ -22,10 +22,12 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  DaemonLockHeld,
   SUN_PATH_MAX,
+  acquireDaemonLock,
   assertSocketPathFits,
   gatewayPaths,
   ipcRequest,
@@ -224,17 +226,17 @@ describe('gateway-daemon · one entry point per Gateway directory (FOUNDER-ACT-2
     }
   });
 
-  it('daemon:a-lost-directory-lock-stops-the-daemon-and-exits-one', { skip: process.platform !== 'linux' }, async () => {
+  it('daemon:the-entry-point-holds-the-directory-until-it-has-exited', async () => {
     const l = launch();
     try {
       assert.ok(await waitForIpc(l.socketPath), `never reached IPC — stderr: ${l.stderr()}`);
-      const helper = spawnSync('/usr/bin/pgrep', ['-P', String(l.child.pid), '-x', 'cat'], { encoding: 'utf8' }).stdout.trim();
-      assert.match(helper, /^\d+$/, 'one lock helper holds the directory');
-      process.kill(Number(helper), 'SIGKILL');
-      const code = await exitWithin(l.child, 10_000);
-      assert.equal(code, 1, `the daemon exits 1 — stderr: ${l.stderr()}`);
-      assert.match(l.stderr(), /the Gateway directory lock was lost: the daemon stops/);
-      assert.ok(!existsSync(l.socketPath), 'its socket was closed and removed');
+      const directory = dirname(l.socketPath);
+      await assert.rejects(acquireDaemonLock(directory), DaemonLockHeld, 'the running daemon holds its directory');
+      const exit = exitOf(l.child);
+      l.child.kill('SIGTERM');
+      assert.equal(await exit, 0, `clean exit — stderr: ${l.stderr()}`);
+      const after = await acquireDaemonLock(directory);
+      await after.release();
     } finally {
       l.cleanup();
     }

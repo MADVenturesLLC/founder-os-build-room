@@ -108,12 +108,12 @@ async function main(): Promise<number> {
   daemonRef = daemon;
 
   let stopping = false;
-  const stop = (code: number): void => {
+  const stop = (): void => {
     if (stopping) return; // A second signal during shutdown changes nothing.
     stopping = true;
     void daemon.stop().then(
       () => {
-        process.exit(code);
+        process.exit(0);
       },
       (error: unknown) => {
         process.stderr.write(`daemon shutdown failed: ${describe(error)}\n`);
@@ -121,13 +121,8 @@ async function main(): Promise<number> {
       },
     );
   };
-  process.on('SIGTERM', () => stop(0));
-  process.on('SIGINT', () => stop(0));
-  // A lost lock no longer keeps a second daemon out: this one stops, and says it failed.
-  void directoryLock.lost.then(() => {
-    process.stderr.write('the Gateway directory lock was lost: the daemon stops\n');
-    stop(1);
-  });
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
 
   await daemon.boot();
   daemon.start();

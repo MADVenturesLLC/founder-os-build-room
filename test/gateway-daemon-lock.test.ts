@@ -84,10 +84,11 @@ async function takenOnceFree(directory: string): Promise<HeldDaemonLock> {
   }
 }
 
-/** This process's Linux lock helpers: each ends as `cat`, holding the lock. */
-function lockHelpers(): number[] {
-  const found = spawnSync('/usr/bin/pgrep', ['-P', String(process.pid), '-x', 'cat'], { encoding: 'utf8' }).stdout;
-  return found.split('\n').filter((line) => line !== '').map(Number);
+/** A process this one starts after taking a lock, and that outlives the lock's release. */
+function laterChild(): ChildProcess {
+  const child = spawn('/bin/sleep', ['30'], { stdio: 'ignore' });
+  children.push(child);
+  return child;
 }
 
 function daemonOn(
@@ -200,46 +201,19 @@ describe('C2: one daemon per Gateway directory', () => {
     }
   });
 
-  it('on Linux the lock outlives SIGINT, SIGTERM and SIGHUP to its helper, and SIGKILL to it is reported as lost', { skip: process.platform !== 'linux' }, async () => {
+  it('the lock is held by the taking process alone: no process is left holding it, and no later child inherits it', async () => {
     const directory = temporary();
-    const before = new Set(lockHelpers());
     const held = await acquireDaemonLock(directory);
-    const helpers = lockHelpers().filter((pid) => !before.has(pid));
-    assert.equal(helpers.length, 1, 'one helper holds it');
-    const helper = helpers[0] as number;
-    let lost = false;
-    void held.lost.then(() => {
-      lost = true;
-    });
-    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
-      process.kill(helper, signal);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      await assert.rejects(acquireDaemonLock(directory), DaemonLockHeld, `${signal} leaves it held`);
-      assert.equal(lost, false);
+    if (process.platform === 'linux') {
+      const flock = spawnSync('/usr/bin/pgrep', ['-P', String(process.pid), '-x', 'flock'], { encoding: 'utf8' }).stdout.trim();
+      assert.equal(flock, '', 'flock took the lock and exited');
     }
-    process.kill(helper, 'SIGKILL');
-    // The helper holds the loop open no more than a daemon's socket would: this test holds it.
-    const keepalive = setInterval(() => undefined, 1_000);
-    try {
-      await held.lost;
-    } finally {
-      clearInterval(keepalive);
-    }
+    const child = laterChild();
+    await held.release();
     const next = await acquireDaemonLock(directory);
+    assert.equal(child.exitCode, null, 'the later child still runs, and holds nothing');
     await next.release();
-    await held.release();
-  });
-
-  it('a lock that is released is never reported lost', async () => {
-    const directory = temporary();
-    const held = await acquireDaemonLock(directory);
-    let lost = false;
-    void held.lost.then(() => {
-      lost = true;
-    });
-    await held.release();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.equal(lost, false);
+    await killed(child);
   });
 
   it('a second daemon on a live daemon\'s directory stops before its lanes, its Planner, its reap or the socket', async () => {
@@ -294,26 +268,44 @@ describe('C2: one daemon per Gateway directory', () => {
     await (await acquireDaemonLock(directory)).release();
   });
 
-  it('on Linux a daemon whose lock is lost logs it and stops, closing its socket', { skip: process.platform !== 'linux' }, async () => {
+  it('a stopping daemon holds the directory until its stop has finished, and its cleanup leaves the next daemon\'s socket', async () => {
     const directory = join(temporary(), 'gateway');
     const paths = gatewayPaths(directory);
-    const before = new Set(lockHelpers());
-    const daemon = daemonOn(directory);
+    let finishShutdown: () => void = () => undefined;
+    const slowShutdown = new Promise<void>((resolve) => {
+      finishShutdown = resolve;
+    });
+    const old = daemonOn(directory, {
+      plannerExecutor: { ...recordingExecutor([]), shutdown: () => slowShutdown } as unknown as PlannerExecutor,
+    });
+    await old.boot();
+    const stopped = old.stop();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const early = daemonOn(directory);
+    await assert.rejects(early.boot(), DaemonLockHeld, 'no daemon boots while the old one is still stopping');
+    await assert.rejects(acquireDaemonLock(directory), DaemonLockHeld);
+    finishShutdown();
+    await stopped;
+    const next = daemonOn(directory);
     try {
-      await daemon.boot();
-      const helper = lockHelpers().find((pid) => !before.has(pid));
-      assert.ok(helper !== undefined, 'the daemon\'s helper holds the lock');
-      process.kill(helper, 'SIGKILL');
-      for (let attempt = 0; attempt < 100 && existsSync(paths.socketPath); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 50));
-      assert.equal(existsSync(paths.socketPath), false, 'the daemon stopped and removed its socket');
-      assert.ok(daemon.ring.recent(50).some((entry) => entry.level === 'error' && entry.at_ === 'daemon.directory_lock_lost'));
+      await next.boot();
+      await old.stop();
+      await early.stop();
+      assert.equal(await socketAnswers(paths.socketPath), true, 'the next daemon keeps its socket');
     } finally {
-      await daemon.stop();
+      await next.stop();
     }
   });
 });
 
 describe('C2: a boot that fails gives the directory back', () => {
+  it('a stopped daemon boots no more', async () => {
+    const daemon = daemonOn(join(temporary(), 'gateway'));
+    await daemon.boot();
+    await daemon.stop();
+    await assert.rejects(daemon.boot(), /failed to boot or was stopped: construct a new one/);
+  });
+
   it('a daemon whose lanes\' recovery rejects releases the lock, and the next boot on the directory proceeds', async () => {
     const directory = join(temporary(), 'gateway');
     const failing = daemonOn(directory);
@@ -329,7 +321,7 @@ describe('C2: a boot that fails gives the directory back', () => {
     }
   });
 
-  it('a daemon whose boot fails after its socket is bound closes and removes the socket before it releases the lock', async () => {
+  it('a daemon whose boot fails after its socket is bound closes and removes the socket before it releases the lock, and boots no more', async () => {
     const directory = join(temporary(), 'gateway');
     const paths = gatewayPaths(directory);
     const failing = daemonOn(directory);
@@ -348,6 +340,9 @@ describe('C2: a boot that fails gives the directory back', () => {
     };
     await assert.rejects(failing.boot(), /failed after bind/);
     assert.equal(listeningAtRelease, false, 'the socket was closed and removed before the lock was released');
+    ipc.start = start;
+    await assert.rejects(failing.boot(), /failed to boot or was stopped: construct a new one/, 'a failed daemon boots no more');
+    assert.equal(await socketAnswers(paths.socketPath), false, 'and its refused retry bound nothing');
     assert.equal(await socketAnswers(paths.socketPath), false, 'nothing listens on the directory');
     const next = daemonOn(directory);
     try {

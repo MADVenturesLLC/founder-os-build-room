@@ -8,24 +8,22 @@
  * boot would reap the planner user and rewrite the live daemon's records.
  *
  * The lock is the kernel's exclusive `flock` on `daemon.lock`, a file in the
- * Gateway directory. The kernel takes it atomically and releases it when the
- * last descriptor on it closes, which happens when its holder ends, however it
- * ends: nothing is left behind that holds the directory, and no code ever
- * decides whether another process is still alive or removes anything another
- * process holds. The file itself is never removed, since removing a locked
- * file would let a second daemon lock a new one beside it.
+ * Gateway directory, held on a descriptor the daemon process itself opened and
+ * keeps. The kernel takes it atomically and releases it only when that
+ * descriptor closes: at the daemon's release, or at its exit, however it
+ * exits. Nothing but the daemon holds it, so nothing can release it while the
+ * daemon still runs; no code ever decides whether another process is alive,
+ * or removes anything another process holds. The file itself is never
+ * removed, since removing a locked file would let a second daemon lock a new
+ * one beside it.
  *
  * - macOS: the daemon opens the file with `O_EXLOCK | O_NONBLOCK`, which takes
- *   the lock in the open itself, and keeps the descriptor for its life.
- * - Linux has no such flag, and Node exposes no `flock` call, so the lock is
- *   held by one helper process the daemon starts with its pipe on the helper's
- *   standard input: a shell that opens the file, locks it with util-linux
- *   `flock`, says so, and becomes `cat`, which holds the descriptor until that
- *   pipe closes, at the daemon's release or its exit, however it exits. The
- *   helper ignores SIGINT, SIGTERM and SIGHUP, so a Ctrl-C or a service stop
- *   that reaches it with the daemon leaves the lock held until the daemon has
- *   finished stopping; SIGKILL alone ends it early, and the daemon is told
- *   (`lost`).
+ *   the lock in the open itself.
+ * - Linux has no such flag, and Node exposes no `flock` call. The daemon opens
+ *   the file and hands that open file to util-linux `flock`, which locks it
+ *   and exits: an `flock` lock belongs to the open file, not to the process
+ *   that took it, so it stays held by the daemon's own descriptor. Node opens
+ *   files close-on-exec, so no other child of the daemon inherits it.
  *
  * It is not a socket or any other endpoint (Room Runtime Phase 1 gives the
  * daemon one socket, `ipc.sock`, and no other named endpoint; test T9). The
@@ -38,26 +36,20 @@
  * down until someone removed it.
  */
 
-import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { open, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Readable, Writable } from 'node:stream';
 import { FILE_MODE } from './paths.js';
 
 /** `O_EXLOCK` from Darwin's `<sys/fcntl.h>`, where Node does not export it. */
 const DARWIN_O_EXLOCK = 0x20;
-/** The util-linux `flock` the Linux lock is taken with. */
+/** The util-linux `flock` that takes the Linux lock on the daemon's descriptor. */
 export const FLOCK_PATH = '/usr/bin/flock';
 /** `flock --conflict-exit-code`: the lock is held by another. */
 const FLOCK_CONFLICT = 75;
-/**
- * The Linux helper, with the lock file as `$1`. The lock is on the descriptor
- * the shell opens (9), which `cat` inherits; `flock` only takes it and exits.
- */
-const LINUX_HOLDER = `trap '' INT TERM HUP; exec 9<>"$1" || exit 1; ${FLOCK_PATH} --nonblock --conflict-exit-code ${String(FLOCK_CONFLICT)} 9 || exit $?; echo held; exec /bin/cat`;
-/** How long the Linux helper may take to report the lock taken or held. */
-const FLOCK_START_TIMEOUT_MS = 10_000;
+/** The descriptor number the daemon's open file has inside `flock`. */
+const FLOCK_FD = 3;
 
 export class DaemonLockHeld extends Error {
   override readonly name = 'DaemonLockHeld';
@@ -68,10 +60,8 @@ export class DaemonLockHeld extends Error {
 }
 
 export interface HeldDaemonLock {
-  /** Releases the lock and settles once it is free. The holder's exit releases it too. */
+  /** Releases the lock. The daemon's exit releases it too. */
   release(): Promise<void>;
-  /** Settles if the lock is lost before its release: on Linux, its helper was killed. */
-  readonly lost: Promise<void>;
 }
 
 /** The lock's file in a Gateway directory. */
@@ -96,63 +86,34 @@ async function acquireDarwin(directory: string): Promise<HeldDaemonLock> {
     if (code === 'EWOULDBLOCK' || code === 'EAGAIN') throw new DaemonLockHeld(directory);
     throw error;
   }
-  let released = false;
-  return {
-    release: async () => {
-      if (released) return;
-      released = true;
-      await handle.close();
-    },
-    // The descriptor is the daemon's own: nothing but its release or its exit closes it.
-    lost: new Promise<void>(() => undefined),
-  };
+  return heldBy(handle);
 }
 
 async function acquireLinux(directory: string): Promise<HeldDaemonLock> {
-  const path = daemonLockPath(directory);
-  // The file is made here, 0600, and never through a link, so the helper opens one that exists.
-  await (await open(path, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, FILE_MODE)).close();
-  const helper: ChildProcessByStdio<Writable, Readable, null> = spawn('/bin/sh', ['-c', LINUX_HOLDER, 'daemon-lock', path], {
-    stdio: ['pipe', 'pipe', 'ignore'],
-    env: { PATH: '/usr/bin:/bin' },
-  });
-  // The helper's standard output closes when it ends, and with it the lock is free.
-  const ended = new Promise<void>((resolve) => helper.stdout.once('close', () => resolve()));
-  const taken = await new Promise<'taken' | 'held' | Error>((resolve) => {
-    let settled = false;
-    const settle = (value: 'taken' | 'held' | Error): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(value);
-    };
-    const timer = setTimeout(() => settle(new Error('the lock helper did not report the lock in time')), FLOCK_START_TIMEOUT_MS);
-    helper.stdout.once('data', () => settle('taken'));
-    helper.once('error', (error) => settle(error));
-    helper.once('exit', (code) => settle(code === FLOCK_CONFLICT ? 'held' : new Error(`the lock helper exited ${String(code)}`)));
-  });
-  if (taken !== 'taken') {
-    helper.stdin.destroy();
-    helper.kill('SIGKILL');
-    if (taken === 'held') throw new DaemonLockHeld(directory);
-    throw taken;
+  const handle = await open(daemonLockPath(directory), constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, FILE_MODE);
+  let outcome: number | Error;
+  try {
+    outcome = await new Promise<number | Error>((resolve) => {
+      const flock = spawn(FLOCK_PATH, ['--nonblock', '--conflict-exit-code', String(FLOCK_CONFLICT), String(FLOCK_FD)], {
+        stdio: ['ignore', 'ignore', 'ignore', handle.fd],
+        env: { PATH: '/usr/bin:/bin' },
+      });
+      flock.once('error', (error) => resolve(error));
+      flock.once('exit', (code, signal) => resolve(code ?? new Error(`flock ended by ${String(signal)}`)));
+    });
+  } catch (error) {
+    await handle.close();
+    throw error;
   }
-  // The helper holds no event loop open: the daemon lives as long as its IPC socket.
-  helper.unref();
-  (helper.stdin as unknown as { unref?: () => void }).unref?.();
-  (helper.stdout as unknown as { unref?: () => void }).unref?.();
-  helper.stdout.resume();
-  let released = false;
+  if (outcome === 0) return heldBy(handle);
+  await handle.close();
+  if (outcome === FLOCK_CONFLICT) throw new DaemonLockHeld(directory);
+  throw outcome instanceof Error ? outcome : new Error(`flock exited ${String(outcome)}`);
+}
+
+function heldBy(handle: FileHandle): HeldDaemonLock {
+  let released: Promise<void> | null = null;
   return {
-    release: async () => {
-      if (!released) {
-        released = true;
-        // Held open again until the helper has ended, so the release can wait for it.
-        (helper.stdout as unknown as { ref?: () => void }).ref?.();
-        helper.stdin.end();
-      }
-      await ended;
-    },
-    lost: ended.then(() => (released ? new Promise<void>(() => undefined) : undefined)),
+    release: () => (released ??= handle.close()),
   };
 }

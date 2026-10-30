@@ -71,6 +71,8 @@ export class GatewayDaemon {
   private readonly ipc: IpcServer;
   private cadence: NodeJS.Timeout | null = null;
   private stopping = false;
+  /** Set when a boot fails after taking the lock; such a daemon never boots again. */
+  private bootFailed = false;
   /** The tick currently in flight, if any (correction B6, Rev 4.7 tester). */
   private tickInFlight: Promise<void> | null = null;
   /** The boot under way, so a stop that overlaps it waits for its reap and check to finish. */
@@ -122,6 +124,11 @@ export class GatewayDaemon {
 
   /** Load persisted state and adopt the primary identity from custody. */
   boot(): Promise<void> {
+    // Its IPC server stopped for good, so a daemon that failed to boot or was stopped boots
+    // no more: the caller constructs a new one.
+    if (this.bootFailed || this.stopping) {
+      return Promise.reject(new Error('this Gateway daemon failed to boot or was stopped: construct a new one'));
+    }
     this.bootInFlight = this.bootNow().finally(() => {
       this.bootInFlight = null;
     });
@@ -136,12 +143,6 @@ export class GatewayDaemon {
     const lock = this.providedLock ?? (await acquireDaemonLock(this.deps.paths.directory));
     this.providedLock = null;
     this.directoryLock = lock;
-    // A lock lost while the daemon runs no longer keeps a second daemon out: this one stops.
-    void lock.lost.then(() => {
-      if (this.directoryLock !== lock || this.stopping) return;
-      this.log('error', 'daemon.directory_lock_lost', {});
-      void this.stop();
-    });
     try {
       try {
         await this.bootLanes();
@@ -158,6 +159,7 @@ export class GatewayDaemon {
       // A boot that fails gives the directory back: a caller that catches the failure and
       // boots again, here or in a new daemon, is not refused by this daemon's lock. Its socket,
       // if it bound one, is closed and removed first, while no other daemon can bind it.
+      this.bootFailed = true;
       await this.ipc.stop();
       await this.releaseDirectoryLock();
       throw error;
