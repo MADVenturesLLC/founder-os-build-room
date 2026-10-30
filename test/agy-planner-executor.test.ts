@@ -2647,6 +2647,105 @@ describe('the eleventh pass: Tier-2 A1 to A4 of the tenth review', () => {
     await assert.rejects(new PlannerRecordStore(recordsDirectory).read('c-fifo'), /not a regular file/);
   });
 
+  it('R1: the halt marker is rewritten one rewrite at a time, and a rewrite clears only the halt it wrote', async () => {
+    let inFlight = 0;
+    let most = 0;
+    let during: (() => void) | null = null;
+    const h = harness({
+      mode: 'ok',
+      syncDirectory: async (path) => {
+        if (basename(path) === 'planner-evidence') return syncDirectory(path);
+        inFlight += 1;
+        most = Math.max(most, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        during?.();
+        inFlight -= 1;
+        return syncDirectory(path);
+      },
+    });
+    const executor = h.executor as unknown as { pendingHalt: string | null; persistPendingHalt: () => Promise<void> };
+    const text = `${JSON.stringify({ haltedAt: '2026-10-29T00:00:00.000Z', reason: 'planner_user_survived_reap', plannerUser: 'buildroom-planner' })}\n`;
+    executor.pendingHalt = text;
+    await Promise.all([executor.persistPendingHalt(), executor.persistPendingHalt(), executor.persistPendingHalt()]);
+    assert.equal(most, 1, 'never two rewrites at once');
+    assert.equal(executor.pendingHalt, null);
+    assert.equal(readFileSync(join(h.gatewayDirectory, 'planner-halted.json'), 'utf8'), text);
+
+    // A halt held anew while a rewrite of the old one is under way is not cleared by that rewrite.
+    const other = `${JSON.stringify({ haltedAt: '2026-10-29T00:00:01.000Z', reason: 'halt_marker_unreadable_at_boot', plannerUser: 'buildroom-planner' })}\n`;
+    executor.pendingHalt = text;
+    during = () => {
+      during = null;
+      executor.pendingHalt = other;
+    };
+    await executor.persistPendingHalt();
+    assert.equal(executor.pendingHalt, other, 'the halt held anew is still pending');
+    await executor.persistPendingHalt();
+    assert.equal(executor.pendingHalt, null);
+    assert.equal(readFileSync(join(h.gatewayDirectory, 'planner-halted.json'), 'utf8'), other);
+  });
+
+  it('R2: once a closing write at boot fails, the records after it are not read either', async () => {
+    const h = harness({ mode: 'ok' });
+    const paths = [work(), work()].map((w) =>
+      placeEvidence(h, w.commandId, evidenceLine(w.commandId, `exec-${w.commandId}`, { outcome: 'running', endedAt: null })),
+    );
+    // At the first closing write's sync, every record path becomes a named pipe: any read
+    // after it would be refused at once and logged as unreadable evidence.
+    const probe = await openFile(FAKE_AGY, 'r');
+    const prototype = Object.getPrototypeOf(probe) as unknown as { sync: (this: FileHandle) => Promise<void> };
+    await probe.close();
+    const original = prototype.sync;
+    let fileSyncs = 0;
+    prototype.sync = async function (this: FileHandle): Promise<void> {
+      if (!(await this.stat()).isDirectory() && ++fileSyncs === 3) {
+        for (const path of paths) {
+          rmSync(path);
+          spawnSync('mkfifo', [path]);
+        }
+        throw Object.assign(new Error('EIO: sync failed'), { code: 'EIO' });
+      }
+      return original.call(this);
+    };
+    try {
+      await h.executor.boot();
+    } finally {
+      prototype.sync = original;
+    }
+    assert.ok(h.logged.includes('agy.evidence_failed'));
+    assert.equal(h.logged.includes('agy.evidence_unreadable'), false, `no record was read after the failure: ${JSON.stringify(h.logged)}`);
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_write_failed');
+  });
+
+  it('R2: a named pipe that appears after the record store opened is refused by its readers at once', { timeout: 10_000 }, async () => {
+    const recordsDirectory = join(temporary('buildroom-records-'), 'planner-records');
+    mkdirSync(recordsDirectory);
+    const store = new PlannerRecordStore(recordsDirectory);
+    assert.equal(await store.read('c-none'), null, 'the store opened with nothing to rewrite');
+    spawnSync('mkfifo', [join(recordsDirectory, evidenceName('c-fifo'))]);
+    const started = Date.now();
+    await assert.rejects(store.read('c-fifo'), /not a regular file/);
+    await assert.rejects(store.all(), /not a regular file/);
+    assert.equal(Date.now() - started < 2_000, true, 'refused, not waited on');
+  });
+
+  it('C2: an evidence directory that cannot be listed at boot halts the executor and latches its evidence', async () => {
+    const h = harness({ mode: 'ok' });
+    // A file where the directory should be: listing it fails with ENOTDIR.
+    const evidenceDirectory = join(h.gatewayDirectory, 'planner-evidence');
+    writeFileSync(evidenceDirectory, '');
+    await h.executor.boot();
+    assert.ok(h.logged.includes('agy.evidence_unreadable'));
+    assert.equal(haltReason(h.gatewayDirectory), 'evidence_unreadable');
+    // The directory is sound again, and the halt is cleared: only the latch still refuses.
+    rmSync(evidenceDirectory);
+    mkdirSync(evidenceDirectory);
+    rmSync(join(h.gatewayDirectory, 'planner-halted.json'));
+    const w = work();
+    await assert.rejects(h.executor.start(w, await identityFor(h.executor, w.commandId)), /cannot be read/);
+    assert.equal(h.launches, 0);
+  });
+
   it('A4: a named pipe at a command\'s evidence path is unreadable evidence, read at once', { timeout: 10_000 }, async () => {
     const h = harness({ mode: 'ok' });
     const evidenceDirectory = join(h.gatewayDirectory, 'planner-evidence');

@@ -411,6 +411,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
    * its directory synced), never synced again, at boot and before every start is answered.
    */
   private pendingHalt: string | null = null;
+  /** The halt marker's rewrites, one at a time. */
+  private haltWrites: Promise<void> = Promise.resolve();
   /**
    * Set when an evidence write fails, at any step, or when boot cannot list the evidence
    * directory or write what it holds again: no record in it is read or written for the
@@ -429,7 +431,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     for (const [name, value] of Object.entries({ sudoPath: config.sudoPath, agyPath: config.agyPath, checkoutParent: config.checkoutParent })) {
       if (!value.startsWith('/')) throw new Error(`${name} must be an absolute path`);
     }
-    if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(config.plannerUser)) throw new Error('plannerUser is not a user name');
+    if (!isPlannerUserName(config.plannerUser)) throw new Error('plannerUser is not a user name');
     if (!/^[0-9a-f]{64}$/.test(config.agySha256)) throw new Error('agySha256 is not a lowercase SHA-256');
     this.launch = deps.launch ?? ((file, args, options) => spawn(file, [...args], { cwd: options.cwd, stdio: 'pipe', env: childEnvironment() }));
     this.probe = deps.probe ?? pgrepProbe(config.plannerUser);
@@ -450,7 +452,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
 
   /** The command line the second privilege rule must match, exactly (Amendment 3 B1(b)). */
   reapCommandLine(): readonly string[] {
-    return [this.config.sudoPath, '-n', '-u', this.config.plannerUser, '--', PKILL_PATH, '-KILL', '-u', this.config.plannerUser];
+    return reapCommandLine(this.config.sudoPath, this.config.plannerUser);
   }
 
   /** Whether the daemon still holds Gateway 1880c12d's identity. A reader that fails is not proof that it does. */
@@ -910,7 +912,15 @@ export class AgyPlannerExecutor implements PlannerExecutor {
    * a second sync of the first file, which can report success for data already lost. The
    * process stays halted either way.
    */
-  private async persistPendingHalt(): Promise<void> {
+  private persistPendingHalt(): Promise<void> {
+    // One rewrite at a time (pull request 133, R1): two at once could each leave the
+    // marker to the other, so a held halt is cleared only by the rewrite of that halt.
+    const next = this.haltWrites.then(() => this.persistPendingHaltNow());
+    this.haltWrites = next.catch(() => undefined);
+    return next;
+  }
+
+  private async persistPendingHaltNow(): Promise<void> {
     const pending = this.pendingHalt;
     if (pending === null) return;
     const temporary = join(this.config.gatewayDirectory, `.planner-halted.${randomUUID()}.tmp`);
@@ -924,7 +934,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       }
       await rename(temporary, this.haltPath());
       await (this.deps.syncDirectory ?? syncDirectory)(this.config.gatewayDirectory);
-      this.pendingHalt = null;
+      if (this.pendingHalt === pending) this.pendingHalt = null;
       this.log('warn', 'agy.halt_persisted', { haltFile: this.haltPath() });
     } catch (error) {
       await unlink(temporary).catch(() => undefined);
@@ -1314,6 +1324,16 @@ function execute(file: string, args: readonly string[], cwd?: string): Promise<{
       reject(error);
     });
   });
+}
+
+/** A name the privilege rules can carry: a plain POSIX user name, nothing sudo could read as an option. */
+export function isPlannerUserName(name: string): boolean {
+  return /^[a-z_][a-z0-9_-]{0,31}$/.test(name);
+}
+
+/** The second privilege rule's command line (Amendment 3 B1(b)), for the executor and for a daemon that does not run one. */
+export function reapCommandLine(sudoPath: string, plannerUser: string): readonly string[] {
+  return [sudoPath, '-n', '-u', plannerUser, '--', PKILL_PATH, '-KILL', '-u', plannerUser];
 }
 
 /** The second privilege rule. `pkill` exits 0 when it signalled a process and 1 when none matched; both are a clean reap. */
