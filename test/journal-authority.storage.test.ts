@@ -45,7 +45,7 @@ import type { Client as PgClient, QueryResult } from 'pg';
 import {
   GENESIS_CHAIN_HASH,
   chainHash,
-  encodeCommandEventRow,
+  encodeCommandEventRowV2,
   envelopeDigest,
   type CommandEventRow,
 } from '../packages/journal/src/index.js';
@@ -274,7 +274,7 @@ function canonicalJournaled(seq: string, commandId: string, second: number): { b
     evidenceRefs: [],
     recordedAt: `2026-09-14T13:00:${String(second).padStart(2, '0')}.000000Z`,
   };
-  const bytes = encodeCommandEventRow(row);
+  const bytes = encodeCommandEventRowV2(row);
   return { bytes, expectedHash: (prior: string) => chainHash(prior, bytes) };
 }
 

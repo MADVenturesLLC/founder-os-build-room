@@ -180,6 +180,8 @@ export function assertSocketPathFits(socketPath: string): void {
 
 export class IpcServer {
   private server: Server | null = null;
+  /** Whether this server bound the socket path; only then is the path its to remove. */
+  private bound = false;
   /** R5 §7: coalesced room-delivery scheduling, keyed by room id. */
   private readonly roomSchedules = new Map<string, boolean>();
   /** R5 §8: every accepted connection, tracked for stop() completion. */
@@ -226,6 +228,8 @@ export class IpcServer {
     // A stale socket file from a crashed daemon would refuse the bind. This is
     // the daemon's own socket path and carries no mutual-exclusion meaning —
     // unlike the staging lock, which is never removed by anything but its owner.
+    // The daemon's directory lock (`daemon-lock.ts`) is what makes it this
+    // daemon's own: no other daemon on the directory gets this far.
     await unlink(this.paths.socketPath).catch(() => undefined);
 
     const server = createServer((socket: Socket) => this.serve(socket));
@@ -233,9 +237,11 @@ export class IpcServer {
       server.once('error', reject);
       server.listen(this.paths.socketPath, () => resolve());
     });
+    // Held before anything else can fail, so a stop() after a failed start still closes it.
+    this.server = server;
+    this.bound = true;
     // 0600: the socket is as sensitive as the state file it reports on.
     await chmod(this.paths.socketPath, FILE_MODE);
-    this.server = server;
     // R5 §7: the adapter registers itself as the runtime's delivery
     // notifier at start() — the explicit registration seam (the runtime
     // owns no sockets/timers; it only invokes this after mutations).
@@ -273,7 +279,9 @@ export class IpcServer {
       await Promise.allSettled([...this.connections].map((c) => c.done)); // (10b) every finalizer
       // (11) grace timer: the race already bounded it; nothing to clear beyond it.
       this.roomSchedules.clear(); // (12) remove scheduled work
-      await unlink(this.paths.socketPath).catch(() => undefined); // (13) owned path only
+      // (13) owned path only: a server that never bound it, such as one whose daemon was
+      // refused the directory lock, leaves the live daemon's socket where it is.
+      if (this.bound) await unlink(this.paths.socketPath).catch(() => undefined);
     })();
     return this.stopPromise;
   }

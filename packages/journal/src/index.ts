@@ -52,9 +52,14 @@ export {
   RESOLUTION_DETERMINATIONS,
   RESOLUTION_SEMANTICS,
   SPEC_ID_C,
+  SPEC_ID_C2,
+  commandSpecOrderDefect,
   encodeCommandEventRow,
+  encodeCommandEventRowAs,
+  encodeCommandEventRowV2,
   type CommandEventRow,
   type CommandEventType,
+  type CommandRowSpec,
   type LifecycleEventRef,
   type ResolutionDetermination,
   type ResolutionSemantics,
@@ -76,9 +81,11 @@ export {
 export {
   JournalDecodeError,
   decodeCommandEventRow,
+  decodeCommandEventRowV2,
   decodeDecisionRecordRow,
   decodeEnvelope,
   decodeJournalRow,
+  journalRowSpec,
   type DecodedJournalRow,
 } from './decode.js';
 

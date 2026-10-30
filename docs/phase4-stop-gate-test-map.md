@@ -139,8 +139,10 @@ more into the map than it holds.
   authorized. The lifecycle suite builds the loop the way that caller
   does, over production's store classes.
 - **The Planner is synthetic.** Every planner test runs a synthetic executor
-  or Planner (§6 allows it). No provider is contacted, and no executor ships:
-  `DEC-20260827-01` §3.4 authorizes no provider binding.
+  or Planner (§6 allows it), and no provider is contacted. The one executor
+  that ships, agy on Gateway `1880c12d`
+  (FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR), is tested against a fake
+  agy in `test/agy-planner-executor.test.ts`.
 - **Item 2's in-memory cases.** `test/journal-7.2-fail-closed.test.ts` tests
   `dispatchGovernedCommand` over the in-memory journal, which no production
   path calls. The production planner path keeps journal-first by its own

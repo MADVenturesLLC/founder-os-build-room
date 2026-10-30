@@ -16,9 +16,11 @@ import {
   SPEC_ID_A,
   SPEC_ID_B,
   SPEC_ID_C,
+  SPEC_ID_C2,
   SPEC_ID_D,
   chainHash,
   encodeCommandEventRow,
+  encodeCommandEventRowAs,
   encodeDecisionRecordRow,
   encodeEnvelope,
   encodePlanDoc,
@@ -27,6 +29,7 @@ import {
   sha256Hex,
   type CanonicalDocument,
   type CommandEventRow,
+  type CommandRowSpec,
   type DecisionRecordRow,
   type NormalizedCommandEnvelope,
 } from '../../packages/journal/src/index.js';
@@ -232,6 +235,123 @@ export const CHAIN_ROWS: readonly (
   },
 ];
 
+/**
+ * The `BRJ:c:2` cutover chain: command rows under `BRJ:c:1`, a decision row, then
+ * every later command row under `BRJ:c:2`, as a chain moves from one to the other
+ * once. It covers a `dispatched` row carrying `init_model` and
+ * `provider_conversation_id`, one carrying neither (a lane whose executor reports
+ * no init event), and a `BRJ:c:2` row of each other shape the cutover needs.
+ */
+export const CHAIN_V2_ROWS: readonly (
+  | { readonly recordClass: 'command'; readonly spec: CommandRowSpec; readonly name: string; readonly row: CommandEventRow }
+  | { readonly recordClass: 'decision'; readonly name: string; readonly row: DecisionRecordRow }
+)[] = [
+  {
+    recordClass: 'command',
+    spec: SPEC_ID_C,
+    name: 'BRJ:c:1 journaled before the cutover',
+    row: journaled('1', 'cmd_example_0101', '21', { roomId: 'room_example_0101' }),
+  },
+  {
+    recordClass: 'command',
+    spec: SPEC_ID_C,
+    name: 'BRJ:c:1 dispatched before the cutover, with no init fields',
+    row: {
+      seq: '2',
+      eventType: 'dispatched',
+      commandId: 'cmd_example_0101',
+      provider: 'example-provider',
+      model: 'example-model-1',
+      executionSurface: 'example-surface',
+      evidenceRefs: [],
+      recordedAt: T('22'),
+    },
+  },
+  {
+    recordClass: 'decision',
+    name: 'decision founder.cancel pre-plan, between the two versions',
+    row: {
+      seq: '3',
+      decision: 'founder.cancel',
+      actorId: 'founder',
+      recordedState: 'ROOM_CREATED',
+      authorizationRef: 'auth_example_0101',
+      lifecycleEventRef: { roomId: 'room_example_0102', eventId: 'evt_example_0101' },
+      recordedAt: T('23'),
+    },
+  },
+  {
+    recordClass: 'command',
+    spec: SPEC_ID_C2,
+    name: 'BRJ:c:2 journaled after the cutover, the init fields absent',
+    row: journaled('4', 'cmd_example_0102', '24'),
+  },
+  {
+    recordClass: 'command',
+    spec: SPEC_ID_C2,
+    name: 'BRJ:c:2 dispatched carrying init_model and provider_conversation_id',
+    row: {
+      seq: '5',
+      eventType: 'dispatched',
+      commandId: 'cmd_example_0102',
+      runId: 'run_example_0102',
+      provider: 'example-provider',
+      model: 'example-model-1',
+      executionSurface: 'example-surface',
+      evidenceRefs: ['plandoc/example_0102'],
+      recordedAt: T('25'),
+      initModel: 'example-model-1',
+      providerConversationId: 'conv_example_0102',
+    },
+  },
+  {
+    recordClass: 'command',
+    spec: SPEC_ID_C2,
+    name: 'BRJ:c:2 completed',
+    row: {
+      seq: '6',
+      eventType: 'completed',
+      commandId: 'cmd_example_0102',
+      evidenceRefs: ['evidence_example_0102'],
+      recordedAt: T('26'),
+    },
+  },
+  {
+    recordClass: 'command',
+    spec: SPEC_ID_C2,
+    name: 'BRJ:c:2 journaled for a lane whose executor reports no init event',
+    row: journaled('7', 'cmd_example_0103', '27'),
+  },
+  {
+    recordClass: 'command',
+    spec: SPEC_ID_C2,
+    name: 'BRJ:c:2 dispatched carrying neither init field',
+    row: {
+      seq: '8',
+      eventType: 'dispatched',
+      commandId: 'cmd_example_0103',
+      provider: 'example-provider',
+      model: 'example-model-1',
+      executionSurface: 'example-surface',
+      evidenceRefs: [],
+      recordedAt: T('28'),
+    },
+  },
+  {
+    recordClass: 'command',
+    spec: SPEC_ID_C2,
+    name: 'BRJ:c:2 failed after dispatch',
+    row: {
+      seq: '9',
+      eventType: 'failed',
+      commandId: 'cmd_example_0103',
+      failureClassification: 'route_mismatch',
+      evidenceRefs: [],
+      recordedAt: T('29'),
+    },
+  },
+];
+
 /** Standalone decision vectors covering every presence shape (contract §6.2, §10). */
 export const DECISION_VECTOR_ROWS: readonly { readonly name: string; readonly row: DecisionRecordRow }[] = [
   {
@@ -368,6 +488,36 @@ export function buildChainVectorFile(): object {
   };
 }
 
+/** The `BRJ:c:2` cutover chain, framed exactly as `chain.json` is. */
+export function buildChainV2VectorFile(): object {
+  let prior = GENESIS_CHAIN_HASH;
+  const rows = CHAIN_V2_ROWS.map((entry) => {
+    const bytes =
+      entry.recordClass === 'command'
+        ? encodeCommandEventRowAs(entry.spec, entry.row)
+        : encodeDecisionRecordRow(entry.row);
+    const rowChainHash = chainHash(prior, bytes);
+    const built = {
+      name: entry.name,
+      record_class: entry.recordClass,
+      spec: entry.recordClass === 'command' ? entry.spec : SPEC_ID_D,
+      input: entry.row,
+      canonical_hex: hex(bytes),
+      row_sha256: sha256Hex(bytes),
+      prior_chain_hash: prior,
+      chain_hash: rowChainHash,
+    };
+    prior = rowChainHash;
+    return built;
+  });
+  return {
+    specs: [SPEC_ID_C, SPEC_ID_C2, SPEC_ID_D],
+    generated_by: 'test/support/generate-journal-vectors.ts',
+    genesis: GENESIS_CHAIN_HASH,
+    rows,
+  };
+}
+
 /** Every vector file, keyed by its path under `packages/journal/vectors/`. */
 export function buildAllVectorFiles(): ReadonlyMap<string, object> {
   return new Map<string, object>([
@@ -375,6 +525,7 @@ export function buildAllVectorFiles(): ReadonlyMap<string, object> {
     ['plandoc.json', buildPlanDocVectorFile()],
     ['decision-row.json', buildDecisionVectorFile()],
     ['chain.json', buildChainVectorFile()],
+    ['chain-v2.json', buildChainV2VectorFile()],
   ]);
 }
 

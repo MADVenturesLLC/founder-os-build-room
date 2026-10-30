@@ -42,7 +42,7 @@ import type { Client as PgClient } from 'pg';
 import {
   GENESIS_CHAIN_HASH,
   chainHash,
-  encodeCommandEventRow,
+  encodeCommandEventRowV2,
   envelopeDigest,
   type CommandEventRow,
 } from '../packages/journal/src/index.js';
@@ -211,7 +211,7 @@ function canonicalRow(seq: string, commandId: string, eventType: CommandEventRow
   };
   // envelopeDigest must match the canonical envelope bytes (validateRow checks).
   const withDigest: CommandEventRow = { ...row, envelopeDigest: envelopeDigest(row.commandEnvelope!) };
-  const bytes = encodeCommandEventRow(withDigest);
+  const bytes = encodeCommandEventRowV2(withDigest);
   return { bytes, hash: (prior: string) => chainHash(prior, bytes) };
 }
 

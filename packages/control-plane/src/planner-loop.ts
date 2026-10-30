@@ -77,8 +77,10 @@
  * surface (slice 10) constructs one per request behind its token, act,
  * deployment-id and registry checks, and answers 503 without them. The
  * entry act that names the active model and the seats (Q2a, Q7a) is
- * still not issued, and the Gateway's Antigravity executor is not
- * built (`DEC-20260827-01` §3.4 authorizes no provider binding).
+ * still not issued. The Gateway's Antigravity executor is
+ * `gateway-daemon/src/agy-planner-executor.ts`, the one provider binding
+ * FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR authorizes, on Gateway
+ * `1880c12d` only.
  */
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -185,8 +187,27 @@ export interface ObservedRoute {
   readonly executionSurface: string;
 }
 
+/**
+ * The init model and conversation id the executor read before it sent the work, for the
+ * `dispatched` row (Amendment 5 B1; FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS B1, B2).
+ */
+export interface PlannerInit {
+  readonly initModel: string;
+  readonly conversationId: string;
+}
+
+/** The agy lane, `antigravity` serving `google`: its accepted work must carry `PlannerInit` (act B2). */
+export function initRequired(observed: ObservedRoute): boolean {
+  return observed.executionSurface === 'antigravity' && observed.provider === 'google';
+}
+
+/** The two `BRJ:c:2` fields of a `dispatched` row, or none. */
+export function initFields(init: PlannerInit | undefined): { initModel?: string; providerConversationId?: string } {
+  return init === undefined ? {} : { initModel: init.initModel, providerConversationId: init.conversationId };
+}
+
 export type PlannerDispatchReceipt =
-  | { readonly kind: 'accepted'; readonly observed: ObservedRoute }
+  | { readonly kind: 'accepted'; readonly observed: ObservedRoute; readonly init?: PlannerInit }
   /** The Planner proves the work never left for a provider. */
   | { readonly kind: 'not_sent' };
 
@@ -202,8 +223,14 @@ export type PlannerResult =
 export type PlannerReconciliation =
   /** Affirmative evidence that the command never reached a provider. */
   | { readonly kind: 'never_received' }
-  | { readonly kind: 'running'; readonly executionId: string; readonly observed: ObservedRoute }
-  | { readonly kind: 'finished'; readonly executionId: string; readonly observed: ObservedRoute; readonly result: PlannerResult };
+  | { readonly kind: 'running'; readonly executionId: string; readonly observed: ObservedRoute; readonly init?: PlannerInit }
+  | {
+      readonly kind: 'finished';
+      readonly executionId: string;
+      readonly observed: ObservedRoute;
+      readonly init?: PlannerInit;
+      readonly result: PlannerResult;
+    };
 
 /**
  * The Planner as the loop sees it. `attest` is `AdapterV1.attest`, read
@@ -632,12 +659,18 @@ export class PlannerLoop {
     }
     if (receipt.kind === 'not_sent') return this.fail(commandId, 'not_sent');
     const observed = receipt.observed;
+    // The agy lane's acceptance without the init model and conversation id: the work may
+    // have been sent, and what served it cannot be journaled, so nothing is guessed (act B2).
+    if (initRequired(observed) && receipt.init === undefined) {
+      return this.unresolved(commandId, 'accepted on the agy lane without the init model and conversation id');
+    }
     await this.deps.journal.appendCommandEvent({
       eventType: 'dispatched',
       commandId,
       provider: observed.provider,
       model: observed.model,
       executionSurface: observed.executionSurface,
+      ...initFields(receipt.init),
       evidenceRefs: [],
     });
     if (
