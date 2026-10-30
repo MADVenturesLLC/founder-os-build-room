@@ -163,6 +163,7 @@ import {
   sha256OfFile,
   readOnly,
   recordAbsence,
+  remainsAfterReap,
   removeCheckout,
   syncDirectory,
   syncMadeDirectories,
@@ -294,7 +295,7 @@ function harness(options: {
           checkouts.push(directory);
           return directory;
         }),
-      timings: { initTimeoutMs: 3_000, runTimeoutMs: 5_000, stopGraceMs: 1_000, ...options.timings },
+      timings: { initTimeoutMs: 3_000, runTimeoutMs: 5_000, stopGraceMs: 1_000, reapSettleMs: 300, ...options.timings },
     },
   );
   return {
@@ -692,9 +693,17 @@ describe('start: refused before agy starts', () => {
 
 describe('halting (Amendment 3 C1)', () => {
   it('halts when a process survives the reap, and takes no work until the halt file is removed', async () => {
-    // Clean before the start, a survivor after the reap, clean again later.
-    const answers = [false, true];
-    const h = harness({ mode: 'ok', plan: readyPlanFor({ ...work() } as never), probe: () => Promise.resolve(answers.shift() ?? false) });
+    // Clean before the start; after the reap a survivor that stays listed through every recheck.
+    let survivor = false;
+    const h = harness({
+      mode: 'ok',
+      plan: readyPlanFor({ ...work() } as never),
+      probe: () => Promise.resolve(survivor),
+      reap: () => {
+        survivor = true;
+        return Promise.resolve();
+      },
+    });
     const first = work();
     const started = await h.executor.start(first, await identityFor(h.executor, first.commandId));
     assert.equal(started.kind, 'accepted');
@@ -709,6 +718,7 @@ describe('halting (Amendment 3 C1)', () => {
     assert.equal(evidenceOf(h.gatewayDirectory).find((e) => e['commandId'] === second.commandId)?.['outcome'], 'executor_halted');
 
     rmSync(haltFile);
+    survivor = false;
     const third = work();
     const resumed = await h.executor.start(third, await identityFor(h.executor, third.commandId));
     assert.equal(resumed.kind, 'accepted', 'the Founder removing the file restarts it');
@@ -742,6 +752,100 @@ describe('halting (Amendment 3 C1)', () => {
     const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
     if (started.kind === 'accepted') await started.completion.catch(() => undefined);
     assert.ok(existsSync(join(h.gatewayDirectory, 'planner-halted.json')));
+  });
+});
+
+describe('the check after the reap waits for killed processes to finish exiting (PC first boot, 2026-10-30)', () => {
+  /** A probe that lists the planner user's processes for `listedFor` checks after each reap, then none. */
+  function exitingAfterReap(listedFor: number): { probe: () => Promise<boolean>; reap: () => Promise<void>; checksAfterReap: () => number } {
+    let reaped = false;
+    let checks = 0;
+    return {
+      probe: () => {
+        if (!reaped) return Promise.resolve(false);
+        checks += 1;
+        return Promise.resolve(checks <= listedFor);
+      },
+      reap: () => {
+        reaped = true;
+        checks = 0;
+        return Promise.resolve();
+      },
+      checksAfterReap: () => checks,
+    };
+  }
+
+  it('a killed process still listed at the first checks does not halt the run\'s end', async () => {
+    const w = work();
+    const exiting = exitingAfterReap(3);
+    const h = harness({ mode: 'ok', plan: readyPlanFor({ ...w } as never), probe: exiting.probe, reap: exiting.reap });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') await started.completion.catch(() => undefined);
+    assert.equal(existsSync(join(h.gatewayDirectory, 'planner-halted.json')), false, 'no halt');
+    assert.equal(exiting.checksAfterReap(), 4, 'checked again until it was gone');
+    assert.equal(h.logged.includes('agy.halted'), false);
+  });
+
+  it('nor the boot reap', async () => {
+    const exiting = exitingAfterReap(3);
+    const h = harness({ mode: 'ok', probe: exiting.probe, reap: exiting.reap });
+    await h.executor.boot();
+    assert.equal(existsSync(join(h.gatewayDirectory, 'planner-halted.json')), false);
+    assert.equal(exiting.checksAfterReap(), 4);
+  });
+
+  it('a process still listed when the settle time is up halts, and only then', async () => {
+    let checks = 0;
+    const h = harness({
+      mode: 'ok',
+      probe: () => {
+        checks += 1;
+        return Promise.resolve(true);
+      },
+      timings: { reapSettleMs: 400 },
+    });
+    const began = Date.now();
+    await h.executor.boot();
+    const waited = Date.now() - began;
+    assert.equal(haltReason(h.gatewayDirectory), 'planner_user_survived_reap');
+    assert.equal(checks, 5, 'the first check and four rechecks, one every 100 ms');
+    assert.ok(waited >= 380, `it waited the settle time before halting (${String(waited)} ms)`);
+  });
+
+  it('remainsAfterReap: none listed answers at once; a check that cannot be made rejects, mid-wait too', async () => {
+    let calls = 0;
+    assert.equal(await remainsAfterReap(() => { calls += 1; return Promise.resolve(false); }, 5_000), false);
+    assert.equal(calls, 1);
+    const answers: (boolean | Error)[] = [true, true, new Error('pgrep missing')];
+    await assert.rejects(
+      remainsAfterReap(() => {
+        const next = answers.shift() ?? true;
+        return next instanceof Error ? Promise.reject(next) : Promise.resolve(next);
+      }, 1_000, 10),
+      /pgrep missing/,
+    );
+    assert.equal(await remainsAfterReap(() => Promise.resolve(true), 0), true, 'no settle time: one check');
+  });
+
+  it('a real process killed with SIGKILL is still there the instant after the kill, and gone within the settle time', async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'], { stdio: 'ignore' });
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', () => resolve());
+      child.once('error', reject);
+    });
+    const pid = child.pid as number;
+    const listed = (): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    child.kill('SIGKILL');
+    assert.equal(listed(), true, 'a check made at once still finds it, as the boot reap\'s did on the PC');
+    assert.equal(await remainsAfterReap(() => Promise.resolve(listed())), false, 'rechecked, it is gone');
   });
 });
 

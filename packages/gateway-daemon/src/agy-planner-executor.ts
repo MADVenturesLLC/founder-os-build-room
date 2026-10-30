@@ -43,7 +43,8 @@
  * output pipes; then it runs the second privilege rule, `sudo -n -u
  * <planner user> -- /usr/bin/pkill -KILL -u <planner user>`, so the planner
  * user ends everything it still runs, and asks the operating system whether
- * any of its processes remain. The executor HALTS when one does, when one
+ * any of its processes remain, again for up to REAP_SETTLE_MS while a killed
+ * one finishes exiting (`remainsAfterReap`). The executor HALTS when one does, when one
  * runs before a start, when either check cannot be made, when sudo's exit is
  * not seen in time, when a checkout cannot be removed, or when an evidence
  * record cannot be written or read: it writes `planner-halted.json` in the
@@ -148,6 +149,10 @@ const INIT_TIMEOUT_MS = 60_000;
 const RUN_GRACE_MS = 60_000;
 /** After SIGTERM, how long agy has before SIGKILL. */
 const STOP_GRACE_MS = 10_000;
+/** After the second privilege rule, how long a killed process has to finish exiting. */
+export const REAP_SETTLE_MS = 5_000;
+/** How often the check is asked again within that time. */
+export const REAP_RECHECK_MS = 100;
 /** One stream-json line is never larger than this; a larger one fails the run. */
 const MAX_LINE_BYTES = 1024 * 1024;
 
@@ -213,7 +218,7 @@ export interface AgyPlannerDeps {
   readonly clock?: Clock;
   readonly log?: (level: 'info' | 'warn' | 'error', at: string, fields: Record<string, unknown>) => void;
   /** Bounds, for suites that cannot wait a minute. Production uses the constants above. */
-  readonly timings?: { readonly initTimeoutMs?: number; readonly runTimeoutMs?: number; readonly stopGraceMs?: number };
+  readonly timings?: { readonly initTimeoutMs?: number; readonly runTimeoutMs?: number; readonly stopGraceMs?: number; readonly reapSettleMs?: number };
 }
 
 /** The route the control plane must intend, and the route a run is observed on. */
@@ -389,6 +394,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
   private readonly initTimeoutMs: number;
   private readonly runTimeoutMs: number;
   private readonly stopGraceMs: number;
+  private readonly reapSettleMs: number;
   /** One run at a time: the planner user is one user, and the lingering-process check reads the whole user. */
   private busy = false;
   /** The start in flight, from its first check to its last evidence write, so a stopping daemon can cancel it (Amendment 3 C2). */
@@ -443,6 +449,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     this.initTimeoutMs = deps.timings?.initTimeoutMs ?? INIT_TIMEOUT_MS;
     this.runTimeoutMs = deps.timings?.runTimeoutMs ?? parseSeconds(AGY_PRINT_TIMEOUT) * 1000 + RUN_GRACE_MS;
     this.stopGraceMs = deps.timings?.stopGraceMs ?? STOP_GRACE_MS;
+    this.reapSettleMs = deps.timings?.reapSettleMs ?? REAP_SETTLE_MS;
   }
 
   /** The command line the first privilege rule must match, exactly. */
@@ -815,7 +822,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     }
     let remains: boolean;
     try {
-      remains = await this.probe();
+      remains = await remainsAfterReap(this.probe, this.reapSettleMs);
     } catch (error) {
       this.log('error', 'agy.probe_failed', { message: describe(error) });
       remains = true;
@@ -1355,6 +1362,25 @@ export async function sha256OfFile(path: string): Promise<string> {
     await handle.close().catch(() => undefined);
   }
   return hash.digest('hex');
+}
+
+/**
+ * The check after the second privilege rule (Amendment 3 C1). SIGKILL ends a
+ * process at once, but the process is still listed until it has finished
+ * exiting and its parent has collected it, which takes moments: a check made
+ * the instant after the kill can list a process that is already dead, as the
+ * PC's first boot reap did (2026-10-30). So the check is asked again, every
+ * `recheckMs`, until no process is listed or `settleMs` has passed; a process
+ * still listed then remains. The bound is a number of checks, not a clock, so
+ * it ends whatever the clock does. A check that cannot be made rejects.
+ */
+export async function remainsAfterReap(probe: PlannerProcessProbe, settleMs: number = REAP_SETTLE_MS, recheckMs: number = REAP_RECHECK_MS): Promise<boolean> {
+  const rechecks = Math.max(0, Math.ceil(settleMs / recheckMs));
+  for (let attempt = 0; ; attempt += 1) {
+    if (!(await probe())) return false;
+    if (attempt >= rechecks) return true;
+    await new Promise((resolve) => setTimeout(resolve, recheckMs));
+  }
 }
 
 /** `pgrep -u <user>` exits 0 when the user has a process, 1 when it has none; anything else is an error. */

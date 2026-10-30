@@ -399,7 +399,7 @@ describe('C1: the boot reap of a daemon that does not run the executor', () => {
   it('it reaps, checks, and logs what it found; a failure is logged as an error and starts nothing', async () => {
     const run = async (reap: () => Promise<void>, probe: () => Promise<boolean>): Promise<string[]> => {
       const logged: string[] = [];
-      await plannerBootReap('buildroom-planner', (level, at) => logged.push(`${level}:${at}`), { reap, probe })();
+      await plannerBootReap('buildroom-planner', (level, at) => logged.push(`${level}:${at}`), { reap, probe, settleMs: 200 })();
       return logged;
     };
     assert.deepEqual(await run(() => Promise.resolve(), () => Promise.resolve(false)), ['info:planner.boot_reaped']);
@@ -409,6 +409,8 @@ describe('C1: the boot reap of a daemon that does not run the executor', () => {
       'info:planner.boot_reaped',
     ]);
     assert.deepEqual(await run(() => Promise.resolve(), () => Promise.reject(new Error('pgrep missing'))), ['error:planner.boot_check_failed']);
+    const listed = [true, true];
+    assert.deepEqual(await run(() => Promise.resolve(), () => Promise.resolve(listed.shift() ?? false)), ['info:planner.boot_reaped'], 'a killed process still exiting at the first checks is not left over');
   });
 
   it('the daemon runs it at boot, after the lanes, when it has no executor; one with an executor boots that instead', async () => {
