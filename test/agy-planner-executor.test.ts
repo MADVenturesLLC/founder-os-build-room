@@ -1251,7 +1251,7 @@ describe('ending a run never waits on agy\'s pipes (Amendment 3 C1; Tier-2 B1)',
   it('still reaps, then halts, when sudo\'s exit is not seen in time', async () => {
     const w = work();
     const children: ReturnType<Launch>[] = [];
-    let markedBeforeReap: string | null = null;
+    let haltedBeforeReap = false;
     const h = harness({
       mode: 'stubborn',
       plan: readyPlanFor({ ...w } as never),
@@ -1261,7 +1261,7 @@ describe('ending a run never waits on agy\'s pipes (Amendment 3 C1; Tier-2 B1)',
         child.kill = () => true;
       },
       reap: () => {
-        markedBeforeReap = haltReason(h.gatewayDirectory);
+        haltedBeforeReap = h.logged.includes('agy.halted');
         for (const child of children) if (child.pid !== undefined) process.kill(child.pid, 'SIGKILL');
         return Promise.resolve();
       },
@@ -1271,7 +1271,65 @@ describe('ending a run never waits on agy\'s pipes (Amendment 3 C1; Tier-2 B1)',
     if (started.kind === 'accepted') await started.completion.catch(() => undefined);
     assert.equal(h.reaps(), 1, 'the reap runs although the exit was not seen');
     assert.equal(haltReason(h.gatewayDirectory), 'agy_exit_unconfirmed');
-    assert.equal(markedBeforeReap, 'agy_exit_unconfirmed', 'the marker is durable before the reap takes its time');
+    assert.equal(haltedBeforeReap, true, 'the halt is made before the reap takes its time');
+    const line = readFileSync(h.logPath, 'utf8').split('\n').find((l) => l.includes('"holder"'));
+    if (line !== undefined) process.kill((JSON.parse(line) as { holder: number }).holder, 'SIGKILL');
+  });
+
+  it('a halt marker whose sync stalls does not keep the reap, the check or the checkout\'s removal from running (Tier-2 confirmation at 0d5d88c)', async () => {
+    const w = work();
+    const children: ReturnType<Launch>[] = [];
+    let checks = 0;
+    let release = (): void => undefined;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let held = false;
+    const h: Harness = harness({
+      mode: 'stubborn',
+      plan: readyPlanFor({ ...w } as never),
+      onLaunch: (child) => {
+        children.push(child);
+        child.kill = () => true;
+      },
+      reap: () => {
+        for (const child of children) if (child.pid !== undefined) process.kill(child.pid, 'SIGKILL');
+        return Promise.resolve();
+      },
+      probe: () => {
+        checks += 1;
+        return Promise.resolve(false);
+      },
+      // The marker's own sync, the first of the Gateway's directory once the marker is there,
+      // stalls until released; every other sync, the closing record's among them, goes through.
+      syncDirectory: async (path) => {
+        if (!held && path === h.gatewayDirectory && existsSync(join(path, 'planner-halted.json'))) {
+          held = true;
+          await released;
+        }
+        await syncDirectory(path);
+      },
+      timings: { stopGraceMs: 300 },
+    });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind !== 'accepted') return;
+    let settled = false;
+    const ending = started.completion.then(
+      () => (settled = true),
+      () => (settled = true),
+    );
+    // The cleanup and the marker's write run side by side, in either order: wait for all of it.
+    const deadline = Date.now() + 10_000;
+    const cleanedUp = (): boolean => h.reaps() === 1 && checks >= 2 && !existsSync(h.checkouts[0] ?? '');
+    while (!(held && cleanedUp()) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(held, true, 'the marker\'s sync is held');
+    assert.equal(h.reaps(), 1, 'reaped while the marker\'s sync is held');
+    assert.ok(checks >= 2, `checked after the reap while it is held (${String(checks)})`);
+    assert.equal(existsSync(h.checkouts[0] ?? ''), false, 'the checkout is removed while it is held');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(settled, false, 'the run\'s end waits for the marker before it reports');
+    release();
+    await ending;
+    assert.equal(haltReason(h.gatewayDirectory), 'agy_exit_unconfirmed');
     const line = readFileSync(h.logPath, 'utf8').split('\n').find((l) => l.includes('"holder"'));
     if (line !== undefined) process.kill((JSON.parse(line) as { holder: number }).holder, 'SIGKILL');
   });

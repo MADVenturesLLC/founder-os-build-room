@@ -161,7 +161,8 @@ export const REAP_ANSWER_MS = 2_000;
  * The longest the executor takes to end a run, as when the daemon stops: both
  * stop graces, the second privilege rule, and the settle time with the last
  * check's answer. The PC's service gives the daemon 20 seconds to stop before
- * SIGKILL (TimeoutStopSec=20), and every halt marker is written within this.
+ * SIGKILL (TimeoutStopSec=20). A halt marker's write and sync are not on this
+ * path: the cleanup never waits for them, and no timer can make them durable.
  */
 export const PLANNER_STOP_BUDGET_MS = 2 * STOP_GRACE_MS + REAP_ANSWER_MS + REAP_SETTLE_MS + REAP_ANSWER_MS;
 /** The longest a timer can wait: Node fires a longer one at once. */
@@ -702,17 +703,22 @@ export class AgyPlannerExecutor implements PlannerExecutor {
    * Amendment 3 C1, after every run that started agy: end agy through sudo,
    * use rule B1(b), check the planner user, remove the checkout. An exit not
    * seen in time, a survivor, a failed check or a checkout left behind halts.
-   * An exit not seen halts before the reap, so its marker is written as soon
-   * as it is known, not after the reap and the check have taken their time.
+   * An exit not seen halts as soon as it is known, before the reap; but the
+   * reap, the check and the checkout's removal do not wait for its marker to
+   * be durable, so a write or sync that stalls cannot keep them from running.
    */
   private async endRun(run: AgyRun, directory: string): Promise<{ exitCode: number | null; signal: string | null; checkoutRemoved: boolean }> {
     const ended = await run.stop();
+    let marking: Promise<void> = Promise.resolve();
     if (!ended.confirmed) {
       this.log('error', 'agy.exit_unconfirmed', { graceMs: this.stopGraceMs });
-      await this.halt('agy_exit_unconfirmed');
+      marking = this.halt('agy_exit_unconfirmed');
+      // Awaited below; handled now, so a rejection while the cleanup runs is not unhandled.
+      marking.catch(() => undefined);
     }
     await this.reapPlannerUser();
     const checkoutRemoved = await this.removeRunCheckout(directory);
+    await marking;
     return { exitCode: ended.exitCode, signal: ended.signal, checkoutRemoved };
   }
 
