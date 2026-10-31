@@ -1264,6 +1264,8 @@ describe('founder-authorization workflow shape — per-PR concurrency and carrie
       '|| github.event.issue.pull_request',
       "|| contains(github.event.issue.labels.*.name, 'milestone-carrier')",
       "|| (github.event.action == 'unlabeled' && github.event.label.name == 'milestone-carrier')",
+      // Deletion and transfer revoke whatever labels the payload shows.
+      "|| (github.event_name == 'issues' && (github.event.action == 'deleted' || github.event.action == 'transferred'))",
     ]) {
       assert.ok(cond.includes(want), `targets condition holds: ${want}`);
     }

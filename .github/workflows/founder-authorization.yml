@@ -91,13 +91,18 @@ jobs:
   # Which pull requests this event re-judges. A PR event names its own PR. A
   # milestone-carrier event names every open PR whose description links the
   # carrier. Any other issue event, and a comment on any other issue, is
-  # skipped here, so nothing is judged.
+  # skipped here, so nothing is judged. Deleting or transferring an issue is
+  # admitted whatever labels the payload shows: GitHub does not document
+  # that those payloads keep the issue's labels, and both are revocation
+  # levers, so a carrier must never be missed. For an issue that was not a
+  # carrier this only re-judges PRs that link it, which cannot pass on it.
   targets:
     if: >-
       github.event_name == 'pull_request_target'
       || github.event.issue.pull_request
       || contains(github.event.issue.labels.*.name, 'milestone-carrier')
       || (github.event.action == 'unlabeled' && github.event.label.name == 'milestone-carrier')
+      || (github.event_name == 'issues' && (github.event.action == 'deleted' || github.event.action == 'transferred'))
     runs-on: ubuntu-latest
     outputs:
       prs: ${{ steps.find.outputs.prs }}
