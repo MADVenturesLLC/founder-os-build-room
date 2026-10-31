@@ -29,10 +29,14 @@
 import {
   AGY_PLANNER_GATEWAY_ID,
   AgyPlannerExecutor,
+  REAP_ANSWER_MS,
+  REAP_RECHECK_MS,
+  answerWithin,
   isPlannerUserName,
   pgrepProbe,
   pkillReaper,
   reapCommandLine,
+  remainsAfterReap,
   type PlannerProcessProbe,
   type PlannerReaper,
 } from './agy-planner-executor.js';
@@ -83,19 +87,19 @@ type Log = NonNullable<PlannerExecutorContext['log']>;
 export function plannerBootReap(
   plannerUser: string,
   log: Log,
-  deps: { readonly reap?: PlannerReaper; readonly probe?: PlannerProcessProbe } = {},
+  deps: { readonly reap?: PlannerReaper; readonly probe?: PlannerProcessProbe; readonly settleMs?: number; readonly answerMs?: number } = {},
 ): () => Promise<void> {
   const reap = deps.reap ?? pkillReaper(reapCommandLine('/usr/bin/sudo', plannerUser));
   const probe = deps.probe ?? pgrepProbe(plannerUser);
   return async () => {
     try {
-      await reap();
+      await answerWithin(reap(), deps.answerMs ?? REAP_ANSWER_MS, 'the second privilege rule');
     } catch (error) {
       log('error', 'planner.boot_reap_failed', { plannerUser, message: error instanceof Error ? error.message : String(error) });
     }
     let remains: boolean;
     try {
-      remains = await probe();
+      remains = await remainsAfterReap(probe, deps.settleMs, REAP_RECHECK_MS, deps.answerMs);
     } catch (error) {
       log('error', 'planner.boot_check_failed', { plannerUser, message: error instanceof Error ? error.message : String(error) });
       return;
