@@ -824,8 +824,13 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
   });
 
   it("refuses a field value holding a later field's label (scope: inside bounded by)", () => {
+    const text = envelopeText({ boundedBy: 'plan X scope: all of it' });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(916, text)] })), /holding a field label/);
+  });
+
+  it("refuses a field value holding two later fields' labels", () => {
     const text = envelopeText({ boundedBy: 'plan X scope: everything carrier: anywhere' });
-    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(916, text)] })), /later label|another carrier/);
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(918, text)] })), /holding a field label/);
   });
 
   it('refuses text before or after the envelope', () => {
