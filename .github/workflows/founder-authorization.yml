@@ -46,6 +46,28 @@
 # `${{ }}` expression appears inside a run: script; event values reach the
 # shell through env mappings only.
 #
+# MILESTONE ENVELOPES (FOUNDER-ACT-20261031-BR-MILESTONE-AUTH-GUARD, under
+# DEC-20261027-01 clause 7). A head with no single-PR authorization is also
+# judged against the envelope its description links on a
+# "Milestone-Auth: <MILESTONE-ID> <carrier issue URL>" line; the conditions
+# are in scripts/founder-authorization-check.sh. No envelope API call is made
+# unless the description has a Milestone-Auth line, and none at all when the
+# single-PR route already authorizes the head. A comment on, or a label,
+# close, reopen, delete or transfer of, a milestone-carrier issue re-judges
+# every open PR whose description links that issue, each in its own job.
+# Every job that judges a PR uses the concurrency group of that PR's number,
+# whatever event started it, so judgments of one PR queue behind each other.
+#
+# WHAT THE ENVELOPE ROUTE DOES NOT DECIDE. It does not decide the rest of
+# DEC-20261027-01 clause 4, whether the Founder reviewed each member's diff,
+# or the clause 3 void when a later review finds an unresolved merge-blocking
+# issue; those stay the Founder's. The Founder's revocation levers are
+# deleting or editing the envelope comment, removing the milestone-carrier
+# label, closing, deleting or transferring the carrier issue, and editing the
+# member's description; each re-judges the members it affects. It cannot tell
+# the Founder's comments from an agent's: both post through the same GitHub
+# account.
+#
 # Changes to this workflow's triggers, permissions, or steps require founder
 # approval before merge (same rule class as DEC-20260718-02 clause 4).
 
@@ -56,6 +78,8 @@ on:
     types: [opened, synchronize, reopened, edited, ready_for_review]
   issue_comment:
     types: [created, edited, deleted]
+  issues:
+    types: [labeled, unlabeled, closed, reopened, deleted, transferred]
 
 permissions:
   contents: read
@@ -63,17 +87,75 @@ permissions:
   pull-requests: read
   issues: read
 
-# Runs for one PR queue instead of cancelling each other, so an evaluation
-# is never killed mid-flight by the next one; the last queued run always
-# completes and publishes the final verdict. (Tier-2 review, 2026-09-27.)
-concurrency:
-  group: founder-authorization-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: false
-
 jobs:
+  # Which pull requests this event re-judges. A PR event names its own PR. A
+  # milestone-carrier event names every open PR whose description links the
+  # carrier. Any other issue event, and a comment on any other issue, is
+  # skipped here, so nothing is judged.
+  targets:
+    if: >-
+      github.event_name == 'pull_request_target'
+      || github.event.issue.pull_request
+      || contains(github.event.issue.labels.*.name, 'milestone-carrier')
+      || (github.event.action == 'unlabeled' && github.event.label.name == 'milestone-carrier')
+    runs-on: ubuntu-latest
+    outputs:
+      prs: ${{ steps.find.outputs.prs }}
+    steps:
+      - name: Find the pull requests to judge
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_PR: ${{ github.event.pull_request.number || (github.event.issue.pull_request && github.event.issue.number) || '' }}
+          CARRIER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$EVENT_PR" ]]; then
+            [[ "$EVENT_PR" =~ ^[1-9][0-9]*$ ]]
+            echo "prs=[$EVENT_PR]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$CARRIER" =~ ^[1-9][0-9]*$ ]]
+          api() {
+            curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$@"
+          }
+          work="$(mktemp -d)"
+          page=1
+          while :; do
+            api "https://api.github.com/repos/$REPO/pulls?state=open&per_page=100&page=$page" > "$work/open-$page.json"
+            if [[ "$(jq 'length' "$work/open-$page.json")" -lt 100 ]]; then break; fi
+            page=$((page + 1))
+          done
+          # Descriptions are read by jq only. A PR counts when its description
+          # holds the carrier's URL not followed by another digit.
+          prs="$(jq -sc --arg u "https://github.com/$REPO/issues/$CARRIER" '
+            ($u | ascii_downcase | gsub("\\."; "\\.")) as $re
+            | [add[] | select((.body // "") | ascii_downcase | test($re + "(?![0-9])")) | .number]
+          ' "$work"/open-*.json)"
+          echo "PRs linking carrier #$CARRIER: $prs"
+          echo "prs=$prs" >> "$GITHUB_OUTPUT"
+
+  # One job per PR. The concurrency group is the judged PR's number, never the
+  # event's, so a PR event and a carrier event judging the same PR queue
+  # behind each other instead of racing.
   evaluate:
-    # issue_comment fires for issues too; only PR comments are judged.
-    if: github.event_name == 'pull_request_target' || github.event.issue.pull_request
+    needs: targets
+    if: needs.targets.outputs.prs != '' && needs.targets.outputs.prs != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        pr: ${{ fromJSON(needs.targets.outputs.prs) }}
+    # Runs for one PR queue instead of cancelling each other, so an evaluation
+    # is never killed mid-flight by the next one; the last queued run always
+    # completes and publishes the final verdict. (Tier-2 review, 2026-09-27.)
+    concurrency:
+      group: founder-authorization-${{ matrix.pr }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       # The default branch, never the PR head: the gate that judges a PR must
@@ -88,7 +170,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          PR_NUMBER: ${{ matrix.pr }}
           FOUNDER_LOGINS: decivantiq
         run: |
           set -euo pipefail
@@ -108,7 +190,9 @@ jobs:
             api -X POST "https://api.github.com/repos/$REPO/statuses/$head_sha" -d "$payload" >/dev/null || return 1
             echo "founder-authorization: $1 on $head_sha ($2)"
           }
-          head_sha="$(api "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" | jq -er '.head.sha')"
+          work="$(mktemp -d)"
+          api "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" > "$work/pull.json"
+          head_sha="$(jq -er '.head.sha' "$work/pull.json")"
           # From here on the run fails closed through ONE exit path. Every
           # exit (an error, including one inside a function where no ERR
           # trap fires; an explicit exit; a signal routed to exit) runs
@@ -167,7 +251,62 @@ jobs:
           if verdict="$(bash scripts/founder-authorization-check.sh "$REPO" "$PR_NUMBER" "$head_sha" <<<"$comments")"; then
             state=success
           else
+            rc=$?
             state=failure
+            # The envelope route: only after the single-PR route found nothing
+            # (exit 1), and only when the description has a Milestone-Auth
+            # line. Without one, no further API call is made.
+            if [[ "$rc" -eq 1 ]] && jq -e '(.body // "") | split("\n") | any(test("^\\s*Milestone-Auth:"; "i"))' "$work/pull.json" >/dev/null; then
+              # The carrier's number, only when the description has exactly
+              # one well-formed line naming an issue in this repository. The
+              # script re-checks all of this; this only decides what to fetch.
+              carrier="$(jq -r --arg r "$REPO" '
+                [(.body // "") | split("\n")[] | sub("\r$"; "") | select(test("^\\s*Milestone-Auth:"; "i"))] as $l
+                | if ($l | length) != 1 then ""
+                  else ($l[0] | gsub("^\\s+|\\s+$"; "")
+                        | capture("^Milestone-Auth: \\S+ https://github\\.com/(?<r>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/issues/(?<n>[1-9][0-9]*)$")?
+                        | select((.r | ascii_downcase) == ($r | ascii_downcase)) | .n) // ""
+                  end' "$work/pull.json")"
+              page=1
+              while :; do
+                api "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/files?per_page=100&page=$page" > "$work/files-$page.json"
+                if [[ "$(jq 'length' "$work/files-$page.json")" -lt 100 || "$page" -ge 30 ]]; then break; fi
+                page=$((page + 1))
+              done
+              jq -s 'add' "$work"/files-*.json > "$work/files.json"
+              echo 'null' > "$work/issue.json"
+              echo '[]' > "$work/carrier-comments.json"
+              if [[ -n "$carrier" ]]; then
+                # A carrier that cannot be read (deleted, transferred, an API
+                # error) leaves issue null, and the script refuses it.
+                if api "https://api.github.com/repos/$REPO/issues/$carrier" > "$work/issue-raw.json" \
+                  && jq -e --argjson n "$carrier" '.number == $n' "$work/issue-raw.json" >/dev/null; then
+                  cp "$work/issue-raw.json" "$work/issue.json"
+                  page=1
+                  while :; do
+                    api "https://api.github.com/repos/$REPO/issues/$carrier/comments?per_page=100&page=$page" > "$work/cc-$page.json"
+                    if [[ "$(jq 'length' "$work/cc-$page.json")" -lt 100 ]]; then break; fi
+                    page=$((page + 1))
+                  done
+                  jq -s 'add' "$work"/cc-*.json > "$work/carrier-comments.json"
+                fi
+              fi
+              # The file list and carrier were read after the head: if the
+              # head or the description moved meanwhile, refuse rather than
+              # judge one head against another head's files.
+              api "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" > "$work/pull-again.json"
+              if ! jq -e --slurpfile a "$work/pull.json" '.head.sha == $a[0].head.sha and .body == $a[0].body' "$work/pull-again.json" >/dev/null; then
+                publish failure "Head or description of #$PR_NUMBER moved during evaluation; refused"
+                verdict_posted=1
+                exit 1
+              fi
+              jq -n --slurpfile pull "$work/pull.json" --slurpfile files "$work/files.json" \
+                --slurpfile issue "$work/issue.json" --slurpfile comments "$work/carrier-comments.json" \
+                '{pull: $pull[0], files: $files[0], issue: $issue[0], comments: $comments[0]}' > "$work/envelope.json"
+              if verdict="$(ENVELOPE_INPUT="$work/envelope.json" bash scripts/founder-authorization-check.sh "$REPO" "$PR_NUMBER" "$head_sha" <<<"$comments")"; then
+                state=success
+              fi
+            fi
           fi
           description="$(jq -r '.description' <<<"$verdict")"
           # If this post fails, the run exits here with verdict_posted unset,

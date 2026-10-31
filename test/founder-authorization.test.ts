@@ -34,6 +34,7 @@ const PR = 81;
 const HEAD = 'cac52010ca49ec2ecb15837d4e47c2cbb2673924';
 const OLDER_HEAD = '9ead1233ee6f0f6ffbc53b740c95e9d290eae91e';
 const FOUNDER = 'decivantiq';
+const JUDGE_STEP = 'Judge the current head and publish the status';
 
 interface Comment {
   id: number;
@@ -158,7 +159,7 @@ describe('founder-authorization workflow shape', () => {
   const text = readFileSync(WORKFLOW, 'utf8');
   const lines = text.split('\n').filter((l) => l.trim() !== '' && !/^\s*#/.test(l));
 
-  it('is triggered by pull_request_target and issue_comment only', () => {
+  it('is triggered by pull_request_target, issue_comment and issues only', () => {
     const onIndex = lines.findIndex((l) => l === 'on:');
     assert.ok(onIndex !== -1, 'expected a top-level on: block');
     const triggers: string[] = [];
@@ -167,7 +168,7 @@ describe('founder-authorization workflow shape', () => {
       const m = /^ {2}([a-z_]+):/.exec(l);
       if (m?.[1] !== undefined) triggers.push(m[1]);
     }
-    assert.deepEqual(triggers, ['pull_request_target', 'issue_comment']);
+    assert.deepEqual(triggers, ['pull_request_target', 'issue_comment', 'issues']);
   });
 
   it('never checks out or references the PR head', () => {
@@ -252,7 +253,8 @@ esac
 
   function runScript(): string {
     const text = readFileSync(WORKFLOW, 'utf8').split('\n');
-    const start = text.findIndex((l) => /^\s+run: \|$/.test(l));
+    const step = text.findIndex((l) => l.trim() === `- name: ${JUDGE_STEP}`);
+    const start = text.findIndex((l, i) => i > step && /^\s+run: \|$/.test(l));
     assert.ok(start !== -1, 'expected one run: block');
     const runIndent = (text[start] ?? '').length - (text[start] ?? '').trimStart().length;
     const body: string[] = [];
@@ -407,7 +409,8 @@ esac
 
   function workflowRunScript(): string {
     const text = readFileSync(WORKFLOW, 'utf8').split('\n');
-    const start = text.findIndex((l) => /^\s+run: \|$/.test(l));
+    const step = text.findIndex((l) => l.trim() === `- name: ${JUDGE_STEP}`);
+    const start = text.findIndex((l, i) => i > step && /^\s+run: \|$/.test(l));
     const runIndent = (text[start] ?? '').length - (text[start] ?? '').trimStart().length;
     const body: string[] = [];
     for (const l of text.slice(start + 1)) {
