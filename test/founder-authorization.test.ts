@@ -636,7 +636,7 @@ function carrierComment(id: number, body: string, opts: { login?: string; edited
 interface FileEntry { filename: string; status?: string; previous_filename?: string }
 
 interface EnvelopeInput {
-  pull: { number: number; head: { sha: string }; body: string | null; changed_files: number };
+  pull: { number: number; head: { sha: string }; body: string | null; changed_files: number; updated_at?: string; base?: { ref: string } };
   files: FileEntry[];
   issue: Record<string, unknown> | null;
   comments: IssueComment[];
@@ -660,6 +660,8 @@ function envelopeInput(over: {
       head: { sha: HEAD },
       body: over.body ?? `Phase 3 slice.\n\n${milestoneLine()}\n`,
       changed_files: over.changedFiles ?? files.length,
+      updated_at: STAMP,
+      base: { ref: 'main' },
     },
     files,
     issue: over.issue === undefined
@@ -825,12 +827,31 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
 
   it("refuses a field value holding a later field's label (scope: inside bounded by)", () => {
     const text = envelopeText({ boundedBy: 'plan X scope: all of it' });
-    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(916, text)] })), /holding a field label/);
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(916, text)] })), /holding a later field label/);
   });
 
   it("refuses a field value holding two later fields' labels", () => {
     const text = envelopeText({ boundedBy: 'plan X scope: everything carrier: anywhere' });
-    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(918, text)] })), /holding a field label/);
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(918, text)] })), /holding a later field label/);
+  });
+
+  it("accepts an earlier field's label inside a later value (Tier-2 at 47d71ff, finding 4)", () => {
+    const text = envelopeText({ scope: 'Repair the milestone: display', boundedBy: 'plan for milestone: BR-M7' });
+    const r = judgeEnvelope(envelopeInput({ comments: [carrierComment(919, text)] }));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.verdict.comment_id, 919);
+  });
+
+  it('refuses a value holding its own label, which cannot be told apart from a later label hidden in an earlier value', () => {
+    const text = envelopeText({ scope: 'fix scope: creep' });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(925, text)] })), /holding a later field label/);
+  });
+
+  it('accepts a carriage return inside a word, which B2 removes rather than turning into a space', () => {
+    const text = envelopeText().replace('FOUNDER MILESTONE', 'FOU\rNDER MILESTONE');
+    const r = judgeEnvelope(envelopeInput({ comments: [carrierComment(926, text)] }));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.verdict.comment_id, 926);
   });
 
   it('refuses text before or after the envelope', () => {
@@ -919,6 +940,31 @@ describe('envelope route — excluded paths and incomplete file lists (B1.8)', (
     assertRefused(judgeEnvelope({ ...input, pull: pull as EnvelopeInput['pull'] }), /may be incomplete/);
   });
 
+  it('refuses envelope input describing another pull request', () => {
+    const input = envelopeInput();
+    assertRefused(judgeEnvelope({ ...input, pull: { ...input.pull, number: 80 } }), /another pull request or head/);
+  });
+
+  it('refuses envelope input describing another head', () => {
+    const input = envelopeInput();
+    assertRefused(judgeEnvelope({ ...input, pull: { ...input.pull, head: { sha: OTHER_HEAD } } }), /another pull request or head/);
+  });
+
+  it('refuses a file list that is not an array', () => {
+    const input = envelopeInput();
+    assertRefused(judgeEnvelope({ ...input, files: { filename: 'a.ts' } as unknown as FileEntry[] }), /file list is malformed/);
+  });
+
+  it('refuses a file entry without a filename', () => {
+    const input = envelopeInput({ files: [{ filename: 'packages/x/a.ts' }, { status: 'added' } as unknown as FileEntry] });
+    assertRefused(judgeEnvelope(input), /file list is malformed/);
+  });
+
+  it('refuses carrier comments that are not an array', () => {
+    const input = envelopeInput();
+    assertRefused(judgeEnvelope({ ...input, comments: { id: 1 } as unknown as IssueComment[] }), /carrier comments are malformed/);
+  });
+
   it('refuses envelope input that is not a JSON object (exit 2)', () => {
     const r = judgeEnvelope('[1]');
     assert.equal(r.status, 2, r.stderr);
@@ -951,11 +997,13 @@ path="\${path%%\\?*}"
 page=1; [[ "$query" =~ (^|&)page=([0-9]+) ]] && page="\${BASH_REMATCH[2]}"
 name="\${path//\\//_}"
 if [[ -n "\${FAKE_FAIL:-}" && "$url" == *"$FAKE_FAIL"* ]]; then exit 22; fi
+key="$name"; [[ "$page" -gt 1 ]] && key="$name.p$page"
+count="$FAKE_DIR/.count-$key"; n=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$count"
+if [[ -e "$FAKE_DIR/$key.call$n" ]]; then cat "$FAKE_DIR/$key.call$n"; exit 0; fi
+if [[ -e "$FAKE_DIR/$key.always" ]]; then cat "$FAKE_DIR/$key.always"; exit 0; fi
+if [[ -e "$FAKE_DIR/$key" ]]; then cat "$FAKE_DIR/$key"; exit 0; fi
 if [[ "$page" -gt 1 ]]; then echo '[]'; exit 0; fi
-count="$FAKE_DIR/.count-$name"; n=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$count"
-if [[ -e "$FAKE_DIR/$name.call$n" ]]; then cat "$FAKE_DIR/$name.call$n"; exit 0; fi
-[[ -e "$FAKE_DIR/$name" ]] || exit 22
-cat "$FAKE_DIR/$name"
+exit 22
 `;
 
   function stepRun(name: string): string {
@@ -1033,11 +1081,12 @@ cat "$FAKE_DIR/$name"
       },
       targets: (event: { EVENT_PR?: string; CARRIER?: string }) => {
         writeFileSync(join(dir, 'output'), '');
+        spawnSync('bash', ['-c', 'rm -f "$1"/.count-*', 'reset', dir]);
         const r = spawnSync('bash', ['-c', stepRun('Find the pull requests to judge')], {
           cwd: REPO_ROOT, encoding: 'utf8', env: { ...env, EVENT_PR: event.EVENT_PR ?? '', CARRIER: event.CARRIER ?? '' },
         });
         const line = read('output').find((l) => l.startsWith('prs='));
-        return { status: r.status, stderr: r.stderr, prs: line === undefined ? null : JSON.parse(line.slice(4)) as number[] };
+        return { status: r.status, stderr: r.stderr, stdout: r.stdout, prs: line === undefined ? null : JSON.parse(line.slice(4)) as number[] };
       },
     };
   }
@@ -1087,7 +1136,44 @@ cat "$FAKE_DIR/$name"
       const r = w.judge();
       assert.notEqual(r.status, 0);
       assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
-      assert.match(r.posts[0]?.description ?? '', /moved during evaluation/);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses when the changed-file count moves with head and description unchanged (Tier-2 at 47d71ff, finding 1)', () => {
+    const input = envelopeInput();
+    const w = stageWorld({ pullSecondRead: { ...input.pull, changed_files: 2 } });
+    try {
+      const r = w.judge();
+      assert.notEqual(r.status, 0);
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses when the base branch moves (a retarget)', () => {
+    const input = envelopeInput();
+    const w = stageWorld({ pullSecondRead: { ...input.pull, base: { ref: 'release' } } });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a head that went A, B and back to A, caught by updated_at', () => {
+    const input = envelopeInput();
+    const w = stageWorld({ pullSecondRead: { ...input.pull, updated_at: '2026-10-31T21:40:00Z' } });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
     } finally {
       rmSync(w.dir, { recursive: true, force: true });
     }
@@ -1141,6 +1227,38 @@ cat "$FAKE_DIR/$name"
       const t = w.targets({ CARRIER: String(CARRIER) });
       assert.equal(t.status, 0, t.stderr);
       assert.deepEqual(t.prs, [PR, 82]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('finds a member that a closed PR shifts onto an already-read page (Tier-2 at 47d71ff, finding 2)', () => {
+    const others = Array.from({ length: 100 }, (_, i) => ({ number: 1000 + i, body: 'unrelated' }));
+    const member = { number: PR, body: `x\n${milestoneLine()}` };
+    const w = stageWorld({});
+    try {
+      // First pass: page 1 holds the 100 others; then #1000 closes, so the
+      // member moves onto page 1 and page 2 reads empty. Later passes see the
+      // list after the close.
+      w.put('pulls.call1', others);
+      w.put('pulls.p2.call1', []);
+      w.put('pulls.always', [...others.slice(1), member]);
+      const t = w.targets({ CARRIER: String(CARRIER) });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails visibly when the open-PR list never holds still for two passes', () => {
+    const w = stageWorld({});
+    try {
+      for (let n = 1; n <= 5; n++) w.put(`pulls.call${n}`, [{ number: 500 + n, body: 'unrelated' }]);
+      const t = w.targets({ CARRIER: String(CARRIER) });
+      assert.notEqual(t.status, 0);
+      assert.equal(t.prs, null, 'no list is output');
+      assert.match(t.stdout, /kept changing/);
     } finally {
       rmSync(w.dir, { recursive: true, force: true });
     }

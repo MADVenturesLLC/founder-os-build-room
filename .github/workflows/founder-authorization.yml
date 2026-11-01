@@ -130,18 +130,41 @@ jobs:
               "$@"
           }
           work="$(mktemp -d)"
-          page=1
-          while :; do
-            api "https://api.github.com/repos/$REPO/pulls?state=open&per_page=100&page=$page" > "$work/open-$page.json"
-            if [[ "$(jq 'length' "$work/open-$page.json")" -lt 100 ]]; then break; fi
-            page=$((page + 1))
+          # One pass lists every open PR, page by page. A PR closed or reopened
+          # while the pages are read shifts the others between pages, so one
+          # pass can miss a member. Passes repeat until two in a row list the
+          # same open PRs (at most five), and every PR that links the carrier
+          # in any pass is judged: judging an extra PR is harmless, missing a
+          # member is not. If no two passes agree, the job fails visibly.
+          # Descriptions are read by jq only. A PR links the carrier when its
+          # description holds the carrier URL not followed by another digit.
+          url="https://github.com/$REPO/issues/$CARRIER"
+          echo '[]' > "$work/linking.json"
+          previous=""
+          stable=""
+          for pass in 1 2 3 4 5; do
+            rm -f "$work"/open-*.json
+            page=1
+            while :; do
+              api "https://api.github.com/repos/$REPO/pulls?state=open&sort=created&direction=asc&per_page=100&page=$page" > "$work/open-$page.json"
+              if [[ "$(jq 'length' "$work/open-$page.json")" -lt 100 ]]; then break; fi
+              page=$((page + 1))
+            done
+            listed="$(jq -sc '[add[] | .number] | sort' "$work"/open-*.json)"
+            jq -sc --arg u "$url" --slurpfile seen "$work/linking.json" '
+              ($u | ascii_downcase | gsub("\\."; "\\.")) as $re
+              | ($seen[0] + [add[] | select((.body // "") | ascii_downcase | test($re + "(?![0-9])")) | .number])
+              | unique
+            ' "$work"/open-*.json > "$work/linking-next.json"
+            mv "$work/linking-next.json" "$work/linking.json"
+            if [[ "$listed" == "$previous" ]]; then stable=1; break; fi
+            previous="$listed"
           done
-          # Descriptions are read by jq only. A PR counts when its description
-          # holds the carrier's URL not followed by another digit.
-          prs="$(jq -sc --arg u "https://github.com/$REPO/issues/$CARRIER" '
-            ($u | ascii_downcase | gsub("\\."; "\\.")) as $re
-            | [add[] | select((.body // "") | ascii_downcase | test($re + "(?![0-9])")) | .number]
-          ' "$work"/open-*.json)"
+          if [[ -z "$stable" ]]; then
+            echo "::error::The open-PR list kept changing across five passes; carrier #$CARRIER was not re-judged. Re-run this job."
+            exit 1
+          fi
+          prs="$(jq -c '.' "$work/linking.json")"
           echo "PRs linking carrier #$CARRIER: $prs"
           echo "prs=$prs" >> "$GITHUB_OUTPUT"
 
@@ -296,16 +319,24 @@ jobs:
                   jq -s 'add' "$work"/cc-*.json > "$work/carrier-comments.json"
                 fi
               fi
-              # The file list and carrier were read after the head: if the
-              # head or the description moved meanwhile, refuse rather than
-              # judge one head against another head's files.
+              # The file list and carrier were read after the head. Re-read the
+              # PR and refuse unless nothing moved meanwhile: not the head, the
+              # description, the base branch or the changed-file count, and not
+              # updated_at, which a push or retarget also moves, so a head that
+              # went A, B and back to A is caught too. The envelope is then
+              # judged against this second read, never the first.
               api "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER" > "$work/pull-again.json"
-              if ! jq -e --slurpfile a "$work/pull.json" '.head.sha == $a[0].head.sha and .body == $a[0].body' "$work/pull-again.json" >/dev/null; then
-                publish failure "Head or description of #$PR_NUMBER moved during evaluation; refused"
+              if ! jq -e --slurpfile a "$work/pull.json" '
+                  . as $b | $a[0] as $a
+                  | ($b.head.sha == $a.head.sha) and ($b.body == $a.body)
+                    and ($b.base.ref == $a.base.ref) and ($b.changed_files == $a.changed_files)
+                    and ($b.updated_at == $a.updated_at) and ($a.updated_at | type) == "string"
+                ' "$work/pull-again.json" >/dev/null; then
+                publish failure "Pull request #$PR_NUMBER changed during evaluation; refused"
                 verdict_posted=1
                 exit 1
               fi
-              jq -n --slurpfile pull "$work/pull.json" --slurpfile files "$work/files.json" \
+              jq -n --slurpfile pull "$work/pull-again.json" --slurpfile files "$work/files.json" \
                 --slurpfile issue "$work/issue.json" --slurpfile comments "$work/carrier-comments.json" \
                 '{pull: $pull[0], files: $files[0], issue: $issue[0], comments: $comments[0]}' > "$work/envelope.json"
               if verdict="$(ENVELOPE_INPUT="$work/envelope.json" bash scripts/founder-authorization-check.sh "$REPO" "$PR_NUMBER" "$head_sha" <<<"$comments")"; then

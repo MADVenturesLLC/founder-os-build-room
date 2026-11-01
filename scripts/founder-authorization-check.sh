@@ -208,11 +208,15 @@ envelope="$(jq -c \
           "comment \($c.id) has an empty field")
     # B2: a field value holding the label of a later field is refused. Read
     # lazily, "bounded by: X scope: Y scope: Z" would hand "Y scope: Z" to
-    # scope and hide the label inside bounded by; so each of the four labels
-    # must occur exactly once, which no value holding a label can satisfy.
-    | chk(["milestone:", "bounded by:", "scope:", "carrier:"]
-          | map(. as $l | $t | ascii_downcase | [match($l; "g")] | length == 1) | all;
-          "comment \($c.id) has a field value holding a field label")
+    # scope and hide the label inside bounded by. So each label that follows
+    # another field (bounded by, scope, carrier) must occur exactly once in
+    # the envelope: a second copy sits inside an earlier value (refused by
+    # B2) or inside its own value, which cannot be told apart from the first
+    # case and so cannot be judged. An earlier label inside a later value,
+    # such as "milestone:" inside scope, is allowed, as B2 allows it.
+    | chk(["bounded by:", "scope:", "carrier:"]
+          | map(. as $l | $t | [match($l; "g")] | length == 1) | all;
+          "comment \($c.id) has a field value holding a later field label")
     | chk($f.m == $ma.id; "comment \($c.id) names milestone \($f.m), not \($ma.id)")
     | chk(($f.c | ascii_downcase) == ($ma.url | ascii_downcase);
           "comment \($c.id) names another carrier")
