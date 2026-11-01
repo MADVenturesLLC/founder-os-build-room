@@ -54,7 +54,9 @@
 # unless the description has a Milestone-Auth line, and none at all when the
 # single-PR route already authorizes the head. A comment on, or a label,
 # close, reopen, delete or transfer of, a milestone-carrier issue re-judges
-# every open PR whose description links that issue, each in its own job.
+# every open PR whose description links that issue, each in its own job, up
+# to the 256 jobs one matrix holds. Above 256 the run fails visibly and judges
+# none, a bound the Founder accepted (Tier-2 finding 3 at 47d71ff).
 # Every job that judges a PR uses the concurrency group of that PR's number,
 # whatever event started it, so judgments of one PR queue behind each other.
 #
@@ -165,6 +167,14 @@ jobs:
             exit 1
           fi
           prs="$(jq -c '.' "$work/linking.json")"
+          # A matrix holds at most 256 jobs. Above that, GitHub would reject the
+          # judging job before any status is posted, silently leaving earlier
+          # successes in place. Fail here instead, visibly, judging none: the
+          # Founder accepted this bound on B4.2 (Tier-2 finding 3 at 47d71ff).
+          if [[ "$(jq 'length' <<<"$prs")" -gt 256 ]]; then
+            echo "::error::$(jq 'length' <<<"$prs") open PRs link carrier #$CARRIER, more than the 256 one matrix can judge; none were re-judged."
+            exit 1
+          fi
           echo "PRs linking carrier #$CARRIER: $prs"
           echo "prs=$prs" >> "$GITHUB_OUTPUT"
 

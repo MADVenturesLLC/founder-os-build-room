@@ -1264,6 +1264,37 @@ exit 22
     }
   });
 
+  it('fails visibly, judging none, when more than 256 open PRs link the carrier (Tier-2 at 47d71ff, finding 3)', () => {
+    const w = stageWorld({});
+    try {
+      const linking = Array.from({ length: 257 }, (_, i) => ({ number: 2000 + i, body: milestoneLine() }));
+      w.put('pulls.always', linking.slice(0, 100));
+      w.put('pulls.p2.always', linking.slice(100, 200));
+      w.put('pulls.p3.always', linking.slice(200));
+      const t = w.targets({ CARRIER: String(CARRIER) });
+      assert.notEqual(t.status, 0);
+      assert.equal(t.prs, null, 'no list is output, so the judging job does not run');
+      assert.match(t.stdout, /257 open PRs link carrier #200, more than the 256/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('judges exactly 256 linking PRs', () => {
+    const w = stageWorld({});
+    try {
+      const linking = Array.from({ length: 256 }, (_, i) => ({ number: 2000 + i, body: milestoneLine() }));
+      w.put('pulls.always', linking.slice(0, 100));
+      w.put('pulls.p2.always', linking.slice(100, 200));
+      w.put('pulls.p3.always', linking.slice(200));
+      const t = w.targets({ CARRIER: String(CARRIER) });
+      assert.equal(t.status, 0, t.stderr);
+      assert.equal(t.prs?.length, 256);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
   it('a carrier event with no linking PR yields an empty list, which the judging job skips', () => {
     const w = stageWorld({ open: [{ number: 85, body: 'nothing' }] });
     try {
