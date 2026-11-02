@@ -858,6 +858,11 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
     assert.equal(r.verdict.comment_id, 926);
   });
 
+  it('refuses text after the envelope (Tier-2 at 33e29b0, finding 4)', () => {
+    const text = `${envelopeText()}\n\nWithdrawn: do not merge #81.`;
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(927, text)] })), /is not the Appendix B text/);
+  });
+
   it('refuses text before or after the envelope', () => {
     assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(917, `Draft:\n${envelopeText()}`)] })),
       /is not the Appendix B text/);
@@ -1122,11 +1127,11 @@ exit 22
           calls: read('calls.log'),
         };
       },
-      targets: (event: { EVENT_PR?: string; CARRIER?: string }) => {
+      targets: (event: { EVENT_PR?: string; CARRIER?: string; CARRIER_LABELLED?: string }) => {
         writeFileSync(join(dir, 'output'), '');
         spawnSync('bash', ['-c', 'rm -f "$1"/.count-*', 'reset', dir]);
         const r = spawnSync('bash', ['-c', stepRun('Find the pull requests to judge')], {
-          cwd: REPO_ROOT, encoding: 'utf8', env: { ...env, EVENT_PR: event.EVENT_PR ?? '', CARRIER: event.CARRIER ?? '' },
+          cwd: REPO_ROOT, encoding: 'utf8', env: { ...env, EVENT_PR: event.EVENT_PR ?? '', CARRIER: event.CARRIER ?? '', CARRIER_LABELLED: event.CARRIER_LABELLED ?? 'false' },
         });
         const line = read('output').find((l) => l.startsWith('prs='));
         return { status: r.status, stderr: r.stderr, stdout: r.stdout, prs: line === undefined ? null : JSON.parse(line.slice(4)) as number[] };
@@ -1198,9 +1203,22 @@ exit 22
     }
   });
 
+  it('refuses when the base commit moves between the reads, since the comparison used the first (Tier-2 at 33e29b0, finding 2)', () => {
+    const input = envelopeInput();
+    const w = stageWorld({ pullSecondRead: { ...input.pull, base: { ref: 'main', sha: OTHER_HEAD } } });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
   it('refuses when the base branch moves (a retarget)', () => {
     const input = envelopeInput();
-    const w = stageWorld({ pullSecondRead: { ...input.pull, base: { ref: 'release' } } });
+    // Same base commit, different branch: only the base.ref check can refuse it.
+    const w = stageWorld({ pullSecondRead: { ...input.pull, base: { ref: 'release', sha: BASE_SHA } } });
     try {
       const r = w.judge();
       assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
@@ -1403,6 +1421,34 @@ exit 22
       const t = w.targets({ CARRIER: String(CARRIER) });
       assert.equal(t.status, 0, t.stderr);
       assert.equal(t.prs?.length, 256);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('scans a labelled carrier converted into a PR when it is commented on, judging its members too (Tier-2 at 33e29b0, finding 1)', () => {
+    const w = stageWorld({
+      open: [
+        { number: PR, body: `x\n${milestoneLine()}` },
+        { number: CARRIER, body: 'the carrier, now a pull request' },
+      ],
+    });
+    try {
+      const t = w.targets({ EVENT_PR: String(CARRIER), CARRIER: String(CARRIER), CARRIER_LABELLED: 'true' });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR, CARRIER].sort((a, b) => a - b));
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('judges only the commented PR, with no listing, when it does not carry the label', () => {
+    const w = stageWorld({ open: [{ number: PR, body: `x\n${milestoneLine()}` }] });
+    try {
+      w.put('pulls.always', 'not json');
+      const t = w.targets({ EVENT_PR: '82', CARRIER: '82', CARRIER_LABELLED: 'false' });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [82]);
     } finally {
       rmSync(w.dir, { recursive: true, force: true });
     }

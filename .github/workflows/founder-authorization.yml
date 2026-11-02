@@ -56,7 +56,11 @@
 # close, reopen, delete or transfer of, a milestone-carrier issue re-judges
 # every open PR whose description links that issue, each in its own job, up
 # to the 256 jobs one matrix holds. Above 256 the run fails visibly and judges
-# none, a bound the Founder accepted (Tier-2 finding 3 at 47d71ff).
+# none, a bound the Founder accepted (Tier-2 finding 3 at 47d71ff). Discovery
+# reads the PR list page by page; if GitHub Support deletes a PR while the
+# pages are read, a member can shift onto a page already read and keep an
+# earlier success until its next event, a bound the Founder also accepted
+# (Tier-2 finding 3 at 33e29b0).
 # Every job that judges a PR uses the concurrency group of that PR's number,
 # whatever event started it, so judgments of one PR queue behind each other.
 #
@@ -125,12 +129,21 @@ jobs:
           REPO: ${{ github.repository }}
           EVENT_PR: ${{ github.event.pull_request.number || (github.event.issue.pull_request && github.event.issue.number) || '' }}
           CARRIER: ${{ github.event.issue.number }}
+          CARRIER_LABELLED: ${{ contains(github.event.issue.labels.*.name, 'milestone-carrier') }}
         run: |
           set -euo pipefail
+          event_prs='[]'
           if [[ -n "$EVENT_PR" ]]; then
             [[ "$EVENT_PR" =~ ^[1-9][0-9]*$ ]]
-            echo "prs=[$EVENT_PR]" >> "$GITHUB_OUTPUT"
-            exit 0
+            event_prs="[$EVENT_PR]"
+            # A PR event judges that PR. But a carrier converted into a pull
+            # request keeps its labels, and its comments then arrive as PR
+            # comments, so a labelled one is also scanned as a carrier below
+            # (Tier-2 at 33e29b0, finding 1).
+            if [[ "$CARRIER_LABELLED" != true ]]; then
+              echo "prs=$event_prs" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
           [[ "$CARRIER" =~ ^[1-9][0-9]*$ ]]
           api() {
@@ -161,7 +174,7 @@ jobs:
                 | select((.body // "") | ascii_downcase | test($re + "(?![0-9])")) | .number]
             | unique
           ' "$work"/all-*.json > "$work/linking.json"
-          prs="$(jq -c '.' "$work/linking.json")"
+          prs="$(jq -c --argjson e "$event_prs" '. + $e | unique' "$work/linking.json")"
           # A matrix holds at most 256 jobs. Above that, GitHub would reject the
           # judging job before any status is posted, silently leaving earlier
           # successes in place. Fail here instead, visibly, judging none: the
@@ -334,8 +347,9 @@ jobs:
               fi
               # The file list and carrier were read after the head. Re-read the
               # PR and refuse unless nothing moved meanwhile: not the head, the
-              # description, the base branch, the changed-file count or
-              # updated_at. These are a cheap first filter; timestamps have
+              # description, the base branch or its commit (the comparison was
+              # made against the first read's base.sha; Tier-2 at 33e29b0,
+              # finding 2), the changed-file count or updated_at. These are a cheap first filter; timestamps have
               # one-second resolution, so a head that went A, B and back to A
               # within a second can pass them. What binds the file list to the
               # head is the SHA-bound comparison above, which the script checks.
@@ -344,7 +358,8 @@ jobs:
               if ! jq -e --slurpfile a "$work/pull.json" '
                   . as $b | $a[0] as $a
                   | ($b.head.sha == $a.head.sha) and ($b.body == $a.body)
-                    and ($b.base.ref == $a.base.ref) and ($b.changed_files == $a.changed_files)
+                    and ($b.base.ref == $a.base.ref) and ($b.base.sha == $a.base.sha)
+                    and ($b.changed_files == $a.changed_files)
                     and ($b.updated_at == $a.updated_at) and ($a.updated_at | type) == "string"
                 ' "$work/pull-again.json" >/dev/null; then
                 publish failure "Pull request #$PR_NUMBER changed during evaluation; refused"
