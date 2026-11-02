@@ -42,6 +42,7 @@ import { promisify } from 'node:util';
 import {
   acquirePhase4Lock,
   loadPhase4Attempts,
+  phase4RecordFileName,
   phase4AttemptSummaries,
   savePhase4Attempts,
   writePhase4EvidenceFile,
@@ -258,14 +259,16 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
     // run again rather than trust an outcome whose record is missing.
     if (result.record !== undefined) {
       const base = `${result.label}-${result.roomId}`;
-      const recordJson = JSON.stringify(result.record, null, 2);
       // A record holding either token is never written, and never scrubbed
       // either: a scrubbed record would not match its digest. The attempt
-      // stays pending, and the set refuses to run again.
-      if (secrets.some((secret) => recordJson.includes(secret))) {
+      // stays pending, and the set refuses to run again. The record's decoded
+      // strings and keys are searched, not its JSON text, where escaping
+      // would hide a token holding a backslash or a quote (Codex, PR 141).
+      if (holdsSecret(result.record, secrets)) {
         throw new Error('the run record holds a token; it is not written, and the attempt stays pending');
       }
-      await writePhase4EvidenceFile(evidenceDir, `${base}.record.json`, `${recordJson}\n`);
+      const recordJson = JSON.stringify(result.record, null, 2);
+      await writePhase4EvidenceFile(evidenceDir, phase4RecordFileName(result.label, result.roomId), `${recordJson}\n`);
       await writePhase4EvidenceFile(evidenceDir, `${base}.record.sha256`, `${phase4RecordDigest(result.record)}  ${base}.record (canonical JSON)\n`);
     }
     await save(final);
@@ -283,6 +286,16 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
   } finally {
     await release();
   }
+}
+
+/** Whether any string or key anywhere in a decoded value contains one of the secrets. */
+export function holdsSecret(value: unknown, secrets: readonly string[]): boolean {
+  if (typeof value === 'string') return secrets.some((secret) => secret !== '' && value.includes(secret));
+  if (Array.isArray(value)) return value.some((item) => holdsSecret(item, secrets));
+  if (value !== null && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>).some(([key, item]) => holdsSecret(key, secrets) || holdsSecret(item, secrets));
+  }
+  return false;
 }
 
 /**

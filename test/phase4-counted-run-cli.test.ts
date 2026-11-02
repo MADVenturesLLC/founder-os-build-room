@@ -19,6 +19,7 @@ import {
   PHASE4_CLI_EXIT,
   phase4CountedRunMain,
   scrubTokens,
+  holdsSecret,
 } from '../packages/run-harness/src/phase4/cli.js';
 import {
   PHASE4_LOCK_FILE,
@@ -27,6 +28,8 @@ import {
   acquirePhase4Lock,
   evaluatePhase4LiveCheck,
   loadPhase4Attempts,
+  phase4RecordDigest,
+  phase4RecordFileName,
   registeredSurfaceIds,
   savePhase4Attempts,
   writePhase4EvidenceFile,
@@ -48,6 +51,15 @@ const ORIGIN = 'https://control-plane.example';
 const API_TOKEN = 'api-token-0123456789abcdef0123456789abcdef';
 const COUNTED_TOKEN = 'counted-token-0123456789abcdef0123456789ab';
 const ROOM_1 = '1086e073-e181-49a9-a275-cd1e35541f7c';
+const ROOM_2 = 'c7d6bd4f-607b-4753-9430-9a16fc46356e';
+const PASSED_CHECK = { passed: true, commandId: 'cmd-1', initModel: 'gemini-4-argon-high', providerConversationId: 'conv-1', readAt: '2026-11-02T14:30:00.000Z' };
+
+/** Write a record beside the log, as the command does, and answer its digest. */
+async function writeRecord(dir: string, label: 'Phase4-CR1' | 'Phase4-CR2' | 'Phase4-CR3', roomId: string): Promise<string> {
+  const record: Phase4RunRecord = { roomId, deploymentIdAtStart: 'dep-0001', deploymentIdAtEnd: 'dep-0001', finalState: 'BUILDING', events: [], commands: [], decisions: [], journalVerified: true };
+  await writePhase4EvidenceFile(dir, phase4RecordFileName(label, roomId), `${JSON.stringify(record, null, 2)}\n`);
+  return phase4RecordDigest(record);
+}
 
 function runSet(overrides: Record<string, unknown> = {}): Phase4RunSet {
   const run = (label: string, roomId: string, path: string) => ({
@@ -191,7 +203,8 @@ describe('the set’s attempt log', () => {
     const dir = await mkdtemp(join(tmpdir(), 'phase4-attempts-'));
     const empty = await loadPhase4Attempts(dir, 'SET', 'f'.repeat(64));
     assert.deepEqual(empty.attempts, []);
-    const log = { setId: 'SET', termsSha256: 'f'.repeat(64), attempts: [{ label: 'Phase4-CR1' as const, roomId: ROOM_1, outcome: 'passed' as const, pending: false, startedAt: '2026-11-02T14:00:00.000Z', endedAt: '2026-11-02T15:00:00.000Z', entryFailures: [], failures: [], recordDigest: 'e'.repeat(64) }] };
+    const recordDigest = await writeRecord(dir, 'Phase4-CR1', ROOM_1);
+    const log = { setId: 'SET', termsSha256: 'f'.repeat(64), attempts: [{ label: 'Phase4-CR1' as const, roomId: ROOM_1, outcome: 'passed' as const, pending: false, startedAt: '2026-11-02T14:00:00.000Z', endedAt: '2026-11-02T15:00:00.000Z', entryFailures: [], failures: [], recordDigest, liveCheck: PASSED_CHECK }] };
     await savePhase4Attempts(dir, log);
     assert.deepEqual(await loadPhase4Attempts(dir, 'SET', 'f'.repeat(64)), log);
   });
@@ -205,8 +218,21 @@ describe('the set’s attempt log', () => {
 
   it('refuses a malformed attempt rather than trust it as progress', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'phase4-attempts-'));
-    const good = { label: 'Phase4-CR1', roomId: ROOM_1, outcome: 'passed', pending: false, startedAt: '2026-11-02T14:00:00Z', endedAt: '2026-11-02T15:00:00Z', entryFailures: [], failures: [], recordDigest: 'e'.repeat(64) };
+    const recordDigest = await writeRecord(dir, 'Phase4-CR1', ROOM_1);
+    const good = { label: 'Phase4-CR1', roomId: ROOM_1, outcome: 'passed', pending: false, startedAt: '2026-11-02T14:00:00Z', endedAt: '2026-11-02T15:00:00Z', entryFailures: [], failures: [], recordDigest, liveCheck: PASSED_CHECK };
     const bad: Record<string, unknown>[] = [
+      // Codex's cases (PR 141): an optional field of the wrong type, a pass whose live check failed, a pass with entry failures.
+      { ...good, liveCheck: 7 },
+      { ...good, liveCheck: { ...PASSED_CHECK, passed: false, reason: 'the dispatched row lacks init_model' } },
+      { ...good, entryFailures: ['gateway_offline'] },
+      { ...good, liveCheck: undefined },
+      { ...good, liveCheck: { ...PASSED_CHECK, providerConversationId: '' } },
+      { ...good, liveCheck: { ...PASSED_CHECK, extra: true } },
+      { ...good, recordDigest: 'd'.repeat(64) },
+      { ...good, label: 'Phase4-CR2' },
+      { ...good, error: 'boom' },
+      { ...good, endedAt: 'not a time' },
+      { label: 'Phase4-CR1', roomId: ROOM_1, outcome: 'not_started', pending: false, startedAt: '2026-11-02T14:00:00Z', entryFailures: [], failures: [], recordDigest },
       { ...good, recordDigest: undefined },
       { ...good, endedAt: undefined },
       { ...good, pending: true },
@@ -264,14 +290,14 @@ function fakeControlPlane(options: { online?: boolean; dispatched?: Record<strin
     if (method === 'POST' && /^\/rooms\/[^/]+\/events$/.test(path)) return json(201, {});
     if (method === 'POST' && /\/planner-round$/.test(path)) {
       if (options.roundStartError !== undefined) return json(500, { error: 'internal', message: options.roundStartError });
-      round = { status: 'settled', roomId: ROOM_1, outcome: { kind: 'plan_review' } };
+      round = { status: 'settled', roomId: path.split('/')[3], outcome: { kind: 'plan_review' } };
       return json(202, { status: 'running' });
     }
     if (method === 'GET' && /\/planner-round$/.test(path)) {
       return json(200, { actId: options.actId ?? 'FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS', deploymentId: DEPLOYMENT, gateway: { id: GATEWAY, online: options.online ?? true }, dispatcherSurfaceRegistered: true, round });
     }
     if (method === 'GET' && /^\/rooms\/[^/]+$/.test(path)) return json(200, { snapshot: { state: 'PLAN_REVIEW' } });
-    if (method === 'GET' && /\/export$/.test(path)) return json(200, { roomId: ROOM_1, snapshot: { state: options.exportState ?? 'PLAN_REVIEW' }, events: [] });
+    if (method === 'GET' && /\/export$/.test(path)) return json(200, { roomId: path.split('/')[2], snapshot: { state: options.exportState ?? 'PLAN_REVIEW' }, events: [] });
     if (method === 'GET' && /\/journal$/.test(path)) {
       if (options.journalError !== undefined) return json(500, { error: 'internal', message: options.journalError });
       return json(200, {
@@ -521,6 +547,61 @@ describe('npm run phase4:counted-run', () => {
     const env = { CONTROL_PLANE_TOKEN: API_TOKEN, PHASE4_COUNTED_RUN_TOKEN: COUNTED_TOKEN };
     assert.equal(scrubTokens(`a ${API_TOKEN} b ${COUNTED_TOKEN}`, env), 'a [withheld] b [withheld]');
     assert.equal(scrubTokens('nothing here', {}), 'nothing here');
+  });
+
+  it('finds a token in the record however JSON would escape it', async () => {
+    const token = 'tok\\en"with-escapes-0123456789abcdef0123456789';
+    assert.equal(JSON.stringify({ v: `x${token}` }).includes(token), false);
+    assert.equal(holdsSecret({ rows: [{ providerConversationId: `x${token}` }] }, [token]), true);
+    assert.equal(holdsSecret({ [`k${token}`]: 1 }, [token]), true);
+    assert.equal(holdsSecret({ rows: [{ v: 'clean' }] }, [token]), false);
+
+    const { dir, env } = await workspace();
+    const escapedEnv = { ...env, CONTROL_PLANE_TOKEN: token };
+    const plane = fakeControlPlane({ dispatched: { initModel: 'gemini-4-argon-high', providerConversationId: `conv-${token}` } });
+    await assert.rejects(phase4CountedRunMain(escapedEnv, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() }), /holds a token/);
+    const evidence = await evidenceText(dir);
+    assert.equal(evidence.includes(token), false);
+    assert.equal(evidence.includes(JSON.stringify(token).slice(1, -1)), false);
+  });
+
+  it('refuses a pass whose record is missing or does not hash to its digest', async () => {
+    const { env } = await workspace();
+    const digest = await writeRecord(env.PHASE4_EVIDENCE_DIR, 'Phase4-CR1', ROOM_1);
+    const pass = { label: 'Phase4-CR1' as const, roomId: ROOM_1, outcome: 'passed' as const, pending: false, startedAt: '2026-11-02T14:00:00.000Z', endedAt: '2026-11-02T15:00:00.000Z', entryFailures: [], failures: [], recordDigest: digest, liveCheck: PASSED_CHECK };
+    await savePhase4Attempts(env.PHASE4_EVIDENCE_DIR, { setId: runSet().setId, termsSha256: env.PHASE4_TERMS_SHA256, attempts: [{ ...pass, recordDigest: 'd'.repeat(64) }] });
+    await assert.rejects(loadPhase4Attempts(env.PHASE4_EVIDENCE_DIR, runSet().setId, env.PHASE4_TERMS_SHA256), /does not hash to its digest/);
+    await savePhase4Attempts(env.PHASE4_EVIDENCE_DIR, { setId: runSet().setId, termsSha256: env.PHASE4_TERMS_SHA256, attempts: [{ ...pass, roomId: ROOM_2 }] });
+    await assert.rejects(loadPhase4Attempts(env.PHASE4_EVIDENCE_DIR, runSet().setId, env.PHASE4_TERMS_SHA256), /missing or unreadable/);
+  });
+
+  it('writes a record that hashes to the digest it keeps', async () => {
+    const { env } = await workspace();
+    await phase4CountedRunMain(env, { fetch: fakeControlPlane({ dispatched: {} }).fetch, git: fakeGit(), out: () => undefined, ...clock() });
+    const log = await loadPhase4Attempts(env.PHASE4_EVIDENCE_DIR, runSet().setId, env.PHASE4_TERMS_SHA256);
+    const attempt = log.attempts[0]!;
+    const written = JSON.parse(await readFile(join(env.PHASE4_EVIDENCE_DIR, phase4RecordFileName(attempt.label, attempt.roomId)), 'utf8')) as Phase4RunRecord;
+    assert.equal(phase4RecordDigest(written), attempt.recordDigest);
+  });
+
+  it('makes the live check for Phase4-CR1 only: Phase4-CR2 waits on the Founder without reading the journal first', async () => {
+    const { env } = await workspace();
+    const digest = await writeRecord(env.PHASE4_EVIDENCE_DIR, 'Phase4-CR1', ROOM_1);
+    await savePhase4Attempts(env.PHASE4_EVIDENCE_DIR, {
+      setId: runSet().setId,
+      termsSha256: env.PHASE4_TERMS_SHA256,
+      attempts: [{ label: 'Phase4-CR1', roomId: ROOM_1, outcome: 'passed', pending: false, startedAt: '2026-11-02T14:00:00.000Z', endedAt: '2026-11-02T15:00:00.000Z', entryFailures: [], failures: [], recordDigest: digest, liveCheck: PASSED_CHECK }],
+    });
+    const plane = fakeControlPlane({ dispatched: {} });
+    const lines: string[] = [];
+    await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l), ...clock(), pollMs: 10_000 });
+    assert.equal(lines.some((l) => l.includes('LIVE CHECK')), false);
+    const firstJournal = plane.requests.findIndex((r) => /\/journal$/.test(r.path));
+    const firstRoomPoll = plane.requests.findIndex((r) => r.method === 'GET' && /^\/rooms\/[^/]+$/.test(r.path));
+    assert.ok(firstRoomPoll !== -1 && firstJournal > firstRoomPoll, 'the journal is read only for the record, after the wait');
+    const log = await loadPhase4Attempts(env.PHASE4_EVIDENCE_DIR, runSet().setId, env.PHASE4_TERMS_SHA256);
+    assert.equal(log.attempts[1]?.label, 'Phase4-CR2');
+    assert.equal('liveCheck' in log.attempts[1]!, false);
   });
 
   it('refuses to run while an attempt is still marked under way', async () => {

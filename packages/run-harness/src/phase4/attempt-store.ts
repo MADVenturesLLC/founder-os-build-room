@@ -21,10 +21,16 @@
 
 import { link, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PHASE4_RUN_LABELS, type Phase4AttemptSummary, type Phase4EntryFailure, type Phase4RunFailure, type Phase4RunLabel, type Phase4RunOutcome } from './model.js';
+import { PHASE4_RUN_LABELS, type Phase4AttemptSummary, type Phase4EntryFailure, type Phase4RunFailure, type Phase4RunLabel, type Phase4RunOutcome, type Phase4RunRecord } from './model.js';
+import { phase4RecordDigest } from './runner.js';
 import type { Phase4LiveCheckReading } from './live-check.js';
 
 export const PHASE4_ATTEMPTS_FILE = 'attempts.json';
+
+/** The record file one attempt writes beside the log. */
+export function phase4RecordFileName(label: Phase4RunLabel, roomId: string): string {
+  return `${label}-${roomId}.record.json`;
+}
 /** Held by one invocation from before the log is read until its last write. */
 export const PHASE4_LOCK_FILE = 'run.lock';
 
@@ -86,6 +92,21 @@ export async function loadPhase4Attempts(directory: string, setId: string, terms
     const defect = attemptDefect(attempt);
     if (defect !== null) throw new Phase4AttemptStoreError(`${PHASE4_ATTEMPTS_FILE} attempt ${index + 1}: ${defect}`);
   });
+  // A pass is trusted only with its record beside it, hashing to the digest
+  // the attempt names: a log edited by hand cannot invent one.
+  for (const attempt of log.attempts as readonly Phase4StoredAttempt[]) {
+    if (attempt.outcome !== 'passed') continue;
+    const name = phase4RecordFileName(attempt.label, attempt.roomId);
+    let record: unknown;
+    try {
+      record = JSON.parse(await readFile(join(directory, name), 'utf8'));
+    } catch {
+      throw new Phase4AttemptStoreError(`${attempt.label} is recorded as passed, but ${name} is missing or unreadable`);
+    }
+    if ((record as { roomId?: unknown } | null)?.roomId !== attempt.roomId || phase4RecordDigest(record as Phase4RunRecord) !== attempt.recordDigest) {
+      throw new Phase4AttemptStoreError(`${attempt.label} is recorded as passed, but ${name} does not hash to its digest`);
+    }
+  }
   return log as Phase4AttemptLog;
 }
 
@@ -192,8 +213,13 @@ const DIGEST_RE = /^[0-9a-f]{64}$/;
 
 /**
  * Why a stored attempt cannot be trusted as progress, or null. The shape is
- * closed, and a pass must look like one the command wrote: settled, ended,
- * with its record's digest and no failure.
+ * closed, every optional field is checked when present, and an attempt must
+ * be one the command could have written: a pending attempt has no end, no
+ * record and no reading yet; a run that did not start has no record and no
+ * reading; a run that started has no entry failures; only Phase4-CR1 carries
+ * a live-check reading; and a pass is settled, ended, digested, free of
+ * failures and, for Phase4-CR1, carries a live check that passed with both
+ * fields (the readiness act's Part B).
  */
 function attemptDefect(raw: unknown): string | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return 'not an object';
@@ -205,14 +231,60 @@ function attemptDefect(raw: unknown): string | null {
   if (typeof a['pending'] !== 'boolean') return 'pending is not true or false';
   if (typeof a['startedAt'] !== 'string' || Number.isNaN(Date.parse(a['startedAt']))) return 'startedAt is not a time';
   if (!stringList(a['entryFailures']) || !stringList(a['failures'])) return 'failures are not lists of strings';
-  if (a['pending'] === true && a['outcome'] !== 'interrupted') return 'a pending attempt must be recorded as interrupted';
+  if ('endedAt' in a && !isTime(a['endedAt'])) return 'endedAt is not a time';
+  if ('recordDigest' in a && (typeof a['recordDigest'] !== 'string' || !DIGEST_RE.test(a['recordDigest']))) return 'recordDigest is not a SHA-256';
+  if ('error' in a && typeof a['error'] !== 'string') return 'error is not text';
+  if ('liveCheck' in a) {
+    if (a['label'] !== 'Phase4-CR1') return 'only Phase4-CR1 carries a live check';
+    const defect = liveCheckDefect(a['liveCheck']);
+    if (defect !== null) return defect;
+  }
+  if (a['pending'] === true) {
+    if (a['outcome'] !== 'interrupted') return 'a pending attempt must be recorded as interrupted';
+    if ('endedAt' in a || 'recordDigest' in a || 'liveCheck' in a) return 'a pending attempt has already ended';
+  }
+  if (a['outcome'] === 'not_started') {
+    if ('recordDigest' in a || 'liveCheck' in a || (a['failures'] as unknown[]).length > 0) return 'a run that did not start has a record';
+  } else if ((a['entryFailures'] as unknown[]).length > 0) {
+    return 'a run that started carries entry failures';
+  }
   if (a['outcome'] === 'passed') {
     if (a['pending'] !== false) return 'a pass is pending';
-    if (typeof a['endedAt'] !== 'string' || Number.isNaN(Date.parse(a['endedAt']))) return 'a pass has no end time';
-    if (typeof a['recordDigest'] !== 'string' || !DIGEST_RE.test(a['recordDigest'])) return 'a pass has no record digest';
+    if (!isTime(a['endedAt'])) return 'a pass has no end time';
+    if (typeof a['recordDigest'] !== 'string') return 'a pass has no record digest';
     if ((a['failures'] as unknown[]).length > 0) return 'a pass carries failures';
+    if ('error' in a) return 'a pass carries an error';
+    if (a['label'] === 'Phase4-CR1') {
+      const check = a['liveCheck'] as Record<string, unknown> | undefined;
+      if (check === undefined || check['passed'] !== true) return 'Phase4-CR1 is recorded as passed without a passing live check';
+    }
   }
   return null;
+}
+
+function liveCheckDefect(raw: unknown): string | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return 'the live check is not an object';
+  const c = raw as Record<string, unknown>;
+  if (!exactKeys(c, ['passed', 'commandId', 'initModel', 'providerConversationId', 'readAt'], ['reason'])) return 'the live check\'s fields are not exactly a reading\'s';
+  if (typeof c['passed'] !== 'boolean') return 'the live check\'s passed is not true or false';
+  for (const field of ['commandId', 'initModel', 'providerConversationId']) {
+    if (c[field] !== null && typeof c[field] !== 'string') return `the live check's ${field} is not text or null`;
+  }
+  if (!isTime(c['readAt'])) return 'the live check has no reading time';
+  if ('reason' in c && typeof c['reason'] !== 'string') return 'the live check\'s reason is not text';
+  if (c['passed'] === true) {
+    if ('reason' in c) return 'a passing live check carries a failure reason';
+    for (const field of ['commandId', 'initModel', 'providerConversationId']) {
+      if (typeof c[field] !== 'string' || (c[field] as string).trim() === '') return `a passing live check lacks ${field}`;
+    }
+  } else if (!('reason' in c)) {
+    return 'a failed live check carries no reason';
+  }
+  return null;
+}
+
+function isTime(value: unknown): boolean {
+  return typeof value === 'string' && !Number.isNaN(Date.parse(value));
 }
 
 function exactKeys(value: Record<string, unknown>, required: readonly string[], optional: readonly string[]): boolean {
