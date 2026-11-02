@@ -211,7 +211,9 @@ export type Phase4RunFailure =
   | 'plan_not_approved_as_reviewed'
   | 'decision_not_founder'
   | 'activity_after_approval'
-  | 'journal_unverified';
+  | 'journal_unverified'
+  /** A caller's afterRound check stopped the run: it never counts, whatever the record shows. */
+  | 'stopped_after_round';
 
 export interface Phase4RunVerdict {
   readonly outcome: Exclude<Phase4RunOutcome, 'not_started'>;

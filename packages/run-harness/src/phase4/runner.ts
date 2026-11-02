@@ -132,6 +132,7 @@ export class Phase4Runner {
 
     let decisionTimedOut = false;
     let roundsExceeded = false;
+    let stoppedAfterRound = false;
     for (let round = 1; ; round += 1) {
       if (round > PHASE4_MAX_ROUNDS_PER_RUN) {
         roundsExceeded = true;
@@ -140,7 +141,10 @@ export class Phase4Runner {
       const opened = await this.driver.runRound(run.roomId);
       if (this.options.afterRound !== undefined) {
         const next = await this.options.afterRound({ label: run.label, roomId: run.roomId, round, kind: opened.kind });
-        if (next === 'stop') break;
+        if (next === 'stop') {
+          stoppedAfterRound = true;
+          break;
+        }
       }
       if (opened.kind !== 'plan_review') break;
       const settled = await this.awaitFounder(run.roomId, set.decisionTimeoutMs);
@@ -153,12 +157,15 @@ export class Phase4Runner {
 
     const record = await this.driver.collectRecord(run.roomId, deploymentIdAtStart);
     const verdict = evaluatePhase4Run(set, run, record, { decisionTimedOut, roundsExceeded });
+    // A run stopped by afterRound never counts, even if the room advanced to an
+    // approval between the check and the record's collection.
+    const outcome = stoppedAfterRound && verdict.outcome === 'passed' ? 'interrupted' : verdict.outcome;
     return {
       label: run.label,
       roomId: run.roomId,
-      outcome: verdict.outcome,
+      outcome,
       entryFailures: [],
-      failures: verdict.failures,
+      failures: stoppedAfterRound ? [...verdict.failures, 'stopped_after_round'] : verdict.failures,
       recordDigest: phase4RecordDigest(record),
       record,
     };

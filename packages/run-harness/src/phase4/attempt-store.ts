@@ -19,12 +19,14 @@
  * or the new one, never a torn one.
  */
 
-import { mkdir, open, readFile, rename } from 'node:fs/promises';
+import { link, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PHASE4_RUN_LABELS, type Phase4AttemptSummary, type Phase4EntryFailure, type Phase4RunFailure, type Phase4RunLabel, type Phase4RunOutcome } from './model.js';
 import type { Phase4LiveCheckReading } from './live-check.js';
 
 export const PHASE4_ATTEMPTS_FILE = 'attempts.json';
+/** Held by one invocation from before the log is read until its last write. */
+export const PHASE4_LOCK_FILE = 'run.lock';
 
 export interface Phase4StoredAttempt {
   readonly label: Phase4RunLabel;
@@ -77,11 +79,13 @@ export async function loadPhase4Attempts(directory: string, setId: string, terms
   if (log.termsSha256 !== termsSha256) {
     throw new Phase4AttemptStoreError(`${PHASE4_ATTEMPTS_FILE} was written under terms ${log.termsSha256}, not ${termsSha256}`);
   }
-  for (const attempt of log.attempts) {
-    if (!(PHASE4_RUN_LABELS as readonly string[]).includes((attempt as Phase4StoredAttempt).label)) {
-      throw new Phase4AttemptStoreError(`${PHASE4_ATTEMPTS_FILE} names an unknown label`);
-    }
+  if (!exactKeys(log as Record<string, unknown>, ['setId', 'termsSha256', 'attempts'], [])) {
+    throw new Phase4AttemptStoreError(`${PHASE4_ATTEMPTS_FILE} is not an attempt log`);
   }
+  log.attempts.forEach((attempt, index) => {
+    const defect = attemptDefect(attempt);
+    if (defect !== null) throw new Phase4AttemptStoreError(`${PHASE4_ATTEMPTS_FILE} attempt ${index + 1}: ${defect}`);
+  });
   return log as Phase4AttemptLog;
 }
 
@@ -96,23 +100,70 @@ export async function savePhase4Attempts(directory: string, log: Phase4AttemptLo
   await writeDurably(directory, PHASE4_ATTEMPTS_FILE, `${JSON.stringify(log, null, 2)}\n`);
 }
 
-/** Write one evidence file atomically and durably, refusing to replace an existing one. */
+/**
+ * Write one evidence file durably, never replacing an existing one: the
+ * synced temporary file is hard-linked to its final name, which fails if the
+ * name exists, so two writers cannot both succeed.
+ */
 export async function writePhase4EvidenceFile(directory: string, name: string, content: string): Promise<void> {
   await mkdir(directory, { recursive: true });
-  const target = join(directory, name);
-  const existing = await open(target, 'r').then(
-    async (handle) => {
-      await handle.close();
-      return true;
-    },
-    () => false,
-  );
-  if (existing) throw new Phase4AttemptStoreError(`${name} already exists; evidence is never overwritten`);
-  await writeDurably(directory, name, content);
+  const temporary = await writeTemporary(directory, name, content);
+  try {
+    await link(temporary, join(directory, name));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new Phase4AttemptStoreError(`${name} already exists; evidence is never overwritten`);
+    }
+    throw error;
+  } finally {
+    await unlink(temporary).catch(() => undefined);
+  }
+  await syncDirectory(directory);
+}
+
+/**
+ * Take the evidence directory's lock, held from before the log is read until
+ * the invocation's last write, so two invocations can never run the same
+ * label. It is a file created exclusively, naming its holder. A crashed
+ * invocation leaves it behind, and every later invocation refuses until the
+ * Founder removes it by hand, having checked that no run is still going:
+ * fail closed, because a run is single-use. The lock is released by the
+ * function this returns.
+ */
+export async function acquirePhase4Lock(directory: string, holder: string): Promise<() => Promise<void>> {
+  await mkdir(directory, { recursive: true });
+  const path = join(directory, PHASE4_LOCK_FILE);
+  let handle;
+  try {
+    handle = await open(path, 'wx', 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new Phase4AttemptStoreError(
+        `${PHASE4_LOCK_FILE} is held: another invocation is running, or one ended without releasing it; remove it by hand only once no run is going`,
+      );
+    }
+    throw error;
+  }
+  try {
+    await handle.writeFile(`${holder}\n`, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await syncDirectory(directory);
+  return async () => {
+    await unlink(path);
+    await syncDirectory(directory);
+  };
 }
 
 async function writeDurably(directory: string, name: string, content: string): Promise<void> {
-  const target = join(directory, name);
+  const temporary = await writeTemporary(directory, name, content);
+  await rename(temporary, join(directory, name));
+  await syncDirectory(directory);
+}
+
+async function writeTemporary(directory: string, name: string, content: string): Promise<string> {
   const temporary = join(directory, `.${name}.${process.pid}.tmp`);
   const handle = await open(temporary, 'w', 0o600);
   try {
@@ -121,11 +172,54 @@ async function writeDurably(directory: string, name: string, content: string): P
   } finally {
     await handle.close();
   }
-  await rename(temporary, target);
+  return temporary;
+}
+
+async function syncDirectory(directory: string): Promise<void> {
   const dir = await open(directory, 'r');
   try {
     await dir.sync();
   } finally {
     await dir.close();
   }
+}
+
+const OUTCOMES: readonly Phase4RunOutcome[] = ['not_started', 'passed', 'failed', 'interrupted', 'rejected'];
+const ATTEMPT_REQUIRED = ['label', 'roomId', 'outcome', 'pending', 'startedAt', 'entryFailures', 'failures'];
+const ATTEMPT_OPTIONAL = ['endedAt', 'recordDigest', 'liveCheck', 'error'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const DIGEST_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Why a stored attempt cannot be trusted as progress, or null. The shape is
+ * closed, and a pass must look like one the command wrote: settled, ended,
+ * with its record's digest and no failure.
+ */
+function attemptDefect(raw: unknown): string | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return 'not an object';
+  const a = raw as Record<string, unknown>;
+  if (!exactKeys(a, ATTEMPT_REQUIRED, ATTEMPT_OPTIONAL)) return 'fields are not exactly an attempt\'s';
+  if (!(PHASE4_RUN_LABELS as readonly unknown[]).includes(a['label'])) return 'unknown label';
+  if (typeof a['roomId'] !== 'string' || !UUID_RE.test(a['roomId'])) return 'room id is not a lowercase UUID';
+  if (!(OUTCOMES as readonly unknown[]).includes(a['outcome'])) return 'unknown outcome';
+  if (typeof a['pending'] !== 'boolean') return 'pending is not true or false';
+  if (typeof a['startedAt'] !== 'string' || Number.isNaN(Date.parse(a['startedAt']))) return 'startedAt is not a time';
+  if (!stringList(a['entryFailures']) || !stringList(a['failures'])) return 'failures are not lists of strings';
+  if (a['pending'] === true && a['outcome'] !== 'interrupted') return 'a pending attempt must be recorded as interrupted';
+  if (a['outcome'] === 'passed') {
+    if (a['pending'] !== false) return 'a pass is pending';
+    if (typeof a['endedAt'] !== 'string' || Number.isNaN(Date.parse(a['endedAt']))) return 'a pass has no end time';
+    if (typeof a['recordDigest'] !== 'string' || !DIGEST_RE.test(a['recordDigest'])) return 'a pass has no record digest';
+    if ((a['failures'] as unknown[]).length > 0) return 'a pass carries failures';
+  }
+  return null;
+}
+
+function exactKeys(value: Record<string, unknown>, required: readonly string[], optional: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return required.every((k) => keys.includes(k)) && keys.every((k) => required.includes(k) || optional.includes(k));
+}
+
+function stringList(value: unknown): boolean {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
 }

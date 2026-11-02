@@ -40,6 +40,7 @@ import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import {
+  acquirePhase4Lock,
   loadPhase4Attempts,
   phase4AttemptSummaries,
   savePhase4Attempts,
@@ -121,121 +122,131 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
   }
 
   const evidenceDir = env['PHASE4_EVIDENCE_DIR']!;
-  let log: Phase4AttemptLog;
+  let release: () => Promise<void>;
   try {
-    log = await loadPhase4Attempts(evidenceDir, set.setId, termsSha);
+    release = await acquirePhase4Lock(evidenceDir, `pid ${process.pid} at ${iso()}`);
   } catch (error) {
     return refuse(describe(error));
   }
-  if (log.attempts.some((a) => a.pending)) {
-    return refuse('an attempt is still marked under way; a run that dies is recorded as interrupted, and the set is spent');
-  }
-  const status = phase4SetStatus(phase4AttemptSummaries(log));
-  if (status.nextLabel === null) {
-    return refuse(status.satisfied ? 'the set is complete: three consecutive passes are on record' : 'the set is spent: a new act is needed');
-  }
-
-  const driver = new HttpPhase4Driver({
-    origin: set.controlPlaneOrigin,
-    apiToken,
-    countedRunToken,
-    founderOs,
-    executorAvailable: true,
-    observeRemoteHead: (repository) => observeRemoteHead(git, repository),
-    ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
-    now,
-    ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
-    ...(deps.pollMs === undefined ? {} : { pollMs: deps.pollMs }),
-  });
-
-  const progress: { pending: Phase4StoredAttempt | null } = { pending: null };
-  let liveCheck: (Phase4LiveCheckReading & { readonly readAt: string }) | undefined;
-  const save = async (attempt: Phase4StoredAttempt): Promise<void> => {
-    const others = log.attempts.filter((a) => !(a.pending && a.label === attempt.label && a.roomId === attempt.roomId));
-    log = { ...log, attempts: [...others, attempt] };
-    await savePhase4Attempts(evidenceDir, log);
-  };
-
-  const runner = new Phase4Runner(driver, {
-    now,
-    ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
-    ...(deps.pollMs === undefined ? {} : { pollMs: deps.pollMs }),
-    onEntryPassed: async (run: Phase4PlannedRun) => {
-      const attempt: Phase4StoredAttempt = { label: run.label, roomId: run.roomId, outcome: 'interrupted', pending: true, startedAt: iso(), entryFailures: [], failures: [] };
-      progress.pending = attempt;
-      await save(attempt);
-      out(`${run.label}: entry passed at ${attempt.startedAt}; room ${run.roomId}`);
-    },
-    afterRound: async ({ label, roomId, round, kind }) => {
-      out(`${label}: round ${round} settled (${kind}) at ${iso()}`);
-      if (label !== 'Phase4-CR1' || round !== 1) return 'continue';
-      let reading: Phase4LiveCheckReading;
-      try {
-        reading = evaluatePhase4LiveCheck(await driver.journalCommands(roomId));
-      } catch (error) {
-        reading = { passed: false, commandId: null, initModel: null, providerConversationId: null, reason: `the journal could not be read: ${describe(error)}` };
-      }
-      liveCheck = { ...reading, readAt: iso() };
-      out(`LIVE CHECK at ${liveCheck.readAt}: command ${reading.commandId ?? 'none'}; init_model ${reading.initModel ?? 'absent'}; provider_conversation_id ${reading.providerConversationId ?? 'absent'}`);
-      if (reading.passed) {
-        out('LIVE CHECK PASSED: the run continues and counts.');
-        return 'continue';
-      }
-      out(`LIVE CHECK FAILED (${reading.reason ?? 'unknown'}): the run stops here and does not count; the set is spent, and nothing more is dispatched on this binding without a new act.`);
-      return 'stop';
-    },
-  });
-
-  let result;
   try {
-    result = await runner.runNext(set, phase4AttemptSummaries(log));
-  } catch (error) {
-    if (error instanceof Phase4SetNotRunnableError) return refuse(error.message);
-    const started = progress.pending;
-    if (started === null) {
-      out(`${status.nextLabel}: did not start, nothing was written: ${describe(error)}`);
+    let log: Phase4AttemptLog;
+    try {
+      log = await loadPhase4Attempts(evidenceDir, set.setId, termsSha);
+    } catch (error) {
+      return refuse(describe(error));
+    }
+    if (log.attempts.some((a) => a.pending)) {
+      return refuse('an attempt is still marked under way; a run that dies is recorded as interrupted, and the set is spent');
+    }
+    const status = phase4SetStatus(phase4AttemptSummaries(log));
+    if (status.nextLabel === null) {
+      return refuse(status.satisfied ? 'the set is complete: three consecutive passes are on record' : 'the set is spent: a new act is needed');
+    }
+
+    const driver = new HttpPhase4Driver({
+      origin: set.controlPlaneOrigin,
+      apiToken,
+      countedRunToken,
+      founderOs,
+      executorAvailable: true,
+      observeRemoteHead: (repository) => observeRemoteHead(git, repository),
+      ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
+      now,
+      ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+      ...(deps.pollMs === undefined ? {} : { pollMs: deps.pollMs }),
+    });
+
+    const progress: { pending: Phase4StoredAttempt | null } = { pending: null };
+    let liveCheck: (Phase4LiveCheckReading & { readonly readAt: string }) | undefined;
+    const save = async (attempt: Phase4StoredAttempt): Promise<void> => {
+      const others = log.attempts.filter((a) => !(a.pending && a.label === attempt.label && a.roomId === attempt.roomId));
+      log = { ...log, attempts: [...others, attempt] };
+      await savePhase4Attempts(evidenceDir, log);
+    };
+
+    const runner = new Phase4Runner(driver, {
+      now,
+      ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
+      ...(deps.pollMs === undefined ? {} : { pollMs: deps.pollMs }),
+      onEntryPassed: async (run: Phase4PlannedRun) => {
+        const attempt: Phase4StoredAttempt = { label: run.label, roomId: run.roomId, outcome: 'interrupted', pending: true, startedAt: iso(), entryFailures: [], failures: [] };
+        progress.pending = attempt;
+        await save(attempt);
+        out(`${run.label}: entry passed at ${attempt.startedAt}; room ${run.roomId}`);
+      },
+      afterRound: async ({ label, roomId, round, kind }) => {
+        out(`${label}: round ${round} settled (${kind}) at ${iso()}`);
+        if (label !== 'Phase4-CR1' || round !== 1) return 'continue';
+        let reading: Phase4LiveCheckReading;
+        try {
+          reading = evaluatePhase4LiveCheck(await driver.journalCommands(roomId));
+        } catch (error) {
+          reading = { passed: false, commandId: null, initModel: null, providerConversationId: null, reason: `the journal could not be read: ${describe(error)}` };
+        }
+        liveCheck = { ...reading, readAt: iso() };
+        out(`LIVE CHECK at ${liveCheck.readAt}: command ${reading.commandId ?? 'none'}; init_model ${reading.initModel ?? 'absent'}; provider_conversation_id ${reading.providerConversationId ?? 'absent'}`);
+        if (reading.passed) {
+          out('LIVE CHECK PASSED: the run continues and counts.');
+          return 'continue';
+        }
+        out(`LIVE CHECK FAILED (${reading.reason ?? 'unknown'}): the run stops here and does not count; the set is spent, and nothing more is dispatched on this binding without a new act.`);
+        return 'stop';
+      },
+    });
+
+    let result;
+    try {
+      result = await runner.runNext(set, phase4AttemptSummaries(log));
+    } catch (error) {
+      if (error instanceof Phase4SetNotRunnableError) return refuse(error.message);
+      const started = progress.pending;
+      if (started === null) {
+        out(`${status.nextLabel}: did not start, nothing was written: ${describe(error)}`);
+        return PHASE4_CLI_EXIT.notStarted;
+      }
+      await save({ ...started, pending: false, endedAt: iso(), error: describe(error), ...(liveCheck === undefined ? {} : { liveCheck }) });
+      out(`${started.label}: interrupted at ${iso()}: ${describe(error)}`);
+      out('The set is spent: a new act is needed for another attempt.');
+      return PHASE4_CLI_EXIT.notPassed;
+    }
+
+    if (result.outcome === 'not_started') {
+      out(`${result.label}: entry refused, nothing was written, the set is not spent: ${result.entryFailures.join(', ')}`);
       return PHASE4_CLI_EXIT.notStarted;
     }
-    await save({ ...started, pending: false, endedAt: iso(), error: describe(error), ...(liveCheck === undefined ? {} : { liveCheck }) });
-    out(`${started.label}: interrupted at ${iso()}: ${describe(error)}`);
-    out('The set is spent: a new act is needed for another attempt.');
-    return PHASE4_CLI_EXIT.notPassed;
+    const startedAt = progress.pending?.startedAt ?? iso();
+    const final: Phase4StoredAttempt = {
+      label: result.label,
+      roomId: result.roomId,
+      outcome: result.outcome,
+      pending: false,
+      startedAt,
+      endedAt: iso(),
+      entryFailures: [],
+      failures: result.failures,
+      ...(result.recordDigest === undefined ? {} : { recordDigest: result.recordDigest }),
+      ...(liveCheck === undefined ? {} : { liveCheck }),
+    };
+    await save(final);
+    if (result.record !== undefined) {
+      const base = `${result.label}-${result.roomId}`;
+      await writePhase4EvidenceFile(evidenceDir, `${base}.record.json`, `${JSON.stringify(result.record, null, 2)}\n`);
+      await writePhase4EvidenceFile(evidenceDir, `${base}.record.sha256`, `${phase4RecordDigest(result.record)}  ${base}.record (canonical JSON)\n`);
+    }
+    out(`${result.label}: ${result.outcome} at ${final.endedAt}; record SHA-256 ${result.recordDigest ?? 'none'}`);
+    if (result.failures.length > 0) out(`${result.label}: failures: ${result.failures.join(', ')}`);
+    const after = phase4SetStatus(phase4AttemptSummaries(log));
+    out(
+      after.satisfied
+        ? 'The set is complete: three consecutive passes.'
+        : after.spent
+          ? 'The set is spent: a new act is needed for another attempt.'
+          : `Next label: ${after.nextLabel}.`,
+    );
+    return result.outcome === 'passed' ? PHASE4_CLI_EXIT.passed : PHASE4_CLI_EXIT.notPassed;
+  } finally {
+    await release();
   }
-
-  if (result.outcome === 'not_started') {
-    out(`${result.label}: entry refused, nothing was written, the set is not spent: ${result.entryFailures.join(', ')}`);
-    return PHASE4_CLI_EXIT.notStarted;
-  }
-  const startedAt = progress.pending?.startedAt ?? iso();
-  const final: Phase4StoredAttempt = {
-    label: result.label,
-    roomId: result.roomId,
-    outcome: result.outcome,
-    pending: false,
-    startedAt,
-    endedAt: iso(),
-    entryFailures: [],
-    failures: result.failures,
-    ...(result.recordDigest === undefined ? {} : { recordDigest: result.recordDigest }),
-    ...(liveCheck === undefined ? {} : { liveCheck }),
-  };
-  await save(final);
-  if (result.record !== undefined) {
-    const base = `${result.label}-${result.roomId}`;
-    await writePhase4EvidenceFile(evidenceDir, `${base}.record.json`, `${JSON.stringify(result.record, null, 2)}\n`);
-    await writePhase4EvidenceFile(evidenceDir, `${base}.record.sha256`, `${phase4RecordDigest(result.record)}  ${base}.record (canonical JSON)\n`);
-  }
-  out(`${result.label}: ${result.outcome} at ${final.endedAt}; record SHA-256 ${result.recordDigest ?? 'none'}`);
-  if (result.failures.length > 0) out(`${result.label}: failures: ${result.failures.join(', ')}`);
-  const after = phase4SetStatus(phase4AttemptSummaries(log));
-  out(
-    after.satisfied
-      ? 'The set is complete: three consecutive passes.'
-      : after.spent
-        ? 'The set is spent: a new act is needed for another attempt.'
-        : `Next label: ${after.nextLabel}.`,
-  );
-  return result.outcome === 'passed' ? PHASE4_CLI_EXIT.passed : PHASE4_CLI_EXIT.notPassed;
 }
 
 /** The repository's live default-branch head, read from GitHub without credentials. */

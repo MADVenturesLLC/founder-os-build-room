@@ -20,8 +20,10 @@ import {
   phase4CountedRunMain,
 } from '../packages/run-harness/src/phase4/cli.js';
 import {
+  PHASE4_LOCK_FILE,
   Phase4AttemptStoreError,
   Phase4Runner,
+  acquirePhase4Lock,
   evaluatePhase4LiveCheck,
   loadPhase4Attempts,
   registeredSurfaceIds,
@@ -188,7 +190,7 @@ describe('the set’s attempt log', () => {
     const dir = await mkdtemp(join(tmpdir(), 'phase4-attempts-'));
     const empty = await loadPhase4Attempts(dir, 'SET', 'f'.repeat(64));
     assert.deepEqual(empty.attempts, []);
-    const log = { setId: 'SET', termsSha256: 'f'.repeat(64), attempts: [{ label: 'Phase4-CR1' as const, roomId: ROOM_1, outcome: 'passed' as const, pending: false, startedAt: 't0', entryFailures: [], failures: [] }] };
+    const log = { setId: 'SET', termsSha256: 'f'.repeat(64), attempts: [{ label: 'Phase4-CR1' as const, roomId: ROOM_1, outcome: 'passed' as const, pending: false, startedAt: '2026-11-02T14:00:00.000Z', endedAt: '2026-11-02T15:00:00.000Z', entryFailures: [], failures: [], recordDigest: 'e'.repeat(64) }] };
     await savePhase4Attempts(dir, log);
     assert.deepEqual(await loadPhase4Attempts(dir, 'SET', 'f'.repeat(64)), log);
   });
@@ -198,6 +200,36 @@ describe('the set’s attempt log', () => {
     await savePhase4Attempts(dir, { setId: 'SET', termsSha256: 'f'.repeat(64), attempts: [] });
     await assert.rejects(loadPhase4Attempts(dir, 'OTHER', 'f'.repeat(64)), Phase4AttemptStoreError);
     await assert.rejects(loadPhase4Attempts(dir, 'SET', 'e'.repeat(64)), Phase4AttemptStoreError);
+  });
+
+  it('refuses a malformed attempt rather than trust it as progress', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'phase4-attempts-'));
+    const good = { label: 'Phase4-CR1', roomId: ROOM_1, outcome: 'passed', pending: false, startedAt: '2026-11-02T14:00:00Z', endedAt: '2026-11-02T15:00:00Z', entryFailures: [], failures: [], recordDigest: 'e'.repeat(64) };
+    const bad: Record<string, unknown>[] = [
+      { ...good, recordDigest: undefined },
+      { ...good, endedAt: undefined },
+      { ...good, pending: true },
+      { ...good, failures: ['journal_unverified'] },
+      { ...good, extra: 'field' },
+      { ...good, outcome: 'won' },
+      { ...good, roomId: 'not-a-room' },
+      { ...good, outcome: 'failed', pending: true },
+    ];
+    await writeFile(join(dir, 'attempts.json'), JSON.stringify({ setId: 'SET', termsSha256: 'f'.repeat(64), attempts: [good] }));
+    assert.equal((await loadPhase4Attempts(dir, 'SET', 'f'.repeat(64))).attempts.length, 1);
+    for (const attempt of bad) {
+      await writeFile(join(dir, 'attempts.json'), JSON.stringify({ setId: 'SET', termsSha256: 'f'.repeat(64), attempts: [attempt] }));
+      await assert.rejects(loadPhase4Attempts(dir, 'SET', 'f'.repeat(64)), Phase4AttemptStoreError, JSON.stringify(attempt));
+    }
+  });
+
+  it('holds one lock per evidence directory, refusing a second holder until it is released', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'phase4-lock-'));
+    const release = await acquirePhase4Lock(dir, 'first');
+    await assert.rejects(acquirePhase4Lock(dir, 'second'), /is held/);
+    await release();
+    const again = await acquirePhase4Lock(dir, 'third');
+    await again();
   });
 
   it('never overwrites an evidence file', async () => {
@@ -403,12 +435,26 @@ describe('npm run phase4:counted-run', () => {
     assert.match(log.attempts[0]?.error ?? '', /does not match the act's base/);
   });
 
+  it('refuses to run while another invocation holds the lock, and releases its own when done', async () => {
+    const { env } = await workspace();
+    const release = await acquirePhase4Lock(env.PHASE4_EVIDENCE_DIR, 'another invocation');
+    const plane = fakeControlPlane({ dispatched: {} });
+    const lines: string[] = [];
+    assert.equal(await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l) }), PHASE4_CLI_EXIT.refused);
+    assert.match(lines.join('\n'), /is held/);
+    assert.equal(plane.requests.length, 0);
+    await release();
+
+    await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() });
+    assert.equal((await readdir(env.PHASE4_EVIDENCE_DIR)).includes(PHASE4_LOCK_FILE), false);
+  });
+
   it('refuses to run while an attempt is still marked under way', async () => {
     const { env } = await workspace();
     await savePhase4Attempts(env.PHASE4_EVIDENCE_DIR, {
       setId: runSet().setId,
       termsSha256: env.PHASE4_TERMS_SHA256,
-      attempts: [{ label: 'Phase4-CR1', roomId: ROOM_1, outcome: 'interrupted', pending: true, startedAt: 't0', entryFailures: [], failures: [] }],
+      attempts: [{ label: 'Phase4-CR1', roomId: ROOM_1, outcome: 'interrupted', pending: true, startedAt: '2026-11-02T14:00:00.000Z', entryFailures: [], failures: [] }],
     });
     const plane = fakeControlPlane();
     const lines: string[] = [];
