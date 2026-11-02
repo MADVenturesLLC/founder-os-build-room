@@ -207,6 +207,19 @@ export class HttpPhase4Driver implements Phase4RunDriver {
     };
   }
 
+  /**
+   * The room's planner commands as the journal route returns them, each row
+   * as decoded (FOUNDER-ACT-20261029-BR-PLANNER-READINESS Part B reads a
+   * dispatched row's `initModel` and `providerConversationId` here).
+   */
+  async journalCommands(roomId: string): Promise<readonly { readonly commandId: string; readonly rows: readonly Record<string, unknown>[] }[]> {
+    const journal = await this.call('GET', `/control-plane/rooms/${roomId}/journal`, this.options.countedRunToken);
+    if (journal.status !== 200) throw new Phase4DriverError(routeRefusal('journal read', journal.status, journal.body));
+    const commands = journal.body['commands'];
+    if (!Array.isArray(commands)) throw new Phase4DriverError('journal read answered without a commands list');
+    return commands as { commandId: string; rows: Record<string, unknown>[] }[];
+  }
+
   private async roundView(roomId: string): Promise<RoundView> {
     const view = await this.call('GET', `/control-plane/rooms/${roomId}/planner-round`, this.options.countedRunToken);
     if (view.status !== 200) throw new Phase4DriverError(routeRefusal('planner-round read', view.status, view.body));
