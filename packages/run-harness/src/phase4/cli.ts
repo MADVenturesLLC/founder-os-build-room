@@ -37,6 +37,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import {
@@ -52,7 +53,8 @@ import {
 import { containsCredentialMaterial } from '../../../journal/src/index.js';
 import { HttpPhase4Driver } from './http-driver.js';
 import { evaluatePhase4LiveCheck, type Phase4LiveCheckReading } from './live-check.js';
-import type { Phase4PlannedRun } from './model.js';
+import type { Phase4PlannedRun, Phase4RunRecord, Phase4RunSet } from './model.js';
+import { evaluatePhase4Run } from './run-unit.js';
 import { phase4SetStatus } from './run-sequence.js';
 import { validatePhase4RunSet } from './run-set.js';
 import { Phase4Runner, Phase4SetNotRunnableError, phase4RecordDigest } from './runner.js';
@@ -167,11 +169,22 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
     let liveCheck: (Phase4LiveCheckReading & { readonly readAt: string }) | undefined;
     const save = async (attempt: Phase4StoredAttempt): Promise<void> => {
       const others = log.attempts.filter((a) => !(a.pending && a.label === attempt.label && a.roomId === attempt.roomId));
-      const scrubbed: Phase4StoredAttempt = {
+      let scrubbed: Phase4StoredAttempt = {
         ...attempt,
         ...(attempt.error === undefined ? {} : { error: scrub(attempt.error) }),
         ...(attempt.liveCheck?.reason === undefined ? {} : { liveCheck: { ...attempt.liveCheck, reason: scrub(attempt.liveCheck.reason) } }),
       };
+      // Scrubbing works on decoded text; JSON can still spell a token out of
+      // escapes (a newline written as backslash-n). Free text that would is
+      // withheld whole.
+      if (leaksSecret(scrubbed, secrets)) {
+        scrubbed = {
+          ...scrubbed,
+          ...(scrubbed.error === undefined ? {} : { error: '[withheld: credential material]' }),
+          ...(scrubbed.liveCheck?.reason === undefined ? {} : { liveCheck: { ...scrubbed.liveCheck, reason: '[withheld: credential material]' } }),
+        };
+      }
+      if (leaksSecret(scrubbed, secrets)) throw new Error('the attempt would record a token; nothing was written');
       log = { ...log, attempts: [...others, scrubbed] };
       await savePhase4Attempts(evidenceDir, log);
     };
@@ -221,6 +234,21 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
       return refuse(`the control plane is configured for act ${remoteActId ?? 'none'}, not ${set.setId}`);
     }
 
+    // A pass on record advances the set only if its record supports it and
+    // the control plane still holds that record: a log edited by hand, or a
+    // record edited with it, cannot invent progress (Codex, PR 141).
+    for (const attempt of log.attempts) {
+      if (attempt.outcome !== 'passed') continue;
+      let defect: string | null;
+      try {
+        defect = await priorPassDefect(set, attempt, evidenceDir, driver);
+      } catch (error) {
+        out(`${nextRun.label}: did not start, nothing was written: ${describe(error)}`);
+        return PHASE4_CLI_EXIT.notStarted;
+      }
+      if (defect !== null) return refuse(`${attempt.label} is recorded as passed, but ${defect}`);
+    }
+
     let result;
     try {
       result = await runner.runNext(set, phase4AttemptSummaries(log));
@@ -264,7 +292,7 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
       // stays pending, and the set refuses to run again. The record's decoded
       // strings and keys are searched, not its JSON text, where escaping
       // would hide a token holding a backslash or a quote (Codex, PR 141).
-      if (holdsSecret(result.record, secrets)) {
+      if (leaksSecret(result.record, secrets)) {
         throw new Error('the run record holds a token; it is not written, and the attempt stays pending');
       }
       const recordJson = JSON.stringify(result.record, null, 2);
@@ -288,6 +316,50 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
   }
 }
 
+/**
+ * Whether a value would put a secret into the evidence: in any decoded string
+ * or key, or in its JSON text, where escapes can spell one out (a newline
+ * serializes as backslash-n). Both are checked before anything is written.
+ */
+export function leaksSecret(value: unknown, secrets: readonly string[]): boolean {
+  if (holdsSecret(value, secrets)) return true;
+  const json = JSON.stringify(value) ?? '';
+  return secrets.some((secret) => secret !== '' && (json.includes(secret) || JSON.stringify(json).includes(secret)));
+}
+
+/**
+ * Why a pass on record cannot advance the set, or null. Its record (whose
+ * digest the log's loader has checked) must judge as passed under the run
+ * unit; Phase4-CR1's must carry the passing live check the log names; and the
+ * control plane must still hold the same record, deployment end aside.
+ */
+async function priorPassDefect(set: Phase4RunSet, attempt: Phase4StoredAttempt, directory: string, driver: HttpPhase4Driver): Promise<string | null> {
+  const run = set.runs.find((r) => r.label === attempt.label && r.roomId === attempt.roomId);
+  if (run === undefined) return "its room is not the terms' room for that label";
+  const stored = JSON.parse(await readFile(join(directory, phase4RecordFileName(attempt.label, attempt.roomId)), 'utf8')) as Phase4RunRecord;
+  const verdict = evaluatePhase4Run(set, run, stored, { decisionTimedOut: false, roundsExceeded: false });
+  if (verdict.outcome !== 'passed') return `its record judges ${verdict.outcome} (${verdict.failures.join(', ')})`;
+  if (attempt.label === 'Phase4-CR1') {
+    const reading = evaluatePhase4LiveCheck(stored.commands as unknown as readonly { commandId: string; rows: readonly Record<string, unknown>[] }[]);
+    const kept = attempt.liveCheck;
+    if (
+      !reading.passed ||
+      kept === undefined ||
+      kept.passed !== true ||
+      kept.commandId !== reading.commandId ||
+      kept.initModel !== reading.initModel ||
+      kept.providerConversationId !== reading.providerConversationId
+    ) {
+      return 'its record does not carry the passing live check it names';
+    }
+  }
+  const fresh = await driver.collectRecord(attempt.roomId, stored.deploymentIdAtStart);
+  if (phase4RecordDigest({ ...fresh, deploymentIdAtEnd: '' }) !== phase4RecordDigest({ ...stored, deploymentIdAtEnd: '' })) {
+    return 'the control plane does not hold the record it names';
+  }
+  return null;
+}
+
 /** Whether any string or key anywhere in a decoded value contains one of the secrets. */
 export function holdsSecret(value: unknown, secrets: readonly string[]): boolean {
   if (typeof value === 'string') return secrets.some((secret) => secret !== '' && value.includes(secret));
@@ -305,7 +377,7 @@ export function holdsSecret(value: unknown, secrets: readonly string[]): boolean
  */
 function withholdCredentials(reading: Phase4LiveCheckReading, secrets: readonly string[]): Phase4LiveCheckReading {
   const values = [reading.commandId, reading.initModel, reading.providerConversationId].filter((v): v is string => v !== null);
-  const leaks = values.some((value) => secrets.some((secret) => value.includes(secret))) || containsCredentialMaterial(values);
+  const leaks = leaksSecret(values, secrets) || containsCredentialMaterial(values);
   if (!leaks) return reading;
   return { passed: false, commandId: null, initModel: null, providerConversationId: null, reason: 'a journal value holds credential material; the values are withheld' };
 }

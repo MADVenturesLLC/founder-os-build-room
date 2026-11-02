@@ -15,11 +15,14 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { founderGoalDigest } from '../packages/control-plane/src/founder-goal.js';
+import { plannerCommandIdFor } from '../packages/control-plane/src/planner-loop.js';
 import {
   PHASE4_CLI_EXIT,
   phase4CountedRunMain,
   scrubTokens,
   holdsSecret,
+  leaksSecret,
 } from '../packages/run-harness/src/phase4/cli.js';
 import {
   PHASE4_LOCK_FILE,
@@ -30,6 +33,7 @@ import {
   loadPhase4Attempts,
   phase4RecordDigest,
   phase4RecordFileName,
+  PHASE4_DISPATCHER,
   registeredSurfaceIds,
   savePhase4Attempts,
   writePhase4EvidenceFile,
@@ -54,9 +58,44 @@ const ROOM_1 = '1086e073-e181-49a9-a275-cd1e35541f7c';
 const ROOM_2 = 'c7d6bd4f-607b-4753-9430-9a16fc46356e';
 const PASSED_CHECK = { passed: true, commandId: 'cmd-1', initModel: 'gemini-4-argon-high', providerConversationId: 'conv-1', readAt: '2026-11-02T14:30:00.000Z' };
 
+/** A record the run unit judges passed: one round to the Founder's approval, its dispatch carrying both init fields. */
+function passingRecordFor(label: 'Phase4-CR1' | 'Phase4-CR2' | 'Phase4-CR3', dispatched: Record<string, unknown> = { initModel: 'gemini-4-argon-high', providerConversationId: 'conv-1' }): Phase4RunRecord {
+  const run = runSet().runs.find((r) => r.label === label)!;
+  const a = (roleId: string | null, actorId: string, actualModel: string, executionSurface: string) => ({ roleId, actorId, actualModel, executionSurface });
+  const planner = a('architect', 'session:planner', 'gemini-4-argon', 'antigravity');
+  const founder = a(null, 'founder', 'n/a (human Founder decision)', 'claude-code');
+  const commandId = plannerCommandIdFor(run.roomId, 't2');
+  const planHash = 'a1'.padEnd(64, '0');
+  return {
+    roomId: run.roomId,
+    deploymentIdAtStart: DEPLOYMENT,
+    deploymentIdAtEnd: DEPLOYMENT,
+    finalState: 'BUILDING',
+    events: [
+      { eventId: 't1', event: 'scope.captured', actor: 'founder', attribution: a(null, 'founder', 'n/a (the Founder’s words, relayed verbatim)', 'claude-code'), evidence: [{ kind: 'founder_goal', ref: 'goal', digest: founderGoalDigest(run.inputs.goal) }] },
+      { eventId: 't2', event: 'task.dispatched.planner', actor: 'control-plane', attribution: a('builder', `control-plane:${DEPLOYMENT}`, PHASE4_DISPATCHER.actualModel, PHASE4_DISPATCHER.executionSurface), evidence: [] },
+      { eventId: 't3', event: 'plan.submitted', actor: 'agent.planner', attribution: planner, evidence: [], planHash },
+      { eventId: 't5', event: 'plan.approved', actor: 'founder', attribution: founder, evidence: [], planHash },
+    ],
+    commands: [
+      {
+        commandId,
+        rows: [
+          { eventType: 'journaled', authorizationRef: runSet().setId, intendedProvider: 'google', intendedModel: 'gemini-4-argon', intendedSurface: 'antigravity' },
+          { eventType: 'identity_bound' },
+          { eventType: 'dispatched', provider: 'google', model: 'gemini-4-argon', executionSurface: 'antigravity', ...dispatched },
+          { eventType: 'completed' },
+        ] as Phase4RunRecord['commands'][number]['rows'],
+      },
+    ],
+    decisions: [{ commandId, decision: 'plan.approved', planHash }],
+    journalVerified: true,
+  };
+}
+
 /** Write a record beside the log, as the command does, and answer its digest. */
-async function writeRecord(dir: string, label: 'Phase4-CR1' | 'Phase4-CR2' | 'Phase4-CR3', roomId: string): Promise<string> {
-  const record: Phase4RunRecord = { roomId, deploymentIdAtStart: 'dep-0001', deploymentIdAtEnd: 'dep-0001', finalState: 'BUILDING', events: [], commands: [], decisions: [], journalVerified: true };
+async function writeRecord(dir: string, label: 'Phase4-CR1' | 'Phase4-CR2' | 'Phase4-CR3', roomId: string, given?: Phase4RunRecord): Promise<string> {
+  const record: Phase4RunRecord = given ?? { roomId, deploymentIdAtStart: 'dep-0001', deploymentIdAtEnd: 'dep-0001', finalState: 'BUILDING', events: [], commands: [], decisions: [], journalVerified: true };
   await writePhase4EvidenceFile(dir, phase4RecordFileName(label, roomId), `${JSON.stringify(record, null, 2)}\n`);
   return phase4RecordDigest(record);
 }
@@ -274,7 +313,7 @@ interface FakeControlPlane {
   readonly requests: { method: string; path: string; authorization: string | null }[];
 }
 
-function fakeControlPlane(options: { online?: boolean; dispatched?: Record<string, unknown>; actId?: string; roundStartError?: string; journalError?: string; exportState?: string } = {}): FakeControlPlane {
+function fakeControlPlane(options: { online?: boolean; dispatched?: Record<string, unknown>; actId?: string; roundStartError?: string; journalError?: string; exportState?: string; served?: Record<string, Phase4RunRecord> } = {}): FakeControlPlane {
   const requests: FakeControlPlane['requests'] = [];
   let round: Record<string, unknown> = { status: 'idle' };
   const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -284,6 +323,17 @@ function fakeControlPlane(options: { online?: boolean; dispatched?: Record<strin
     const headers = (init?.headers ?? {}) as Record<string, string>;
     requests.push({ method, path: url.pathname, authorization: headers['authorization'] ?? null });
     const path = url.pathname;
+    const servedRoom = options.served?.[path.split('/')[path.startsWith('/control-plane/') ? 3 : 2] ?? ''];
+    if (servedRoom !== undefined && method === 'GET' && /\/export$/.test(path)) {
+      return json(200, {
+        roomId: servedRoom.roomId,
+        snapshot: { state: servedRoom.finalState },
+        events: servedRoom.events.map((e, seq) => ({ seq, outcome: 'transition', event_id: e.eventId, event: e.event, actor: e.actor, attribution: e.attribution, evidence: e.evidence, payload: { facts: e.planHash === undefined ? {} : { planHash: e.planHash } } })),
+      });
+    }
+    if (servedRoom !== undefined && method === 'GET' && /\/journal$/.test(path)) {
+      return json(200, { commands: servedRoom.commands, decisions: servedRoom.decisions, journal: { verified: servedRoom.journalVerified, headSeq: 9 } });
+    }
     if (method === 'GET' && path === '/version') return json(200, { commit: SHA_BUILDROOM });
     if (method === 'GET' && path === '/control-plane/enrollments') return json(200, { enrollments: [{ gatewayId: GATEWAY, state: 'enrolled' }] });
     if (method === 'POST' && path === '/rooms') return json(201, {});
@@ -352,6 +402,16 @@ async function evidenceText(dir: string): Promise<string> {
   const names = await readdir(evidence).catch(() => [] as string[]);
   const texts = await Promise.all(names.map((name) => readFile(join(evidence, name), 'utf8')));
   return texts.join('\n');
+}
+
+/** Record CR1 as the command would after a pass: its record beside the log, and the attempt. */
+async function recordPass(env: { PHASE4_EVIDENCE_DIR: string; PHASE4_TERMS_SHA256: string }, record: Phase4RunRecord, liveCheck = { ...PASSED_CHECK, commandId: plannerCommandIdFor(ROOM_1, 't2') }): Promise<void> {
+  const recordDigest = await writeRecord(env.PHASE4_EVIDENCE_DIR, 'Phase4-CR1', ROOM_1, record);
+  await savePhase4Attempts(env.PHASE4_EVIDENCE_DIR, {
+    setId: runSet().setId,
+    termsSha256: env.PHASE4_TERMS_SHA256,
+    attempts: [{ label: 'Phase4-CR1', roomId: ROOM_1, outcome: 'passed', pending: false, startedAt: '2026-11-02T14:00:00.000Z', endedAt: '2026-11-02T15:00:00.000Z', entryFailures: [], failures: [], recordDigest, liveCheck }],
+  });
 }
 
 describe('npm run phase4:counted-run', () => {
@@ -586,22 +646,86 @@ describe('npm run phase4:counted-run', () => {
 
   it('makes the live check for Phase4-CR1 only: Phase4-CR2 waits on the Founder without reading the journal first', async () => {
     const { env } = await workspace();
-    const digest = await writeRecord(env.PHASE4_EVIDENCE_DIR, 'Phase4-CR1', ROOM_1);
-    await savePhase4Attempts(env.PHASE4_EVIDENCE_DIR, {
-      setId: runSet().setId,
-      termsSha256: env.PHASE4_TERMS_SHA256,
-      attempts: [{ label: 'Phase4-CR1', roomId: ROOM_1, outcome: 'passed', pending: false, startedAt: '2026-11-02T14:00:00.000Z', endedAt: '2026-11-02T15:00:00.000Z', entryFailures: [], failures: [], recordDigest: digest, liveCheck: PASSED_CHECK }],
-    });
-    const plane = fakeControlPlane({ dispatched: {} });
+    const cr1 = passingRecordFor('Phase4-CR1');
+    await recordPass(env, cr1);
+    const plane = fakeControlPlane({ dispatched: {}, served: { [ROOM_1]: cr1 } });
     const lines: string[] = [];
     await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l), ...clock(), pollMs: 10_000 });
     assert.equal(lines.some((l) => l.includes('LIVE CHECK')), false);
-    const firstJournal = plane.requests.findIndex((r) => /\/journal$/.test(r.path));
-    const firstRoomPoll = plane.requests.findIndex((r) => r.method === 'GET' && /^\/rooms\/[^/]+$/.test(r.path));
+    // CR1's journal is read first, to check its pass; CR2's only for its record, after the wait.
+    const firstJournal = plane.requests.findIndex((r) => r.path === `/control-plane/rooms/${ROOM_2}/journal`);
+    const firstRoomPoll = plane.requests.findIndex((r) => r.method === 'GET' && r.path === `/rooms/${ROOM_2}`);
     assert.ok(firstRoomPoll !== -1 && firstJournal > firstRoomPoll, 'the journal is read only for the record, after the wait');
     const log = await loadPhase4Attempts(env.PHASE4_EVIDENCE_DIR, runSet().setId, env.PHASE4_TERMS_SHA256);
     assert.equal(log.attempts[1]?.label, 'Phase4-CR2');
     assert.equal('liveCheck' in log.attempts[1]!, false);
+  });
+
+  it('advances past a pass the record and the control plane both support', async () => {
+    const { env } = await workspace();
+    const cr1 = passingRecordFor('Phase4-CR1');
+    await recordPass(env, cr1);
+    const plane = fakeControlPlane({ dispatched: {}, served: { [ROOM_1]: cr1 } });
+    const lines: string[] = [];
+    await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l), ...clock(), pollMs: 10_000 });
+    assert.ok(lines.some((l) => l.startsWith('Phase4-CR2: entry passed')), lines.join('\n'));
+  });
+
+  it('refuses a pass the log claims but its record does not support (Codex confirmation, PR 141)', async () => {
+    const { env } = await workspace();
+    // CR1 stopped at a failed live check; only attempts.json was then edited to claim a pass.
+    const stopped: Phase4RunRecord = { ...passingRecordFor('Phase4-CR1', {}), finalState: 'PLAN_REVIEW', events: passingRecordFor('Phase4-CR1').events.slice(0, 3), decisions: [] };
+    await recordPass(env, stopped);
+    const plane = fakeControlPlane({ served: { [ROOM_1]: stopped } });
+    const lines: string[] = [];
+    assert.equal(await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l), ...clock() }), PHASE4_CLI_EXIT.refused);
+    assert.match(lines.join('\n'), /Phase4-CR1 is recorded as passed, but its record judges/);
+    assert.equal(plane.requests.some((r) => r.method === 'POST'), false);
+  });
+
+  it('refuses a pass whose live check the record does not carry', async () => {
+    const { env } = await workspace();
+    const cr1 = passingRecordFor('Phase4-CR1');
+    await recordPass(env, cr1, { ...PASSED_CHECK, commandId: plannerCommandIdFor(ROOM_1, 't2'), providerConversationId: 'conv-forged' });
+    const plane = fakeControlPlane({ served: { [ROOM_1]: cr1 } });
+    const lines: string[] = [];
+    assert.equal(await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l), ...clock() }), PHASE4_CLI_EXIT.refused);
+    assert.match(lines.join('\n'), /does not carry the passing live check it names/);
+  });
+
+  it('refuses a pass whose record the control plane does not hold', async () => {
+    const { env } = await workspace();
+    const cr1 = passingRecordFor('Phase4-CR1');
+    await recordPass(env, cr1);
+    const elsewhere: Phase4RunRecord = { ...cr1, decisions: [...cr1.decisions, { commandId: 'other', decision: 'plan.approved' }] };
+    const plane = fakeControlPlane({ served: { [ROOM_1]: elsewhere } });
+    const lines: string[] = [];
+    assert.equal(await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l), ...clock() }), PHASE4_CLI_EXIT.refused);
+    assert.match(lines.join('\n'), /control plane does not hold the record it names/);
+  });
+
+  it('finds a token that JSON would spell out of an escape (Codex confirmation, PR 141)', async () => {
+    const token = 'x\\ny-0123456789abcdef0123456789abcdef';
+    const value = { providerConversationId: 'x\ny-0123456789abcdef0123456789abcdef' };
+    assert.equal(holdsSecret(value, [token]), false);
+    assert.equal(leaksSecret(value, [token]), true);
+    assert.equal(leaksSecret({ v: 'clean' }, [token]), false);
+
+    const { dir, env } = await workspace();
+    const plane = fakeControlPlane({ dispatched: { initModel: 'gemini-4-argon-high', providerConversationId: 'x\ny-0123456789abcdef0123456789abcdef' } });
+    await assert.rejects(phase4CountedRunMain({ ...env, PHASE4_COUNTED_RUN_TOKEN: token }, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() }), /holds a token/);
+    assert.equal((await evidenceText(dir)).includes(token), false);
+  });
+
+  it('withholds an error whose JSON would spell out a token, and still records the attempt', async () => {
+    const token = 'p\\nq-0123456789abcdef0123456789abcdef';
+    const { dir, env } = await workspace();
+    const plane = fakeControlPlane({ roundStartError: 'upstream said p\nq-0123456789abcdef0123456789abcdef' });
+    const code = await phase4CountedRunMain({ ...env, CONTROL_PLANE_TOKEN: token }, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() });
+    assert.equal(code, PHASE4_CLI_EXIT.notPassed);
+    const log = await loadPhase4Attempts(env.PHASE4_EVIDENCE_DIR, runSet().setId, env.PHASE4_TERMS_SHA256);
+    assert.equal(log.attempts[0]?.error, '[withheld: credential material]');
+    assert.equal((await evidenceText(dir)).includes(token), false);
   });
 
   it('refuses to run while an attempt is still marked under way', async () => {
