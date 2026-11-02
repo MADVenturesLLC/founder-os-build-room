@@ -57,6 +57,7 @@ export class Phase4DriverError extends Error {
 }
 
 interface RoundView {
+  readonly actId?: string;
   readonly deploymentId: string | null;
   readonly gateway: { readonly id: string; readonly online: boolean };
   readonly dispatcherSurfaceRegistered: boolean;
@@ -218,6 +219,12 @@ export class HttpPhase4Driver implements Phase4RunDriver {
     const commands = journal.body['commands'];
     if (!Array.isArray(commands)) throw new Phase4DriverError('journal read answered without a commands list');
     return commands as { commandId: string; rows: Record<string, unknown>[] }[];
+  }
+
+  /** The act the control plane's counted-run surface is configured for, or null when it names none. */
+  async countedRunActId(roomId: string): Promise<string | null> {
+    const view = await this.roundView(roomId);
+    return typeof view.actId === 'string' && view.actId !== '' ? view.actId : null;
   }
 
   private async roundView(roomId: string): Promise<RoundView> {

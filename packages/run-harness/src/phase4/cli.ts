@@ -48,6 +48,7 @@ import {
   type Phase4AttemptLog,
   type Phase4StoredAttempt,
 } from './attempt-store.js';
+import { containsCredentialMaterial } from '../../../journal/src/index.js';
 import { HttpPhase4Driver } from './http-driver.js';
 import { evaluatePhase4LiveCheck, type Phase4LiveCheckReading } from './live-check.js';
 import type { Phase4PlannedRun } from './model.js';
@@ -72,7 +73,11 @@ const SHA256_RE = /^[0-9a-f]{64}$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 
 export async function phase4CountedRunMain(env: Readonly<Record<string, string | undefined>>, deps: Phase4CliDeps = {}): Promise<number> {
-  const out = deps.out ?? ((line: string) => process.stdout.write(`${line}\n`));
+  const rawOut = deps.out ?? ((line: string) => process.stdout.write(`${line}\n`));
+  // Every line is scrubbed of the two tokens before it is printed, whatever its source.
+  const secrets: string[] = [];
+  const scrub = (text: string): string => secrets.reduce((t, secret) => t.split(secret).join('[withheld]'), text);
+  const out = (line: string): void => rawOut(scrub(line));
   const now = deps.now ?? (() => Date.now());
   const iso = (): string => new Date(now()).toISOString();
   const git = deps.git ?? defaultGit;
@@ -90,6 +95,7 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
   const apiToken = env['CONTROL_PLANE_TOKEN']!;
   const countedRunToken = env['PHASE4_COUNTED_RUN_TOKEN']!;
   if (apiToken === countedRunToken) return refuse('the API token and the counted-run token are the same value');
+  secrets.push(apiToken, countedRunToken);
 
   const expectedTermsSha = env['PHASE4_TERMS_SHA256']!.trim().toLowerCase();
   if (!SHA256_RE.test(expectedTermsSha)) return refuse('PHASE4_TERMS_SHA256 is not a SHA-256');
@@ -160,7 +166,8 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
     let liveCheck: (Phase4LiveCheckReading & { readonly readAt: string }) | undefined;
     const save = async (attempt: Phase4StoredAttempt): Promise<void> => {
       const others = log.attempts.filter((a) => !(a.pending && a.label === attempt.label && a.roomId === attempt.roomId));
-      log = { ...log, attempts: [...others, attempt] };
+      const scrubbed: Phase4StoredAttempt = attempt.error === undefined ? attempt : { ...attempt, error: scrub(attempt.error) };
+      log = { ...log, attempts: [...others, scrubbed] };
       await savePhase4Attempts(evidenceDir, log);
     };
 
@@ -179,7 +186,7 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
         if (label !== 'Phase4-CR1' || round !== 1) return 'continue';
         let reading: Phase4LiveCheckReading;
         try {
-          reading = evaluatePhase4LiveCheck(await driver.journalCommands(roomId));
+          reading = withholdCredentials(evaluatePhase4LiveCheck(await driver.journalCommands(roomId)), secrets);
         } catch (error) {
           reading = { passed: false, commandId: null, initModel: null, providerConversationId: null, reason: `the journal could not be read: ${describe(error)}` };
         }
@@ -193,6 +200,21 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
         return 'stop';
       },
     });
+
+    // The control plane must be configured for this act and no other before
+    // anything is written: a room run under another act's terms would spend
+    // this set (Copilot, PR 141).
+    const nextRun = set.runs.find((r) => r.label === status.nextLabel)!;
+    let remoteActId: string | null;
+    try {
+      remoteActId = await driver.countedRunActId(nextRun.roomId);
+    } catch (error) {
+      out(`${nextRun.label}: did not start, nothing was written: ${describe(error)}`);
+      return PHASE4_CLI_EXIT.notStarted;
+    }
+    if (remoteActId !== set.setId) {
+      return refuse(`the control plane is configured for act ${remoteActId ?? 'none'}, not ${set.setId}`);
+    }
 
     let result;
     try {
@@ -227,12 +249,15 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
       ...(result.recordDigest === undefined ? {} : { recordDigest: result.recordDigest }),
       ...(liveCheck === undefined ? {} : { liveCheck }),
     };
-    await save(final);
+    // The record goes to disk first, while the attempt is still pending: if
+    // either write fails, the attempt stays pending, and the set refuses to
+    // run again rather than trust an outcome whose record is missing.
     if (result.record !== undefined) {
       const base = `${result.label}-${result.roomId}`;
-      await writePhase4EvidenceFile(evidenceDir, `${base}.record.json`, `${JSON.stringify(result.record, null, 2)}\n`);
+      await writePhase4EvidenceFile(evidenceDir, `${base}.record.json`, `${scrub(JSON.stringify(result.record, null, 2))}\n`);
       await writePhase4EvidenceFile(evidenceDir, `${base}.record.sha256`, `${phase4RecordDigest(result.record)}  ${base}.record (canonical JSON)\n`);
     }
+    await save(final);
     out(`${result.label}: ${result.outcome} at ${final.endedAt}; record SHA-256 ${result.recordDigest ?? 'none'}`);
     if (result.failures.length > 0) out(`${result.label}: failures: ${result.failures.join(', ')}`);
     const after = phase4SetStatus(phase4AttemptSummaries(log));
@@ -247,6 +272,18 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
   } finally {
     await release();
   }
+}
+
+/**
+ * A live-check reading whose journal values hold either token, or anything
+ * shaped like a credential, is withheld and fails: the values are never
+ * printed or kept, and the run does not count.
+ */
+function withholdCredentials(reading: Phase4LiveCheckReading, secrets: readonly string[]): Phase4LiveCheckReading {
+  const values = [reading.commandId, reading.initModel, reading.providerConversationId].filter((v): v is string => v !== null);
+  const leaks = values.some((value) => secrets.some((secret) => value.includes(secret))) || containsCredentialMaterial(values);
+  if (!leaks) return reading;
+  return { passed: false, commandId: null, initModel: null, providerConversationId: null, reason: 'a journal value holds credential material; the values are withheld' };
 }
 
 /** The repository's live default-branch head, read from GitHub without credentials. */

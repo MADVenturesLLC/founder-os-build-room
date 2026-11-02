@@ -247,7 +247,7 @@ interface FakeControlPlane {
   readonly requests: { method: string; path: string; authorization: string | null }[];
 }
 
-function fakeControlPlane(options: { online?: boolean; dispatched?: Record<string, unknown> } = {}): FakeControlPlane {
+function fakeControlPlane(options: { online?: boolean; dispatched?: Record<string, unknown>; actId?: string; roundStartError?: string } = {}): FakeControlPlane {
   const requests: FakeControlPlane['requests'] = [];
   let round: Record<string, unknown> = { status: 'idle' };
   const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -262,11 +262,12 @@ function fakeControlPlane(options: { online?: boolean; dispatched?: Record<strin
     if (method === 'POST' && path === '/rooms') return json(201, {});
     if (method === 'POST' && /^\/rooms\/[^/]+\/events$/.test(path)) return json(201, {});
     if (method === 'POST' && /\/planner-round$/.test(path)) {
+      if (options.roundStartError !== undefined) return json(500, { error: 'internal', message: options.roundStartError });
       round = { status: 'settled', roomId: ROOM_1, outcome: { kind: 'plan_review' } };
       return json(202, { status: 'running' });
     }
     if (method === 'GET' && /\/planner-round$/.test(path)) {
-      return json(200, { deploymentId: DEPLOYMENT, gateway: { id: GATEWAY, online: options.online ?? true }, dispatcherSurfaceRegistered: true, round });
+      return json(200, { actId: options.actId ?? 'FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS', deploymentId: DEPLOYMENT, gateway: { id: GATEWAY, online: options.online ?? true }, dispatcherSurfaceRegistered: true, round });
     }
     if (method === 'GET' && /^\/rooms\/[^/]+$/.test(path)) return json(200, { snapshot: { state: 'PLAN_REVIEW' } });
     if (method === 'GET' && /\/export$/.test(path)) return json(200, { roomId: ROOM_1, snapshot: { state: 'PLAN_REVIEW' }, events: [] });
@@ -447,6 +448,51 @@ describe('npm run phase4:counted-run', () => {
 
     await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() });
     assert.equal((await readdir(env.PHASE4_EVIDENCE_DIR)).includes(PHASE4_LOCK_FILE), false);
+  });
+
+  it('refuses, writing nothing, when the control plane is configured for another act', async () => {
+    const { env } = await workspace();
+    const plane = fakeControlPlane({ actId: 'FOUNDER-ACT-SOMETHING-ELSE' });
+    const lines: string[] = [];
+    assert.equal(await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l), ...clock() }), PHASE4_CLI_EXIT.refused);
+    assert.match(lines.join('\n'), /configured for act FOUNDER-ACT-SOMETHING-ELSE/);
+    assert.equal(plane.requests.some((r) => r.method === 'POST'), false);
+    const log = await loadPhase4Attempts(env.PHASE4_EVIDENCE_DIR, runSet().setId, env.PHASE4_TERMS_SHA256);
+    assert.deepEqual(log.attempts, []);
+  });
+
+  it('withholds and fails a live check whose journal values carry a token', async () => {
+    const { dir, env } = await workspace();
+    const plane = fakeControlPlane({ dispatched: { initModel: 'gemini-4-argon-high', providerConversationId: `conv-${COUNTED_TOKEN}` } });
+    const lines: string[] = [];
+    assert.equal(await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l), ...clock() }), PHASE4_CLI_EXIT.notPassed);
+    assert.match(lines.join('\n'), /LIVE CHECK FAILED \(a journal value holds credential material/);
+    const log = await loadPhase4Attempts(env.PHASE4_EVIDENCE_DIR, runSet().setId, env.PHASE4_TERMS_SHA256);
+    assert.equal(log.attempts[0]?.liveCheck?.providerConversationId, null);
+    for (const text of [lines.join('\n'), await evidenceText(dir)]) assert.equal(text.includes(COUNTED_TOKEN), false);
+  });
+
+  it('scrubs a token out of an error before printing or keeping it', async () => {
+    const { dir, env } = await workspace();
+    const plane = fakeControlPlane({ roundStartError: `upstream echoed Bearer ${API_TOKEN}` });
+    const lines: string[] = [];
+    assert.equal(await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l), ...clock() }), PHASE4_CLI_EXIT.notPassed);
+    assert.match(lines.join('\n'), /Bearer \[withheld\]/);
+    const log = await loadPhase4Attempts(env.PHASE4_EVIDENCE_DIR, runSet().setId, env.PHASE4_TERMS_SHA256);
+    assert.match(log.attempts[0]?.error ?? '', /Bearer \[withheld\]/);
+    for (const text of [lines.join('\n'), await evidenceText(dir)]) assert.equal(text.includes(API_TOKEN), false);
+  });
+
+  it('keeps the attempt pending when its record cannot be written, so the set refuses to run again', async () => {
+    const { env } = await workspace();
+    await writePhase4EvidenceFile(env.PHASE4_EVIDENCE_DIR, `Phase4-CR1-${ROOM_1}.record.json`, 'in the way\n');
+    const plane = fakeControlPlane({ dispatched: {} });
+    await assert.rejects(phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() }), /never overwritten/);
+    const log = await loadPhase4Attempts(env.PHASE4_EVIDENCE_DIR, runSet().setId, env.PHASE4_TERMS_SHA256);
+    assert.equal(log.attempts[0]?.pending, true);
+    const lines: string[] = [];
+    assert.equal(await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l) }), PHASE4_CLI_EXIT.refused);
+    assert.match(lines.join('\n'), /still marked under way/);
   });
 
   it('refuses to run while an attempt is still marked under way', async () => {
