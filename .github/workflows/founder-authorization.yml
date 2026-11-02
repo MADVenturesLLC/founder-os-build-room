@@ -60,7 +60,10 @@
 # reads the PR list page by page; if GitHub Support deletes a PR while the
 # pages are read, a member can shift onto a page already read and keep an
 # earlier success until its next event, a bound the Founder also accepted
-# (Tier-2 finding 3 at 33e29b0).
+# (Tier-2 finding 3 at 33e29b0). The same holds if GitHub ever returned two
+# PRs with identical creation times in a different order on different pages:
+# GitHub does not document a stable order for ties. The Founder accepted that
+# bound too (Tier-2 finding 1 at 5c73e93).
 # Every job that judges a PR uses the concurrency group of that PR's number,
 # whatever event started it, so judgments of one PR queue behind each other.
 #

@@ -815,6 +815,20 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
     });
   }
 
+  const removed: Array<[string, (t: string) => string]> = [
+    ['the first-person sentence', (t) => t.replace(
+      'I, Michael Daley, Founder (MAD Ventures), authorize merge of each pull\nrequest listed below at the full 40-character head named on its line.\n', '')],
+    ['the live-head sentence', (t) => t.replace('Merge each only if its live head still matches the head named for it.\n', '')],
+    ['the closing signature line', (t) => t.replace('\n— Michael Daley', '')],
+  ];
+  for (const [part, cut] of removed) {
+    it(`refuses an envelope without ${part} (Tier-2 at 5c73e93, finding 2)`, () => {
+      const text = cut(envelopeText());
+      assert.notEqual(text, envelopeText(), `fixture removes ${part}`);
+      assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(929, text)] })), /is not the Appendix B text/);
+    });
+  }
+
   it('refuses an envelope without the review-attestation paragraph', () => {
     assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(913, envelopeText({ attestation: false }))] })),
       /is not the Appendix B text/);
