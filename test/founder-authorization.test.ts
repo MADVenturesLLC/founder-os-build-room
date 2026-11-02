@@ -570,6 +570,7 @@ const CARRIER_URL = `https://github.com/${REPO}/issues/${CARRIER}`;
 const MILESTONE = 'BR-M7';
 const OTHER_HEAD = '1111111111111111111111111111111111111111';
 const STAMP = '2026-10-31T21:30:00Z';
+const BASE_SHA = '5eaa1f9a77ef66647adf8e7f1a1e43f5c4c79cfc';
 
 interface EnvelopeFields {
   milestone?: string;
@@ -636,8 +637,9 @@ function carrierComment(id: number, body: string, opts: { login?: string; edited
 interface FileEntry { filename: string; status?: string; previous_filename?: string }
 
 interface EnvelopeInput {
-  pull: { number: number; head: { sha: string }; body: string | null; changed_files: number; updated_at?: string; base?: { ref: string } };
+  pull: { number: number; head: { sha: string }; body: string | null; changed_files: number; updated_at?: string; base?: { ref: string; sha?: string } };
   files: FileEntry[];
+  compare_files?: FileEntry[] | null;
   issue: Record<string, unknown> | null;
   comments: IssueComment[];
 }
@@ -649,6 +651,7 @@ function milestoneLine(id: string = MILESTONE, url: string = CARRIER_URL): strin
 function envelopeInput(over: {
   body?: string;
   files?: FileEntry[];
+  compareFiles?: FileEntry[] | null;
   changedFiles?: number;
   issue?: Record<string, unknown> | null;
   comments?: IssueComment[];
@@ -661,9 +664,10 @@ function envelopeInput(over: {
       body: over.body ?? `Phase 3 slice.\n\n${milestoneLine()}\n`,
       changed_files: over.changedFiles ?? files.length,
       updated_at: STAMP,
-      base: { ref: 'main' },
+      base: { ref: 'main', sha: BASE_SHA },
     },
     files,
+    compare_files: over.compareFiles === undefined ? files : over.compareFiles,
     issue: over.issue === undefined
       ? { number: CARRIER, state: 'open', labels: [{ name: 'milestone-carrier' }], html_url: CARRIER_URL }
       : over.issue,
@@ -960,6 +964,43 @@ describe('envelope route — excluded paths and incomplete file lists (B1.8)', (
     assertRefused(judgeEnvelope(input), /file list is malformed/);
   });
 
+  it('refuses a rename without a previous_filename (Tier-2 at 11afcff, finding 2)', () => {
+    const files = [{ filename: 'docs/path-audit.sh', status: 'renamed' }];
+    assertRefused(judgeEnvelope(envelopeInput({ files })), /file list is malformed/);
+  });
+
+  it('refuses a previous_filename that is not a string', () => {
+    // Not marked as a rename, so only the type rule can refuse it.
+    const files = [{ filename: 'docs/a.ts', status: 'modified', previous_filename: 7 as unknown as string }];
+    assertRefused(judgeEnvelope(envelopeInput({ files })), /file list is malformed/);
+  });
+
+  it('refuses a file list naming one file twice', () => {
+    const files = [{ filename: 'packages/x/a.ts' }, { filename: 'packages/x/a.ts' }];
+    assertRefused(judgeEnvelope(envelopeInput({ files })), /file list is malformed/);
+  });
+
+  it('refuses a missing head comparison', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ compareFiles: null })), /comparison file list is missing or malformed/);
+  });
+
+  it("refuses a file list that differs from the head's own comparison (Tier-2 at 11afcff, finding 3)", () => {
+    const files = [{ filename: 'packages/run-harness/src/cli.ts' }];
+    const compareFiles = [{ filename: '.github/workflows/ci.yml' }];
+    assertRefused(judgeEnvelope(envelopeInput({ files, compareFiles })), /does not match head cac5201/);
+  });
+
+  it('refuses when the head comparison lists 300 or more files, which it cannot bind', () => {
+    const files = Array.from({ length: 300 }, (_, i) => ({ filename: `packages/x/src/f${i}.ts` }));
+    assertRefused(judgeEnvelope(envelopeInput({ files })), /cannot bind 300 or more/);
+  });
+
+  it('accepts a matching comparison that lists renames the same way', () => {
+    const files = [{ filename: 'docs/new.md', status: 'renamed', previous_filename: 'docs/old.md' }];
+    const r = judgeEnvelope(envelopeInput({ files }));
+    assert.equal(r.status, 0, r.stderr);
+  });
+
   it('refuses carrier comments that are not an array', () => {
     const input = envelopeInput();
     assertRefused(judgeEnvelope({ ...input, comments: { id: 1 } as unknown as IssueComment[] }), /carrier comments are malformed/);
@@ -1028,6 +1069,7 @@ exit 22
     issue?: Record<string, unknown> | null;
     carrierComments?: IssueComment[];
     pullSecondRead?: Record<string, unknown>;
+    compareFiles?: FileEntry[];
   }
 
   function stageWorld(w: World) {
@@ -1043,8 +1085,9 @@ exit 22
     put(`pulls_${PR}`, pull);
     if (w.pullSecondRead !== undefined) put(`pulls_${PR}.call2`, w.pullSecondRead);
     put(`pulls_${PR}_files`, files);
+    put(`compare_${BASE_SHA}...${HEAD}`, { files: w.compareFiles === undefined ? files : w.compareFiles });
     put(`issues_${PR}_comments`, w.prComments ?? []);
-    put('pulls', w.open ?? [{ number: PR, head: { sha: HEAD }, body: pull.body }]);
+    put('pulls', (w.open ?? [{ number: PR, head: { sha: HEAD }, body: pull.body }]).map((p) => ({ state: 'open', ...p })));
     if (w.issue !== null) put(`issues_${CARRIER}`, w.issue ?? input.issue);
     put(`issues_${CARRIER}_comments`, w.carrierComments ?? input.comments);
     writeFileSync(join(dir, 'posts.log'), '');
@@ -1179,6 +1222,64 @@ exit 22
     }
   });
 
+  it('refuses a head that went A, B and back to A within one second, by the SHA-bound comparison (Tier-2 at 11afcff, finding 3)', () => {
+    // Both PR reads show head A with the same updated_at; /files was read
+    // while the head was B (one safe file). The comparison at A shows A's
+    // own one-file diff, which touches .github/.
+    const w = stageWorld({
+      files: [{ filename: 'packages/run-harness/src/cli.ts' }],
+      compareFiles: [{ filename: '.github/workflows/ci.yml' }],
+    });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /does not match head/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses when only the description changes between the two reads', () => {
+    const input = envelopeInput();
+    const w = stageWorld({ pullSecondRead: { ...input.pull, body: `${input.pull.body ?? ''}\nedited` } });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses when the PR carries no updated_at to compare', () => {
+    const input = envelopeInput();
+    const pull: Record<string, unknown> = { ...input.pull };
+    delete pull.updated_at;
+    const w = stageWorld({ pull });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads every page of the file list, so an excluded path on page 2 is found', () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ filename: `packages/x/src/f${i}.ts` }));
+    const page2 = [{ filename: '.github/workflows/ci.yml' }];
+    const input = envelopeInput();
+    const w = stageWorld({ pull: { ...input.pull, changed_files: 101 }, files: page1, compareFiles: [...page1, ...page2] });
+    try {
+      w.put(`pulls_${PR}_files.p2.always`, page2);
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changes \.github\/workflows\/ci\.yml/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
   it('publishes failure when the file list cannot be fetched', () => {
     const w = stageWorld({});
     try {
@@ -1232,17 +1333,14 @@ exit 22
     }
   });
 
-  it('finds a member that a closed PR shifts onto an already-read page (Tier-2 at 47d71ff, finding 2)', () => {
-    const others = Array.from({ length: 100 }, (_, i) => ({ number: 1000 + i, body: 'unrelated' }));
-    const member = { number: PR, body: `x\n${milestoneLine()}` };
+  it('lists closed PRs too, so closing one cannot shift a member onto a page already read (Tier-2 at 11afcff, finding 1)', () => {
+    // Page 1 is 100 closed PRs; the open member is on page 2. Closing or
+    // reopening any of them changes only its state, never its place.
+    const closed = Array.from({ length: 100 }, (_, i) => ({ number: 1000 + i, state: 'closed', body: 'unrelated' }));
     const w = stageWorld({});
     try {
-      // First pass: page 1 holds the 100 others; then #1000 closes, so the
-      // member moves onto page 1 and page 2 reads empty. Later passes see the
-      // list after the close.
-      w.put('pulls.call1', others);
-      w.put('pulls.p2.call1', []);
-      w.put('pulls.always', [...others.slice(1), member]);
+      w.put('pulls.always', closed);
+      w.put('pulls.p2.always', [{ number: PR, state: 'open', body: `x\n${milestoneLine()}` }]);
       const t = w.targets({ CARRIER: String(CARRIER) });
       assert.equal(t.status, 0, t.stderr);
       assert.deepEqual(t.prs, [PR]);
@@ -1251,14 +1349,29 @@ exit 22
     }
   });
 
-  it('fails visibly when the open-PR list never holds still for two passes', () => {
+  it('does not judge a closed PR that links the carrier', () => {
+    const w = stageWorld({
+      open: [
+        { number: PR, state: 'open', body: `x\n${milestoneLine()}` },
+        { number: 82, state: 'closed', body: `x\n${milestoneLine()}` },
+      ],
+    });
+    try {
+      assert.deepEqual(w.targets({ CARRIER: String(CARRIER) }).prs, [PR]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails the job, judging none, when a page of the PR list cannot be read', () => {
     const w = stageWorld({});
     try {
-      for (let n = 1; n <= 5; n++) w.put(`pulls.call${n}`, [{ number: 500 + n, body: 'unrelated' }]);
-      const t = w.targets({ CARRIER: String(CARRIER) });
-      assert.notEqual(t.status, 0);
-      assert.equal(t.prs, null, 'no list is output');
-      assert.match(t.stdout, /kept changing/);
+      // A full first page, then a second page that is not a JSON array.
+      w.put('pulls.always', Array.from({ length: 100 }, (_, i) => ({ number: 1000 + i, state: 'closed', body: '' })));
+      w.put('pulls.p2.always', 'not json');
+      const bad = w.targets({ CARRIER: String(CARRIER) });
+      assert.notEqual(bad.status, 0);
+      assert.equal(bad.prs, null);
     } finally {
       rmSync(w.dir, { recursive: true, force: true });
     }
@@ -1267,7 +1380,7 @@ exit 22
   it('fails visibly, judging none, when more than 256 open PRs link the carrier (Tier-2 at 47d71ff, finding 3)', () => {
     const w = stageWorld({});
     try {
-      const linking = Array.from({ length: 257 }, (_, i) => ({ number: 2000 + i, body: milestoneLine() }));
+      const linking = Array.from({ length: 257 }, (_, i) => ({ number: 2000 + i, state: 'open', body: milestoneLine() }));
       w.put('pulls.always', linking.slice(0, 100));
       w.put('pulls.p2.always', linking.slice(100, 200));
       w.put('pulls.p3.always', linking.slice(200));
@@ -1283,7 +1396,7 @@ exit 22
   it('judges exactly 256 linking PRs', () => {
     const w = stageWorld({});
     try {
-      const linking = Array.from({ length: 256 }, (_, i) => ({ number: 2000 + i, body: milestoneLine() }));
+      const linking = Array.from({ length: 256 }, (_, i) => ({ number: 2000 + i, state: 'open', body: milestoneLine() }));
       w.put('pulls.always', linking.slice(0, 100));
       w.put('pulls.p2.always', linking.slice(100, 200));
       w.put('pulls.p3.always', linking.slice(200));
@@ -1418,6 +1531,12 @@ describe('founder-authorization workflow shape — per-PR concurrency and carrie
     ]) {
       assert.ok(cond.includes(want), `targets condition holds: ${want}`);
     }
+  });
+
+  it('lists all pull requests, not only open ones, when looking for carrier members', () => {
+    assert.ok(text.includes('pulls?state=all&sort=created&direction=asc&per_page=100'), 'discovery lists state=all, oldest first');
+    assert.ok(!text.includes('pulls?state=open&sort='), 'discovery no longer lists open PRs only');
+    assert.ok(text.includes('select(.state == "open")'), 'only open PRs are judged');
   });
 
   it('keeps ${{ }} out of every run: script', () => {

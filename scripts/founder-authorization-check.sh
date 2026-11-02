@@ -36,7 +36,10 @@
 #      AGENTS.md or CLAUDE.md at any depth, scripts/, railway.toml,
 #      package.json, package-lock.json, packages/control-plane/src/
 #      migrations.ts or migrate-cli.ts, *.sql), by filename or a rename's
-#      previous_filename.
+#      previous_filename. The list must be well formed and must equal the
+#      SHA-bound comparison of the base commit with the head being judged
+#      (ENVELOPE_INPUT compare_files), which binds it to that head; that
+#      comparison lists at most 300 files, so 300 or more are refused.
 #
 # WHAT THE ENVELOPE ROUTE DOES NOT DECIDE (Part B6 of that act). It does not
 # decide the rest of DEC-20261027-01 clause 4, whether the Founder reviewed
@@ -66,7 +69,8 @@
 #   env:    FOUNDER_LOGINS — space-separated logins whose comments count
 #           (required; an empty or unset value fails closed)
 #           ENVELOPE_INPUT — optional path to a JSON file
-#           {pull, files, issue, comments}: the PR object, its file list, the
+#           {pull, files, compare_files, issue, comments}: the PR object, its
+#           file list, the file list of the base...head comparison, the
 #           carrier issue and the carrier's comments, as the REST API returns
 #           them. Unset or empty: the script behaves exactly as it did before
 #           the envelope route existed.
@@ -188,6 +192,19 @@ envelope="$(jq -c \
     or . == "packages/control-plane/src/migrate-cli.ts"
     or endswith(".sql");
 
+  # A file list that can be judged: an array of objects, each with a string
+  # filename; previous_filename absent, null or a string, and a string for
+  # every rename; no filename twice. Anything else cannot establish which
+  # paths changed, so it is refused (Tier-2 at 11afcff, finding 2).
+  def file_list_ok:
+    type == "array"
+    and all(.[]; type == "object" and (.filename | type) == "string"
+        and ((.previous_filename | type) as $t | $t == "null" or $t == "string")
+        and (.status != "renamed" or (.previous_filename | type) == "string"))
+    and ((map(.filename) | length) == (map(.filename) | unique | length));
+
+  def file_keys: [.[] | [.filename, .previous_filename]] | sort;
+
   def carrier_url($n): "https://github.com/" + $repo + "/issues/" + $n;
 
   # Judges one carrier comment; returns it with .reason null when it counts.
@@ -246,11 +263,20 @@ envelope="$(jq -c \
         "envelope input describes another pull request or head")
 
   # B1.8: the file list is complete and touches no excluded path.
-  | chk(($in.files | type) == "array" and ([$in.files[] | (.filename | type) == "string"] | all);
-        "file list is malformed")
+  | chk($in.files | file_list_ok; "file list is malformed")
   | chk(($in.pull.changed_files | type) == "number"
         and ($in.files | length) < 3000 and ($in.files | length) >= $in.pull.changed_files;
         "file list may be incomplete (\($in.files | length) of \($in.pull.changed_files // "?"))")
+  # The list must be the head commit'"'"'s own: it must equal the comparison of
+  # the base commit with this exact head, which GitHub computes from SHAs, so
+  # a list read while the head briefly pointed elsewhere does not match. The
+  # comparison lists at most 300 files, so 300 or more cannot be bound and
+  # are refused (Tier-2 at 11afcff, finding 3).
+  | chk($in.compare_files | file_list_ok; "comparison file list is missing or malformed")
+  | chk(($in.compare_files | length) < 300;
+        "comparison lists \($in.compare_files | length) files; cannot bind 300 or more to the head")
+  | chk(($in.files | file_keys) == ($in.compare_files | file_keys);
+        "file list does not match head \($head[0:7]); it may have been read from another head")
   | ([$in.files[]? | (.filename?, .previous_filename?) | strings | select(excluded)]) as $hit
   | chk(($hit | length) == 0; "changes \($hit[0]), which an envelope cannot cover")
 
