@@ -877,14 +877,24 @@ describe('the check after the reap waits for killed processes to finish exiting 
     await assert.rejects(remainsAfterReap(() => new Promise<boolean>(() => undefined), 0, 100, 30), /did not answer within 30 ms/, 'the first check too');
   });
 
-  it('checks that answer slowly still end at the bound, a process still listed then remaining', async () => {
+  it('checks that answer slowly still end at the bound, which halts either way', async () => {
     let calls = 0;
     const began = Date.now();
     const slow = (): Promise<boolean> => {
       calls += 1;
       return new Promise((resolve) => setTimeout(() => resolve(true), 40));
     };
-    assert.equal(await remainsAfterReap(slow, 100, 10, 50), true);
+    // The bound lands in a wait, after a check that listed a process, or in a check still
+    // answering, by a few milliseconds of timer drift: the first answers true, the second
+    // rejects, and the executor halts on both (macOS CI at 5eaa1f9 took the second).
+    const outcome = await remainsAfterReap(slow, 100, 10, 50).then(
+      (remains) => ({ remains }),
+      (error: unknown) => ({ rejected: error instanceof Error ? error.message : String(error) }),
+    );
+    assert.ok(
+      'remains' in outcome ? outcome.remains : /the check did not answer within 150 ms/.test(outcome.rejected),
+      `a process still listed, or a check unanswered at the bound (${JSON.stringify(outcome)})`,
+    );
     const waited = Date.now() - began;
     assert.ok(waited < 1_000, `ended by the bound, not by the number of checks (${String(waited)} ms)`);
     assert.ok(calls < 11, `fewer checks than the count allows (${String(calls)})`);
