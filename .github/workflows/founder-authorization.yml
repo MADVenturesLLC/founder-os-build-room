@@ -81,7 +81,7 @@ name: Founder Authorization
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, edited, ready_for_review]
+    types: [opened, synchronize, reopened, edited, ready_for_review, unlabeled]
   issue_comment:
     types: [created, edited, deleted]
   issues:
@@ -113,10 +113,16 @@ jobs:
     # grouped by the event's issue or PR so that a burst of events on one
     # carrier (anyone can comment on a public issue) collapses to one running
     # and one pending discovery, as the workflow-level group did before this
-    # change. Nothing is lost: the pending run that survives scans the state
-    # at the time it runs (Cursor security review at afa6d1b).
+    # change (Cursor security review at afa6d1b). GitHub replaces a pending
+    # run with a newer one, so a run that only judges the event's own PR must
+    # never share a group with a run that scans for a carrier's members: it
+    # could displace the scan and leave a member's success standing. Runs
+    # that scan use the "scan" group and runs that do not use the "pr" group;
+    # within each group every run does the same work on current state, so a
+    # replaced pending run loses nothing (Tier-2 at e528913, finding 1). The
+    # label test here is the CARRIER_LABELLED expression below, verbatim.
     concurrency:
-      group: founder-authorization-targets-${{ github.event.pull_request.number || github.event.issue.number }}
+      group: founder-authorization-targets-${{ (github.event.pull_request || github.event.issue.pull_request) && !(contains(github.event.issue.labels.*.name, 'milestone-carrier') || contains(github.event.pull_request.labels.*.name, 'milestone-carrier') || github.event.label.name == 'milestone-carrier') && 'pr' || 'scan' }}-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     outputs:
@@ -128,8 +134,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           EVENT_PR: ${{ github.event.pull_request.number || (github.event.issue.pull_request && github.event.issue.number) || '' }}
-          CARRIER: ${{ github.event.issue.number }}
-          CARRIER_LABELLED: ${{ contains(github.event.issue.labels.*.name, 'milestone-carrier') }}
+          CARRIER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          # The carrier label is under issue.labels for issue and comment
+          # events and under pull_request.labels for PR events; an unlabeled
+          # event that removed it names it in label.name (Tier-2 at e528913).
+          CARRIER_LABELLED: ${{ contains(github.event.issue.labels.*.name, 'milestone-carrier') || contains(github.event.pull_request.labels.*.name, 'milestone-carrier') || github.event.label.name == 'milestone-carrier' }}
         run: |
           set -euo pipefail
           event_prs='[]'
@@ -137,9 +146,10 @@ jobs:
             [[ "$EVENT_PR" =~ ^[1-9][0-9]*$ ]]
             event_prs="[$EVENT_PR]"
             # A PR event judges that PR. But a carrier converted into a pull
-            # request keeps its labels, and its comments then arrive as PR
-            # comments, so a labelled one is also scanned as a carrier below
-            # (Tier-2 at 33e29b0, finding 1).
+            # request keeps its labels, and its events then arrive as PR
+            # events, so a labelled one, or one whose carrier label was just
+            # removed, is also scanned as a carrier below (Tier-2 at 33e29b0
+            # finding 1, and at e528913 finding 1).
             if [[ "$CARRIER_LABELLED" != true ]]; then
               echo "prs=$event_prs" >> "$GITHUB_OUTPUT"
               exit 0

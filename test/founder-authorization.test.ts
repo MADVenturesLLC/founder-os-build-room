@@ -571,6 +571,7 @@ const MILESTONE = 'BR-M7';
 const OTHER_HEAD = '1111111111111111111111111111111111111111';
 const STAMP = '2026-10-31T21:30:00Z';
 const BASE_SHA = '5eaa1f9a77ef66647adf8e7f1a1e43f5c4c79cfc';
+const CARRIER_LABEL_TEST = "contains(github.event.issue.labels.*.name, 'milestone-carrier') || contains(github.event.pull_request.labels.*.name, 'milestone-carrier') || github.event.label.name == 'milestone-carrier'";
 
 interface EnvelopeFields {
   milestone?: string;
@@ -875,6 +876,11 @@ describe('envelope route — refused member entries and fields (B1.4, B1.5)', ()
     assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(920, text)] })), /names another head/);
   });
 
+  it('counts entries for this PR whatever the case of the repository name (Tier-2 at e528913, finding 2)', () => {
+    const text = envelopeText({ members: [memberLine('founder-os-build-room', PR, HEAD), memberLine('Founder-OS-Build-Room', PR, OTHER_HEAD)] });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(928, text)] })), /2 entries for #81/);
+  });
+
   it('refuses two member entries for this pull request', () => {
     const text = envelopeText({ members: [memberLine('founder-os-build-room', PR, HEAD), memberLine('founder-os-build-room', PR, HEAD)] });
     assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(921, text)] })), /2 entries for #81/);
@@ -987,6 +993,12 @@ describe('envelope route — excluded paths and incomplete file lists (B1.8)', (
 
   it('refuses a missing head comparison', () => {
     assertRefused(judgeEnvelope(envelopeInput({ compareFiles: null })), /comparison file list is missing or malformed/);
+  });
+
+  it("refuses a rename whose source differs from the head comparison's (Tier-2 at e528913, finding 2)", () => {
+    const files = [{ filename: 'docs/ci.yml', status: 'renamed', previous_filename: 'docs/old-ci.yml' }];
+    const compareFiles = [{ filename: 'docs/ci.yml', status: 'renamed', previous_filename: '.github/workflows/ci.yml' }];
+    assertRefused(judgeEnvelope(envelopeInput({ files, compareFiles })), /does not match head cac5201/);
   });
 
   it("refuses a file list that differs from the head's own comparison (Tier-2 at 11afcff, finding 3)", () => {
@@ -1533,11 +1545,17 @@ describe('founder-authorization workflow shape — per-PR concurrency and carrie
     const conc = lines.flatMap((l, i) => (/^\s+concurrency:$/.test(l) ? [i] : []));
     const groups = conc.map((i) => block(i).map((l) => l.trim()));
     assert.deepEqual(groups, [
-      // Discovery: grouped by the event, under a name no judging key can take.
-      ['group: founder-authorization-targets-${{ github.event.pull_request.number || github.event.issue.number }}', 'cancel-in-progress: false'],
+      // Discovery: grouped by the event, under a name no judging key can
+      // take, with scanning and non-scanning runs in separate groups.
+      [`group: founder-authorization-targets-\${{ (github.event.pull_request || github.event.issue.pull_request) && !(${CARRIER_LABEL_TEST}) && 'pr' || 'scan' }}-\${{ github.event.pull_request.number || github.event.issue.number }}`, 'cancel-in-progress: false'],
       // Judging: keyed by the judged PR only.
       ['group: founder-authorization-${{ matrix.pr }}', 'cancel-in-progress: false'],
     ]);
+  });
+
+  it('reads the carrier label wherever GitHub puts it, with the same test in the discovery group and the step (Tier-2 at e528913, finding 1)', () => {
+    assert.ok(lines.some((l) => l.trim() === `CARRIER_LABELLED: \${{ ${CARRIER_LABEL_TEST} }}`), 'the step reads issue labels, PR labels and a removed label');
+    assert.ok(lines.some((l) => l.trim() === 'CARRIER: ${{ github.event.issue.number || github.event.pull_request.number }}'), 'a PR event supplies its own number as the carrier');
   });
 
   it('judges each PR in its own matrix job, and only the judging job carries the key', () => {
@@ -1557,7 +1575,7 @@ describe('founder-authorization workflow shape — per-PR concurrency and carrie
     const triggers = block(on).map((l) => l.trim());
     assert.deepEqual(triggers, [
       'pull_request_target:',
-      'types: [opened, synchronize, reopened, edited, ready_for_review]',
+      'types: [opened, synchronize, reopened, edited, ready_for_review, unlabeled]',
       'issue_comment:',
       'types: [created, edited, deleted]',
       'issues:',
