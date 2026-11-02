@@ -3,7 +3,7 @@
 **This receipt records the landing of one Founder act,
 `FOUNDER-ACT-20261030-BR-PC-PLANNER`, with its three amendments, the
 readings he gave under them, his rulings during the act, and the
-builder's reads. It records fourteen findings and authorizes nothing.**
+builder's reads. It records seventeen findings and authorizes nothing.**
 The act's own text governs. The filing is ordered by Part I of the act,
 Part F of its Amendment 3, and C1 of
 `FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE` (one custody filing per act,
@@ -160,9 +160,9 @@ fix PR" (13:22:15Z).
 | Field | Value |
 |---|---|
 | Path | `docs/planning/command-journal/custody/PC-PLANNER-EVIDENCE-builder-reads-20261030.txt` |
-| Git blob id | `e6ee94fa44ac16c56a6303ae237e34e51387eafa` |
-| SHA-256 | `aa7f9b400195ab64f079608c6b0e61714566d9639df3f24ff744b7894fe8f419` |
-| Bytes | 5036 |
+| Git blob id | `2b437879dd1167bd9655dd1eaace4d49bee20867` |
+| SHA-256 | `0fe38aee632fd2c41958c54d6bb1ffaa8eb2362e2b231a9e2b1def3ec4c1a1c4` |
+| Bytes | 5105 |
 | Lines | 12 (`wc -l`) |
 | Trailing newline | present (single LF); no CR bytes |
 | What it is | the builder's reads for the act and Amendment 3: the deployments of `413ba83`, `5eaa1f9` and `2a56dab`; B2 and Amendment 3 B1; the cause of G4's halt read from the code; the dependency audit; and the control plane's heartbeat logs around G2, C5 and the reboot |
@@ -206,7 +206,7 @@ and EST (UTC−5) on 2026-11-02.
 | 10:19:35Z | the first heartbeat after C5 | Railway |
 | 10:21:07Z | D1 | the Founder, in session |
 | 10:27:35Z | the PC rebooted for D2 | `uptime -s` |
-| 10:27:47Z | the service started, nobody logged in at the console (finding 11) | the PC's journal |
+| 10:27:47Z | the service started; the console not read (finding 11) | the PC's journal |
 | 10:28:07Z | the first heartbeat after the reboot | Railway |
 | 10:28:54Z | D2's readings over SSH | the Founder, in session |
 
@@ -312,7 +312,7 @@ Amendment 3 require.
 (`<MAC_TAILNET_ADDRESS>`, 2), the ISP's DNS servers (`<ISP_DNS>`, 10),
 and a Docker bridge address (`<DOCKER_ADDRESS>`, 3). Public addresses
 of the services named in the readings (Google, Railway, Cloudflare,
-Canonical, Vercel, Fastly and example.com), loopback, Docker subnets and
+Canonical, Vercel, Fastly, New Relic and example.com), loopback, Docker subnets and
 Tailscale's fixed addresses are kept. No account name, node key, token,
 OAuth code or credential appears. In the builder's reads the Gateway's
 source address is left out.
@@ -321,6 +321,39 @@ source address is left out.
 in words, of what access the planner user's agy sign-in grants in his
 Google account. The counted run itself needs his separate act.
 
+**15. The Founder's own sudo rule.** The act's C3 says its two rules are
+"the only two privilege rules for the planner user". F1's
+`sudo -l -U "$(id -un)"` lists three for the Founder's user, the user
+the Gateway daemon runs as: the two of C3, and `(ALL : ALL) ALL`, which
+his user holds as the PC's administrator. That rule is not marked
+`NOPASSWD`, so sudo asks for his password before using it. The act
+neither grants nor changes it, and the daemon calls `sudo` only with
+`-n` and only for the two commands of C3. Whether a sudo credential
+cached by one of his terminal sessions could ever serve the daemon was
+not read.
+
+**16. Amendment 1 cites the act's signing time 12 seconds late.**
+Amendment 1's third line says the act was "signed
+2026-10-30T11:42:47Z". The Founder's signature reached the builder's
+session at 11:42:34.864Z (the time this receipt and its timeline use);
+11:42:47Z is when the builder wrote the signature into its own record.
+Amendment 1 is filed as signed and is not changed. Its line names the
+act by its SHA-256, which is correct.
+
+**17. C3 wrote the sudo rules through a fixed name in `/tmp`.** C3
+wrote the rules with `> /tmp/buildroom-planner.sudoers`, then installed
+that file. Any local user can create a file or symbolic link of that
+name in `/tmp` first. Depending on the kernel's `fs.protected_regular`
+and `fs.protected_symlinks` settings, the Founder's write could then go
+into a file that user controls, and that user could change the rules
+between `visudo -c` and `install`. The settings were not read. The
+installed rules are the intended ones: C3's own `sudo ls -l
+/etc/sudoers.d` (evidence block 9) shows `buildroom-planner` at 307 bytes, exactly the
+length of C3's `printf` output for his user name, and F1's `sudo -l -U`
+lists C3's two rules verbatim and no other rule for the planner user.
+The act is complete and is filed as signed; the risk applies to reusing
+C3's text.
+
 ## Follow-ups, not decided here
 
 - The cleanup ordering the Founder declined in Build Room pull request
@@ -328,6 +361,8 @@ Google account. The counted run itself needs his separate act.
   step independent of halt-marker writes, under its own review.
 - The dependency advisories of finding 10.
 - `antigravity-unleash.goog`, on D1 and never reached (finding 5).
+- Any later act that writes sudo rules writes them to a file made by
+  `mktemp`, not to a fixed name in `/tmp` (finding 17).
 - Removing `/srv/buildroom-planner/checkouts/reading` (finding 12), as
   F5's last line does.
 
@@ -338,3 +373,21 @@ any planner command reaching agy through the daemon; any Railway
 variable or setting; any deploy, redeploy or rollback; any change on the
 PC or the MacBook; any name added to the allowlist; any update of the
 copy.
+
+## Identity
+
+| Step | Identity |
+|---|---|
+| The act, its three amendments, the signatures, the rulings and the readings | the Founder (in session) |
+| Drafts of the act and its amendments, the GitHub, Railway, `/health` and `/version` reads, the masking, this record | the builder session, under the act and the Founder's direction in session |
+| Transport | the instruments from the builder's signed copies, byte for byte; readings from the session transcript, masked by the builder; each file ending with a single LF; pins above computed by the builder over the landed files |
+| Founder-side hash | Amendment 2's SHA-256, which its signature names; the other three signatures name none (finding 1) |
+
+## Attribution
+
+Committed by the `builder` seat, Actor-Id
+`session:claude-code/session_01Cshrrc2z6NzhDeFE1XffzA`, Execution-Surface
+`claude-code`, at Founder direction: Part I of
+`FOUNDER-ACT-20261030-BR-PC-PLANNER`, Part F1 of its Amendment 3, and C1
+of `FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE`. Merge is a separate
+exact-SHA Founder act under DEC-20260718-04; this receipt asserts none.
