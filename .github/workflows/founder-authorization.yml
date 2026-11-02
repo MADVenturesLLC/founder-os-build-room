@@ -138,6 +138,15 @@ jobs:
           REPO: ${{ github.repository }}
           EVENT_PR: ${{ github.event.pull_request.number || (github.event.issue.pull_request && github.event.issue.number) || '' }}
           CARRIER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          # This event's comment, if any: its body, its body before an edit,
+          # and its author's association. Read by jq only, never by the shell.
+          # The text is passed only when the author is the owner, a member or
+          # a collaborator: an outsider's text is never needed, and a large
+          # enough one could exceed the environment's size limit and fail the
+          # run that replaced a pending scan.
+          EVENT_COMMENT_BODY: ${{ contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && github.event.comment.body || '' }}
+          EVENT_COMMENT_OLD_BODY: ${{ contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && github.event.changes.body.from || '' }}
+          EVENT_COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
           # The carrier label is under issue.labels for issue and comment
           # events and under pull_request.labels for PR events; an unlabeled
           # event that removed it names it in label.name (Tier-2 at e528913).
@@ -187,13 +196,45 @@ jobs:
                 | select((.body // "") | ascii_downcase | test($re + "(?![0-9])")) | .number]
             | unique
           ' "$work"/all-*.json > "$work/linking.json"
+          # A matrix holds at most 256 jobs. The repository is public, so anyone
+          # can open PRs that merely mention the carrier, and enough of them
+          # would otherwise stop every re-judgment, freezing a real member's
+          # earlier success through a revocation (Cursor security review at
+          # 27fe8a7). Only a PR named in an envelope can hold an envelope
+          # success, and only the Founder writes envelopes. So above 256 the
+          # PRs judged are the linking ones named as members of this
+          # repository in a carrier comment, or in this event's own comment
+          # (its text before an edit, or as deleted), written by the
+          # repository's owner, a member or a collaborator, which an outsider
+          # cannot be. If those comments cannot be read, or the named set
+          # still exceeds 256, the job fails visibly and judges none: the
+          # Founder accepted that bound (Tier-2 finding 3 at 47d71ff).
+          if [[ "$(jq 'length' "$work/linking.json")" -gt 256 ]]; then
+            linking_count="$(jq 'length' "$work/linking.json")"
+            page=1
+            while :; do
+              api "https://api.github.com/repos/$REPO/issues/$CARRIER/comments?per_page=100&page=$page" > "$work/cc-$page.json"
+              if [[ "$(jq 'length' "$work/cc-$page.json")" -lt 100 ]]; then break; fi
+              page=$((page + 1))
+            done
+            jq -sc --arg repo "$REPO" '
+              ($repo | ascii_downcase | gsub("\\."; "\\.")) as $r
+              | ["OWNER", "MEMBER", "COLLABORATOR"] as $trusted
+              | [(add | arrays | .[]),
+                 {body: (env.EVENT_COMMENT_BODY // ""), old_body: (env.EVENT_COMMENT_OLD_BODY // ""),
+                  author_association: (env.EVENT_COMMENT_ASSOCIATION // "")}]
+              | map(select(type == "object" and (.author_association as $a | $trusted | index($a)))
+                    | (.body, .old_body) | strings | ascii_downcase
+                    | scan($r + "#([1-9][0-9]*)") | .[0] | tonumber)
+              | unique
+            ' "$work"/cc-*.json > "$work/named.json"
+            jq -c --slurpfile named "$work/named.json" '[.[] | select(. as $n | $named[0] | index($n))]' "$work/linking.json" > "$work/linking-named.json"
+            mv "$work/linking-named.json" "$work/linking.json"
+            echo "$linking_count open PRs link carrier #$CARRIER; judging the $(jq 'length' "$work/linking.json") named in trusted envelope comments."
+          fi
           prs="$(jq -c --argjson e "$event_prs" '. + $e | unique' "$work/linking.json")"
-          # A matrix holds at most 256 jobs. Above that, GitHub would reject the
-          # judging job before any status is posted, silently leaving earlier
-          # successes in place. Fail here instead, visibly, judging none: the
-          # Founder accepted this bound on B4.2 (Tier-2 finding 3 at 47d71ff).
           if [[ "$(jq 'length' <<<"$prs")" -gt 256 ]]; then
-            echo "::error::$(jq 'length' <<<"$prs") open PRs link carrier #$CARRIER, more than the 256 one matrix can judge; none were re-judged."
+            echo "::error::$(jq 'length' <<<"$prs") PRs to judge for carrier #$CARRIER, more than the 256 one matrix can judge; none were re-judged."
             exit 1
           fi
           echo "PRs linking carrier #$CARRIER: $prs"

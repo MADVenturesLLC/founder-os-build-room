@@ -1153,11 +1153,24 @@ exit 22
           calls: read('calls.log'),
         };
       },
-      targets: (event: { EVENT_PR?: string; CARRIER?: string; CARRIER_LABELLED?: string }) => {
+      targets: (event: {
+        EVENT_PR?: string; CARRIER?: string; CARRIER_LABELLED?: string;
+        EVENT_COMMENT_BODY?: string; EVENT_COMMENT_OLD_BODY?: string; EVENT_COMMENT_ASSOCIATION?: string;
+      }) => {
         writeFileSync(join(dir, 'output'), '');
         spawnSync('bash', ['-c', 'rm -f "$1"/.count-*', 'reset', dir]);
         const r = spawnSync('bash', ['-c', stepRun('Find the pull requests to judge')], {
-          cwd: REPO_ROOT, encoding: 'utf8', env: { ...env, EVENT_PR: event.EVENT_PR ?? '', CARRIER: event.CARRIER ?? '', CARRIER_LABELLED: event.CARRIER_LABELLED ?? 'false' },
+          cwd: REPO_ROOT,
+          encoding: 'utf8',
+          env: {
+            ...env,
+            EVENT_PR: event.EVENT_PR ?? '',
+            CARRIER: event.CARRIER ?? '',
+            CARRIER_LABELLED: event.CARRIER_LABELLED ?? 'false',
+            EVENT_COMMENT_BODY: event.EVENT_COMMENT_BODY ?? '',
+            EVENT_COMMENT_OLD_BODY: event.EVENT_COMMENT_OLD_BODY ?? '',
+            EVENT_COMMENT_ASSOCIATION: event.EVENT_COMMENT_ASSOCIATION ?? '',
+          },
         });
         const line = read('output').find((l) => l.startsWith('prs='));
         return { status: r.status, stderr: r.stderr, stdout: r.stdout, prs: line === undefined ? null : JSON.parse(line.slice(4)) as number[] };
@@ -1421,17 +1434,111 @@ exit 22
     }
   });
 
-  it('fails visibly, judging none, when more than 256 open PRs link the carrier (Tier-2 at 47d71ff, finding 3)', () => {
+  // A flood: many open PRs that merely mention the carrier, plus the real
+  // member #81 (Cursor security review at 27fe8a7).
+  function stageFlood(w: ReturnType<typeof stageWorld>, decoys: number): void {
+    const all = [
+      ...Array.from({ length: decoys }, (_, i) => ({ number: 2000 + i, state: 'open', body: milestoneLine() })),
+      { number: PR, state: 'open', body: `x\n${milestoneLine()}` },
+    ];
+    for (let p = 0; p * 100 < all.length; p++) {
+      w.put(p === 0 ? 'pulls.always' : `pulls.p${p + 1}.always`, all.slice(p * 100, p * 100 + 100));
+    }
+  }
+  const trusted = (id: number, body: string, association = 'OWNER') => ({ ...carrierComment(id, body), author_association: association });
+
+  it('in a decoy flood, judges only the linking PRs a trusted envelope names (Cursor at 27fe8a7)', () => {
     const w = stageWorld({});
     try {
-      const linking = Array.from({ length: 257 }, (_, i) => ({ number: 2000 + i, state: 'open', body: milestoneLine() }));
-      w.put('pulls.always', linking.slice(0, 100));
-      w.put('pulls.p2.always', linking.slice(100, 200));
-      w.put('pulls.p3.always', linking.slice(200));
+      stageFlood(w, 300);
+      w.put(`issues_${CARRIER}_comments`, [trusted(900, envelopeText())]);
+      const t = w.targets({ CARRIER: String(CARRIER) });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR]);
+      assert.match(t.stdout, /301 open PRs link carrier #200; judging the 1 named/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('in a decoy flood, ignores PRs named only in an outsider comment', () => {
+    const w = stageWorld({});
+    try {
+      stageFlood(w, 300);
+      const decoyNames = Array.from({ length: 300 }, (_, i) => `MADVenturesLLC/founder-os-build-room#${2000 + i}`).join('\n');
+      w.put(`issues_${CARRIER}_comments`, [trusted(900, envelopeText()), trusted(901, decoyNames, 'NONE')]);
+      const t = w.targets({ CARRIER: String(CARRIER) });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('in a decoy flood, still finds the member when its envelope is the comment being deleted', () => {
+    const w = stageWorld({});
+    try {
+      stageFlood(w, 300);
+      w.put(`issues_${CARRIER}_comments`, []);
+      const t = w.targets({ CARRIER: String(CARRIER), EVENT_COMMENT_BODY: envelopeText(), EVENT_COMMENT_ASSOCIATION: 'OWNER' });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('in a decoy flood, still finds the member when its envelope was edited away', () => {
+    const w = stageWorld({});
+    try {
+      stageFlood(w, 300);
+      w.put(`issues_${CARRIER}_comments`, [trusted(900, 'withdrawn')]);
+      const t = w.targets({
+        CARRIER: String(CARRIER), EVENT_COMMENT_BODY: 'withdrawn', EVENT_COMMENT_OLD_BODY: envelopeText(), EVENT_COMMENT_ASSOCIATION: 'OWNER',
+      });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores an outsider event comment naming PRs in a flood', () => {
+    const w = stageWorld({});
+    try {
+      stageFlood(w, 300);
+      w.put(`issues_${CARRIER}_comments`, []);
+      const t = w.targets({ CARRIER: String(CARRIER), EVENT_COMMENT_BODY: envelopeText(), EVENT_COMMENT_ASSOCIATION: 'NONE' });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, []);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('in a decoy flood, fails visibly when the carrier comments cannot be read', () => {
+    const w = stageWorld({});
+    try {
+      stageFlood(w, 300);
+      w.remove(`issues_${CARRIER}_comments`);
+      const t = w.targets({ CARRIER: String(CARRIER) });
+      assert.notEqual(t.status, 0);
+      assert.equal(t.prs, null);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails visibly, judging none, when trusted envelopes name more than 256 linking PRs (Tier-2 at 47d71ff, finding 3)', () => {
+    const w = stageWorld({});
+    try {
+      stageFlood(w, 300);
+      const names = Array.from({ length: 300 }, (_, i) => `MADVenturesLLC/founder-os-build-room#${2000 + i}`).join('\n');
+      w.put(`issues_${CARRIER}_comments`, [trusted(900, names)]);
       const t = w.targets({ CARRIER: String(CARRIER) });
       assert.notEqual(t.status, 0);
       assert.equal(t.prs, null, 'no list is output, so the judging job does not run');
-      assert.match(t.stdout, /257 open PRs link carrier #200, more than the 256/);
+      assert.match(t.stdout, /300 PRs to judge for carrier #200, more than the 256/);
     } finally {
       rmSync(w.dir, { recursive: true, force: true });
     }
@@ -1570,6 +1677,12 @@ describe('founder-authorization workflow shape — per-PR concurrency and carrie
   it('reads the carrier label wherever GitHub puts it, with the same test in the discovery group and the step (Tier-2 at e528913, finding 1)', () => {
     assert.ok(lines.some((l) => l.trim() === `CARRIER_LABELLED: \${{ ${CARRIER_LABEL_TEST} }}`), 'the step reads issue labels, PR labels and a removed label');
     assert.ok(lines.some((l) => l.trim() === 'CARRIER: ${{ github.event.issue.number || github.event.pull_request.number }}'), 'a PR event supplies its own number as the carrier');
+  });
+
+  it("passes an event comment's text to discovery only from a trusted author (Cursor at 27fe8a7)", () => {
+    const trustedTest = `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)`;
+    assert.ok(lines.some((l) => l.trim() === `EVENT_COMMENT_BODY: \${{ ${trustedTest} && github.event.comment.body || '' }}`));
+    assert.ok(lines.some((l) => l.trim() === `EVENT_COMMENT_OLD_BODY: \${{ ${trustedTest} && github.event.changes.body.from || '' }}`));
   });
 
   it('judges each PR in its own matrix job, and only the judging job carries the key', () => {
