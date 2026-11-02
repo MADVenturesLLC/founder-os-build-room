@@ -609,20 +609,25 @@ describe('npm run phase4:counted-run', () => {
     assert.equal(scrubTokens('nothing here', {}), 'nothing here');
   });
 
-  it('finds a token in the record however JSON would escape it', async () => {
+  it('finds a token in decoded values however JSON would escape it, and refuses such tokens outright', async () => {
     const token = 'tok\\en"with-escapes-0123456789abcdef0123456789';
     assert.equal(JSON.stringify({ v: `x${token}` }).includes(token), false);
     assert.equal(holdsSecret({ rows: [{ providerConversationId: `x${token}` }] }, [token]), true);
     assert.equal(holdsSecret({ [`k${token}`]: 1 }, [token]), true);
     assert.equal(holdsSecret({ rows: [{ v: 'clean' }] }, [token]), false);
 
-    const { dir, env } = await workspace();
-    const escapedEnv = { ...env, CONTROL_PLANE_TOKEN: token };
-    const plane = fakeControlPlane({ dispatched: { initModel: 'gemini-4-argon-high', providerConversationId: `conv-${token}` } });
-    await assert.rejects(phase4CountedRunMain(escapedEnv, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() }), /holds a token/);
-    const evidence = await evidenceText(dir);
-    assert.equal(evidence.includes(token), false);
-    assert.equal(evidence.includes(JSON.stringify(token).slice(1, -1)), false);
+    // A token JSON would spell differently is refused before anything runs (Codex third review, PR 141).
+    const { env } = await workspace();
+    for (const bad of [token, 'quote"0123456789abcdef0123456789abcdef', 'tab\t0123456789abcdef0123456789abcdef']) {
+      for (const name of ['CONTROL_PLANE_TOKEN', 'PHASE4_COUNTED_RUN_TOKEN']) {
+        const plane = fakeControlPlane();
+        const lines: string[] = [];
+        assert.equal(await phase4CountedRunMain({ ...env, [name]: bad }, { fetch: plane.fetch, git: fakeGit(), out: (l) => lines.push(l) }), PHASE4_CLI_EXIT.refused);
+        assert.match(lines.join('\n'), new RegExp(`${name} holds a quote, a backslash or a control character`));
+        assert.equal(plane.requests.length, 0);
+        assert.equal(lines.join('\n').includes(bad), false);
+      }
+    }
   });
 
   it('refuses a pass whose record is missing or does not hash to its digest', async () => {
@@ -705,27 +710,50 @@ describe('npm run phase4:counted-run', () => {
   });
 
   it('finds a token that JSON would spell out of an escape (Codex confirmation, PR 141)', async () => {
-    const token = 'x\\ny-0123456789abcdef0123456789abcdef';
-    const value = { providerConversationId: 'x\ny-0123456789abcdef0123456789abcdef' };
-    assert.equal(holdsSecret(value, [token]), false);
-    assert.equal(leaksSecret(value, [token]), true);
-    assert.equal(leaksSecret({ v: 'clean' }, [token]), false);
+    // A token of plain characters can still be spelled out of an escape: a newline before 'y' serializes as backslash-n-y.
+    const tail = 'y-'.concat('z'.repeat(32));
+    const probe = `n${tail}`;
+    const value = { providerConversationId: `x\n${tail}` };
+    assert.equal(holdsSecret(value, [probe]), false);
+    assert.equal(leaksSecret(value, [probe]), true);
+    assert.equal(leaksSecret({ v: 'clean' }, [probe]), false);
 
     const { dir, env } = await workspace();
-    const plane = fakeControlPlane({ dispatched: { initModel: 'gemini-4-argon-high', providerConversationId: 'x\ny-0123456789abcdef0123456789abcdef' } });
-    await assert.rejects(phase4CountedRunMain({ ...env, PHASE4_COUNTED_RUN_TOKEN: token }, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() }), /holds a token/);
-    assert.equal((await evidenceText(dir)).includes(token), false);
+    const plane = fakeControlPlane({ dispatched: { initModel: 'gemini-4-argon-high', providerConversationId: `x\n${tail}` } });
+    await assert.rejects(phase4CountedRunMain({ ...env, PHASE4_COUNTED_RUN_TOKEN: probe }, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() }), /holds a token/);
+    assert.equal((await evidenceText(dir)).includes(probe), false);
   });
 
   it('withholds an error whose JSON would spell out a token, and still records the attempt', async () => {
-    const token = 'p\\nq-0123456789abcdef0123456789abcdef';
+    const tail = 'q-'.concat('w'.repeat(32));
+    const probe = `n${tail}`;
     const { dir, env } = await workspace();
-    const plane = fakeControlPlane({ roundStartError: 'upstream said p\nq-0123456789abcdef0123456789abcdef' });
-    const code = await phase4CountedRunMain({ ...env, CONTROL_PLANE_TOKEN: token }, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() });
+    const plane = fakeControlPlane({ roundStartError: `upstream said p\n${tail}` });
+    const code = await phase4CountedRunMain({ ...env, CONTROL_PLANE_TOKEN: probe }, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() });
     assert.equal(code, PHASE4_CLI_EXIT.notPassed);
     const log = await loadPhase4Attempts(env.PHASE4_EVIDENCE_DIR, runSet().setId, env.PHASE4_TERMS_SHA256);
     assert.equal(log.attempts[0]?.error, '[withheld: credential material]');
-    assert.equal((await evidenceText(dir)).includes(token), false);
+    assert.equal((await evidenceText(dir)).includes(probe), false);
+  });
+
+  it('checks every pass before calling the set complete (Codex third review, PR 141)', async () => {
+    const { env } = await workspace();
+    const stub = (label: 'Phase4-CR1' | 'Phase4-CR2' | 'Phase4-CR3', roomId: string, digest: string) => ({
+      label, roomId, outcome: 'passed' as const, pending: false, startedAt: '2026-11-02T14:00:00.000Z', endedAt: '2026-11-02T15:00:00.000Z', entryFailures: [], failures: [], recordDigest: digest,
+      ...(label === 'Phase4-CR1' ? { liveCheck: { ...PASSED_CHECK, commandId: plannerCommandIdFor(ROOM_1, 't2') } } : {}),
+    });
+    const rooms = runSet().runs.map((r) => r.roomId);
+    const digests = await Promise.all((['Phase4-CR1', 'Phase4-CR2', 'Phase4-CR3'] as const).map((label, i) => writeRecord(env.PHASE4_EVIDENCE_DIR, label, rooms[i]!)));
+    await savePhase4Attempts(env.PHASE4_EVIDENCE_DIR, {
+      setId: runSet().setId,
+      termsSha256: env.PHASE4_TERMS_SHA256,
+      attempts: (['Phase4-CR1', 'Phase4-CR2', 'Phase4-CR3'] as const).map((label, i) => stub(label, rooms[i]!, digests[i]!)),
+    });
+    const lines: string[] = [];
+    assert.equal(await phase4CountedRunMain(env, { fetch: fakeControlPlane().fetch, git: fakeGit(), out: (l) => lines.push(l), ...clock() }), PHASE4_CLI_EXIT.refused);
+    const output = lines.join('\n');
+    assert.match(output, /Phase4-CR1 is recorded as passed, but its record judges/);
+    assert.equal(/the set is complete/.test(output), false);
   });
 
   it('refuses to run while an attempt is still marked under way', async () => {

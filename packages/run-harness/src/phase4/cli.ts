@@ -98,6 +98,13 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
   const apiToken = env['CONTROL_PLANE_TOKEN']!;
   const countedRunToken = env['PHASE4_COUNTED_RUN_TOKEN']!;
   if (apiToken === countedRunToken) return refuse('the API token and the counted-run token are the same value');
+  // A token JSON would write differently from itself (a quote, a backslash or
+  // a control character) could reach the evidence in an escaped spelling no
+  // search for the token finds. Such tokens are refused before anything runs
+  // (Codex, PR 141; the act's D3 token is hex).
+  for (const [name, token] of [['CONTROL_PLANE_TOKEN', apiToken], ['PHASE4_COUNTED_RUN_TOKEN', countedRunToken]] as const) {
+    if (JSON.stringify(token) !== `"${token}"`) return refuse(`${name} holds a quote, a backslash or a control character; use a token without them`);
+  }
   secrets.push(apiToken, countedRunToken);
 
   const expectedTermsSha = env['PHASE4_TERMS_SHA256']!.trim().toLowerCase();
@@ -147,11 +154,6 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
     if (log.attempts.some((a) => a.pending)) {
       return refuse('an attempt is still marked under way; a run that dies is recorded as interrupted, and the set is spent');
     }
-    const status = phase4SetStatus(phase4AttemptSummaries(log));
-    if (status.nextLabel === null) {
-      return refuse(status.satisfied ? 'the set is complete: three consecutive passes are on record' : 'the set is spent: a new act is needed');
-    }
-
     const driver = new HttpPhase4Driver({
       origin: set.controlPlaneOrigin,
       apiToken,
@@ -222,12 +224,11 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
     // The control plane must be configured for this act and no other before
     // anything is written: a room run under another act's terms would spend
     // this set (Copilot, PR 141).
-    const nextRun = set.runs.find((r) => r.label === status.nextLabel)!;
     let remoteActId: string | null;
     try {
-      remoteActId = await driver.countedRunActId(nextRun.roomId);
+      remoteActId = await driver.countedRunActId(set.runs[0]!.roomId);
     } catch (error) {
-      out(`${nextRun.label}: did not start, nothing was written: ${describe(error)}`);
+      out(`the set: nothing ran, nothing was written: ${describe(error)}`);
       return PHASE4_CLI_EXIT.notStarted;
     }
     if (remoteActId !== set.setId) {
@@ -243,10 +244,17 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
       try {
         defect = await priorPassDefect(set, attempt, evidenceDir, driver);
       } catch (error) {
-        out(`${nextRun.label}: did not start, nothing was written: ${describe(error)}`);
+        out(`the set: nothing ran, nothing was written: ${describe(error)}`);
         return PHASE4_CLI_EXIT.notStarted;
       }
       if (defect !== null) return refuse(`${attempt.label} is recorded as passed, but ${defect}`);
+    }
+
+    // Only now, with every pass on record checked, does the log's progress
+    // name the next label, or say the set is complete or spent (Codex, PR 141).
+    const status = phase4SetStatus(phase4AttemptSummaries(log));
+    if (status.nextLabel === null) {
+      return refuse(status.satisfied ? 'the set is complete: three consecutive passes are on record and checked' : 'the set is spent: a new act is needed');
     }
 
     let result;
