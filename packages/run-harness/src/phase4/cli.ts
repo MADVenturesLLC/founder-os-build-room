@@ -166,7 +166,11 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
     let liveCheck: (Phase4LiveCheckReading & { readonly readAt: string }) | undefined;
     const save = async (attempt: Phase4StoredAttempt): Promise<void> => {
       const others = log.attempts.filter((a) => !(a.pending && a.label === attempt.label && a.roomId === attempt.roomId));
-      const scrubbed: Phase4StoredAttempt = attempt.error === undefined ? attempt : { ...attempt, error: scrub(attempt.error) };
+      const scrubbed: Phase4StoredAttempt = {
+        ...attempt,
+        ...(attempt.error === undefined ? {} : { error: scrub(attempt.error) }),
+        ...(attempt.liveCheck?.reason === undefined ? {} : { liveCheck: { ...attempt.liveCheck, reason: scrub(attempt.liveCheck.reason) } }),
+      };
       log = { ...log, attempts: [...others, scrubbed] };
       await savePhase4Attempts(evidenceDir, log);
     };
@@ -254,7 +258,14 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
     // run again rather than trust an outcome whose record is missing.
     if (result.record !== undefined) {
       const base = `${result.label}-${result.roomId}`;
-      await writePhase4EvidenceFile(evidenceDir, `${base}.record.json`, `${scrub(JSON.stringify(result.record, null, 2))}\n`);
+      const recordJson = JSON.stringify(result.record, null, 2);
+      // A record holding either token is never written, and never scrubbed
+      // either: a scrubbed record would not match its digest. The attempt
+      // stays pending, and the set refuses to run again.
+      if (secrets.some((secret) => recordJson.includes(secret))) {
+        throw new Error('the run record holds a token; it is not written, and the attempt stays pending');
+      }
+      await writePhase4EvidenceFile(evidenceDir, `${base}.record.json`, `${recordJson}\n`);
       await writePhase4EvidenceFile(evidenceDir, `${base}.record.sha256`, `${phase4RecordDigest(result.record)}  ${base}.record (canonical JSON)\n`);
     }
     await save(final);
@@ -300,6 +311,13 @@ async function defaultGit(args: readonly string[]): Promise<string> {
   return stdout;
 }
 
+/** Text with the two tokens the environment holds replaced, for output outside the command's own scrubbing. */
+export function scrubTokens(text: string, env: Readonly<Record<string, string | undefined>>): string {
+  return [env['CONTROL_PLANE_TOKEN'], env['PHASE4_COUNTED_RUN_TOKEN']]
+    .filter((secret): secret is string => secret !== undefined && secret !== '')
+    .reduce((t, secret) => t.split(secret).join('[withheld]'), text);
+}
+
 function describe(error: unknown): string {
   return error instanceof Error && error.message.length > 0 ? error.message : String(error);
 }
@@ -311,7 +329,7 @@ if (entry !== undefined && import.meta.url === pathToFileURL(realpathSync(entry)
       process.exitCode = code;
     },
     (error: unknown) => {
-      process.stdout.write(`phase4:counted-run: ${describe(error)}\n`);
+      process.stdout.write(`phase4:counted-run: ${scrubTokens(describe(error), process.env)}\n`);
       process.exitCode = PHASE4_CLI_EXIT.notPassed;
     },
   );
