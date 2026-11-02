@@ -1,0 +1,18 @@
+FOUNDER-ACT-20261030-BR-PC-PLANNER Amendment 2: where G4 reads daemon.booted
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Under: FOUNDER-ACT-20261030-BR-PC-PLANNER (SHA-256 8a78e3a2632cfd25732c272ec6fbd7df47391aa7a6020062958cc8a3f32f20b0) and its Amendment 1 (38cc5f9bea6e1d347f7df5cf663408a5edd8a284def52cd9342468463ae78dac).
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. The act's G4 expects the service journal to show daemon.booted. At 413ba83 the daemon writes daemon.booted only to its own log (packages/gateway-daemon/src/daemon.ts, log()), which the Gateway CLI's tail command reads over the daemon's socket. The journal holds what main.ts writes to stderr: the "planner executor:" line and the executor's events, agy.reap_failed, agy.probe_failed, agy.hash_mismatch and agy.halted among them. As written, G4 would fail on a healthy daemon.
+
+Part B: Ruling
+B1. In G4, the journal reading must show the "planner executor:" line and no agy.reap_failed, agy.probe_failed, agy.hash_mismatch or agy.halted line; and daemon.booted is read from the daemon's own log, from ~/buildroom-gateway-413ba83:
+  ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-cli/src/bin.js tail
+which must show daemon.booted after G2's restart. Everything else in the act and Amendment 1 stands.
+
+Part C: Signature
+Signed: Michael Daley
+Date: 2026-10-30 (UTC)
+Actor-Id: founder

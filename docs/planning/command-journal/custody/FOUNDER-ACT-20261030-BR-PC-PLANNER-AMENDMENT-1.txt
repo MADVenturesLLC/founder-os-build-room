@@ -1,0 +1,22 @@
+FOUNDER-ACT-20261030-BR-PC-PLANNER Amendment 1: the copy is made from agy 1.4.11
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Under: FOUNDER-ACT-20261030-BR-PC-PLANNER (SHA-256 8a78e3a2632cfd25732c272ec6fbd7df47391aa7a6020062958cc8a3f32f20b0), signed 2026-10-30T11:42:47Z.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. My B1 readings of 2026-10-30, after the act's signature: one daemon running and the service active, from ~/buildroom-gateway-056ffd1 at 056ffd11d7db78b42463b233d758d41cdbf682a3; no buildroom-planner user, /opt/buildroom-planner or /srv/buildroom-planner; setfacl, busctl and varlinkctl present; both sockets present and open to every user; dbus active, dbus-broker inactive; nginx and libnginx-mod-stream available at 1.28.3-2ubuntu1.12; the dnsmasq and www-data users present; /etc/sudoers.d holding only README; no inet buildroom_planner table; nothing on ports 8443 or 5354; none of D3's files present. All as the act states, except my agy: version 1.4.11, SHA-256 4341b80b43fc3b4437ff65041673f0f71c950e49d69a6256e3b6f212c4694ed4, where the act records 1.4.8 and 70b1d27f1812f5ebccc8f13daf2209112447413437dd1ab6d87c58b8a04fe35b. Under the act's B1 I stopped, and nothing was changed.
+A2. agy 1.4.11's help lists every argument of Amendment 3 B1(a) and every flag the executor refuses. Its changelog since 1.4.8 adds, among changes that do not touch the planner's use: a finished_reason field on a stream-json result that ended early, which the executor does not read (it reads only status and response, and a response cut off mid-way fails its JSON parse and is refused); and a billing choice, a Gemini subscription or Pay As You Go, after a sign-in with Google Cloud.
+A3. My agy updated itself three times between 2026-10-26 and 2026-10-30, so a version and hash in an act can be stale within hours.
+
+Part B: Rulings
+B1. Version and hash. In the act's B1, C2 and G2, the version is 1.4.11 and the SHA-256 is 4341b80b43fc3b4437ff65041673f0f71c950e49d69a6256e3b6f212c4694ed4, in place of 1.4.8 and 70b1d27f1812f5ebccc8f13daf2209112447413437dd1ab6d87c58b8a04fe35b. The act's A3 stays as the record of what was read when it was drafted.
+B2. Read again before the copy. Immediately before C2's install, I read ~/.local/bin/agy --version and sha256sum ~/.local/bin/agy once more. If either differs from B1, I stop before C2; what C1 made stays, unused, under the act's H3, and the copy is made under a later act.
+B3. Billing at sign-in. If agy's sign-in as the planner user offers a billing choice, I choose the one my own agy uses, never Pay As You Go. If agy cannot go on without Pay As You Go, I stop at E2. This amendment, like the act, authorizes no spend.
+B4. Hosts. The hosts of the act's D1 were read at agy 1.4.8. If 1.4.11 needs a name not on D1, the readings of F8 name it, and the act's D2 applies: I add it only by a later act.
+B5. Everything else in the act stands.
+
+Part C: Signature
+Signed: Michael Daley
+Date: 2026-10-30 (UTC)
+Actor-Id: founder
