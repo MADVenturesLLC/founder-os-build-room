@@ -1,0 +1,281 @@
+FOUNDER-ACT-20261030-BR-PC-PLANNER: the Planner's isolation on the PC, and Gateway 1880c12d's executor enabled
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Under: FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR (SHA-256 d2868a5978c6dd54e55b9959511ea7586b44b9760c439f3306d79fdcae0da008), C1 third step; its Amendment 1 (b17be4549f2e860da8f56696b18c7ffc99109bf16f8dc1f62ff303e87b0af67d), Amendment 2 (cfd7255855be166ec1167cfe82d9c10d36a761e7c26a44d4e68b1fa5cdd177b5), Amendment 3 (c3a257ef954239cdd1391b8d1b612e3843237219ba060b0c458057742fdfa2f5), Amendment 4 (d514039964bb60eb0c634a19a6c34e18931ace19499960a80369d106c8cfe39d) and Amendment 5 (f2aa86a251cb6a2399c92b42f66606309cba807f5a416a6ff4e76622b192fdee); FOUNDER-ACT-20261029-BR-PLANNER-READINESS (0c8efcd9ea746966437a997595253b7f8d89360fb0128cc962570ec9ed381f65); FOUNDER-ACT-20261026-BR-PC-GATEWAY-SERVICE (47f5ef0b529298adc385fa8148a4062ef3d3b9bd7694b43d41a51550bdde4206).
+The builder read the executor at Build Room main 413ba83cb7e94603cb209719fbc91cd27e781f2e and my readings of the PC of 2026-10-30 (R1 to R11) before drafting.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. What is in place. Gateway 1880c12d runs as the user service buildroom-gateway.service from ~/buildroom-gateway-056ffd1 (FOUNDER-ACT-20261026-BR-PC-GATEWAY-SERVICE). That checkout carries no Planner executor, no directory lock and no boot reap. The executor merged in Build Room pull requests 131 and 133, the init fields in 134 and 135, and the readiness act's Part C in 136, merged as 413ba83cb7e94603cb209719fbc91cd27e781f2e and deployed to production at 2026-10-30T10:45:44Z.
+A2. What the executor needs, as its code reads at 413ba83 (planner-executor-factory.ts, agy-planner-executor.ts):
+  - BUILDROOM_PLANNER_EXECUTOR=agy, on Linux, while the daemon holds Gateway 1880c12d; BUILDROOM_PLANNER_USER, BUILDROOM_PLANNER_AGY (absolute), BUILDROOM_PLANNER_AGY_SHA256 (64 lowercase hex) and BUILDROOM_PLANNER_CHECKOUTS (absolute) all set.
+  - It starts a run as exactly: /usr/bin/sudo -n -u buildroom-planner -- /opt/buildroom-planner/bin/agy --input-format stream-json --output-format stream-json --model gemini-4-argon-high --effort high --mode plan --sandbox --print-timeout 900s (Amendment 3 B1(a)).
+  - It ends a run's processes with exactly: /usr/bin/sudo -n -u buildroom-planner -- /usr/bin/pkill -KILL -u buildroom-planner (Amendment 3 B1(b)), and checks with /usr/bin/pgrep -u buildroom-planner as the Gateway's user.
+  - Every child it starts gets only PATH=/usr/bin:/bin, LANG, LC_ALL, TZ and HOME=/nonexistent, with git isolated, so agy's HOME must come from sudo.
+  - Each run's checkout is made by the Gateway's user below BUILDROOM_PLANNER_CHECKOUTS, directories 0555 and files 0444, and is agy's working directory.
+  - It hashes BUILDROOM_PLANNER_AGY before every run and refuses on any difference (Amendment 4 C3).
+A3. What my readings of the PC showed (2026-10-30, filed masked under Part I):
+  - Ubuntu 26.04.1, kernel 7.0, systemd 259. sudo is sudo-rs 0.2.13. nft, dnsmasq (installed, inactive), bwrap, flock, strace, pkill and pgrep present; nginx and ts absent.
+  - My agy is one file, an ELF executable of 228,897,168 bytes, version 1.4.8, SHA-256 70b1d27f1812f5ebccc8f13daf2209112447413437dd1ab6d87c58b8a04fe35b. It updated itself from 1.4.7 after 2026-10-26.
+  - Name lookups: /etc/resolv.conf is systemd-resolved's stub; hosts: files mdns4_minimal [NOTFOUND=return] dns; only systemd-resolved listens on port 53. Its local socket /run/systemd/resolve/io.systemd.Resolve and the system D-Bus socket are open to every user, so any user can look up any name past the firewall. avahi-daemon is active. Tailscale's split DNS runs through systemd-resolved.
+  - The firewall: Docker and Tailscale own their nftables tables, which say not to touch them. No table filters outgoing traffic.
+  - kernel.apparmor_restrict_unprivileged_userns is 1, so a sandbox that needs a user namespace may be refused for a user AppArmor does not allow.
+  - Traced with strace, one run of my agy looked up daily-cloudcode-pa.googleapis.com, play.googleapis.com, aicode.googleapis.com, www.googleapis.com, lh3.googleusercontent.com, antigravity-cli-auto-updater-974169037036.us-central1.run.app, gemini-api-docs-mcp.dev and metadata.google.internal (which does not exist); an untraced run also looked up oauth2.googleapis.com and antigravity-unleash.goog. storage.googleapis.com was not agy's.
+A4. Names this act fixes. The planner user is buildroom-planner, a system user with home /var/lib/buildroom-planner. The agy copy is /opt/buildroom-planner/bin/agy. The checkout parent is /srv/buildroom-planner/checkouts. The Gateway's user is the user that runs buildroom-gateway.service, written below as "my user"; commands that need its name take it from id -un, so this text carries none.
+A5. Correction. FOUNDER-ACT-20261029-BR-PLANNER-READINESS C1 cites "the second privilege rule of Amendment 3 E1". E1 is in the withdrawn text (Amendment 4 A1). The rule meant is Amendment 3 B1(b) of c3a257ef, the same command; C1 reads so from this signature.
+
+Part B: Before
+B1. My readings, none of which changes anything, given to the builder. If any differs from what is stated, I stop and change nothing:
+  pgrep -af gateway-daemon (one daemon); systemctl --user is-active buildroom-gateway.service (active)
+  git -C ~/buildroom-gateway-056ffd1 rev-parse HEAD (recorded)
+  id buildroom-planner (no such user); ls -ld /opt/buildroom-planner /srv/buildroom-planner (no such file, for both)
+  ~/.local/bin/agy --version (1.4.8); sha256sum ~/.local/bin/agy (70b1d27f1812f5ebccc8f13daf2209112447413437dd1ab6d87c58b8a04fe35b)
+  command -v setfacl busctl varlinkctl (each present; if setfacl is absent, I install the acl package in D3 first)
+  ls -l /run/avahi-daemon/socket /run/systemd/resolve/io.systemd.Resolve; systemctl is-active dbus dbus-broker
+  apt-cache policy nginx libnginx-mod-stream | head -20; getent passwd dnsmasq www-data
+  sudo ls /etc/sudoers.d; sudo nft list tables (no inet buildroom_planner); ss -ltnu '( sport = :8443 or sport = :5354 )' (nothing)
+  ls /etc/systemd/system/systemd-resolved.service.d /etc/systemd/system/avahi-daemon.service.d /etc/dbus-1/system.d/buildroom-planner.conf 2>&1 (none exist)
+B2. The builder reads, within 15 minutes before Part C: Build Room main at 413ba83 or a later commit that changes no file under packages/gateway-daemon, packages/gateway-protocol or packages/gateway-cli; /health 200; /version naming the commit Railway serves; and Railway's serving deployment of rare-enjoyment SUCCESS with nothing building. If any fails, I stop and nothing is changed.
+
+Part C: The planner user, the copy and the sudo rules
+C1. The user:
+  sudo useradd --system --home-dir /var/lib/buildroom-planner --create-home --shell /usr/sbin/nologin --user-group buildroom-planner
+  sudo chmod 0700 /var/lib/buildroom-planner
+It holds no password, no SSH key and no repository credential, and is in no group but its own.
+C2. The copy (Amendment 4 C1):
+  sudo install -d -o root -g root -m 0755 /opt/buildroom-planner /opt/buildroom-planner/bin
+  sudo install -o root -g root -m 0755 ~/.local/bin/agy /opt/buildroom-planner/bin/agy
+  ls -l /opt/buildroom-planner/bin/agy; sha256sum /opt/buildroom-planner/bin/agy; /opt/buildroom-planner/bin/agy --version
+This act records version 1.4.8 and SHA-256 70b1d27f1812f5ebccc8f13daf2209112447413437dd1ab6d87c58b8a04fe35b. If the copy's hash or version differs, my agy has updated since B1: I stop, and the copy is made under a later act that records the new ones.
+C3. The rules, written for sudo-rs, which supports exact arguments and NOPASSWD and sets HOME from the target user itself:
+  printf '%s ALL=(buildroom-planner) NOPASSWD: /opt/buildroom-planner/bin/agy --input-format stream-json --output-format stream-json --model gemini-4-argon-high --effort high --mode plan --sandbox --print-timeout 900s\n%s ALL=(buildroom-planner) NOPASSWD: /usr/bin/pkill -KILL -u buildroom-planner\n' "$(id -un)" "$(id -un)" > /tmp/buildroom-planner.sudoers
+  sudo visudo -c -f /tmp/buildroom-planner.sudoers
+  sudo install -o root -g root -m 0440 /tmp/buildroom-planner.sudoers /etc/sudoers.d/buildroom-planner
+  sudo visudo -c; rm /tmp/buildroom-planner.sudoers
+Both checks must report the files parse. These are the only two privilege rules for the planner user.
+C4. The checkout parent:
+  sudo install -d -o root -g root -m 0755 /srv/buildroom-planner
+  sudo install -d -o "$(id -un)" -g "$(id -un)" -m 0711 /srv/buildroom-planner/checkouts
+C5. HOME, as the daemon passes it (A2): each of these must print /var/lib/buildroom-planner, or I stop:
+  sudo -u buildroom-planner /usr/bin/printenv HOME
+  env -i PATH=/usr/bin:/bin HOME=/nonexistent /usr/bin/sudo -u buildroom-planner /usr/bin/printenv HOME
+
+Part D: The network allowlist (Amendment 2 Part B)
+D1. The allowlist, exact names, no wildcard: daily-cloudcode-pa.googleapis.com, oauth2.googleapis.com, aicode.googleapis.com, antigravity-unleash.goog. None accepts content from anyone in the sense of Amendment 2 B2.
+D2. Not on it, by name: www.googleapis.com (Google's general API front door, which accepts uploads; Amendment 2 B2), play.googleapis.com (usage telemetry), antigravity-cli-auto-updater-974169037036.us-central1.run.app (the copy changes only by my act; Amendment 4 C2), lh3.googleusercontent.com (profile pictures), gemini-api-docs-mcp.dev (an MCP server; Amendment 4 D1), metadata.google.internal, storage.googleapis.com, and every other name. If sign-in or F5 fails on a name not on D1, the filter's logs name it, and the builder brings it to me; I add it only by a later act.
+D3. Lookups past the firewall closed for the planner user only (my ruling of 2026-10-30). If B1 showed setfacl absent: sudo apt-get install acl. Then:
+  - /etc/systemd/system/systemd-resolved.service.d/buildroom-planner.conf:
+      [Service]
+      ExecStartPost=/usr/bin/setfacl -m u:buildroom-planner:--- /run/systemd/resolve/io.systemd.Resolve
+  - /etc/systemd/system/avahi-daemon.service.d/buildroom-planner.conf:
+      [Service]
+      ExecStartPost=/usr/bin/setfacl -m u:buildroom-planner:--- /run/avahi-daemon/socket
+  - /etc/dbus-1/system.d/buildroom-planner.conf:
+      <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+      <busconfig>
+        <policy user="buildroom-planner">
+          <deny send_destination="org.freedesktop.resolve1"/>
+          <deny send_destination="org.freedesktop.Avahi"/>
+        </policy>
+      </busconfig>
+  each written with sudo tee, mode 0644, owner root; then:
+  sudo setfacl -m u:buildroom-planner:--- /run/systemd/resolve/io.systemd.Resolve /run/avahi-daemon/socket
+  sudo systemctl daemon-reload
+  sudo busctl call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig
+  getfacl /run/systemd/resolve/io.systemd.Resolve /run/avahi-daemon/socket (each shows user:buildroom-planner:---)
+Every other user, and Tailscale, keep their lookups as they are.
+D4. The filtering service. Amendment 2 B1 allows the planner user one filtering service on the PC. It is the planner filter: one nginx stream server on 127.0.0.1:8443 and [::1]:8443, which forwards a TLS connection only if its server name is on D1 and resets every other, and its resolver, one dnsmasq instance on 127.0.0.1:5354 and [::1]:5354, which answers only D1's names. Both listen on loopback only, run as their own system users, and are configured by this act alone. The files:
+  sudo apt-get install --no-install-recommends nginx libnginx-mod-stream
+  sudo unlink /etc/nginx/sites-enabled/default
+  - /etc/nginx/buildroom-planner-stream.conf:
+      stream {
+          map $ssl_preread_server_name $buildroom_planner_upstream {
+              daily-cloudcode-pa.googleapis.com daily-cloudcode-pa.googleapis.com:443;
+              oauth2.googleapis.com oauth2.googleapis.com:443;
+              aicode.googleapis.com aicode.googleapis.com:443;
+              antigravity-unleash.goog antigravity-unleash.goog:443;
+              default 127.0.0.1:1;
+          }
+          resolver 127.0.0.53 valid=60s ipv6=on;
+          log_format buildroom_planner '$time_iso8601 $ssl_preread_server_name $upstream_addr $status';
+          access_log /var/log/nginx/buildroom-planner.log buildroom_planner;
+          server {
+              listen 127.0.0.1:8443;
+              listen [::1]:8443;
+              ssl_preread on;
+              proxy_pass $buildroom_planner_upstream;
+              proxy_connect_timeout 10s;
+          }
+      }
+  - one line appended to /etc/nginx/nginx.conf, outside every block: include /etc/nginx/buildroom-planner-stream.conf;
+  sudo nginx -t (must pass); sudo systemctl reload nginx
+  - /etc/buildroom-planner/dnsmasq.conf:
+      port=5354
+      listen-address=127.0.0.1,::1
+      bind-interfaces
+      no-resolv
+      no-hosts
+      no-poll
+      domain-needed
+      bogus-priv
+      log-queries
+      log-facility=-
+      server=/daily-cloudcode-pa.googleapis.com/127.0.0.53
+      server=/oauth2.googleapis.com/127.0.0.53
+      server=/aicode.googleapis.com/127.0.0.53
+      server=/antigravity-unleash.goog/127.0.0.53
+      address=/#/
+  - /etc/systemd/system/buildroom-planner-dns.service:
+      [Unit]
+      Description=Build Room planner resolver (allowlisted names only)
+      After=network.target systemd-resolved.service
+      [Service]
+      ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/buildroom-planner/dnsmasq.conf --user=dnsmasq --pid-file=
+      Restart=on-failure
+      [Install]
+      WantedBy=multi-user.target
+  The system dnsmasq.service stays as it is, inactive.
+D5. The rule. The operating system enforces it for the planner user's uid, whatever agy or its sandbox does (Amendment 2 B1):
+  - /etc/buildroom-planner/nftables.nft:
+      table inet buildroom_planner
+      delete table inet buildroom_planner
+      table inet buildroom_planner {
+          chain nat_out {
+              type nat hook output priority -100; policy accept;
+              meta skuid "buildroom-planner" tcp dport 443 redirect to :8443
+              meta skuid "buildroom-planner" udp dport 53 redirect to :5354
+              meta skuid "buildroom-planner" tcp dport 53 redirect to :5354
+          }
+          chain filter_out {
+              type filter hook output priority 0; policy accept;
+              meta skuid "buildroom-planner" jump planner
+          }
+          chain planner {
+              ip daddr 127.0.0.1 tcp dport 8443 accept
+              ip6 daddr ::1 tcp dport 8443 accept
+              ip daddr 127.0.0.1 udp dport 5354 accept
+              ip6 daddr ::1 udp dport 5354 accept
+              ip daddr 127.0.0.1 tcp dport 5354 accept
+              ip6 daddr ::1 tcp dport 5354 accept
+              ip daddr 127.0.0.0/8 ct state established accept
+              ip6 daddr ::1 ct state established accept
+              counter reject with icmpx type admin-prohibited
+          }
+      }
+  - /etc/systemd/system/buildroom-planner-firewall.service:
+      [Unit]
+      Description=Build Room planner network allowlist
+      DefaultDependencies=no
+      Before=network-pre.target
+      Wants=network-pre.target
+      After=local-fs.target
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/sbin/nft -f /etc/buildroom-planner/nftables.nft
+      ExecStop=/usr/sbin/nft delete table inet buildroom_planner
+      [Install]
+      WantedBy=sysinit.target
+  The accepts match the loopback destination, not the loopback interface: after the redirect the output filter still sees the packet's original interface (measured by the builder on 2026-10-30). The rule is its own table: it touches no Docker or Tailscale table, and nftables.service, whose file flushes every table, is not enabled. Everything the planner user sends that is not TCP 443 or DNS to the filter is refused, on every interface, the tailnet and loopback included; UDP 443 is refused, so agy must use TCP. The one loopback exception, replies on a connection another local process opened to the planner user, lets agy's sign-in receive the browser's return on the PC (E2).
+  sudo systemctl daemon-reload; sudo systemctl enable --now buildroom-planner-firewall.service buildroom-planner-dns.service
+D6. Order. Parts C5 and D are in force, and F4's readings pass, before any process of the planner user makes a connection, sign-in included.
+D7. What remains, which I accept for this binding (with Amendment 2 D3):
+  - Domain fronting: a connection with a listed server name may ask Google's shared front end for another service. Google refuses most of this; the PC cannot prove it never answers.
+  - A name below a listed name (any.oauth2.googleapis.com) is resolved through the resolver, and the lookup reaches that name's operator.
+  - Local sockets other than the resolver's and Avahi's, such as the rest of the system D-Bus, stay reachable by the planner user; the firewall does not see them.
+
+Part E: Plugins, sign-in and the token
+E1. No plugins, no MCP servers (Amendment 4 D1):
+  sudo -u buildroom-planner /opt/buildroom-planner/bin/agy plugin list
+  sudo -u buildroom-planner /opt/buildroom-planner/bin/agy mcp list
+Both must show none. If either shows any, I stop and ask the builder.
+E2. Sign-in (ruling B6; Amendment 1 C2; my rulings of 2026-10-30). I run sudo -u buildroom-planner /opt/buildroom-planner/bin/agy in a terminal I watch and sign it in with my existing Google account: from another device if agy offers a code or link that works there; otherwise in a browser on the PC, signed in as me. Nothing is copied from my own agy. No token, and no file or output that carries one, is pasted, filed or given to the builder. I give the builder only that the sign-in happened, when, and the agy version. If sign-in needs a name not on D1, I stop; the builder reads the filter's logs (F8) and brings the name to me.
+E3. The token's reach (Amendment 2 D1). In my Google account I read what access the agy sign-in grants and give the builder that reading in words, without any token. If it grants more than agy's own use, I decide before any counted run whether to proceed.
+
+Part F: Readings, before the executor is enabled
+F1. Isolation (Amendment 1 C7). Each must fail:
+  sudo -u buildroom-planner ls "$HOME/Library/Application Support/founder-os/gateway"; echo "exit $?"
+  sudo -u buildroom-planner test -r "$HOME/Library/Application Support/founder-os/gateway/custody/primary.cred"; echo "exit $?"
+  sudo -u buildroom-planner /usr/bin/systemd-creds --user decrypt "$HOME/Library/Application Support/founder-os/gateway/custody/primary.cred" /dev/null; echo "exit $?"
+F2. The rules as the system lists them (Amendment 3 D1): sudo -l -U "$(id -un)", which must list exactly C3's two rules for the planner user.
+F3. The copy (Amendment 4 F1): ls -l, sha256sum and --version of /opt/buildroom-planner/bin/agy, equal to C2's.
+F4. The network (Amendment 2 E1), as the planner user:
+  sudo -u buildroom-planner /usr/bin/curl -sS -m 10 -o /dev/null https://example.com; echo "exit $?" (fails)
+  sudo -u buildroom-planner /usr/bin/curl -sS -m 10 -o /dev/null https://www.googleapis.com/; echo "exit $?" (fails: a Google name not on D1)
+  sudo -u buildroom-planner /usr/bin/dig +time=3 +tries=1 @8.8.8.8 example.com (fails)
+  sudo -u buildroom-planner getent hosts example.com; echo "exit $?" (fails)
+  sudo -u buildroom-planner /usr/bin/resolvectl query example.com; echo "exit $?" (fails)
+  sudo -u buildroom-planner /usr/bin/varlinkctl call /run/systemd/resolve/io.systemd.Resolve io.systemd.Resolve.ResolveHostname '{"name":"example.com"}'; echo "exit $?" (fails)
+  sudo -u buildroom-planner /usr/bin/busctl call org.freedesktop.resolve1 /org/freedesktop/resolve1 org.freedesktop.resolve1.Manager ResolveHostname isit 0 example.com 0 0; echo "exit $?" (fails)
+  sudo -u buildroom-planner getent hosts oauth2.googleapis.com; echo "exit $?" (succeeds)
+  sudo -u buildroom-planner /usr/bin/curl -4 -sS -m 10 -o /dev/null -w '%{http_code}\n' https://oauth2.googleapis.com/; echo "exit $?" (connects over IPv4: any HTTP code, exit 0)
+  sudo -u buildroom-planner /usr/bin/curl -6 -sS -m 10 -o /dev/null -w '%{http_code}\n' https://oauth2.googleapis.com/; echo "exit $?" (connects over IPv6: any HTTP code, exit 0)
+  sudo -u buildroom-planner /usr/bin/curl -6 -sS -m 10 -o /dev/null https://example.com; echo "exit $?" (fails over IPv6 too)
+  getent hosts example.com; echo "exit $?" (as my user: succeeds, so my own lookups are untouched)
+  sudo nft list table inet buildroom_planner; cat /etc/nginx/buildroom-planner-stream.conf /etc/buildroom-planner/dnsmasq.conf
+F5. Attestation and init timing (ruling B3; Amendment 4 F1). With the copy, through C3's first rule exactly as the daemon runs it, in a directory the planner user can read and not write:
+  install -d -m 0555 /srv/buildroom-planner/checkouts/reading
+  cd /srv/buildroom-planner/checkouts/reading && (sleep 20; echo "input sent $(date +%s.%N)" >&2; printf '%s\n' '{"event":"user","message":{"role":"user","content":"Reply with the single word OK"}}') | env -i PATH=/usr/bin:/bin HOME=/nonexistent LANG=C.UTF-8 /usr/bin/sudo -n -u buildroom-planner -- /opt/buildroom-planner/bin/agy --input-format stream-json --output-format stream-json --model gemini-4-argon-high --effort high --mode plan --sandbox --print-timeout 900s | while IFS= read -r line; do printf '%s %s\n' "$(date +%s.%N)" "$line"; done
+It must show an init event naming gemini-4-argon-high timed before "input sent", and a result. The builder records the init event's permission_mode. If agy refuses --sandbox (A3, AppArmor), I stop; an AppArmor profile for the copy needs a later act. Afterwards: rmdir /srv/buildroom-planner/checkouts/reading.
+F6. Processes end (Amendment 3 D1; Amendment 2 E1). A test run started as in F5 with its input held open longer than this reading; while it runs, /usr/bin/pgrep -u buildroom-planner lists it; then /usr/bin/sudo -n -u buildroom-planner -- /usr/bin/pkill -KILL -u buildroom-planner; then /usr/bin/pgrep -u buildroom-planner; echo "exit $?" prints exit 1.
+F7. No repository credential (Amendment 1 C5): sudo ls -la /var/lib/buildroom-planner, showing no .git-credentials, .ssh or .netrc.
+F8. What the filter saw during E2, F5 and F6: sudo cat /var/log/nginx/buildroom-planner.log; journalctl -u buildroom-planner-dns.service --since today --no-pager | tail -100; sudo nft list chain inet buildroom_planner planner (its reject counter). The builder lists every name refused.
+
+Part G: The executor enabled
+G1. New checkout, beside the old:
+  git clone https://github.com/MADVenturesLLC/founder-os-build-room.git ~/buildroom-gateway-413ba83
+  git -C ~/buildroom-gateway-413ba83 checkout --detach 413ba83cb7e94603cb209719fbc91cd27e781f2e
+  cd ~/buildroom-gateway-413ba83 && PATH="$HOME/.nvm/versions/node/v22.23.2/bin:$PATH" npm ci && PATH="$HOME/.nvm/versions/node/v22.23.2/bin:$PATH" npm run build
+rev-parse HEAD must print 413ba83cb7e94603cb209719fbc91cd27e781f2e, status --short nothing, and dist/packages/gateway-daemon/src/main.js must exist. ~/buildroom-gateway-056ffd1 is not touched; it is the rollback.
+G2. The unit. I replace ~/.config/systemd/user/buildroom-gateway.service with exactly:
+  [Unit]
+  Description=Build Room Gateway daemon (1880c12d)
+
+  [Service]
+  Type=simple
+  WorkingDirectory=%h/buildroom-gateway-413ba83
+  Environment=BUILDROOM_CONTROL_PLANE_URL=https://rare-enjoyment-production-0869.up.railway.app
+  Environment=BUILDROOM_PLANNER_EXECUTOR=agy
+  Environment=BUILDROOM_PLANNER_USER=buildroom-planner
+  Environment=BUILDROOM_PLANNER_AGY=/opt/buildroom-planner/bin/agy
+  Environment=BUILDROOM_PLANNER_AGY_SHA256=70b1d27f1812f5ebccc8f13daf2209112447413437dd1ab6d87c58b8a04fe35b
+  Environment=BUILDROOM_PLANNER_CHECKOUTS=/srv/buildroom-planner/checkouts
+  ExecStart=%h/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-daemon/src/main.js
+  Restart=on-failure
+  RestartSec=30
+  KillSignal=SIGTERM
+  TimeoutStopSec=20
+
+  [Install]
+  WantedBy=default.target
+and run systemctl --user daemon-reload and systemctl --user restart buildroom-gateway.service.
+G3. Restart during a run (Amendment 3 D1). Before G2's restart I start a test run as in F6 and leave it running. G2's restart is then the daemon restart during a test run, and the new daemon's boot reap must end it: after the restart, /usr/bin/pgrep -u buildroom-planner; echo "exit $?" prints exit 1.
+G4. After. Within 15 minutes of G2 I read and give the builder:
+  systemctl --user status buildroom-gateway.service --no-pager (active (running));
+  journalctl --user -u buildroom-gateway.service -n 60 --no-pager, showing "planner executor: /usr/bin/sudo -n -u buildroom-planner -- /opt/buildroom-planner/bin/agy --input-format stream-json --output-format stream-json --model gemini-4-argon-high --effort high --mode plan --sandbox --print-timeout 900s", daemon.booted, and no agy.reap_failed, agy.probe_failed, agy.hash_mismatch or agy.halted line;
+  from ~/buildroom-gateway-413ba83: ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-cli/src/bin.js status, answered by the running daemon with primary HEARTBEATING;
+  the lock (readiness act C2): from ~/buildroom-gateway-413ba83, ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-daemon/src/main.js; echo "exit $?" prints "another Gateway daemon holds" and its directory, then "exit 1", and the service stays active.
+The builder reads /health 200 and the control plane's record of Gateway 1880c12d heartbeating after G2.
+G5. Reboot. When I choose, I reboot the PC without logging in at its console and repeat G4's readings over SSH within 10 minutes of boot, with sudo nft list table inet buildroom_planner, systemctl is-active nginx buildroom-planner-dns.service, and getfacl /run/systemd/resolve/io.systemd.Resolve /run/avahi-daemon/socket.
+
+Part H: Stop and rollback
+H1. If any reading of Parts C, D, F or G fails, I stop. To roll back the executor I put back the unit of FOUNDER-ACT-20261026-BR-PC-GATEWAY-SERVICE B4, which runs ~/buildroom-gateway-056ffd1 without any BUILDROOM_PLANNER variable, run systemctl --user daemon-reload and systemctl --user restart buildroom-gateway.service, and give the builder G4's first three readings. Parts C and D stay in place, unused.
+H2. If anything suggests the token or any input left the allowlist, the builder stops the executor and tells me, and I revoke the agy sign-in in my Google account (Amendment 2 D2). No run proceeds until I sign agy in again under a new act.
+H3. Removing the planner user, the copy, the rules, the filter, the resolver block or the allowlist is a separate act of mine; until then the executor stays disabled under H1.
+
+Part I: Filing
+I1. Under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, the builder files this act verbatim, my readings (R1 to R11 and this act's) with every user name, host name, address, tailnet name, node key and account name masked, and the builder's reads, in one Build Room custody pull request that needs my separate authorization. The filing is the record Amendment 1 C7, Amendment 2 E1, Amendment 3 D1 and Amendment 4 F1 require before any counted run, and B3's attestation report.
+
+Part J: Not authorized
+- A counted run or my counted-run act; setting or changing PHASE4_COUNTED_RUN, PHASE4_COUNTED_RUN_TOKEN or any other Railway variable or setting.
+- Any planner command reaching agy: the executor serves only planner commands of a counted run my act authorizes (ruling B1); F5, F6 and G3 run agy by hand, outside the daemon, with a public test prompt.
+- Any other provider, lane, model or Gateway; enrollment, revocation or denial of any Gateway, including 2222132d; any change on the MacBook.
+- Any read or move of the Gateway's key other than the daemon's own read at start; any change to the hermes service; deleting or changing ~/buildroom-gateway or ~/buildroom-gateway-056ffd1.
+- Any change to the control plane, the database, a migration, a Neon role or any secret; any deploy, redeploy or rollback of the control plane.
+- Any agy plugin or MCP server for the planner user, any change to my own agy, any update of the copy except by my later act (Amendment 4 C2), any AppArmor profile, and any name added to the allowlist except by my later act.
+- Any change to Docker's or Tailscale's tables, to systemd-resolved's or Avahi's configuration beyond D3's drop-ins, or to name lookups for any user but the planner user.
+
+Part K: Signature
+Signed: Michael Daley
+Date: 2026-10-30 (UTC)
+Actor-Id: founder
