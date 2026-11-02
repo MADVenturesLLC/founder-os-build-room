@@ -57,6 +57,7 @@ export class Phase4DriverError extends Error {
 }
 
 interface RoundView {
+  readonly actId?: string;
   readonly deploymentId: string | null;
   readonly gateway: { readonly id: string; readonly online: boolean };
   readonly dispatcherSurfaceRegistered: boolean;
@@ -205,6 +206,25 @@ export class HttpPhase4Driver implements Phase4RunDriver {
       decisions,
       journalVerified: verified,
     };
+  }
+
+  /**
+   * The room's planner commands as the journal route returns them, each row
+   * as decoded (FOUNDER-ACT-20261029-BR-PLANNER-READINESS Part B reads a
+   * dispatched row's `initModel` and `providerConversationId` here).
+   */
+  async journalCommands(roomId: string): Promise<readonly { readonly commandId: string; readonly rows: readonly Record<string, unknown>[] }[]> {
+    const journal = await this.call('GET', `/control-plane/rooms/${roomId}/journal`, this.options.countedRunToken);
+    if (journal.status !== 200) throw new Phase4DriverError(routeRefusal('journal read', journal.status, journal.body));
+    const commands = journal.body['commands'];
+    if (!Array.isArray(commands)) throw new Phase4DriverError('journal read answered without a commands list');
+    return commands as { commandId: string; rows: Record<string, unknown>[] }[];
+  }
+
+  /** The act the control plane's counted-run surface is configured for, or null when it names none. */
+  async countedRunActId(roomId: string): Promise<string | null> {
+    const view = await this.roundView(roomId);
+    return typeof view.actId === 'string' && view.actId !== '' ? view.actId : null;
   }
 
   private async roundView(roomId: string): Promise<RoundView> {
