@@ -105,6 +105,15 @@ jobs:
       || contains(github.event.issue.labels.*.name, 'milestone-carrier')
       || (github.event.action == 'unlabeled' && github.event.label.name == 'milestone-carrier')
       || (github.event_name == 'issues' && (github.event.action == 'deleted' || github.event.action == 'transferred'))
+    # Discovery does not judge, so it does not take the judging key. It is
+    # grouped by the event's issue or PR so that a burst of events on one
+    # carrier (anyone can comment on a public issue) collapses to one running
+    # and one pending discovery, as the workflow-level group did before this
+    # change. Nothing is lost: the pending run that survives scans the state
+    # at the time it runs (Cursor security review at afa6d1b).
+    concurrency:
+      group: founder-authorization-targets-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     outputs:
       prs: ${{ steps.find.outputs.prs }}

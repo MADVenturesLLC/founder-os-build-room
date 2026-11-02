@@ -1485,12 +1485,13 @@ describe('founder-authorization workflow shape — per-PR concurrency and carrie
   it('sets concurrency per job, never at workflow level, keyed by the judged PR', () => {
     assert.ok(!lines.some((l) => l === 'concurrency:'), 'no workflow-level concurrency');
     const conc = lines.flatMap((l, i) => (/^\s+concurrency:$/.test(l) ? [i] : []));
-    assert.equal(conc.length, 1, 'exactly one job-level concurrency block');
-    assert.deepEqual(block(conc[0] ?? -1).map((l) => l.trim()), [
-      'group: founder-authorization-${{ matrix.pr }}',
-      'cancel-in-progress: false',
+    const groups = conc.map((i) => block(i).map((l) => l.trim()));
+    assert.deepEqual(groups, [
+      // Discovery: grouped by the event, under a name no judging key can take.
+      ['group: founder-authorization-targets-${{ github.event.pull_request.number || github.event.issue.number }}', 'cancel-in-progress: false'],
+      // Judging: keyed by the judged PR only.
+      ['group: founder-authorization-${{ matrix.pr }}', 'cancel-in-progress: false'],
     ]);
-    assert.ok(!/github\.event\.(issue|pull_request)\.number[^\n]*\n?[^\n]*group:/.test(text));
   });
 
   it('judges each PR in its own matrix job, and only the judging job carries the key', () => {
