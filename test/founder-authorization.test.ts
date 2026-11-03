@@ -822,6 +822,7 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
     ['the live-head sentence', (t) => t.replace('Merge each only if its live head still matches the head named for it.\n', '')],
     ['the closing signature line', (t) => t.replace('\n— Michael Daley', '')],
     ['the opening heading', (t) => t.replace('FOUNDER MILESTONE AUTHORIZATION\n', '')],
+    ['the review sentence', (t) => t.replace("I have reviewed each member's diff at the head named for it. ", '')],
   ];
   for (const [part, cut] of removed) {
     it(`refuses an envelope without ${part} (Tier-2 at 5c73e93, finding 2)`, () => {
@@ -830,6 +831,18 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
       assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(929, text)] })), /is not the Appendix B text/);
     });
   }
+
+  it('refuses a placeholder hidden in a Markdown link target (Tier-2 at 2a4eea3, finding 2)', () => {
+    const text = envelopeText({ scope: '[Phase 3 runtime slices](https://example.invalid/<n>)' });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(932, text)] })), /placeholder/);
+  });
+
+  it('refuses an envelope comment with neither timestamp (Tier-2 at 2a4eea3, finding 2)', () => {
+    const bare: Partial<IssueComment> = carrierComment(933, envelopeText());
+    delete bare.created_at;
+    delete bare.updated_at;
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [bare as IssueComment] })), /has been edited/);
+  });
 
   it('refuses an envelope without the review-attestation paragraph', () => {
     assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(913, envelopeText({ attestation: false }))] })),
@@ -1157,7 +1170,6 @@ exit 22
       },
       targets: (event: {
         EVENT_PR?: string; CARRIER?: string; SCAN_CARRIER?: string;
-        EVENT_COMMENT_BODY?: string; EVENT_COMMENT_OLD_BODY?: string; EVENT_COMMENT_ASSOCIATION?: string;
       }) => {
         writeFileSync(join(dir, 'output'), '');
         spawnSync('bash', ['-c', 'rm -f "$1"/.count-*', 'reset', dir]);
@@ -1169,9 +1181,6 @@ exit 22
             EVENT_PR: event.EVENT_PR ?? '',
             CARRIER: event.CARRIER ?? '',
             SCAN_CARRIER: event.SCAN_CARRIER ?? 'false',
-            EVENT_COMMENT_BODY: event.EVENT_COMMENT_BODY ?? '',
-            EVENT_COMMENT_OLD_BODY: event.EVENT_COMMENT_OLD_BODY ?? '',
-            EVENT_COMMENT_ASSOCIATION: event.EVENT_COMMENT_ASSOCIATION ?? '',
           },
         });
         const line = read('output').find((l) => l.startsWith('prs='));
@@ -1437,7 +1446,7 @@ exit 22
   });
 
   // A flood: many open PRs that merely mention the carrier, plus the real
-  // member #81 (Cursor security review at 27fe8a7).
+  // member #81.
   function stageFlood(w: ReturnType<typeof stageWorld>, decoys: number): void {
     const all = [
       ...Array.from({ length: decoys }, (_, i) => ({ number: 2000 + i, state: 'open', body: milestoneLine() })),
@@ -1447,156 +1456,28 @@ exit 22
       w.put(p === 0 ? 'pulls.always' : `pulls.p${p + 1}.always`, all.slice(p * 100, p * 100 + 100));
     }
   }
-  const trusted = (id: number, body: string, association = 'OWNER') => ({ ...carrierComment(id, body), author_association: association });
 
-  it('in a decoy flood, judges only the linking PRs a trusted envelope names (Cursor at 27fe8a7)', () => {
+  it('fails visibly, judging none, when more than 256 open PRs link the carrier (Tier-2 at 47d71ff, finding 3)', () => {
     const w = stageWorld({});
     try {
-      stageFlood(w, 300);
-      w.put(`issues_${CARRIER}_comments`, [trusted(900, envelopeText())]);
-      const t = w.targets({ CARRIER: String(CARRIER) });
-      assert.equal(t.status, 0, t.stderr);
-      assert.deepEqual(t.prs, [PR]);
-      assert.match(t.stdout, /301 open PRs link carrier #200; judging the 1 named/);
-    } finally {
-      rmSync(w.dir, { recursive: true, force: true });
-    }
-  });
-
-  it('in a decoy flood, ignores PRs named only in an outsider comment', () => {
-    const w = stageWorld({});
-    try {
-      stageFlood(w, 300);
-      const decoyNames = Array.from({ length: 300 }, (_, i) => `MADVenturesLLC/founder-os-build-room#${2000 + i}`).join('\n');
-      w.put(`issues_${CARRIER}_comments`, [trusted(900, envelopeText()), trusted(901, decoyNames, 'NONE')]);
-      const t = w.targets({ CARRIER: String(CARRIER) });
-      assert.equal(t.status, 0, t.stderr);
-      assert.deepEqual(t.prs, [PR]);
-    } finally {
-      rmSync(w.dir, { recursive: true, force: true });
-    }
-  });
-
-  // The script normalizes an envelope before reading it, so discovery must
-  // read the same normalized text, or a member the script accepts can be
-  // missed (Tier-2 at ca3a4a5, finding 1).
-  const disguised: Array<[string, string]> = [
-    ['a Markdown link around the repository name', envelopeText().replace(
-      'MADVenturesLLC/founder-os-build-room#81', '[MADVenturesLLC/founder-os-build-room](https://example.invalid/repo)#81')],
-    ['a carriage return inside the repository name', envelopeText().replace(
-      'MADVenturesLLC/founder-os-build-room#81', 'MADVenturesLLC/founder-os-\rbuild-room#81')],
-    ['a Markdown link splitting the PR number', envelopeText().replace(
-      'MADVenturesLLC/founder-os-build-room#81', 'MADVenturesLLC/founder-os-build-room#[8](https://example.invalid/)1')],
-  ];
-  for (const [how, text] of disguised) {
-    it(`in a decoy flood, finds a member the script accepts despite ${how} (Tier-2 at ca3a4a5, finding 1)`, () => {
-      assert.notEqual(text, envelopeText(), 'fixture disguises the entry');
-      const w = stageWorld({ carrierComments: [carrierComment(900, text)] });
-      try {
-        assert.deepEqual(w.judge().posts.map((p) => p.state), ['success'], 'the script accepts this envelope');
-        stageFlood(w, 300);
-        w.put(`issues_${CARRIER}_comments`, [trusted(900, text)]);
-        const t = w.targets({ CARRIER: String(CARRIER) });
-        assert.equal(t.status, 0, t.stderr);
-        assert.deepEqual(t.prs, [PR]);
-      } finally {
-        rmSync(w.dir, { recursive: true, force: true });
-      }
-    });
-  }
-
-  for (const association of ['MEMBER', 'COLLABORATOR']) {
-    it(`in a decoy flood, counts a carrier comment by a ${association} (Tier-2 at ca3a4a5, finding 3)`, () => {
-      const w = stageWorld({});
-      try {
-        stageFlood(w, 300);
-        w.put(`issues_${CARRIER}_comments`, [trusted(900, envelopeText(), association)]);
-        const t = w.targets({ CARRIER: String(CARRIER) });
-        assert.equal(t.status, 0, t.stderr);
-        assert.deepEqual(t.prs, [PR]);
-      } finally {
-        rmSync(w.dir, { recursive: true, force: true });
-      }
-    });
-
-    it(`in a decoy flood, counts a deleted event comment by a ${association}`, () => {
-      const w = stageWorld({});
-      try {
-        stageFlood(w, 300);
-        w.put(`issues_${CARRIER}_comments`, []);
-        const t = w.targets({ CARRIER: String(CARRIER), EVENT_COMMENT_BODY: envelopeText(), EVENT_COMMENT_ASSOCIATION: association });
-        assert.equal(t.status, 0, t.stderr);
-        assert.deepEqual(t.prs, [PR]);
-      } finally {
-        rmSync(w.dir, { recursive: true, force: true });
-      }
-    });
-  }
-
-  it('in a decoy flood, still finds the member when its envelope is the comment being deleted', () => {
-    const w = stageWorld({});
-    try {
-      stageFlood(w, 300);
-      w.put(`issues_${CARRIER}_comments`, []);
-      const t = w.targets({ CARRIER: String(CARRIER), EVENT_COMMENT_BODY: envelopeText(), EVENT_COMMENT_ASSOCIATION: 'OWNER' });
-      assert.equal(t.status, 0, t.stderr);
-      assert.deepEqual(t.prs, [PR]);
-    } finally {
-      rmSync(w.dir, { recursive: true, force: true });
-    }
-  });
-
-  it('in a decoy flood, still finds the member when its envelope was edited away', () => {
-    const w = stageWorld({});
-    try {
-      stageFlood(w, 300);
-      w.put(`issues_${CARRIER}_comments`, [trusted(900, 'withdrawn')]);
-      const t = w.targets({
-        CARRIER: String(CARRIER), EVENT_COMMENT_BODY: 'withdrawn', EVENT_COMMENT_OLD_BODY: envelopeText(), EVENT_COMMENT_ASSOCIATION: 'OWNER',
-      });
-      assert.equal(t.status, 0, t.stderr);
-      assert.deepEqual(t.prs, [PR]);
-    } finally {
-      rmSync(w.dir, { recursive: true, force: true });
-    }
-  });
-
-  it('ignores an outsider event comment naming PRs in a flood', () => {
-    const w = stageWorld({});
-    try {
-      stageFlood(w, 300);
-      w.put(`issues_${CARRIER}_comments`, []);
-      const t = w.targets({ CARRIER: String(CARRIER), EVENT_COMMENT_BODY: envelopeText(), EVENT_COMMENT_ASSOCIATION: 'NONE' });
-      assert.equal(t.status, 0, t.stderr);
-      assert.deepEqual(t.prs, []);
-    } finally {
-      rmSync(w.dir, { recursive: true, force: true });
-    }
-  });
-
-  it('in a decoy flood, fails visibly when the carrier comments cannot be read', () => {
-    const w = stageWorld({});
-    try {
-      stageFlood(w, 300);
-      w.remove(`issues_${CARRIER}_comments`);
-      const t = w.targets({ CARRIER: String(CARRIER) });
-      assert.notEqual(t.status, 0);
-      assert.equal(t.prs, null);
-    } finally {
-      rmSync(w.dir, { recursive: true, force: true });
-    }
-  });
-
-  it('fails visibly, judging none, when trusted envelopes name more than 256 linking PRs (Tier-2 at 47d71ff, finding 3)', () => {
-    const w = stageWorld({});
-    try {
-      stageFlood(w, 300);
-      const names = Array.from({ length: 300 }, (_, i) => `MADVenturesLLC/founder-os-build-room#${2000 + i}`).join('\n');
-      w.put(`issues_${CARRIER}_comments`, [trusted(900, names)]);
+      stageFlood(w, 256);
       const t = w.targets({ CARRIER: String(CARRIER) });
       assert.notEqual(t.status, 0);
       assert.equal(t.prs, null, 'no list is output, so the judging job does not run');
-      assert.match(t.stdout, /300 PRs to judge for carrier #200, more than the 256/);
+      assert.match(t.stdout, /257 PRs to judge for carrier #200, more than the 256/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('in a flood, an event on the member itself still judges it, with no listing (Founder ruling 2026-11-03)', () => {
+    const w = stageWorld({});
+    try {
+      stageFlood(w, 300);
+      w.put('pulls.always', 'not json');
+      const t = w.targets({ EVENT_PR: String(PR), CARRIER: String(PR), SCAN_CARRIER: 'false' });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR]);
     } finally {
       rmSync(w.dir, { recursive: true, force: true });
     }
@@ -1735,28 +1616,10 @@ describe('founder-authorization workflow shape — per-PR concurrency and carrie
     assert.ok(!block(targets).some((l) => l.trim() === 'concurrency:'), 'the targets job has no concurrency group');
   });
 
-  it('copies the decision script\'s normalize into discovery verbatim (Tier-2 at ca3a4a5, finding 1)', () => {
-    const def = (src: string): string[] => {
-      const all = src.split('\n');
-      const start = all.findIndex((l) => l.trim() === 'def normalize:');
-      const end = all.findIndex((l, i) => i > start && l.trim() === '| ltrimstr(" ") | rtrimstr(" ");');
-      assert.ok(start >= 0 && end > start, 'normalize found');
-      return all.slice(start, end + 1).map((l) => l.trim());
-    };
-    assert.deepEqual(def(text), def(readFileSync(CHECK, 'utf8')));
-    assert.ok(text.includes('| (.body, .old_body) | strings | normalize'), 'discovery normalizes each comment text');
-  });
-
   it('reads the carrier label wherever GitHub puts it (Tier-2 at e528913, finding 1)', () => {
     assert.ok(lines.some((l) => l.trim() === `SCAN_CARRIER: \${{ (${CARRIER_LABEL_TEST}) && (github.event_name != 'issue_comment' || ${TRUSTED_COMMENT_TEST}) }}`),
       'the step reads issue labels, PR labels and a removed label, and scans for a comment only from a trusted author');
     assert.ok(lines.some((l) => l.trim() === 'CARRIER: ${{ github.event.issue.number || github.event.pull_request.number }}'), 'a PR event supplies its own number as the carrier');
-  });
-
-  it("passes an event comment's text to discovery only from a trusted author (Cursor at 27fe8a7)", () => {
-    const trustedTest = TRUSTED_COMMENT_TEST;
-    assert.ok(lines.some((l) => l.trim() === `EVENT_COMMENT_BODY: \${{ ${trustedTest} && github.event.comment.body || '' }}`));
-    assert.ok(lines.some((l) => l.trim() === `EVENT_COMMENT_OLD_BODY: \${{ ${trustedTest} && github.event.changes.body.from || '' }}`));
   });
 
   it('judges each PR in its own matrix job, and only the judging job carries the key', () => {

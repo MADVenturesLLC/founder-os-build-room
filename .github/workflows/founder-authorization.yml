@@ -57,11 +57,15 @@
 # every open PR whose description links that issue, each in its own job, up
 # to the 256 jobs one matrix holds. A comment on a carrier starts that only
 # when its author is the repository's owner, a member or a collaborator: no
-# one else can write, change or remove an envelope. Above 256 linking PRs,
-# only those a trusted comment on the carrier names are judged (Cursor
-# security review at 27fe8a7); if that set still exceeds 256, or the
-# comments cannot be read, the run fails visibly and judges none, a bound the
-# Founder accepted (Tier-2 finding 3 at 47d71ff). Discovery
+# one else can write, change or remove an envelope. Above 256 linking PRs
+# the run fails visibly and judges none, a bound the Founder accepted
+# (Tier-2 finding 3 at 47d71ff). The repository is public, so anyone can open
+# PRs that merely mention a carrier's URL; enough of them stop carrier-side
+# re-judgments, keeping a member's earlier success through a revocation made
+# on the carrier. The Founder accepted that too (Cursor security review at
+# 27fe8a7; Founder ruling 2026-11-03, after Tier-2 at 2a4eea3 finding 1):
+# the failed run is visible, and editing the member's own description, a
+# revocation lever, re-judges that member directly with no discovery. Discovery
 # reads the PR list page by page; if GitHub Support deletes a PR while the
 # pages are read, a member can shift onto a page already read and keep an
 # earlier success until its next event, a bound the Founder also accepted
@@ -118,10 +122,9 @@ jobs:
       || (github.event.action == 'unlabeled' && github.event.label.name == 'milestone-carrier')
       || (github.event_name == 'issues' && (github.event.action == 'deleted' || github.event.action == 'transferred'))
     # Discovery has no concurrency group. GitHub replaces a pending run in a
-    # group with a newer one, and a deleted or edited envelope survives only
-    # in its own event's text, so a replaced discovery could lose the only
-    # record of which member to re-judge (Tier-2 at ca3a4a5, finding 2).
-    # Every discovery therefore runs. A comment on a carrier starts one only
+    # group with a newer one, which dropped re-judgments when discovery read
+    # its own event's text (Tier-2 at ca3a4a5, finding 2). Discovery now
+    # reads current state only, and with no group every discovery runs. A comment on a carrier starts one only
     # when its author is trusted (the test below), so public comments cannot
     # fan out discoveries (Cursor security review at afa6d1b); an outsider can
     # neither write an envelope nor change one. Judging still queues per PR in
@@ -138,15 +141,6 @@ jobs:
           REPO: ${{ github.repository }}
           EVENT_PR: ${{ github.event.pull_request.number || (github.event.issue.pull_request && github.event.issue.number) || '' }}
           CARRIER: ${{ github.event.issue.number || github.event.pull_request.number }}
-          # This event's comment, if any: its body, its body before an edit,
-          # and its author's association. Read by jq only, never by the shell.
-          # The text is passed only when the author is the owner, a member or
-          # a collaborator: an outsider's text is never needed, and a large
-          # enough one could exceed the environment's size limit and fail the
-          # run.
-          EVENT_COMMENT_BODY: ${{ contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && github.event.comment.body || '' }}
-          EVENT_COMMENT_OLD_BODY: ${{ contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && github.event.changes.body.from || '' }}
-          EVENT_COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
           # Whether to scan for a carrier's members. The carrier label is
           # under issue.labels for issue and comment events and under
           # pull_request.labels for PR events; an unlabeled event that removed
@@ -199,59 +193,11 @@ jobs:
                 | select((.body // "") | ascii_downcase | test($re + "(?![0-9])")) | .number]
             | unique
           ' "$work"/all-*.json > "$work/linking.json"
-          # A matrix holds at most 256 jobs. The repository is public, so anyone
-          # can open PRs that merely mention the carrier, and enough of them
-          # would otherwise stop every re-judgment, freezing a real member's
-          # earlier success through a revocation (Cursor security review at
-          # 27fe8a7). Only a PR named in an envelope can hold an envelope
-          # success, and only the Founder writes envelopes. So above 256 the
-          # PRs judged are the linking ones named as members of this
-          # repository in a carrier comment, or in this event's own comment
-          # (its text before an edit, or as deleted), written by the
-          # repository's owner, a member or a collaborator, which an outsider
-          # cannot be. Each text is first normalized exactly as the decision
-          # script normalizes an envelope (its normalize, copied verbatim; a
-          # test keeps the two identical), and every #<n> in it counts, a
-          # superset of the member entries the script can accept (Tier-2 at
-          # ca3a4a5, finding 1). If those comments cannot be read, or the
-          # named set still exceeds 256, the job fails visibly and judges
-          # none: the Founder accepted that bound (Tier-2 finding 3 at
-          # 47d71ff).
-          if [[ "$(jq 'length' "$work/linking.json")" -gt 256 ]]; then
-            linking_count="$(jq 'length' "$work/linking.json")"
-            page=1
-            while :; do
-              api "https://api.github.com/repos/$REPO/issues/$CARRIER/comments?per_page=100&page=$page" > "$work/cc-$page.json"
-              if [[ "$(jq 'length' "$work/cc-$page.json")" -lt 100 ]]; then break; fi
-              page=$((page + 1))
-            done
-            jq -sc '
-              def normalize:
-                gsub("\r"; "")
-                | split("\n")
-                | until((length == 0) or (.[0] | test("\\S")); .[1:])
-                | until((length == 0) or (.[-1] | test("\\S")); .[:-1])
-                | if length >= 2
-                     and (.[0] | test("^ {0,3}(```+|~~~+)[^`]*$"))
-                     and (.[-1] | test("^ {0,3}(```+|~~~+)\\s*$"))
-                  then .[1:-1] else . end
-                | join("\n")
-                | gsub("\\[(?<t>[^\\]]*)\\]\\([^)]*\\)"; "\(.t)")
-                | gsub("\\s+"; " ")
-                | ltrimstr(" ") | rtrimstr(" ");
-              ["OWNER", "MEMBER", "COLLABORATOR"] as $trusted
-              | [(add | arrays | .[]),
-                 {body: (env.EVENT_COMMENT_BODY // ""), old_body: (env.EVENT_COMMENT_OLD_BODY // ""),
-                  author_association: (env.EVENT_COMMENT_ASSOCIATION // "")}]
-              | map(select(type == "object" and (.author_association as $a | $trusted | index($a)))
-                    | (.body, .old_body) | strings | normalize
-                    | scan("#([1-9][0-9]*)") | .[0] | tonumber)
-              | unique
-            ' "$work"/cc-*.json > "$work/named.json"
-            jq -c --slurpfile named "$work/named.json" '[.[] | select(. as $n | $named[0] | index($n))]' "$work/linking.json" > "$work/linking-named.json"
-            mv "$work/linking-named.json" "$work/linking.json"
-            echo "$linking_count open PRs link carrier #$CARRIER; judging the $(jq 'length' "$work/linking.json") named in trusted envelope comments."
-          fi
+          # A matrix holds at most 256 jobs. Above that the job fails visibly
+          # and judges none, a bound the Founder accepted (Tier-2 finding 3 at
+          # 47d71ff), as is a flood of PRs that merely mention the carrier
+          # (Cursor security review at 27fe8a7; Founder ruling 2026-11-03):
+          # editing a member's own description re-judges it directly.
           prs="$(jq -c --argjson e "$event_prs" '. + $e | unique' "$work/linking.json")"
           if [[ "$(jq 'length' <<<"$prs")" -gt 256 ]]; then
             echo "::error::$(jq 'length' <<<"$prs") PRs to judge for carrier #$CARRIER, more than the 256 one matrix can judge; none were re-judged."
