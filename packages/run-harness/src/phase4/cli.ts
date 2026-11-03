@@ -164,6 +164,9 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
       observeRemoteHead: (repository) => observeRemoteHead(git, repository),
       ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
       now,
+      // A test's fake clock is also its elapsed-time clock; the command uses
+      // the driver's own monotonic clock.
+      ...(deps.now === undefined ? {} : { monotonicNow: deps.now }),
       ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
       ...(deps.pollMs === undefined ? {} : { pollMs: deps.pollMs }),
       ...(deps.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: deps.requestTimeoutMs }),

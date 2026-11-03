@@ -62,6 +62,12 @@ export interface HttpPhase4DriverOptions {
   readonly roundTimeoutMs?: number;
   readonly pollMs?: number;
   readonly now?: () => number;
+  /**
+   * Elapsed time in milliseconds, for the read retry window only: a clock no
+   * wall-clock adjustment moves (`performance.now()` by default; Codex, PR
+   * 143). `now` stays the clock of the timestamps.
+   */
+  readonly monotonicNow?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly fetch?: typeof fetch;
   /** Told one line, with no token and no body, each time a read is tried again. */
@@ -82,6 +88,20 @@ export const PHASE4_REQUEST_TIMEOUT_MS = 30_000;
 export const PHASE4_READ_RETRY_DELAYS_MS: readonly number[] = Object.freeze([5_000, 10_000, 20_000, 40_000]);
 export const PHASE4_READ_RETRY_STEADY_MS = 60_000;
 export const PHASE4_READ_RETRY_WINDOW_MS = 10 * 60_000;
+/**
+ * The most waits one read takes: as many of the schedule's waits as fit in
+ * the window. It bounds the retries whatever any clock does (Codex, PR 143).
+ */
+export const PHASE4_READ_RETRY_MAX_WAITS: number = (() => {
+  let waits = 0;
+  let total = 0;
+  for (;;) {
+    const next = PHASE4_READ_RETRY_DELAYS_MS[waits] ?? PHASE4_READ_RETRY_STEADY_MS;
+    if (total + next >= PHASE4_READ_RETRY_WINDOW_MS) return waits;
+    total += next;
+    waits += 1;
+  }
+})();
 /** The answers to a read that are tried again: the edge's gateway errors. */
 const RETRIED_STATUSES: ReadonlySet<number> = new Set([502, 504]);
 
@@ -116,10 +136,12 @@ export class HttpPhase4Driver implements Phase4RunDriver {
   private readonly fetch: typeof fetch;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly elapsed: () => number;
 
   constructor(private readonly options: HttpPhase4DriverOptions) {
     this.fetch = options.fetch ?? fetch;
     this.now = options.now ?? (() => Date.now());
+    this.elapsed = options.monotonicNow ?? (() => performance.now());
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
@@ -290,7 +312,8 @@ export class HttpPhase4Driver implements Phase4RunDriver {
   ): Promise<{ status: number; body: Record<string, unknown> }> {
     const timeoutMs = this.options.requestTimeoutMs ?? PHASE4_REQUEST_TIMEOUT_MS;
     if (method !== 'GET') return this.once(method, path, token, timeoutMs, body);
-    // The window runs from the first failure. Every try ends inside it: a try
+    // The window runs from the first failure, on the elapsed-time clock, which
+    // no wall-clock adjustment moves. Every try ends inside it: a try
     // is never dispatched without time left, its timeout is cut to the time
     // left, and an answer that still comes after the window is not taken
     // (Codex, PR 143). The last failure is what the read fails with, as before.
@@ -301,7 +324,7 @@ export class HttpPhase4Driver implements Phase4RunDriver {
       return last!;
     };
     for (let retries = 0; ; retries += 1) {
-      const budget = deadline === null ? timeoutMs : Math.min(timeoutMs, deadline - this.now());
+      const budget = deadline === null ? timeoutMs : Math.min(timeoutMs, deadline - this.elapsed());
       if (budget <= 0) return failAsBefore();
       let answer: { status: number; body: Record<string, unknown> } | null = null;
       let failure: Phase4TransportError | null = null;
@@ -312,17 +335,18 @@ export class HttpPhase4Driver implements Phase4RunDriver {
         failure = error;
       }
       if (answer !== null && !RETRIED_STATUSES.has(answer.status)) {
-        if (deadline !== null && this.now() > deadline) return failAsBefore();
+        if (deadline !== null && this.elapsed() > deadline) return failAsBefore();
         return answer;
       }
       last = failure ?? answer;
-      const at = this.now();
+      const at = this.elapsed();
       deadline ??= at + PHASE4_READ_RETRY_WINDOW_MS;
       const delay = PHASE4_READ_RETRY_DELAYS_MS[retries] ?? PHASE4_READ_RETRY_STEADY_MS;
-      // No wait that would leave no time for the try after it.
-      if (at + delay >= deadline) return failAsBefore();
+      // No wait that would leave no time for the try after it, and never more
+      // waits than the schedule fits in the window, whatever the clocks do.
+      if (at + delay >= deadline || retries >= PHASE4_READ_RETRY_MAX_WAITS) return failAsBefore();
       const reason = failure !== null ? failure.message : `answered ${answer!.status}`;
-      this.options.onRetry?.(`${new Date(at).toISOString()} GET ${path}: ${reason}; trying again in ${Math.ceil(delay / 1000)}s`);
+      this.options.onRetry?.(`${new Date(this.now()).toISOString()} GET ${path}: ${reason}; trying again in ${Math.ceil(delay / 1000)}s`);
       await this.sleep(delay);
     }
   }

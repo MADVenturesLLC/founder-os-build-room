@@ -24,6 +24,7 @@ import type { PostgresLedgerStore } from '../packages/control-plane/src/store.js
 import { PlanStoreUnavailableError, type StoredPlan } from '../packages/control-plane/src/plan-store.js';
 import {
   HttpPhase4Driver,
+  PHASE4_READ_RETRY_MAX_WAITS,
   PHASE4_READ_RETRY_WINDOW_MS,
   PHASE4_REQUEST_TIMEOUT_MS,
   Phase4TransportError,
@@ -100,6 +101,7 @@ function driver(fetchImpl: typeof fetch, c = clock(), lines: string[] = [], requ
     executorAvailable: true,
     fetch: fetchImpl,
     now: c.now,
+    monotonicNow: c.now,
     sleep: c.sleep,
     onRetry: (line) => lines.push(line),
     ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
@@ -183,6 +185,76 @@ describe('B1: a read that loses its answer is tried again', () => {
     const f = scriptedFetch(['reject', 'reject', 200], c);
     await assert.rejects(driver(f.fetch, overshooting).roomState(ROOM), (error: unknown) => error instanceof Phase4TransportError);
     assert.equal(f.seen.length, 2);
+  });
+
+  it('measures the window on elapsed time: a wall clock stepped back two minutes does not let a late answer in', async () => {
+    const c = clock();
+    // The second try takes 10 s past the window on the elapsed clock; the
+    // wall clock, stepped back 2 minutes after the first try, says it is
+    // still inside (the confirmation's reproduction, Codex, PR 143).
+    const f = scriptedFetch(['reject', { after: PHASE4_READ_RETRY_WINDOW_MS + 10_000 - 5_000, then: 200 }], c);
+    const wall = () => c.now() - (f.seen.length >= 2 ? 120_000 : 0);
+    const d = new HttpPhase4Driver({
+      origin: ORIGIN,
+      apiToken: API_TOKEN,
+      countedRunToken: COUNTED_TOKEN,
+      founderOs: { sha: SHA_FOUNDEROS, clean: true },
+      executorAvailable: true,
+      fetch: f.fetch,
+      now: wall,
+      monotonicNow: c.now,
+      sleep: c.sleep,
+    });
+    await assert.rejects(d.roomState(ROOM), (error: unknown) => error instanceof Phase4TransportError && error.message === 'fetch failed');
+  });
+
+  it('by default the window ignores the wall clock: a jump of an hour does not end it', async () => {
+    mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-03T13:00:00Z') });
+    try {
+      let calls = 0;
+      const fake = (async () => {
+        calls += 1;
+        if (calls === 1) throw new TypeError('fetch failed');
+        // An hour passes on the wall clock alone, as a clock set forward does.
+        mock.timers.setTime(Date.now() + 3_600_000);
+        return json(200, { snapshot: { state: 'BUILDING' } });
+      }) as typeof fetch;
+      const d = new HttpPhase4Driver({
+        origin: ORIGIN,
+        apiToken: API_TOKEN,
+        countedRunToken: COUNTED_TOKEN,
+        founderOs: { sha: SHA_FOUNDEROS, clean: true },
+        executorAvailable: true,
+        fetch: fake,
+        sleep: async () => undefined,
+      });
+      assert.equal(await d.roomState(ROOM), 'BUILDING');
+      assert.equal(calls, 2);
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  it('stops after the schedule’s waits even when no clock moves', async () => {
+    const lines: string[] = [];
+    const frozen = { now: () => 0, sleep: async () => undefined };
+    const f = scriptedFetch(['reject']);
+    const d = new HttpPhase4Driver({
+      origin: ORIGIN,
+      apiToken: API_TOKEN,
+      countedRunToken: COUNTED_TOKEN,
+      founderOs: { sha: SHA_FOUNDEROS, clean: true },
+      executorAvailable: true,
+      fetch: f.fetch,
+      now: frozen.now,
+      monotonicNow: frozen.now,
+      sleep: frozen.sleep,
+      onRetry: (line) => lines.push(line),
+    });
+    await assert.rejects(d.roomState(ROOM), (error: unknown) => error instanceof Phase4TransportError);
+    assert.equal(PHASE4_READ_RETRY_MAX_WAITS, 12);
+    assert.equal(lines.length, PHASE4_READ_RETRY_MAX_WAITS);
+    assert.equal(f.seen.length, PHASE4_READ_RETRY_MAX_WAITS + 1);
   });
 
   it('cuts a try’s timeout to the time left in the window', async () => {
