@@ -138,6 +138,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp, open as openFile, type FileHandle } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
+import { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -456,6 +458,41 @@ describe('agy\'s output is split into lines with no more than one line held (Tie
     assert.equal(t.oversized, 1);
   });
 
+  it('reports one byte over the limit at once, with no break after it (third review at 5cd4b33, finding 2)', () => {
+    const t = split(8);
+    t.splitter.push(Buffer.from('123456789', 'utf8'));
+    assert.equal(t.oversized, 1);
+    assert.equal(t.splitter.heldBytes, 0);
+  });
+
+  it('breaks lines exactly where readline with crlfDelay Infinity does, however the bytes are chunked (third review at 5cd4b33, finding 1)', async () => {
+    let seed = 0x5cd4b33;
+    const random = (n: number): number => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed % n;
+    };
+    const alphabet = ['a', 'b', '€', '\r', '\n', '\r\n', '{', '}', ' '];
+    for (let round = 0; round < 400; round += 1) {
+      let text = '';
+      const length = random(40);
+      for (let i = 0; i < length; i += 1) text += alphabet[random(alphabet.length)] ?? '';
+      const bytes = Buffer.from(text, 'utf8');
+      const chunks: Buffer[] = [];
+      for (let at = 0; at < bytes.length; ) {
+        const size = 1 + random(6);
+        chunks.push(bytes.subarray(at, at + size));
+        at += size;
+      }
+      const t = split(1024);
+      for (const chunk of chunks) t.splitter.push(chunk);
+      t.splitter.end();
+      const expected: string[] = [];
+      const reader = createInterface({ input: Readable.from(chunks), crlfDelay: Infinity });
+      for await (const line of reader) expected.push(line);
+      assert.deepEqual(t.lines, expected, JSON.stringify(text));
+    }
+  });
+
   it('never holds more than one line however much arrives without a newline, and recovers at the next one', () => {
     const t = split(1024 * 1024);
     const block = Buffer.alloc(64 * 1024, 0x78);
@@ -464,7 +501,7 @@ describe('agy\'s output is split into lines with no more than one line held (Tie
       t.splitter.push(block);
       most = Math.max(most, t.splitter.heldBytes);
     }
-    assert.ok(most <= 1024 * 1024 + 1, `held ${most} bytes`);
+    assert.ok(most <= 1024 * 1024, `held ${most} bytes`);
     assert.equal(t.splitter.heldBytes, 0, 'an oversized line is dropped, not kept');
     assert.equal(t.oversized, 1, 'reported once, as soon as it is too long');
     t.splitter.push(Buffer.from('tail\n{"event":"result"}\n', 'utf8'));
@@ -747,6 +784,16 @@ describe('start: a run that fails after the work is sent', () => {
     const [evidence] = evidenceOf(h.gatewayDirectory);
     assert.equal((evidence?.['streamEvents'] as string[]).length, 65);
     assert.equal(evidence?.['resultStatus'], 'SUCCESS');
+  });
+
+  it('reads a result after a step ended by a lone CR, as before (third review at 5cd4b33, finding 1)', async () => {
+    const w = work();
+    const plan = readyPlanFor({ ...w } as never);
+    const h = harness({ mode: 'cr_separated', plan });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') assert.deepEqual(await started.completion, { kind: 'plan', document: plan });
+    assert.deepEqual(evidenceOf(h.gatewayDirectory)[0]?.['streamEvents'], ['step_update', 'result']);
   });
 
   it('ends malformed on output with no newline, without waiting for the run timeout (Tier-2 confirmation at ac1097f)', async () => {

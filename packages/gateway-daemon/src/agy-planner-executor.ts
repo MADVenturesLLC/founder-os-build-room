@@ -1168,14 +1168,18 @@ type RunOutcome =
 /**
  * Splits agy's output into lines without ever holding more than one line's bytes
  * (Tier-2 confirmation at ac1097f, under the Founder's ruling of 2026-11-03 bounding the
- * buffer). A line longer than MAX_LINE_BYTES is reported once, as soon as it is too long,
- * and its remaining bytes are dropped up to its newline. A final line without a newline is
- * a line, as readline treats it; a carriage return before a newline is not part of the line.
+ * buffer). Lines end where readline with `crlfDelay: Infinity` ends them: at LF, at CR LF
+ * (one break, even across chunks), and at a lone CR (the Founder's ruling of 2026-11-03 on
+ * the third review at 5cd4b33). A break is never part of a line, so a line is at most
+ * MAX_LINE_BYTES; one that grows past it is reported once, as soon as it does, and its
+ * remaining bytes are dropped up to its break. A final line without a break is a line.
  */
 export class BoundedLineSplitter {
   private readonly parts: Buffer[] = [];
   private held = 0;
   private dropping = false;
+  /** The last break was a CR: an LF that follows it, in this chunk or the next, is the same break. */
+  private afterCR = false;
 
   constructor(
     private readonly onLine: (line: string) => void,
@@ -1183,7 +1187,7 @@ export class BoundedLineSplitter {
     private readonly maxLineBytes: number = MAX_LINE_BYTES,
   ) {}
 
-  /** The bytes held for the line being assembled; never more than maxLineBytes + 1. */
+  /** The bytes held for the line being assembled; never more than maxLineBytes. */
   get heldBytes(): number {
     return this.held;
   }
@@ -1191,12 +1195,20 @@ export class BoundedLineSplitter {
   push(chunk: Buffer): void {
     let start = 0;
     while (start < chunk.length) {
-      const newline = chunk.indexOf(0x0a, start);
-      const end = newline === -1 ? chunk.length : newline;
+      if (this.afterCR) {
+        this.afterCR = false;
+        if (chunk[start] === 0x0a) {
+          start += 1;
+          continue;
+        }
+      }
+      const lf = chunk.indexOf(0x0a, start);
+      const cr = chunk.indexOf(0x0d, start);
+      const brk = lf === -1 ? cr : cr === -1 ? lf : Math.min(lf, cr);
+      const end = brk === -1 ? chunk.length : brk;
       if (!this.dropping) {
         const piece = chunk.subarray(start, end);
-        // One byte more than the limit may be a carriage return still to be stripped.
-        if (this.held + piece.length > this.maxLineBytes + 1) {
+        if (this.held + piece.length > this.maxLineBytes) {
           this.parts.length = 0;
           this.held = 0;
           this.dropping = true;
@@ -1206,13 +1218,14 @@ export class BoundedLineSplitter {
           this.held += piece.length;
         }
       }
-      if (newline === -1) return;
+      if (brk === -1) return;
+      if (chunk[brk] === 0x0d) this.afterCR = true;
       this.finishLine();
-      start = newline + 1;
+      start = brk + 1;
     }
   }
 
-  /** The stream ended: a last line without a newline is still a line. */
+  /** The stream ended: a last line without a break is still a line. */
   end(): void {
     if (this.dropping || this.held > 0) this.finishLine();
   }
@@ -1222,14 +1235,9 @@ export class BoundedLineSplitter {
       this.dropping = false;
       return;
     }
-    let line = Buffer.concat(this.parts, this.held);
+    const line = Buffer.concat(this.parts, this.held);
     this.parts.length = 0;
     this.held = 0;
-    if (line.length > 0 && line[line.length - 1] === 0x0d) line = line.subarray(0, line.length - 1);
-    if (line.length > this.maxLineBytes) {
-      this.onOversized();
-      return;
-    }
     this.onLine(line.toString('utf8'));
   }
 }
