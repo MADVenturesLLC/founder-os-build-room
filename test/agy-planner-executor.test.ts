@@ -180,6 +180,7 @@ import {
   type PlannerExecutor,
   type PlannerRecord,
 } from '../packages/gateway-daemon/src/index.js';
+import { BoundedLineSplitter } from '../packages/gateway-daemon/src/agy-planner-executor.js';
 import { validatePlannerReportPayload, type PlannerIdentityWire, type PlannerResultWire, type PlannerWorkWire } from '../packages/gateway-protocol/src/index.js';
 import { judgePlanDoc } from '../packages/control-plane/src/plan-doc.js';
 import { readyPlanFor } from './support/synthetic-planner.js';
@@ -421,6 +422,56 @@ function placeEvidence(h: Harness, commandId: string, line: string): string {
   writeFileSync(path, line);
   return path;
 }
+
+describe('agy\'s output is split into lines with no more than one line held (Tier-2 confirmation at ac1097f)', () => {
+  function split(max: number): { lines: string[]; oversized: number; splitter: BoundedLineSplitter } {
+    const lines: string[] = [];
+    const counts = { oversized: 0 };
+    const splitter = new BoundedLineSplitter((line) => lines.push(line), () => (counts.oversized += 1), max);
+    return {
+      lines,
+      get oversized() {
+        return counts.oversized;
+      },
+      splitter,
+    };
+  }
+
+  it('splits lines across chunks, keeps multi-byte characters whole, drops CR before LF, and keeps blank lines', () => {
+    const t = split(64);
+    for (const chunk of ['{"a":', '1}\r\n\nsecond', ' line\n']) t.splitter.push(Buffer.from(chunk, 'utf8'));
+    const euro = Buffer.from('€\n', 'utf8');
+    t.splitter.push(euro.subarray(0, 1));
+    t.splitter.push(euro.subarray(1));
+    t.splitter.push(Buffer.from('last', 'utf8'));
+    t.splitter.end();
+    assert.deepEqual(t.lines, ['{"a":1}', '', 'second line', '€', 'last']);
+    assert.equal(t.oversized, 0);
+  });
+
+  it('allows a line of exactly the limit, with or without a CR, and reports one byte more once', () => {
+    const t = split(8);
+    t.splitter.push(Buffer.from('12345678\n12345678\r\n123456789\nok\n', 'utf8'));
+    assert.deepEqual(t.lines, ['12345678', '12345678', 'ok']);
+    assert.equal(t.oversized, 1);
+  });
+
+  it('never holds more than one line however much arrives without a newline, and recovers at the next one', () => {
+    const t = split(1024 * 1024);
+    const block = Buffer.alloc(64 * 1024, 0x78);
+    let most = 0;
+    for (let part = 0; part < 256; part += 1) {
+      t.splitter.push(block);
+      most = Math.max(most, t.splitter.heldBytes);
+    }
+    assert.ok(most <= 1024 * 1024 + 1, `held ${most} bytes`);
+    assert.equal(t.splitter.heldBytes, 0, 'an oversized line is dropped, not kept');
+    assert.equal(t.oversized, 1, 'reported once, as soon as it is too long');
+    t.splitter.push(Buffer.from('tail\n{"event":"result"}\n', 'utf8'));
+    assert.deepEqual(t.lines, ['{"event":"result"}']);
+    assert.equal(t.oversized, 1);
+  });
+});
 
 describe('the prompt (FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX B1)', () => {
   it('lets the Planner read files and forbids every command, even one that only reads', () => {
@@ -696,6 +747,20 @@ describe('start: a run that fails after the work is sent', () => {
     const [evidence] = evidenceOf(h.gatewayDirectory);
     assert.equal((evidence?.['streamEvents'] as string[]).length, 65);
     assert.equal(evidence?.['resultStatus'], 'SUCCESS');
+  });
+
+  it('ends malformed on output with no newline, without waiting for the run timeout (Tier-2 confirmation at ac1097f)', async () => {
+    const w = work();
+    const h = harness({ mode: 'unterminated', plan: readyPlanFor({ ...w } as never), timings: { runTimeoutMs: 20_000 } });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind !== 'accepted') return;
+    const began = Date.now();
+    await assert.rejects(started.completion, /malformed_output/);
+    assert.ok(Date.now() - began < 15_000, 'the oversized line ends the run as it arrives');
+    const [evidence] = evidenceOf(h.gatewayDirectory);
+    assert.equal(evidence?.['outcome'], 'malformed_output');
+    assert.deepEqual(evidence?.['streamEvents'], ['other']);
   });
 
   it('reads a plan from a fenced JSON answer', async () => {

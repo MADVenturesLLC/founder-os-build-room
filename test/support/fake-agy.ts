@@ -39,6 +39,8 @@
  *   bad_then_result  init; after the input line, a line that is not JSON, then a SUCCESS result
  *   flood         as ok, after five thousand step lines each carrying a kilobyte of text
  *   switch_then_result  a step naming another model and a SUCCESS result, in one write
+ *   unterminated  init; after the input line, two MiB with no newline, then silence
+ *                 (Tier-2 confirmation at ac1097f)
  *
  * Whatever the mode, it first enforces what agy 1.4.7 does, as the Founder
  * read it on the PC on 2026-10-26: `--print` must carry a value and refuses
@@ -124,7 +126,7 @@ function acceptInput(line: string): boolean {
 }
 
 if (mode === 'blank_first') process.stdout.write('\n');
-if (['ok', 'fenced', 'switch', 'error', 'unparseable', 'hang', 'exit', 'stubborn', 'deep_switch', 'tool_end', 'odd_events', 'many', 'blanks', 'many_blanks', 'blank_first', 'bad_then_result', 'flood', 'switch_then_result'].includes(mode)) {
+if (['ok', 'fenced', 'switch', 'error', 'unparseable', 'hang', 'exit', 'stubborn', 'deep_switch', 'tool_end', 'odd_events', 'many', 'blanks', 'many_blanks', 'blank_first', 'bad_then_result', 'flood', 'switch_then_result', 'unterminated'].includes(mode)) {
   init('gemini-4-argon-high');
 } else if (mode === 'no_conversation') {
   emit({ event: 'init', init: { model: 'gemini-4-argon-high', cwd: process.cwd() } });
@@ -213,6 +215,12 @@ lines.on('line', (line) => {
       process.stdout.write('not json\n');
       result(plan);
       break;
+    case 'unterminated': {
+      const block = 'x'.repeat(64 * 1024);
+      for (let part = 0; part < 32; part += 1) process.stdout.write(block);
+      setInterval(() => undefined, 1_000);
+      break;
+    }
     case 'switch_then_result':
       process.stdout.write(
         `${JSON.stringify({ event: 'step_update', step_update: { conversation_id: conversation, model: 'gemini-3.8-flash-high' } })}\n` +

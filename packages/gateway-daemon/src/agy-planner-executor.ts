@@ -73,7 +73,6 @@ import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdtemp, open, readdir, rename, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
 import type {
   Clock,
   PlannerIdentityWire,
@@ -1167,6 +1166,75 @@ type RunOutcome =
   | { readonly kind: 'agy_error' | 'no_result' | 'unparseable_plan' | 'model_switched' | 'malformed_output' | 'timed_out' };
 
 /**
+ * Splits agy's output into lines without ever holding more than one line's bytes
+ * (Tier-2 confirmation at ac1097f, under the Founder's ruling of 2026-11-03 bounding the
+ * buffer). A line longer than MAX_LINE_BYTES is reported once, as soon as it is too long,
+ * and its remaining bytes are dropped up to its newline. A final line without a newline is
+ * a line, as readline treats it; a carriage return before a newline is not part of the line.
+ */
+export class BoundedLineSplitter {
+  private readonly parts: Buffer[] = [];
+  private held = 0;
+  private dropping = false;
+
+  constructor(
+    private readonly onLine: (line: string) => void,
+    private readonly onOversized: () => void,
+    private readonly maxLineBytes: number = MAX_LINE_BYTES,
+  ) {}
+
+  /** The bytes held for the line being assembled; never more than maxLineBytes + 1. */
+  get heldBytes(): number {
+    return this.held;
+  }
+
+  push(chunk: Buffer): void {
+    let start = 0;
+    while (start < chunk.length) {
+      const newline = chunk.indexOf(0x0a, start);
+      const end = newline === -1 ? chunk.length : newline;
+      if (!this.dropping) {
+        const piece = chunk.subarray(start, end);
+        // One byte more than the limit may be a carriage return still to be stripped.
+        if (this.held + piece.length > this.maxLineBytes + 1) {
+          this.parts.length = 0;
+          this.held = 0;
+          this.dropping = true;
+          this.onOversized();
+        } else if (piece.length > 0) {
+          this.parts.push(Buffer.from(piece));
+          this.held += piece.length;
+        }
+      }
+      if (newline === -1) return;
+      this.finishLine();
+      start = newline + 1;
+    }
+  }
+
+  /** The stream ended: a last line without a newline is still a line. */
+  end(): void {
+    if (this.dropping || this.held > 0) this.finishLine();
+  }
+
+  private finishLine(): void {
+    if (this.dropping) {
+      this.dropping = false;
+      return;
+    }
+    let line = Buffer.concat(this.parts, this.held);
+    this.parts.length = 0;
+    this.held = 0;
+    if (line.length > 0 && line[line.length - 1] === 0x0d) line = line.subarray(0, line.length - 1);
+    if (line.length > this.maxLineBytes) {
+      this.onOversized();
+      return;
+    }
+    this.onLine(line.toString('utf8'));
+  }
+}
+
+/**
  * One agy process: its output judged line by line, its input written once, its end.
  *
  * Nothing agy writes is kept beyond what judging it needs (fix act B2, the Founder's
@@ -1207,46 +1275,57 @@ class AgyRun {
     });
     child.stdin.on('error', () => undefined);
     child.stderr.resume();
-    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-    lines.on('line', (line) => {
-      if (Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES) {
+    const lines = new BoundedLineSplitter(
+      (line) => this.onLine(line),
+      () => {
         this.noteKind(null);
         this.markMalformed();
-        return this.wake();
-      }
-      // A blank line is a line, and has no event: it is named `other` (Tier-2 finding 1).
-      if (line.trim() === '') {
-        this.noteKind(null);
-        return;
-      }
-      const event = parseEvent(line);
-      if (event === null) {
-        this.noteKind(null);
-        this.markMalformed();
-        return this.wake();
-      }
-      if (this.first === null && !this.malformed) {
-        // start() checks the first event itself; only what follows it is judged here.
-        this.first = event;
-        if (event['event'] === 'init') {
-          // The kinds recorded are those after init: anything before it, blank lines only, is dropped.
-          this.kinds.length = 0;
-          this.kindsOverflow = false;
-        } else {
-          this.noteKind(event);
-        }
-        this.noteResult(event);
-        return this.wake();
-      }
-      this.noteKind(event);
-      this.noteResult(event);
-      this.judge(event);
-      this.wake();
-    });
-    lines.on('close', () => {
+        this.wake();
+      },
+    );
+    child.stdout.on('data', (chunk: Buffer) => lines.push(chunk));
+    let ended = false;
+    const finish = (): void => {
+      if (ended) return;
+      ended = true;
+      lines.end();
       this.closed = true;
       this.wake();
-    });
+    };
+    child.stdout.once('end', finish);
+    child.stdout.once('close', finish);
+  }
+
+  /** One complete line of agy's output, at most MAX_LINE_BYTES. */
+  private onLine(line: string): void {
+    // A blank line is a line, and has no event: it is named `other` (Tier-2 finding 1).
+    if (line.trim() === '') {
+      this.noteKind(null);
+      return;
+    }
+    const event = parseEvent(line);
+    if (event === null) {
+      this.noteKind(null);
+      this.markMalformed();
+      return this.wake();
+    }
+    if (this.first === null && !this.malformed) {
+      // start() checks the first event itself; only what follows it is judged here.
+      this.first = event;
+      if (event['event'] === 'init') {
+        // The kinds recorded are those after init: anything before it, blank lines only, is dropped.
+        this.kinds.length = 0;
+        this.kindsOverflow = false;
+      } else {
+        this.noteKind(event);
+      }
+      this.noteResult(event);
+      return this.wake();
+    }
+    this.noteKind(event);
+    this.noteResult(event);
+    this.judge(event);
+    this.wake();
   }
 
   private wake(): void {
