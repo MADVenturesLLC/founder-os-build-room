@@ -1166,10 +1166,22 @@ type RunOutcome =
   | { readonly kind: 'plan'; readonly document: unknown }
   | { readonly kind: 'agy_error' | 'no_result' | 'unparseable_plan' | 'model_switched' | 'malformed_output' | 'timed_out' };
 
-/** One agy process: its output as events, its input written once, its end. */
+/**
+ * One agy process: its output judged line by line, its input written once, its end.
+ *
+ * Nothing agy writes is kept beyond what judging it needs (fix act B2, the Founder's
+ * ruling of 2026-11-03 on Tier-2 finding 2): the first event, which start() checks; the
+ * run's outcome once a line decides it; the first result's status and size; and the
+ * names of at most STREAM_EVENTS_RECORDED lines after init. However long agy writes,
+ * memory stays bounded by one line (MAX_LINE_BYTES).
+ */
 class AgyRun {
-  private readonly events: Record<string, unknown>[] = [];
-  /** The `event` of each non-empty output line, `other` when it has none that fits; capped, init included. */
+  /** The first JSON object agy wrote, unless a line that was not one came before it. */
+  private first: Record<string, unknown> | null = null;
+  /** Set by the first line after `first` that decides how the run ends; later lines decide nothing. */
+  private outcome: RunOutcome | null = null;
+  private resultSummary: { readonly status: string | null; readonly bytes: number | null } | null = null;
+  /** The name of each output line after init, `other` when it has none that fits; at most STREAM_EVENTS_RECORDED. */
   private readonly kinds: string[] = [];
   private kindsOverflow = false;
   private readonly waiters: (() => void)[] = [];
@@ -1198,15 +1210,37 @@ class AgyRun {
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     lines.on('line', (line) => {
       if (Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES) {
-        this.malformed = true;
         this.noteKind(null);
+        this.markMalformed();
         return this.wake();
       }
-      if (line.trim() === '') return;
+      // A blank line is a line, and has no event: it is named `other` (Tier-2 finding 1).
+      if (line.trim() === '') {
+        this.noteKind(null);
+        return;
+      }
       const event = parseEvent(line);
+      if (event === null) {
+        this.noteKind(null);
+        this.markMalformed();
+        return this.wake();
+      }
+      if (this.first === null && !this.malformed) {
+        // start() checks the first event itself; only what follows it is judged here.
+        this.first = event;
+        if (event['event'] === 'init') {
+          // The kinds recorded are those after init: anything before it, blank lines only, is dropped.
+          this.kinds.length = 0;
+          this.kindsOverflow = false;
+        } else {
+          this.noteKind(event);
+        }
+        this.noteResult(event);
+        return this.wake();
+      }
       this.noteKind(event);
-      if (event === null) this.malformed = true;
-      else this.events.push(event);
+      this.noteResult(event);
+      this.judge(event);
       this.wake();
     });
     lines.on('close', () => {
@@ -1221,8 +1255,8 @@ class AgyRun {
 
   /** One more output line's kind: its `event` if that is a short lowercase name, otherwise `other`. */
   private noteKind(event: Record<string, unknown> | null): void {
-    // Init plus the recorded lines; what is beyond them is only counted as more.
-    if (this.kinds.length > STREAM_EVENTS_RECORDED) {
+    // What is beyond the recorded lines is only counted as more.
+    if (this.kinds.length >= STREAM_EVENTS_RECORDED) {
       this.kindsOverflow = true;
       return;
     }
@@ -1230,22 +1264,53 @@ class AgyRun {
     this.kinds.push(typeof name === 'string' && STREAM_EVENT_RE.test(name) ? name : 'other');
   }
 
+  /** The first result event's status and response size, for the closing record; never its text. */
+  private noteResult(event: Record<string, unknown>): void {
+    if (this.resultSummary !== null || event['event'] !== 'result') return;
+    const result = objectAt(event, 'result');
+    const status = result === null ? undefined : result['status'];
+    const response = result === null ? undefined : result['response'];
+    this.resultSummary = {
+      status: typeof status === 'string' && RESULT_STATUS_RE.test(status) ? status : null,
+      bytes: typeof response === 'string' ? Buffer.byteLength(response, 'utf8') : null,
+    };
+  }
+
+  /** A line that is not a bounded JSON object: if nothing has decided the run yet, it ends malformed. */
+  private markMalformed(): void {
+    this.malformed = true;
+    if (this.first !== null && this.outcome === null) this.outcome = { kind: 'malformed_output' };
+  }
+
+  /** An event after the first: every one must name no other model, and the first `result` ends the run. */
+  private judge(event: Record<string, unknown>): void {
+    if (this.outcome !== null) return;
+    if (modelsNamed(event).some((model) => model !== AGY_PLANNER_LANE.agyModel)) {
+      this.outcome = { kind: 'model_switched' };
+      return;
+    }
+    if (event['event'] !== 'result') return;
+    const result = objectAt(event, 'result');
+    if (result === null || result['status'] !== 'SUCCESS' || typeof result['response'] !== 'string') {
+      this.outcome = { kind: 'agy_error' };
+      return;
+    }
+    try {
+      this.outcome = { kind: 'plan', document: planDocumentFrom(result['response']) };
+    } catch {
+      this.outcome = { kind: 'unparseable_plan' };
+    }
+  }
+
   /**
    * How the run ended, for its closing record (fix act B2): the kinds of the lines after
    * init, the first result's status and its response's byte length. No text is kept.
    */
   diagnostics(): { streamEvents: string[]; resultStatus: string | null; responseBytes: number | null } {
-    const afterInit = this.kinds[0] === 'init' ? this.kinds.slice(1) : [...this.kinds];
-    const overflow = this.kindsOverflow || afterInit.length > STREAM_EVENTS_RECORDED;
-    const streamEvents = overflow ? [...afterInit.slice(0, STREAM_EVENTS_RECORDED), 'truncated'] : afterInit;
-    const first = this.events.findIndex((event) => event['event'] === 'result');
-    const result = first === -1 ? null : objectAt(this.events[first], 'result');
-    const status = result === null ? undefined : result['status'];
-    const response = result === null ? undefined : result['response'];
     return {
-      streamEvents,
-      resultStatus: typeof status === 'string' && RESULT_STATUS_RE.test(status) ? status : null,
-      responseBytes: typeof response === 'string' ? Buffer.byteLength(response, 'utf8') : null,
+      streamEvents: this.kindsOverflow ? [...this.kinds, 'truncated'] : [...this.kinds],
+      resultStatus: this.resultSummary?.status ?? null,
+      responseBytes: this.resultSummary?.bytes ?? null,
     };
   }
 
@@ -1262,36 +1327,23 @@ class AgyRun {
   /** The first output line, if it is a JSON object and arrives in time. Nothing has been written yet. */
   async firstEvent(timeoutMs: number): Promise<Record<string, unknown> | null> {
     const deadline = this.clock.monotonicNow() + timeoutMs;
-    while (this.events.length === 0 && !this.malformed && !this.closed) {
+    while (this.first === null && !this.malformed && !this.closed) {
       const remaining = deadline - this.clock.monotonicNow();
       if (remaining <= 0 || !(await this.next(remaining))) return null;
     }
-    return this.malformed ? null : (this.events[0] ?? null);
+    // A line that was not a JSON object before any that was leaves `first` unset.
+    return this.first;
   }
 
   send(line: string): void {
     this.child.stdin.end(line);
   }
 
-  /** Read on until the `result` event; every event after `init` must name no other model. */
+  /** Wait for the line that decides the run: the first `result`, another model named, or a malformed line. */
   async result(timeoutMs: number): Promise<RunOutcome> {
     const deadline = this.clock.monotonicNow() + timeoutMs;
-    let index = 1;
     for (;;) {
-      while (index < this.events.length) {
-        const event = this.events[index++] ?? {};
-        if (modelsNamed(event).some((model) => model !== AGY_PLANNER_LANE.agyModel)) return { kind: 'model_switched' };
-        if (event['event'] === 'result') {
-          const result = objectAt(event, 'result');
-          if (result === null || result['status'] !== 'SUCCESS' || typeof result['response'] !== 'string') return { kind: 'agy_error' };
-          try {
-            return { kind: 'plan', document: planDocumentFrom(result['response']) };
-          } catch {
-            return { kind: 'unparseable_plan' };
-          }
-        }
-      }
-      if (this.malformed) return { kind: 'malformed_output' };
+      if (this.outcome !== null) return this.outcome;
       if (this.closed) return { kind: 'no_result' };
       const remaining = deadline - this.clock.monotonicNow();
       if (remaining <= 0 || !(await this.next(remaining))) return { kind: 'timed_out' };

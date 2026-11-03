@@ -33,6 +33,12 @@
  *                 command (Phase4-CR1, 2026-11-03)
  *   odd_events    as ok, after three lines whose event is not a short lowercase name
  *   many          as ok, after seventy step lines
+ *   blanks        as ok, after two blank lines (Tier-2 finding 1 at efaa1c9)
+ *   many_blanks   as ok, after seventy blank lines
+ *   blank_first   a blank line before init, then as ok
+ *   bad_then_result  init; after the input line, a line that is not JSON, then a SUCCESS result
+ *   flood         as ok, after five thousand step lines each carrying a kilobyte of text
+ *   switch_then_result  a step naming another model and a SUCCESS result, in one write
  *
  * Whatever the mode, it first enforces what agy 1.4.7 does, as the Founder
  * read it on the PC on 2026-10-26: `--print` must carry a value and refuses
@@ -117,7 +123,8 @@ function acceptInput(line: string): boolean {
   return true;
 }
 
-if (['ok', 'fenced', 'switch', 'error', 'unparseable', 'hang', 'exit', 'stubborn', 'deep_switch', 'tool_end', 'odd_events', 'many'].includes(mode)) {
+if (mode === 'blank_first') process.stdout.write('\n');
+if (['ok', 'fenced', 'switch', 'error', 'unparseable', 'hang', 'exit', 'stubborn', 'deep_switch', 'tool_end', 'odd_events', 'many', 'blanks', 'many_blanks', 'blank_first', 'bad_then_result', 'flood', 'switch_then_result'].includes(mode)) {
   init('gemini-4-argon-high');
 } else if (mode === 'no_conversation') {
   emit({ event: 'init', init: { model: 'gemini-4-argon-high', cwd: process.cwd() } });
@@ -190,6 +197,34 @@ lines.on('line', (line) => {
       for (let line = 0; line < 70; line += 1) emit({ event: 'step_update', step_update: { conversation_id: conversation, state: 'RUNNING' } });
       result(plan);
       break;
+    case 'blanks':
+      process.stdout.write('\n   \n');
+      result(plan);
+      break;
+    case 'many_blanks':
+      process.stdout.write('\n'.repeat(70));
+      result(plan);
+      break;
+    case 'blank_first':
+      emit({ event: 'step_update', step_update: { conversation_id: conversation, state: 'DONE' } });
+      result(plan);
+      break;
+    case 'bad_then_result':
+      process.stdout.write('not json\n');
+      result(plan);
+      break;
+    case 'switch_then_result':
+      process.stdout.write(
+        `${JSON.stringify({ event: 'step_update', step_update: { conversation_id: conversation, model: 'gemini-3.8-flash-high' } })}\n` +
+          `${JSON.stringify({ event: 'result', result: { conversation_id: conversation, status: 'SUCCESS', response: plan, num_turns: 1 } })}\n`,
+      );
+      break;
+    case 'flood': {
+      const text = 'x'.repeat(1024);
+      for (let line = 0; line < 5000; line += 1) emit({ event: 'step_update', step_update: { conversation_id: conversation, text_delta: text } });
+      result(plan);
+      break;
+    }
     case 'exit':
       process.exit(0);
       break;

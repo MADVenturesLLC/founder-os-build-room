@@ -648,6 +648,56 @@ describe('start: a run that fails after the work is sent', () => {
     assert.equal(events[64], 'truncated');
   });
 
+  it('names each blank line "other", and counts blank lines toward the cap (Tier-2 finding 1 at efaa1c9)', async () => {
+    for (const [mode, expected] of [
+      ['blanks', ['other', 'other', 'result']],
+      ['many_blanks', [...new Array<string>(64).fill('other'), 'truncated']],
+      ['blank_first', ['step_update', 'result']],
+    ] as const) {
+      const w = work();
+      const plan = readyPlanFor({ ...w } as never);
+      const h = harness({ mode, plan });
+      const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+      assert.equal(started.kind, 'accepted', mode);
+      if (started.kind === 'accepted') assert.deepEqual(await started.completion, { kind: 'plan', document: plan }, mode);
+      assert.deepEqual(evidenceOf(h.gatewayDirectory)[0]?.['streamEvents'], expected, mode);
+    }
+  });
+
+  it('ends malformed on a line that is not JSON before the result, whatever follows it', async () => {
+    const w = work();
+    const h = harness({ mode: 'bad_then_result', plan: readyPlanFor({ ...w } as never) });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind !== 'accepted') return;
+    await assert.rejects(started.completion, /malformed_output/);
+    const [evidence] = evidenceOf(h.gatewayDirectory);
+    assert.equal(evidence?.['outcome'], 'malformed_output');
+    assert.deepEqual(evidence?.['streamEvents'], ['other', 'result']);
+  });
+
+  it('lets the first line that decides the run decide it, even when a result follows in the same write', async () => {
+    const w = work();
+    const h = harness({ mode: 'switch_then_result', plan: readyPlanFor({ ...w } as never) });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind !== 'accepted') return;
+    await assert.rejects(started.completion, /model_switched/);
+    assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['outcome'], 'model_switched');
+  });
+
+  it('judges a long stream line by line, keeping none of it (Tier-2 finding 2 at efaa1c9)', async () => {
+    const w = work();
+    const plan = readyPlanFor({ ...w } as never);
+    const h = harness({ mode: 'flood', plan });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') assert.deepEqual(await started.completion, { kind: 'plan', document: plan });
+    const [evidence] = evidenceOf(h.gatewayDirectory);
+    assert.equal((evidence?.['streamEvents'] as string[]).length, 65);
+    assert.equal(evidence?.['resultStatus'], 'SUCCESS');
+  });
+
   it('reads a plan from a fenced JSON answer', async () => {
     const w = work();
     const plan = readyPlanFor({ ...w } as never);
