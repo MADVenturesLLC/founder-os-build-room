@@ -41,7 +41,7 @@ export interface Phase4RunDriver {
   /** T1: the run's scope and goal, relayed for the Founder with the act's relay attribution. */
   captureScope(roomId: string, run: Phase4PlannedRun, relay: Phase4RunSet['founderRelay']): Promise<void>;
   /** Open one planning round; resolves when the round has settled, with its outcome kind. */
-  runRound(roomId: string): Promise<{ readonly kind: string }>;
+  runRound(roomId: string): Promise<{ readonly kind: string; readonly planHash?: string }>;
   roomState(roomId: string): Promise<string>;
   collectRecord(roomId: string, deploymentIdAtStart: string): Promise<Phase4RunRecord>;
 }
@@ -76,6 +76,8 @@ export interface Phase4RoundContext {
   readonly round: number;
   /** The round's settled outcome kind, as the driver reported it. */
   readonly kind: string;
+  /** The plan's hash, when the round settled at plan_review and the driver reported one. */
+  readonly planHash?: string;
 }
 
 export interface Phase4AttemptResult {
@@ -140,7 +142,13 @@ export class Phase4Runner {
       }
       const opened = await this.driver.runRound(run.roomId);
       if (this.options.afterRound !== undefined) {
-        const next = await this.options.afterRound({ label: run.label, roomId: run.roomId, round, kind: opened.kind });
+        const next = await this.options.afterRound({
+          label: run.label,
+          roomId: run.roomId,
+          round,
+          kind: opened.kind,
+          ...(opened.planHash === undefined ? {} : { planHash: opened.planHash }),
+        });
         if (next === 'stop') {
           stoppedAfterRound = true;
           break;

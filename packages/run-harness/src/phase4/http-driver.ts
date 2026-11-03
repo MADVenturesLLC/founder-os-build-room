@@ -11,7 +11,9 @@
  *   - `GET /rooms/:id`, `GET /rooms/:id/export` (API token): state and record;
  *   - `POST|GET /control-plane/rooms/:id/planner-round` and
  *     `GET /control-plane/rooms/:id/journal` (counted-run token): the Q9
- *     routes, inert unless the act is configured.
+ *     routes, inert unless the act is configured;
+ *   - `GET /control-plane/rooms/:id/plan` (API token): the plan under the
+ *     room's latest T3, saved for the Founder to read (REHEARSAL-FIXES B2).
  * It never calls the plan-decision route, and holds no credential that opens
  * it: the counted-run token is distinct from the adjudication token, and the
  * Founder decides there.
@@ -23,6 +25,17 @@
  * refuses to capture scope against a head it could not observe or that is
  * not the act's base — it never asserts the fact it was going to check.
  * Tokens are held in memory and never logged or echoed.
+ *
+ * REQUESTS (FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES B1). Every request
+ * ends within `PHASE4_REQUEST_TIMEOUT_MS` or fails. A read (GET) that fails
+ * with no HTTP answer, or is answered 502 or 504, is tried again on
+ * `PHASE4_READ_RETRY_DELAYS_MS`, then every `PHASE4_READ_RETRY_STEADY_MS`,
+ * for at most `PHASE4_READ_RETRY_WINDOW_MS` from its first failure, and then
+ * fails as it did before. A write (POST) is never tried again: a write whose
+ * answer was lost may have taken effect. No other answer is retried, 503
+ * included, which the control plane answers for states that are not
+ * transient. The first rehearsal ended on one lost read in a four-hour
+ * decision window (2026-11-03, 13:25:05Z).
  */
 
 import { readPhase4Export } from './export-reader.js';
@@ -50,10 +63,32 @@ export interface HttpPhase4DriverOptions {
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly fetch?: typeof fetch;
+  /** Told one line, with no token and no body, each time a read is tried again. */
+  readonly onRetry?: (line: string) => void;
+  readonly requestTimeoutMs?: number;
 }
 
 export class Phase4DriverError extends Error {
-  override readonly name = 'Phase4DriverError';
+  override readonly name: string = 'Phase4DriverError';
+}
+
+/** A request that got no HTTP answer: the network failed, or nothing answered in time. */
+export class Phase4TransportError extends Phase4DriverError {
+  override readonly name = 'Phase4TransportError';
+}
+
+export const PHASE4_REQUEST_TIMEOUT_MS = 30_000;
+export const PHASE4_READ_RETRY_DELAYS_MS: readonly number[] = Object.freeze([5_000, 10_000, 20_000, 40_000]);
+export const PHASE4_READ_RETRY_STEADY_MS = 60_000;
+export const PHASE4_READ_RETRY_WINDOW_MS = 10 * 60_000;
+/** The answers to a read that are tried again: the edge's gateway errors. */
+const RETRIED_STATUSES: ReadonlySet<number> = new Set([502, 504]);
+
+/** The plan the plan route answers. */
+export interface Phase4PlanReading {
+  readonly commandId: string;
+  readonly planHash: string;
+  readonly document: unknown;
 }
 
 interface RoundView {
@@ -151,7 +186,7 @@ export class HttpPhase4Driver implements Phase4RunDriver {
     if (t1.status !== 201) throw new Phase4DriverError(routeRefusal('scope capture', t1.status, t1.body));
   }
 
-  async runRound(roomId: string): Promise<{ readonly kind: string }> {
+  async runRound(roomId: string): Promise<{ readonly kind: string; readonly planHash?: string }> {
     const started = await this.call('POST', `/control-plane/rooms/${roomId}/planner-round`, this.options.countedRunToken, {});
     if (started.status !== 202) {
       throw new Phase4DriverError(routeRefusal('planner-round start', started.status, started.body));
@@ -166,7 +201,8 @@ export class HttpPhase4Driver implements Phase4RunDriver {
           const detail = [outcome.code, outcome.reason].filter((v): v is string => typeof v === 'string' && v.length > 0).join(' — ');
           throw new Phase4DriverError(`planner-round ${outcome.kind}${detail.length > 0 ? `: ${detail}` : ''}`);
         }
-        return { kind: outcome?.kind ?? 'unknown' };
+        const planHash = (outcome as { planHash?: unknown } | undefined)?.planHash;
+        return { kind: outcome?.kind ?? 'unknown', ...(typeof planHash === 'string' ? { planHash } : {}) };
       }
       if (this.now() >= deadline) {
         throw new Phase4DriverError(`planner-round timed out after ${timeoutMs}ms in room ${roomId} (status: ${view.round.status})`);
@@ -221,6 +257,17 @@ export class HttpPhase4Driver implements Phase4RunDriver {
     return commands as { commandId: string; rows: Record<string, unknown>[] }[];
   }
 
+  /** The plan under the room's latest T3 (REHEARSAL-FIXES B2). */
+  async readPlan(roomId: string): Promise<Phase4PlanReading> {
+    const read = await this.call('GET', `/control-plane/rooms/${roomId}/plan`, this.options.apiToken);
+    if (read.status !== 200) throw new Phase4DriverError(routeRefusal('plan read', read.status, read.body));
+    const { commandId, planHash, document } = read.body;
+    if (typeof commandId !== 'string' || typeof planHash !== 'string' || document === undefined) {
+      throw new Phase4DriverError('plan read answered without a commandId, planHash and document');
+    }
+    return { commandId, planHash, document };
+  }
+
   /** The act the control plane's counted-run surface is configured for, or null when it names none. */
   async countedRunActId(roomId: string): Promise<string | null> {
     const view = await this.roundView(roomId);
@@ -233,7 +280,42 @@ export class HttpPhase4Driver implements Phase4RunDriver {
     return view.body as unknown as RoundView;
   }
 
+  /** One request, or for a read as many as B1 allows. */
   private async call(
+    method: 'GET' | 'POST',
+    path: string,
+    token: string | null,
+    body?: Record<string, unknown>,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    if (method !== 'GET') return this.once(method, path, token, body);
+    let firstFailureAt: number | null = null;
+    for (let retries = 0; ; retries += 1) {
+      let answer: { status: number; body: Record<string, unknown> } | null = null;
+      let failure: Phase4TransportError | null = null;
+      try {
+        answer = await this.once('GET', path, token);
+        if (!RETRIED_STATUSES.has(answer.status)) return answer;
+      } catch (error) {
+        if (!(error instanceof Phase4TransportError)) throw error;
+        failure = error;
+      }
+      const at = this.now();
+      firstFailureAt ??= at;
+      const elapsed = at - firstFailureAt;
+      if (elapsed >= PHASE4_READ_RETRY_WINDOW_MS) {
+        if (failure !== null) throw failure;
+        return answer!;
+      }
+      const scheduled = PHASE4_READ_RETRY_DELAYS_MS[retries] ?? PHASE4_READ_RETRY_STEADY_MS;
+      const delay = Math.min(scheduled, PHASE4_READ_RETRY_WINDOW_MS - elapsed);
+      const reason = failure !== null ? failure.message : `answered ${answer!.status}`;
+      this.options.onRetry?.(`${new Date(at).toISOString()} GET ${path}: ${reason}; trying again in ${Math.ceil(delay / 1000)}s`);
+      await this.sleep(delay);
+    }
+  }
+
+  /** One request, ended within the timeout; no HTTP answer is a `Phase4TransportError`. */
+  private async once(
     method: 'GET' | 'POST',
     path: string,
     token: string | null,
@@ -242,12 +324,35 @@ export class HttpPhase4Driver implements Phase4RunDriver {
     const headers: Record<string, string> = {};
     if (token !== null) headers['authorization'] = `Bearer ${token}`;
     if (body !== undefined) headers['content-type'] = 'application/json';
-    const response = await this.fetch(`${this.options.origin}${path}`, {
-      method,
-      headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    const timeoutMs = this.options.requestTimeoutMs ?? PHASE4_REQUEST_TIMEOUT_MS;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Phase4TransportError(`no answer within ${timeoutMs}ms`));
+      }, timeoutMs);
     });
-    const parsed = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-    return { status: response.status, body: parsed };
+    const exchange = (async () => {
+      let response: Response;
+      try {
+        response = await this.fetch(`${this.options.origin}${path}`, {
+          method,
+          headers,
+          signal: controller.signal,
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        });
+      } catch (error) {
+        // The message only ("fetch failed"): a cause can carry addresses.
+        throw new Phase4TransportError(error instanceof Error && error.message.length > 0 ? error.message : 'the request failed');
+      }
+      const parsed = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      return { status: response.status, body: parsed };
+    })();
+    try {
+      return await Promise.race([exchange, timedOut]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
