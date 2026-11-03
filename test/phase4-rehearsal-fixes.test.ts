@@ -220,6 +220,8 @@ after(async () => {
 interface PlanFixture {
   readonly exists?: boolean;
   readonly t3s?: readonly string[];
+  /** A T3 that lands after the room's first read, as a revision's would. */
+  readonly t3AfterFirstRead?: string;
   readonly plan?: StoredPlan | null | 'unavailable';
 }
 
@@ -230,8 +232,17 @@ async function startPlanServer(fixture: PlanFixture) {
     { transition: 'T2', eventId: 'evt_t2' },
     ...(fixture.t3s ?? []).flatMap((id, n) => [{ transition: 'T3', eventId: id }, ...(n < (fixture.t3s?.length ?? 0) - 1 ? [{ transition: 'T4', eventId: `evt_t4_${n}` }] : [])]),
   ];
+  let roomReads = 0;
   const store = new Proxy(
-    { loadRoom: async (roomId: string) => ({ roomId, exists: fixture.exists ?? true, state: { entries }, logLength: entries.length }) },
+    {
+      loadRoom: async (roomId: string) => {
+        roomReads += 1;
+        const now = roomReads > 1 && fixture.t3AfterFirstRead !== undefined
+          ? [...entries, { transition: 'T4', eventId: 'evt_t4_late' }, { transition: 'T3', eventId: fixture.t3AfterFirstRead }]
+          : entries;
+        return { roomId, exists: fixture.exists ?? true, state: { entries: now }, logLength: now.length };
+      },
+    },
     {
       get: (target, key) => {
         if (key === 'loadRoom') return target.loadRoom;
@@ -274,6 +285,14 @@ describe('B2: GET /control-plane/rooms/:roomId/plan', () => {
     assert.equal((await (await startPlanServer({ t3s: [] })).get(CONTROL_TOKEN)).status, 404);
     assert.equal((await (await startPlanServer({ exists: false, t3s: ['evt_t3'] })).get(CONTROL_TOKEN)).status, 404);
     assert.equal((await (await startPlanServer({ t3s: ['evt_t3'], plan: null })).get(CONTROL_TOKEN)).status, 404);
+  });
+
+  it('answers 409 when a newer T3 lands while the plan is read, and serves no stale plan', async () => {
+    const { get, asked } = await startPlanServer({ t3s: ['evt_t3_first'], t3AfterFirstRead: 'evt_t3_second' });
+    const response = await get(CONTROL_TOKEN);
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: 'plan_changed' });
+    assert.deepEqual(asked, [{ roomId: ROOM, eventId: 'evt_t3_first' }]);
   });
 
   it('answers 401 without the API token, the adjudication token included', async () => {

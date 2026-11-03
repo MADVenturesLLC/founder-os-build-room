@@ -12,7 +12,8 @@
  * It reads and never writes: no ledger append, no journal row, no lease. It
  * decides nothing — the plan decision stays at `plan-decision.ts`, behind the
  * adjudication token alone. A room with no T3 answers 404, as does a room
- * that does not exist.
+ * that does not exist; a plan superseded by a newer T3 while it was read
+ * answers 409 `plan_changed`.
  */
 
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
@@ -44,7 +45,7 @@ export function planReadRouter(deps: PlanReadDeps): Router {
         res.status(404).json({ error: 'room_not_found' });
         return;
       }
-      const t3 = [...view.state.entries].reverse().find((entry) => entry.transition === 'T3');
+      const t3 = latestT3(view);
       if (t3 === undefined) {
         res.status(404).json({ error: 'plan_not_found' });
         return;
@@ -53,6 +54,13 @@ export function planReadRouter(deps: PlanReadDeps): Router {
         const plan = await deps.plans.planForEvent(roomId, t3.eventId);
         if (plan === null) {
           res.status(404).json({ error: 'plan_not_found' });
+          return;
+        }
+        // The room and the plan are two reads: a revision can land a newer T3
+        // between them. The room is read again, and a plan that is no longer
+        // the latest T3's is not served (Copilot, PR 143).
+        if (latestT3(await deps.ledger.loadRoom(roomId))?.eventId !== t3.eventId) {
+          res.status(409).json({ error: 'plan_changed' });
           return;
         }
         res.status(200).json({ roomId, commandId: plan.commandId, planHash: plan.planHash, document: plan.document });
@@ -70,6 +78,10 @@ export function planReadRouter(deps: PlanReadDeps): Router {
     }),
   );
   return router;
+}
+
+function latestT3(view: { readonly state: LedgerState }): { readonly eventId: string } | undefined {
+  return [...view.state.entries].reverse().find((entry) => entry.transition === 'T3');
 }
 
 function asyncRoute(handler: (req: Request, res: Response) => Promise<void>) {
