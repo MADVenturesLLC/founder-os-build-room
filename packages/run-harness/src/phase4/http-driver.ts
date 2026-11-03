@@ -31,7 +31,8 @@
  * with no HTTP answer, or is answered 502 or 504, is tried again on
  * `PHASE4_READ_RETRY_DELAYS_MS`, then every `PHASE4_READ_RETRY_STEADY_MS`,
  * for at most `PHASE4_READ_RETRY_WINDOW_MS` from its first failure, and then
- * fails as it did before. A write (POST) is never tried again: a write whose
+ * fails as it did before: no try starts, runs or is taken after the window.
+ * A request whose status has arrived is answered, even if its body stalls. A write (POST) is never tried again: a write whose
  * answer was lost may have taken effect. No other answer is retried, 503
  * included, which the control plane answers for states that are not
  * transient. The first rehearsal ended on one lost read in a four-hour
@@ -287,50 +288,70 @@ export class HttpPhase4Driver implements Phase4RunDriver {
     token: string | null,
     body?: Record<string, unknown>,
   ): Promise<{ status: number; body: Record<string, unknown> }> {
-    if (method !== 'GET') return this.once(method, path, token, body);
-    let firstFailureAt: number | null = null;
+    const timeoutMs = this.options.requestTimeoutMs ?? PHASE4_REQUEST_TIMEOUT_MS;
+    if (method !== 'GET') return this.once(method, path, token, timeoutMs, body);
+    // The window runs from the first failure. Every try ends inside it: a try
+    // is never dispatched without time left, its timeout is cut to the time
+    // left, and an answer that still comes after the window is not taken
+    // (Codex, PR 143). The last failure is what the read fails with, as before.
+    let deadline: number | null = null;
+    let last: Phase4TransportError | { status: number; body: Record<string, unknown> } | null = null;
+    const failAsBefore = (): { status: number; body: Record<string, unknown> } => {
+      if (last instanceof Phase4TransportError) throw last;
+      return last!;
+    };
     for (let retries = 0; ; retries += 1) {
+      const budget = deadline === null ? timeoutMs : Math.min(timeoutMs, deadline - this.now());
+      if (budget <= 0) return failAsBefore();
       let answer: { status: number; body: Record<string, unknown> } | null = null;
       let failure: Phase4TransportError | null = null;
       try {
-        answer = await this.once('GET', path, token);
-        if (!RETRIED_STATUSES.has(answer.status)) return answer;
+        answer = await this.once('GET', path, token, budget);
       } catch (error) {
         if (!(error instanceof Phase4TransportError)) throw error;
         failure = error;
       }
-      const at = this.now();
-      firstFailureAt ??= at;
-      const elapsed = at - firstFailureAt;
-      if (elapsed >= PHASE4_READ_RETRY_WINDOW_MS) {
-        if (failure !== null) throw failure;
-        return answer!;
+      if (answer !== null && !RETRIED_STATUSES.has(answer.status)) {
+        if (deadline !== null && this.now() > deadline) return failAsBefore();
+        return answer;
       }
-      const scheduled = PHASE4_READ_RETRY_DELAYS_MS[retries] ?? PHASE4_READ_RETRY_STEADY_MS;
-      const delay = Math.min(scheduled, PHASE4_READ_RETRY_WINDOW_MS - elapsed);
+      last = failure ?? answer;
+      const at = this.now();
+      deadline ??= at + PHASE4_READ_RETRY_WINDOW_MS;
+      const delay = PHASE4_READ_RETRY_DELAYS_MS[retries] ?? PHASE4_READ_RETRY_STEADY_MS;
+      // No wait that would leave no time for the try after it.
+      if (at + delay >= deadline) return failAsBefore();
       const reason = failure !== null ? failure.message : `answered ${answer!.status}`;
       this.options.onRetry?.(`${new Date(at).toISOString()} GET ${path}: ${reason}; trying again in ${Math.ceil(delay / 1000)}s`);
       await this.sleep(delay);
     }
   }
 
-  /** One request, ended within the timeout; no HTTP answer is a `Phase4TransportError`. */
+  /**
+   * One request, ended within `timeoutMs`. No HTTP answer is a
+   * `Phase4TransportError`. Once the status has arrived the request is
+   * answered, whatever happens to its body: a body that does not arrive in
+   * time is read as empty, under the status received (Codex, PR 143), so a
+   * 503 whose body stalls is still a 503 and is not tried again.
+   */
   private async once(
     method: 'GET' | 'POST',
     path: string,
     token: string | null,
+    timeoutMs: number,
     body?: Record<string, unknown>,
   ): Promise<{ status: number; body: Record<string, unknown> }> {
     const headers: Record<string, string> = {};
     if (token !== null) headers['authorization'] = `Bearer ${token}`;
     if (body !== undefined) headers['content-type'] = 'application/json';
-    const timeoutMs = this.options.requestTimeoutMs ?? PHASE4_REQUEST_TIMEOUT_MS;
     const controller = new AbortController();
+    let received: number | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const timedOut = new Promise<never>((_, reject) => {
+    const timedOut = new Promise<{ status: number; body: Record<string, unknown> }>((resolve, reject) => {
       timer = setTimeout(() => {
         controller.abort();
-        reject(new Phase4TransportError(`no answer within ${timeoutMs}ms`));
+        if (received !== null) resolve({ status: received, body: {} });
+        else reject(new Phase4TransportError(`no answer within ${timeoutMs}ms`));
       }, timeoutMs);
     });
     const exchange = (async () => {
@@ -346,6 +367,7 @@ export class HttpPhase4Driver implements Phase4RunDriver {
         // The message only ("fetch failed"): a cause can carry addresses.
         throw new Phase4TransportError(error instanceof Error && error.message.length > 0 ? error.message : 'the request failed');
       }
+      received = response.status;
       const parsed = (await response.json().catch(() => ({}))) as Record<string, unknown>;
       return { status: response.status, body: parsed };
     })();

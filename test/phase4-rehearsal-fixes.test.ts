@@ -8,7 +8,7 @@
  * written under a temporary directory.
  */
 
-import { after, describe, it } from 'node:test';
+import { after, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
@@ -25,6 +25,7 @@ import { PlanStoreUnavailableError, type StoredPlan } from '../packages/control-
 import {
   HttpPhase4Driver,
   PHASE4_READ_RETRY_WINDOW_MS,
+  PHASE4_REQUEST_TIMEOUT_MS,
   Phase4TransportError,
 } from '../packages/run-harness/src/phase4/http-driver.js';
 import { PHASE4_CLI_EXIT, phase4CountedRunMain } from '../packages/run-harness/src/phase4/cli.js';
@@ -57,13 +58,28 @@ function clock() {
   };
 }
 
+/**
+ * One scripted answer: reject, hang until aborted, a status with its body, a
+ * status whose body never arrives, or any of those after the fake clock moves
+ * on (a request that took that long).
+ */
+type Step = 'reject' | 'hang' | number | { readonly stall: number } | { readonly after: number; readonly then: 'reject' | number };
+
 /** A fetch that answers from a script, one entry per request, then repeats the last. */
-function scriptedFetch(script: readonly ('reject' | 'hang' | number)[]) {
-  const seen: { method: string; path: string }[] = [];
+function scriptedFetch(script: readonly Step[], c?: ReturnType<typeof clock>) {
+  const seen: { method: string; path: string; at: number }[] = [];
   const fake = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
-    seen.push({ method: init?.method ?? 'GET', path: url.pathname });
-    const step = script[Math.min(seen.length - 1, script.length - 1)]!;
+    seen.push({ method: init?.method ?? 'GET', path: url.pathname, at: c?.now() ?? 0 });
+    let step = script[Math.min(seen.length - 1, script.length - 1)]!;
+    if (typeof step === 'object' && 'after' in step) {
+      c!.state.t += step.after;
+      step = step.then;
+    }
+    if (typeof step === 'object') {
+      // The status arrives; the body never does, and ignores the abort.
+      return new Response(new ReadableStream({ start: () => undefined }), { status: step.stall, headers: { 'content-type': 'application/json' } });
+    }
     if (step === 'reject') throw new TypeError('fetch failed');
     if (step === 'hang') {
       return new Promise<Response>((_, reject) => {
@@ -123,21 +139,78 @@ describe('B1: a read that loses its answer is tried again', () => {
     assert.match(lines[0]!, /no answer within 20ms; trying again in 5s$/);
   });
 
-  it('gives up ten minutes after the first failure, on the schedule 5, 10, 20, 40, then every 60 s, and fails as before', async () => {
+  it('gives up inside ten minutes of the first failure, on the schedule 5, 10, 20, 40, then every 60 s, and fails as before', async () => {
     const c = clock();
     const lines: string[] = [];
-    const f = scriptedFetch(['reject']);
+    const f = scriptedFetch(['reject'], c);
     await assert.rejects(driver(f.fetch, c, lines).roomState(ROOM), (error: unknown) => error instanceof Phase4TransportError && error.message === 'fetch failed');
-    assert.deepEqual(c.state.waits, [5_000, 10_000, 20_000, 40_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000, 45_000]);
-    assert.equal(c.state.waits.reduce((a, b) => a + b, 0), PHASE4_READ_RETRY_WINDOW_MS);
+    // No wait that would leave no time for the try after it: the last try is
+    // at 555 s, and another 60 s would pass the window.
+    assert.deepEqual(c.state.waits, [5_000, 10_000, 20_000, 40_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000, 60_000]);
     assert.equal(f.seen.length, c.state.waits.length + 1);
+    const first = f.seen[0]!.at;
+    assert.ok(f.seen.every((r) => r.at - first < PHASE4_READ_RETRY_WINDOW_MS), 'every try starts inside the window');
   });
 
-  it('after ten minutes of 502, the read fails with the route’s refusal, as before', async () => {
+  it('after its retries of 502, the read fails with the route’s refusal, as before', async () => {
     const c = clock();
-    const f = scriptedFetch([502]);
+    const f = scriptedFetch([502], c);
     await assert.rejects(driver(f.fetch, c).roomState(ROOM), /room read answered 502/);
-    assert.equal(c.state.waits.reduce((a, b) => a + b, 0), PHASE4_READ_RETRY_WINDOW_MS);
+    assert.ok(c.state.waits.reduce((a, b) => a + b, 0) < PHASE4_READ_RETRY_WINDOW_MS);
+  });
+
+  it('does not take an answer that comes after the window, and fails with the last failure', async () => {
+    const c = clock();
+    // The first try fails; the second takes past the window and then succeeds.
+    const f = scriptedFetch(['reject', { after: PHASE4_READ_RETRY_WINDOW_MS, then: 200 }], c);
+    await assert.rejects(driver(f.fetch, c).roomState(ROOM), (error: unknown) => error instanceof Phase4TransportError && error.message === 'fetch failed');
+    assert.equal(f.seen.length, 2);
+  });
+
+  it('starts no try once the window has run out, when a wait overshoots it', async () => {
+    const c = clock();
+    // The second wait, asked for 10 s, wakes 10 minutes later, as a sleeping
+    // laptop's timer can: no third try is dispatched.
+    let waits = 0;
+    const overshooting = {
+      ...c,
+      sleep: async (ms: number) => {
+        waits += 1;
+        c.state.waits.push(ms);
+        c.state.t += waits === 2 ? ms + PHASE4_READ_RETRY_WINDOW_MS : ms;
+      },
+    };
+    const f = scriptedFetch(['reject', 'reject', 200], c);
+    await assert.rejects(driver(f.fetch, overshooting).roomState(ROOM), (error: unknown) => error instanceof Phase4TransportError);
+    assert.equal(f.seen.length, 2);
+  });
+
+  it('cuts a try’s timeout to the time left in the window', async () => {
+    const c = clock();
+    // The second try fails 10,050 ms before the window ends; the next try,
+    // 10 s later, has 50 ms left, and its timeout is cut to that, not 10 s.
+    const f = scriptedFetch(['reject', { after: PHASE4_READ_RETRY_WINDOW_MS - 5_000 - 10_050, then: 'reject' }, 'hang'], c);
+    const started = Date.now();
+    await assert.rejects(driver(f.fetch, c, [], 10_000).roomState(ROOM), /no answer within 50ms/);
+    assert.ok(Date.now() - started < 5_000, 'the last try ended at the window, not at its own 10 s timeout');
+    assert.equal(f.seen.length, 3);
+  });
+
+  it('reads an answered request whose body stalls under its status: a 503 or a 200 is not tried again, a 502 is', async () => {
+    for (const [status, retried] of [[503, false], [200, false], [502, true]] as const) {
+      const c = clock();
+      const lines: string[] = [];
+      const f = scriptedFetch([{ stall: status }, 200], c);
+      const result = driver(f.fetch, c, lines, 20).roomState(ROOM);
+      if (retried) {
+        assert.equal(await result, 'BUILDING');
+        assert.match(lines[0]!, /answered 502; trying again in 5s$/);
+      } else {
+        await assert.rejects(result, new RegExp(`room read answered ${status}`));
+        assert.deepEqual(lines, [], `status ${status}`);
+        assert.equal(f.seen.length, 1, `status ${status}`);
+      }
+    }
   });
 
   it('never retries a 503 or a 4xx', async () => {
@@ -162,6 +235,32 @@ describe('B1: a read that loses its answer is tried again', () => {
       assert.equal(f.seen[0]!.method, 'POST');
       assert.deepEqual(c.state.waits, []);
       assert.deepEqual(lines, []);
+    }
+  });
+
+  it('ends a request at 30 s by default, and not before', async () => {
+    assert.equal(PHASE4_REQUEST_TIMEOUT_MS, 30_000);
+    mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+      const f = scriptedFetch(['hang']);
+      let outcome: string | null = null;
+      const pending = driver(f.fetch).createRoom(ROOM).then(
+        () => {
+          outcome = 'resolved';
+        },
+        (error: unknown) => {
+          outcome = error instanceof Error ? error.message : String(error);
+        },
+      );
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+      mock.timers.tick(29_999);
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+      assert.equal(outcome, null, 'still waiting at 29,999 ms');
+      mock.timers.tick(1);
+      await pending;
+      assert.equal(outcome, 'no answer within 30000ms');
+    } finally {
+      mock.timers.reset();
     }
   });
 
