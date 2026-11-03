@@ -571,6 +571,7 @@ const MILESTONE = 'BR-M7';
 const OTHER_HEAD = '1111111111111111111111111111111111111111';
 const STAMP = '2026-10-31T21:30:00Z';
 const BASE_SHA = '5eaa1f9a77ef66647adf8e7f1a1e43f5c4c79cfc';
+const TRUSTED_COMMENT_TEST = `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)`;
 const CARRIER_LABEL_TEST = "contains(github.event.issue.labels.*.name, 'milestone-carrier') || contains(github.event.pull_request.labels.*.name, 'milestone-carrier') || github.event.label.name == 'milestone-carrier'";
 
 interface EnvelopeFields {
@@ -820,6 +821,7 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
       'I, Michael Daley, Founder (MAD Ventures), authorize merge of each pull\nrequest listed below at the full 40-character head named on its line.\n', '')],
     ['the live-head sentence', (t) => t.replace('Merge each only if its live head still matches the head named for it.\n', '')],
     ['the closing signature line', (t) => t.replace('\n— Michael Daley', '')],
+    ['the opening heading', (t) => t.replace('FOUNDER MILESTONE AUTHORIZATION\n', '')],
   ];
   for (const [part, cut] of removed) {
     it(`refuses an envelope without ${part} (Tier-2 at 5c73e93, finding 2)`, () => {
@@ -1154,7 +1156,7 @@ exit 22
         };
       },
       targets: (event: {
-        EVENT_PR?: string; CARRIER?: string; CARRIER_LABELLED?: string;
+        EVENT_PR?: string; CARRIER?: string; SCAN_CARRIER?: string;
         EVENT_COMMENT_BODY?: string; EVENT_COMMENT_OLD_BODY?: string; EVENT_COMMENT_ASSOCIATION?: string;
       }) => {
         writeFileSync(join(dir, 'output'), '');
@@ -1166,7 +1168,7 @@ exit 22
             ...env,
             EVENT_PR: event.EVENT_PR ?? '',
             CARRIER: event.CARRIER ?? '',
-            CARRIER_LABELLED: event.CARRIER_LABELLED ?? 'false',
+            SCAN_CARRIER: event.SCAN_CARRIER ?? 'false',
             EVENT_COMMENT_BODY: event.EVENT_COMMENT_BODY ?? '',
             EVENT_COMMENT_OLD_BODY: event.EVENT_COMMENT_OLD_BODY ?? '',
             EVENT_COMMENT_ASSOCIATION: event.EVENT_COMMENT_ASSOCIATION ?? '',
@@ -1475,6 +1477,62 @@ exit 22
     }
   });
 
+  // The script normalizes an envelope before reading it, so discovery must
+  // read the same normalized text, or a member the script accepts can be
+  // missed (Tier-2 at ca3a4a5, finding 1).
+  const disguised: Array<[string, string]> = [
+    ['a Markdown link around the repository name', envelopeText().replace(
+      'MADVenturesLLC/founder-os-build-room#81', '[MADVenturesLLC/founder-os-build-room](https://example.invalid/repo)#81')],
+    ['a carriage return inside the repository name', envelopeText().replace(
+      'MADVenturesLLC/founder-os-build-room#81', 'MADVenturesLLC/founder-os-\rbuild-room#81')],
+    ['a Markdown link splitting the PR number', envelopeText().replace(
+      'MADVenturesLLC/founder-os-build-room#81', 'MADVenturesLLC/founder-os-build-room#[8](https://example.invalid/)1')],
+  ];
+  for (const [how, text] of disguised) {
+    it(`in a decoy flood, finds a member the script accepts despite ${how} (Tier-2 at ca3a4a5, finding 1)`, () => {
+      assert.notEqual(text, envelopeText(), 'fixture disguises the entry');
+      const w = stageWorld({ carrierComments: [carrierComment(900, text)] });
+      try {
+        assert.deepEqual(w.judge().posts.map((p) => p.state), ['success'], 'the script accepts this envelope');
+        stageFlood(w, 300);
+        w.put(`issues_${CARRIER}_comments`, [trusted(900, text)]);
+        const t = w.targets({ CARRIER: String(CARRIER) });
+        assert.equal(t.status, 0, t.stderr);
+        assert.deepEqual(t.prs, [PR]);
+      } finally {
+        rmSync(w.dir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  for (const association of ['MEMBER', 'COLLABORATOR']) {
+    it(`in a decoy flood, counts a carrier comment by a ${association} (Tier-2 at ca3a4a5, finding 3)`, () => {
+      const w = stageWorld({});
+      try {
+        stageFlood(w, 300);
+        w.put(`issues_${CARRIER}_comments`, [trusted(900, envelopeText(), association)]);
+        const t = w.targets({ CARRIER: String(CARRIER) });
+        assert.equal(t.status, 0, t.stderr);
+        assert.deepEqual(t.prs, [PR]);
+      } finally {
+        rmSync(w.dir, { recursive: true, force: true });
+      }
+    });
+
+    it(`in a decoy flood, counts a deleted event comment by a ${association}`, () => {
+      const w = stageWorld({});
+      try {
+        stageFlood(w, 300);
+        w.put(`issues_${CARRIER}_comments`, []);
+        const t = w.targets({ CARRIER: String(CARRIER), EVENT_COMMENT_BODY: envelopeText(), EVENT_COMMENT_ASSOCIATION: association });
+        assert.equal(t.status, 0, t.stderr);
+        assert.deepEqual(t.prs, [PR]);
+      } finally {
+        rmSync(w.dir, { recursive: true, force: true });
+      }
+    });
+  }
+
   it('in a decoy flood, still finds the member when its envelope is the comment being deleted', () => {
     const w = stageWorld({});
     try {
@@ -1567,7 +1625,7 @@ exit 22
       ],
     });
     try {
-      const t = w.targets({ EVENT_PR: String(CARRIER), CARRIER: String(CARRIER), CARRIER_LABELLED: 'true' });
+      const t = w.targets({ EVENT_PR: String(CARRIER), CARRIER: String(CARRIER), SCAN_CARRIER: 'true' });
       assert.equal(t.status, 0, t.stderr);
       assert.deepEqual(t.prs, [PR, CARRIER].sort((a, b) => a - b));
     } finally {
@@ -1579,7 +1637,7 @@ exit 22
     const w = stageWorld({ open: [{ number: PR, body: `x\n${milestoneLine()}` }] });
     try {
       w.put('pulls.always', 'not json');
-      const t = w.targets({ EVENT_PR: '82', CARRIER: '82', CARRIER_LABELLED: 'false' });
+      const t = w.targets({ EVENT_PR: '82', CARRIER: '82', SCAN_CARRIER: 'false' });
       assert.equal(t.status, 0, t.stderr);
       assert.deepEqual(t.prs, [82]);
     } finally {
@@ -1666,21 +1724,37 @@ describe('founder-authorization workflow shape — per-PR concurrency and carrie
     const conc = lines.flatMap((l, i) => (/^\s+concurrency:$/.test(l) ? [i] : []));
     const groups = conc.map((i) => block(i).map((l) => l.trim()));
     assert.deepEqual(groups, [
-      // Discovery: grouped by the event, under a name no judging key can
-      // take, with scanning and non-scanning runs in separate groups.
-      [`group: founder-authorization-targets-\${{ (github.event.pull_request || github.event.issue.pull_request) && !(${CARRIER_LABEL_TEST}) && 'pr' || 'scan' }}-\${{ github.event.pull_request.number || github.event.issue.number }}`, 'cancel-in-progress: false'],
-      // Judging: keyed by the judged PR only.
+      // Judging: keyed by the judged PR only. Discovery has no group.
       ['group: founder-authorization-${{ matrix.pr }}', 'cancel-in-progress: false'],
     ]);
   });
 
-  it('reads the carrier label wherever GitHub puts it, with the same test in the discovery group and the step (Tier-2 at e528913, finding 1)', () => {
-    assert.ok(lines.some((l) => l.trim() === `CARRIER_LABELLED: \${{ ${CARRIER_LABEL_TEST} }}`), 'the step reads issue labels, PR labels and a removed label');
+  it('never groups discovery, so no pending discovery is replaced and its event text lost (Tier-2 at ca3a4a5, finding 2)', () => {
+    const jobs = lines.findIndex((l) => l === 'jobs:');
+    const targets = lines.findIndex((l, i) => i > jobs && l === '  targets:');
+    assert.ok(!block(targets).some((l) => l.trim() === 'concurrency:'), 'the targets job has no concurrency group');
+  });
+
+  it('copies the decision script\'s normalize into discovery verbatim (Tier-2 at ca3a4a5, finding 1)', () => {
+    const def = (src: string): string[] => {
+      const all = src.split('\n');
+      const start = all.findIndex((l) => l.trim() === 'def normalize:');
+      const end = all.findIndex((l, i) => i > start && l.trim() === '| ltrimstr(" ") | rtrimstr(" ");');
+      assert.ok(start >= 0 && end > start, 'normalize found');
+      return all.slice(start, end + 1).map((l) => l.trim());
+    };
+    assert.deepEqual(def(text), def(readFileSync(CHECK, 'utf8')));
+    assert.ok(text.includes('| (.body, .old_body) | strings | normalize'), 'discovery normalizes each comment text');
+  });
+
+  it('reads the carrier label wherever GitHub puts it (Tier-2 at e528913, finding 1)', () => {
+    assert.ok(lines.some((l) => l.trim() === `SCAN_CARRIER: \${{ (${CARRIER_LABEL_TEST}) && (github.event_name != 'issue_comment' || ${TRUSTED_COMMENT_TEST}) }}`),
+      'the step reads issue labels, PR labels and a removed label, and scans for a comment only from a trusted author');
     assert.ok(lines.some((l) => l.trim() === 'CARRIER: ${{ github.event.issue.number || github.event.pull_request.number }}'), 'a PR event supplies its own number as the carrier');
   });
 
   it("passes an event comment's text to discovery only from a trusted author (Cursor at 27fe8a7)", () => {
-    const trustedTest = `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)`;
+    const trustedTest = TRUSTED_COMMENT_TEST;
     assert.ok(lines.some((l) => l.trim() === `EVENT_COMMENT_BODY: \${{ ${trustedTest} && github.event.comment.body || '' }}`));
     assert.ok(lines.some((l) => l.trim() === `EVENT_COMMENT_OLD_BODY: \${{ ${trustedTest} && github.event.changes.body.from || '' }}`));
   });
@@ -1716,7 +1790,9 @@ describe('founder-authorization workflow shape — per-PR concurrency and carrie
     for (const want of [
       "github.event_name == 'pull_request_target'",
       '|| github.event.issue.pull_request',
-      "|| contains(github.event.issue.labels.*.name, 'milestone-carrier')",
+      // A comment on a carrier starts discovery only from a trusted author
+      // (Tier-2 at ca3a4a5, finding 2).
+      `|| (contains(github.event.issue.labels.*.name, 'milestone-carrier') && (github.event_name != 'issue_comment' || ${TRUSTED_COMMENT_TEST}))`,
       "|| (github.event.action == 'unlabeled' && github.event.label.name == 'milestone-carrier')",
       // Deletion and transfer revoke whatever labels the payload shows.
       "|| (github.event_name == 'issues' && (github.event.action == 'deleted' || github.event.action == 'transferred'))",

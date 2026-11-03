@@ -55,8 +55,13 @@
 # single-PR route already authorizes the head. A comment on, or a label,
 # close, reopen, delete or transfer of, a milestone-carrier issue re-judges
 # every open PR whose description links that issue, each in its own job, up
-# to the 256 jobs one matrix holds. Above 256 the run fails visibly and judges
-# none, a bound the Founder accepted (Tier-2 finding 3 at 47d71ff). Discovery
+# to the 256 jobs one matrix holds. A comment on a carrier starts that only
+# when its author is the repository's owner, a member or a collaborator: no
+# one else can write, change or remove an envelope. Above 256 linking PRs,
+# only those a trusted comment on the carrier names are judged (Cursor
+# security review at 27fe8a7); if that set still exceeds 256, or the
+# comments cannot be read, the run fails visibly and judges none, a bound the
+# Founder accepted (Tier-2 finding 3 at 47d71ff). Discovery
 # reads the PR list page by page; if GitHub Support deletes a PR while the
 # pages are read, a member can shift onto a page already read and keep an
 # earlier success until its next event, a bound the Founder also accepted
@@ -109,24 +114,19 @@ jobs:
     if: >-
       github.event_name == 'pull_request_target'
       || github.event.issue.pull_request
-      || contains(github.event.issue.labels.*.name, 'milestone-carrier')
+      || (contains(github.event.issue.labels.*.name, 'milestone-carrier') && (github.event_name != 'issue_comment' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
       || (github.event.action == 'unlabeled' && github.event.label.name == 'milestone-carrier')
       || (github.event_name == 'issues' && (github.event.action == 'deleted' || github.event.action == 'transferred'))
-    # Discovery does not judge, so it does not take the judging key. It is
-    # grouped by the event's issue or PR so that a burst of events on one
-    # carrier (anyone can comment on a public issue) collapses to one running
-    # and one pending discovery, as the workflow-level group did before this
-    # change (Cursor security review at afa6d1b). GitHub replaces a pending
-    # run with a newer one, so a run that only judges the event's own PR must
-    # never share a group with a run that scans for a carrier's members: it
-    # could displace the scan and leave a member's success standing. Runs
-    # that scan use the "scan" group and runs that do not use the "pr" group;
-    # within each group every run does the same work on current state, so a
-    # replaced pending run loses nothing (Tier-2 at e528913, finding 1). The
-    # label test here is the CARRIER_LABELLED expression below, verbatim.
-    concurrency:
-      group: founder-authorization-targets-${{ (github.event.pull_request || github.event.issue.pull_request) && !(contains(github.event.issue.labels.*.name, 'milestone-carrier') || contains(github.event.pull_request.labels.*.name, 'milestone-carrier') || github.event.label.name == 'milestone-carrier') && 'pr' || 'scan' }}-${{ github.event.pull_request.number || github.event.issue.number }}
-      cancel-in-progress: false
+    # Discovery has no concurrency group. GitHub replaces a pending run in a
+    # group with a newer one, and a deleted or edited envelope survives only
+    # in its own event's text, so a replaced discovery could lose the only
+    # record of which member to re-judge (Tier-2 at ca3a4a5, finding 2).
+    # Every discovery therefore runs. A comment on a carrier starts one only
+    # when its author is trusted (the test below), so public comments cannot
+    # fan out discoveries (Cursor security review at afa6d1b); an outsider can
+    # neither write an envelope nor change one. Judging still queues per PR in
+    # the evaluate job, where a replaced pending judgment loses nothing, since
+    # every judgment reads the PR's current state.
     runs-on: ubuntu-latest
     outputs:
       prs: ${{ steps.find.outputs.prs }}
@@ -143,14 +143,16 @@ jobs:
           # The text is passed only when the author is the owner, a member or
           # a collaborator: an outsider's text is never needed, and a large
           # enough one could exceed the environment's size limit and fail the
-          # run that replaced a pending scan.
+          # run.
           EVENT_COMMENT_BODY: ${{ contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && github.event.comment.body || '' }}
           EVENT_COMMENT_OLD_BODY: ${{ contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && github.event.changes.body.from || '' }}
           EVENT_COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
-          # The carrier label is under issue.labels for issue and comment
-          # events and under pull_request.labels for PR events; an unlabeled
-          # event that removed it names it in label.name (Tier-2 at e528913).
-          CARRIER_LABELLED: ${{ contains(github.event.issue.labels.*.name, 'milestone-carrier') || contains(github.event.pull_request.labels.*.name, 'milestone-carrier') || github.event.label.name == 'milestone-carrier' }}
+          # Whether to scan for a carrier's members. The carrier label is
+          # under issue.labels for issue and comment events and under
+          # pull_request.labels for PR events; an unlabeled event that removed
+          # it names it in label.name (Tier-2 at e528913). A comment scans
+          # only when its author is trusted (Tier-2 at ca3a4a5, finding 2).
+          SCAN_CARRIER: ${{ (contains(github.event.issue.labels.*.name, 'milestone-carrier') || contains(github.event.pull_request.labels.*.name, 'milestone-carrier') || github.event.label.name == 'milestone-carrier') && (github.event_name != 'issue_comment' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) }}
         run: |
           set -euo pipefail
           event_prs='[]'
@@ -161,8 +163,9 @@ jobs:
             # request keeps its labels, and its events then arrive as PR
             # events, so a labelled one, or one whose carrier label was just
             # removed, is also scanned as a carrier below (Tier-2 at 33e29b0
-            # finding 1, and at e528913 finding 1).
-            if [[ "$CARRIER_LABELLED" != true ]]; then
+            # finding 1, and at e528913 finding 1), unless the event is an
+            # untrusted comment.
+            if [[ "$SCAN_CARRIER" != true ]]; then
               echo "prs=$event_prs" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -206,9 +209,14 @@ jobs:
           # repository in a carrier comment, or in this event's own comment
           # (its text before an edit, or as deleted), written by the
           # repository's owner, a member or a collaborator, which an outsider
-          # cannot be. If those comments cannot be read, or the named set
-          # still exceeds 256, the job fails visibly and judges none: the
-          # Founder accepted that bound (Tier-2 finding 3 at 47d71ff).
+          # cannot be. Each text is first normalized exactly as the decision
+          # script normalizes an envelope (its normalize, copied verbatim; a
+          # test keeps the two identical), and every #<n> in it counts, a
+          # superset of the member entries the script can accept (Tier-2 at
+          # ca3a4a5, finding 1). If those comments cannot be read, or the
+          # named set still exceeds 256, the job fails visibly and judges
+          # none: the Founder accepted that bound (Tier-2 finding 3 at
+          # 47d71ff).
           if [[ "$(jq 'length' "$work/linking.json")" -gt 256 ]]; then
             linking_count="$(jq 'length' "$work/linking.json")"
             page=1
@@ -217,15 +225,27 @@ jobs:
               if [[ "$(jq 'length' "$work/cc-$page.json")" -lt 100 ]]; then break; fi
               page=$((page + 1))
             done
-            jq -sc --arg repo "$REPO" '
-              ($repo | ascii_downcase | gsub("\\."; "\\.")) as $r
-              | ["OWNER", "MEMBER", "COLLABORATOR"] as $trusted
+            jq -sc '
+              def normalize:
+                gsub("\r"; "")
+                | split("\n")
+                | until((length == 0) or (.[0] | test("\\S")); .[1:])
+                | until((length == 0) or (.[-1] | test("\\S")); .[:-1])
+                | if length >= 2
+                     and (.[0] | test("^ {0,3}(```+|~~~+)[^`]*$"))
+                     and (.[-1] | test("^ {0,3}(```+|~~~+)\\s*$"))
+                  then .[1:-1] else . end
+                | join("\n")
+                | gsub("\\[(?<t>[^\\]]*)\\]\\([^)]*\\)"; "\(.t)")
+                | gsub("\\s+"; " ")
+                | ltrimstr(" ") | rtrimstr(" ");
+              ["OWNER", "MEMBER", "COLLABORATOR"] as $trusted
               | [(add | arrays | .[]),
                  {body: (env.EVENT_COMMENT_BODY // ""), old_body: (env.EVENT_COMMENT_OLD_BODY // ""),
                   author_association: (env.EVENT_COMMENT_ASSOCIATION // "")}]
               | map(select(type == "object" and (.author_association as $a | $trusted | index($a)))
-                    | (.body, .old_body) | strings | ascii_downcase
-                    | scan($r + "#([1-9][0-9]*)") | .[0] | tonumber)
+                    | (.body, .old_body) | strings | normalize
+                    | scan("#([1-9][0-9]*)") | .[0] | tonumber)
               | unique
             ' "$work"/cc-*.json > "$work/named.json"
             jq -c --slurpfile named "$work/named.json" '[.[] | select(. as $n | $named[0] | index($n))]' "$work/linking.json" > "$work/linking-named.json"
