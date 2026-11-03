@@ -51,6 +51,31 @@ export interface Phase4RunnerOptions {
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly entry?: Phase4EntryOptions;
+  /**
+   * Called once entry has passed and before anything is written (the room's
+   * creation). A caller that keeps the set's attempts records the attempt
+   * here, so a run that dies after this point is never mistaken for one that
+   * never started. If it throws, nothing is written and the error propagates.
+   */
+  readonly onEntryPassed?: (run: Phase4PlannedRun) => Promise<void>;
+  /**
+   * Called after each planning round settles, before the runner waits on the
+   * Founder's decision. Answering `stop` ends the run there: the record is
+   * collected and judged as it stands (a room left in PLAN_REVIEW is
+   * `interrupted`). FOUNDER-ACT-20261029-BR-PLANNER-READINESS Part B's live
+   * check is made here.
+   */
+  readonly afterRound?: (context: Phase4RoundContext) => Promise<'continue' | 'stop'>;
+}
+
+/** What `afterRound` is told about the round that just settled. */
+export interface Phase4RoundContext {
+  readonly label: Phase4RunLabel;
+  readonly roomId: string;
+  /** 1 for the run's first round. */
+  readonly round: number;
+  /** The round's settled outcome kind, as the driver reported it. */
+  readonly kind: string;
 }
 
 export interface Phase4AttemptResult {
@@ -101,17 +126,26 @@ export class Phase4Runner {
     }
     const deploymentIdAtStart = observation.controlPlane.deploymentId;
 
+    if (this.options.onEntryPassed !== undefined) await this.options.onEntryPassed(run);
     await this.driver.createRoom(run.roomId);
     await this.driver.captureScope(run.roomId, run, set.founderRelay);
 
     let decisionTimedOut = false;
     let roundsExceeded = false;
+    let stoppedAfterRound = false;
     for (let round = 1; ; round += 1) {
       if (round > PHASE4_MAX_ROUNDS_PER_RUN) {
         roundsExceeded = true;
         break;
       }
       const opened = await this.driver.runRound(run.roomId);
+      if (this.options.afterRound !== undefined) {
+        const next = await this.options.afterRound({ label: run.label, roomId: run.roomId, round, kind: opened.kind });
+        if (next === 'stop') {
+          stoppedAfterRound = true;
+          break;
+        }
+      }
       if (opened.kind !== 'plan_review') break;
       const settled = await this.awaitFounder(run.roomId, set.decisionTimeoutMs);
       if (settled === null) {
@@ -123,12 +157,15 @@ export class Phase4Runner {
 
     const record = await this.driver.collectRecord(run.roomId, deploymentIdAtStart);
     const verdict = evaluatePhase4Run(set, run, record, { decisionTimedOut, roundsExceeded });
+    // A run stopped by afterRound never counts, even if the room advanced to an
+    // approval between the check and the record's collection.
+    const outcome = stoppedAfterRound && verdict.outcome === 'passed' ? 'interrupted' : verdict.outcome;
     return {
       label: run.label,
       roomId: run.roomId,
-      outcome: verdict.outcome,
+      outcome,
       entryFailures: [],
-      failures: verdict.failures,
+      failures: stoppedAfterRound ? [...verdict.failures, 'stopped_after_round'] : verdict.failures,
       recordDigest: phase4RecordDigest(record),
       record,
     };

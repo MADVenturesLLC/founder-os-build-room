@@ -28,6 +28,7 @@
     "migrate:admin": "node dist/packages/control-plane/src/migrate-cli.js",
     "phase2:runs": "node dist/packages/run-harness/src/cli.js",
     "phase3:counted-run": "bash scripts/phase3-counted-run.sh",
+    "phase4:counted-run": "npm run build && node dist/packages/run-harness/src/phase4/cli.js",
     "test:storage": "npm run build && node dist/test/support/require-test-database-url.js && node --test dist/test/*.storage.test.js",
     "test:storage:runtime-role": "npm run build && node dist/test/support/require-test-database-url.js && node dist/test/support/run-runtime-role-tier.js",
     "test:prereq-c": "npm run build && node dist/test/support/require-prereq-c-runtime.js && node --test dist/test/*.prereq-c.storage.test.js",

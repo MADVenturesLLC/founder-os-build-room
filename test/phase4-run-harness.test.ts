@@ -489,6 +489,15 @@ function runner(driver: Phase4RunDriver, clock = { t: 0 }): Phase4Runner {
 }
 
 describe('phase 4 runner · one run of the set, over a scripted driver', () => {
+  it('never counts a run its afterRound check stopped, even when the record would pass', async () => {
+    // The room reached an approval between the check and the record (Copilot, PR 141).
+    const driver = new ScriptedDriver();
+    const result = await new Phase4Runner(driver, { afterRound: async () => 'stop' }).runNext(set(), []);
+    assert.equal(result.outcome, 'interrupted', JSON.stringify(result));
+    assert.ok(result.failures.includes('stopped_after_round'));
+    assert.equal(driver.calls.includes('roomState'), false);
+  });
+
   it('runs the next label to a pass, watching the room until the Founder decides', async () => {
     const driver = new ScriptedDriver();
     driver.states = ['PLAN_REVIEW', 'PLAN_REVIEW', 'BUILDING'];
