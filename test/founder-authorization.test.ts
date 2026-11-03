@@ -844,6 +844,28 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
     assertRefused(judgeEnvelope(envelopeInput({ comments: [bare as IssueComment] })), /has been edited/);
   });
 
+  // Each sentence after the review sentence is mandatory too (Tier-2 at
+  // f8274c4, finding 2). The script collapses whitespace, so the paragraph is
+  // written on one line here and each sentence removed in turn.
+  const flatAttestation = ATTESTATION.replace(/\s+/g, ' ');
+  const laterSentences = [
+    'Each line is a separate authorization.',
+    "A line is void the moment that pull request's head moves, or when a later review finds an unresolved merge-blocking issue on it; the other lines stay in force.",
+    'A void line is re-authorized only by a new comment, never by editing this one.',
+    'This authorization does not cover any pull request that DEC-20261027-01 clause 4 excludes, and does not extend to any pull request not listed above.',
+  ];
+  for (const s of laterSentences) {
+    it(`refuses an envelope without the sentence "${s.slice(0, 30)}…"`, () => {
+      assert.ok(flatAttestation.includes(s), 'fixture holds the sentence');
+      const control = envelopeText().replace(ATTESTATION, flatAttestation);
+      const ok = judgeEnvelope(envelopeInput({ comments: [carrierComment(934, control)] }));
+      assert.equal(ok.verdict.authorized, true, 'the one-line paragraph is accepted');
+      const text = envelopeText().replace(ATTESTATION, flatAttestation.replace(` ${s}`, '').replace(`${s} `, ''));
+      assert.notEqual(text, control, 'fixture removes the sentence');
+      assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(934, text)] })), /is not the Appendix B text/);
+    });
+  }
+
   it('refuses an envelope without the review-attestation paragraph', () => {
     assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(913, envelopeText({ attestation: false }))] })),
       /is not the Appendix B text/);
@@ -1465,6 +1487,27 @@ exit 22
       assert.notEqual(t.status, 0);
       assert.equal(t.prs, null, 'no list is output, so the judging job does not run');
       assert.match(t.stdout, /257 PRs to judge for carrier #200, more than the 256/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('in a flood, still judges a member that carries the carrier label itself, with an error (Tier-2 at f8274c4, finding 1)', () => {
+    const w = stageWorld({});
+    try {
+      // 256 other PRs link the member's own issue URL, so its scan overflows.
+      const ownUrl = `https://github.com/${REPO}/issues/${PR}`;
+      const all = [
+        ...Array.from({ length: 256 }, (_, i) => ({ number: 2000 + i, state: 'open', body: `see ${ownUrl}` })),
+        { number: PR, state: 'open', body: `x\n${milestoneLine()}` },
+      ];
+      for (let p = 0; p * 100 < all.length; p++) {
+        w.put(p === 0 ? 'pulls.always' : `pulls.p${p + 1}.always`, all.slice(p * 100, p * 100 + 100));
+      }
+      const t = w.targets({ EVENT_PR: String(PR), CARRIER: String(PR), SCAN_CARRIER: 'true' });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR], 'the member is still judged');
+      assert.match(t.stdout, /::error::257 PRs to judge for carrier #81, more than the 256/);
     } finally {
       rmSync(w.dir, { recursive: true, force: true });
     }

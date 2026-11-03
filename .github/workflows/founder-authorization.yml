@@ -58,14 +58,16 @@
 # to the 256 jobs one matrix holds. A comment on a carrier starts that only
 # when its author is the repository's owner, a member or a collaborator: no
 # one else can write, change or remove an envelope. Above 256 linking PRs
-# the run fails visibly and judges none, a bound the Founder accepted
+# no linking PR is judged and, unless the event is on a PR, which is still
+# judged, the run fails visibly, a bound the Founder accepted
 # (Tier-2 finding 3 at 47d71ff). The repository is public, so anyone can open
 # PRs that merely mention a carrier's URL; enough of them stop carrier-side
 # re-judgments, keeping a member's earlier success through a revocation made
 # on the carrier. The Founder accepted that too (Cursor security review at
 # 27fe8a7; Founder ruling 2026-11-03, after Tier-2 at 2a4eea3 finding 1):
 # the failed run is visible, and editing the member's own description, a
-# revocation lever, re-judges that member directly with no discovery. Discovery
+# revocation lever, re-judges that member directly, even when the member
+# also carries the carrier label (Tier-2 at f8274c4, finding 1). Discovery
 # reads the PR list page by page; if GitHub Support deletes a PR while the
 # pages are read, a member can shift onto a page already read and keep an
 # earlier success until its next event, a bound the Founder also accepted
@@ -193,15 +195,19 @@ jobs:
                 | select((.body // "") | ascii_downcase | test($re + "(?![0-9])")) | .number]
             | unique
           ' "$work"/all-*.json > "$work/linking.json"
-          # A matrix holds at most 256 jobs. Above that the job fails visibly
-          # and judges none, a bound the Founder accepted (Tier-2 finding 3 at
-          # 47d71ff), as is a flood of PRs that merely mention the carrier
-          # (Cursor security review at 27fe8a7; Founder ruling 2026-11-03):
-          # editing a member's own description re-judges it directly.
+          # A matrix holds at most 256 jobs. Above that no linking PR is
+          # judged, a bound the Founder accepted (Tier-2 finding 3 at 47d71ff),
+          # as is a flood of PRs that merely mention the carrier (Cursor
+          # security review at 27fe8a7; Founder ruling 2026-11-03): editing a
+          # member's own description re-judges it directly. So the event's
+          # own PR, if any, is still judged, even when it carries the carrier
+          # label and its scan overflows (Tier-2 at f8274c4, finding 1), with
+          # an error annotation; with no event PR the job fails visibly.
           prs="$(jq -c --argjson e "$event_prs" '. + $e | unique' "$work/linking.json")"
           if [[ "$(jq 'length' <<<"$prs")" -gt 256 ]]; then
-            echo "::error::$(jq 'length' <<<"$prs") PRs to judge for carrier #$CARRIER, more than the 256 one matrix can judge; none were re-judged."
-            exit 1
+            echo "::error::$(jq 'length' <<<"$prs") PRs to judge for carrier #$CARRIER, more than the 256 one matrix can judge; none were re-judged except this event's own PR, if any."
+            if [[ "$event_prs" == '[]' ]]; then exit 1; fi
+            prs="$event_prs"
           fi
           echo "PRs linking carrier #$CARRIER: $prs"
           echo "prs=$prs" >> "$GITHUB_OUTPUT"
