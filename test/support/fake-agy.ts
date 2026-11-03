@@ -28,6 +28,11 @@
  *   slow_init     init only after two seconds
  *   no_conversation     init naming the lane's model, with no conversation_id
  *   empty_conversation  init naming the lane's model, with an empty conversation_id
+ *   tool_end      init; after the input line, a tool-call line and a SUCCESS result
+ *                 with an empty response, as agy did when the model asked to run a
+ *                 command (Phase4-CR1, 2026-11-03)
+ *   odd_events    as ok, after three lines whose event is not a short lowercase name
+ *   many          as ok, after seventy step lines
  *
  * Whatever the mode, it first enforces what agy 1.4.7 does, as the Founder
  * read it on the PC on 2026-10-26: `--print` must carry a value and refuses
@@ -112,7 +117,7 @@ function acceptInput(line: string): boolean {
   return true;
 }
 
-if (['ok', 'fenced', 'switch', 'error', 'unparseable', 'hang', 'exit', 'stubborn', 'deep_switch'].includes(mode)) {
+if (['ok', 'fenced', 'switch', 'error', 'unparseable', 'hang', 'exit', 'stubborn', 'deep_switch', 'tool_end', 'odd_events', 'many'].includes(mode)) {
   init('gemini-4-argon-high');
 } else if (mode === 'no_conversation') {
   emit({ event: 'init', init: { model: 'gemini-4-argon-high', cwd: process.cwd() } });
@@ -170,6 +175,20 @@ lines.on('line', (line) => {
       break;
     case 'unparseable':
       result('Here is my plan: do the thing.');
+      break;
+    case 'tool_end':
+      emit({ event: 'tool_call', tool_call: { conversation_id: conversation, name: 'run_command', args: { CommandLine: 'git log -n 15 --oneline' } } });
+      result('');
+      break;
+    case 'odd_events':
+      emit({ event: 'Step-Update', step_update: { conversation_id: conversation } });
+      emit({ event: 42 });
+      emit({ step_update: { conversation_id: conversation } });
+      result(plan);
+      break;
+    case 'many':
+      for (let line = 0; line < 70; line += 1) emit({ event: 'step_update', step_update: { conversation_id: conversation, state: 'RUNNING' } });
+      result(plan);
       break;
     case 'exit':
       process.exit(0);

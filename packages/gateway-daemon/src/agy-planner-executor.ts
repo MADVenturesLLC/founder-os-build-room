@@ -169,6 +169,10 @@ export const PLANNER_STOP_BUDGET_MS = 2 * STOP_GRACE_MS + REAP_ANSWER_MS + REAP_
 const MAX_TIMER_MS = 2_147_483_647;
 /** One stream-json line is never larger than this; a larger one fails the run. */
 const MAX_LINE_BYTES = 1024 * 1024;
+/** At most this many of agy's output lines after init are named in a closing record (fix act B2 item 1). */
+const STREAM_EVENTS_RECORDED = 64;
+const STREAM_EVENT_RE = /^[a-z_]{1,32}$/;
+const RESULT_STATUS_RE = /^[A-Z_]{1,32}$/;
 
 const REPOSITORY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/;
@@ -307,7 +311,7 @@ export function modelsNamed(value: unknown): string[] {
 export function plannerPrompt(work: PlannerWorkWire): string {
   const lines = [
     'You are the architect seat of the MAD Ventures Build Room, acting as its Planner.',
-    'Write an Implementation Plan for the goal below. Plan only: do not modify, create or delete any file, do not run any command that changes anything, and do not contact any service.',
+    'Write an Implementation Plan for the goal below. Plan only. You may read files in your working directory with your file-reading tool. You may not run any command or program of any kind, even one that only reads: a request to run one ends your turn with no plan. Do not modify, create or delete any file, and do not contact any service. Give your whole answer in this one turn.',
     `The repository ${work.repository} is checked out read-only in your working directory at commit ${work.baseSha}.`,
     '',
     'GOAL',
@@ -363,6 +367,14 @@ interface EvidenceRecord {
   readonly signal: string | null;
   /** Whether the run's checkout was removed (Amendment 1 C5); `null` when there was none, or the run is still going. */
   readonly checkoutRemoved: boolean | null;
+  /**
+   * How a run that started agy ended (FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX B2), on its
+   * closing record only: the `event` of each line agy wrote after init, the result's status,
+   * and the response's byte length. Never any text agy or the model wrote.
+   */
+  readonly streamEvents?: readonly string[];
+  readonly resultStatus?: string | null;
+  readonly responseBytes?: number | null;
 }
 
 /** Enough of a record's shape to close it at boot: an object with a command id and an outcome. */
@@ -648,7 +660,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     if (refused !== null) {
       // Nothing was written to agy's input: the work never left this host.
       const ended = await this.endRun(run, directory);
-      await this.evidence({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: refused, ...ended });
+      await this.evidence({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: refused, ...ended, ...run.diagnostics() });
       this.log('warn', 'agy.not_sent', { outcome: refused, initModel });
       return { kind: 'not_sent' };
     }
@@ -659,7 +671,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     const sentBase = { ...evidenceBase, sent: true };
     if (!(await this.evidence({ ...sentBase, endedAt: null, outcome: 'running', exitCode: null, signal: null, checkoutRemoved: null }))) {
       const ended = await this.endRun(run, directory);
-      return this.notSentOnceRecorded({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: 'evidence_write_failed', ...ended });
+      return this.notSentOnceRecorded({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: 'evidence_write_failed', ...ended, ...run.diagnostics() });
     }
     // The record took time to write: ask again, and make the last checks with nothing
     // awaited between them and the write, so neither a promotion nor a stop lands between.
@@ -673,7 +685,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     if (late !== null) {
       const ended = await this.endRun(run, directory);
       this.log('warn', 'agy.not_sent', { outcome: late, initModel });
-      return this.notSentOnceRecorded({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: late, ...ended });
+      return this.notSentOnceRecorded({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: late, ...ended, ...run.diagnostics() });
     }
     run.send(agyInputLine(plannerPrompt(work)));
 
@@ -681,7 +693,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       const ended = await this.endRun(run, directory);
       // A run whose closing record cannot be written is not reported as having ended as it
       // did: the record would still say running, and boot would close it as a daemon death.
-      if (!(await this.evidence({ ...sentBase, endedAt: this.isoNow(), outcome: outcome.kind, ...ended }))) {
+      if (!(await this.evidence({ ...sentBase, endedAt: this.isoNow(), outcome: outcome.kind, ...ended, ...run.diagnostics() }))) {
         throw new Error(`the run ended (${outcome.kind}), but its record could not be written`);
       }
       if (outcome.kind !== 'plan') throw new Error(`agy run ended without a plan: ${outcome.kind}`);
@@ -1157,6 +1169,9 @@ type RunOutcome =
 /** One agy process: its output as events, its input written once, its end. */
 class AgyRun {
   private readonly events: Record<string, unknown>[] = [];
+  /** The `event` of each non-empty output line, `other` when it has none that fits; capped, init included. */
+  private readonly kinds: string[] = [];
+  private kindsOverflow = false;
   private readonly waiters: (() => void)[] = [];
   private closed = false;
   private malformed = false;
@@ -1184,10 +1199,12 @@ class AgyRun {
     lines.on('line', (line) => {
       if (Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES) {
         this.malformed = true;
+        this.noteKind(null);
         return this.wake();
       }
       if (line.trim() === '') return;
       const event = parseEvent(line);
+      this.noteKind(event);
       if (event === null) this.malformed = true;
       else this.events.push(event);
       this.wake();
@@ -1200,6 +1217,36 @@ class AgyRun {
 
   private wake(): void {
     for (const waiter of this.waiters.splice(0)) waiter();
+  }
+
+  /** One more output line's kind: its `event` if that is a short lowercase name, otherwise `other`. */
+  private noteKind(event: Record<string, unknown> | null): void {
+    // Init plus the recorded lines; what is beyond them is only counted as more.
+    if (this.kinds.length > STREAM_EVENTS_RECORDED) {
+      this.kindsOverflow = true;
+      return;
+    }
+    const name = event === null ? undefined : event['event'];
+    this.kinds.push(typeof name === 'string' && STREAM_EVENT_RE.test(name) ? name : 'other');
+  }
+
+  /**
+   * How the run ended, for its closing record (fix act B2): the kinds of the lines after
+   * init, the first result's status and its response's byte length. No text is kept.
+   */
+  diagnostics(): { streamEvents: string[]; resultStatus: string | null; responseBytes: number | null } {
+    const afterInit = this.kinds[0] === 'init' ? this.kinds.slice(1) : [...this.kinds];
+    const overflow = this.kindsOverflow || afterInit.length > STREAM_EVENTS_RECORDED;
+    const streamEvents = overflow ? [...afterInit.slice(0, STREAM_EVENTS_RECORDED), 'truncated'] : afterInit;
+    const first = this.events.findIndex((event) => event['event'] === 'result');
+    const result = first === -1 ? null : objectAt(this.events[first], 'result');
+    const status = result === null ? undefined : result['status'];
+    const response = result === null ? undefined : result['response'];
+    return {
+      streamEvents,
+      resultStatus: typeof status === 'string' && RESULT_STATUS_RE.test(status) ? status : null,
+      responseBytes: typeof response === 'string' ? Buffer.byteLength(response, 'utf8') : null,
+    };
   }
 
   private next(timeoutMs: number): Promise<boolean> {

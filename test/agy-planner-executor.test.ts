@@ -162,6 +162,7 @@ import {
   GatewayDaemon,
   gatewayPaths,
   planDocumentFrom,
+  plannerPrompt,
   childEnvironment,
   modelsNamed,
   pgrepProbe,
@@ -421,6 +422,16 @@ function placeEvidence(h: Harness, commandId: string, line: string): string {
   return path;
 }
 
+describe('the prompt (FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX B1)', () => {
+  it('lets the Planner read files and forbids every command, even one that only reads', () => {
+    const prompt = plannerPrompt(work());
+    assert.match(prompt, /Plan only\. You may read files in your working directory with your file-reading tool\./);
+    assert.match(prompt, /You may not run any command or program of any kind, even one that only reads: a request to run one ends your turn with no plan\./);
+    assert.match(prompt, /Do not modify, create or delete any file, and do not contact any service\. Give your whole answer in this one turn\./);
+    assert.doesNotMatch(prompt, /changes anything/);
+  });
+});
+
 describe('the command line', () => {
   it('is sudo -n -u <planner user> -- <agy> and exactly the pinned arguments, in plan mode', () => {
     const { executor } = harness({ mode: 'ok' });
@@ -546,6 +557,10 @@ describe('start: the init gate', () => {
     assert.equal(evidence?.['conversationId'], '3b2c7a4c-1bda-46b1-8dc1-44641701df02');
     assert.equal(evidence?.['sent'], true);
     assert.equal(evidence?.['outcome'], 'plan');
+    // How it ended, without its text (FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX B2).
+    assert.deepEqual(evidence?.['streamEvents'], ['step_update', 'result']);
+    assert.equal(evidence?.['resultStatus'], 'SUCCESS');
+    assert.equal(evidence?.['responseBytes'], Buffer.byteLength(JSON.stringify(plan), 'utf8'));
   });
 
   for (const [mode, outcome] of [
@@ -569,6 +584,10 @@ describe('start: the init gate', () => {
       const [evidence] = evidenceOf(h.gatewayDirectory);
       assert.equal(evidence?.['sent'], false);
       assert.equal(evidence?.['outcome'], outcome);
+      // agy was started, so its closing record says how it ended (fix act B2).
+      assert.ok(Array.isArray(evidence?.['streamEvents']));
+      assert.equal(evidence?.['resultStatus'], null);
+      assert.equal(evidence?.['responseBytes'], null);
     });
   }
 });
@@ -589,6 +608,45 @@ describe('start: a run that fails after the work is sent', () => {
       assert.notEqual(evidence?.['outcome'], 'plan');
     });
   }
+
+  it('records how a run that asked for a command ended, and none of its text (fix act B2)', async () => {
+    const w = work();
+    const h = harness({ mode: 'tool_end', plan: readyPlanFor({ ...w } as never) });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind !== 'accepted') return;
+    await assert.rejects(started.completion, /unparseable_plan/);
+    const [evidence] = evidenceOf(h.gatewayDirectory);
+    assert.equal(evidence?.['outcome'], 'unparseable_plan');
+    assert.deepEqual(evidence?.['streamEvents'], ['tool_call', 'result']);
+    assert.equal(evidence?.['resultStatus'], 'SUCCESS');
+    assert.equal(evidence?.['responseBytes'], 0);
+    const written = readFileSync(join(h.gatewayDirectory, 'planner-evidence', readdirSync(join(h.gatewayDirectory, 'planner-evidence'))[0] ?? ''), 'utf8');
+    assert.doesNotMatch(written, /git log|run_command|CommandLine/, 'no text agy wrote is kept');
+  });
+
+  it('names a line whose event is not a short lowercase name "other"', async () => {
+    const w = work();
+    const plan = readyPlanFor({ ...w } as never);
+    const h = harness({ mode: 'odd_events', plan });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') assert.deepEqual(await started.completion, { kind: 'plan', document: plan });
+    assert.deepEqual(evidenceOf(h.gatewayDirectory)[0]?.['streamEvents'], ['other', 'other', 'other', 'result']);
+  });
+
+  it('names at most 64 lines after init, then "truncated"', async () => {
+    const w = work();
+    const plan = readyPlanFor({ ...w } as never);
+    const h = harness({ mode: 'many', plan });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') await started.completion;
+    const events = evidenceOf(h.gatewayDirectory)[0]?.['streamEvents'] as string[];
+    assert.equal(events.length, 65);
+    assert.deepEqual(events.slice(0, 64), new Array(64).fill('step_update'));
+    assert.equal(events[64], 'truncated');
+  });
 
   it('reads a plan from a fenced JSON answer', async () => {
     const w = work();
