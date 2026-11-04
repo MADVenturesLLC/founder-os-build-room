@@ -34,6 +34,7 @@ const PR = 81;
 const HEAD = 'cac52010ca49ec2ecb15837d4e47c2cbb2673924';
 const OLDER_HEAD = '9ead1233ee6f0f6ffbc53b740c95e9d290eae91e';
 const FOUNDER = 'decivantiq';
+const JUDGE_STEP = 'Judge the current head and publish the status';
 
 interface Comment {
   id: number;
@@ -158,7 +159,7 @@ describe('founder-authorization workflow shape', () => {
   const text = readFileSync(WORKFLOW, 'utf8');
   const lines = text.split('\n').filter((l) => l.trim() !== '' && !/^\s*#/.test(l));
 
-  it('is triggered by pull_request_target and issue_comment only', () => {
+  it('is triggered by pull_request_target, issue_comment and issues only', () => {
     const onIndex = lines.findIndex((l) => l === 'on:');
     assert.ok(onIndex !== -1, 'expected a top-level on: block');
     const triggers: string[] = [];
@@ -167,7 +168,7 @@ describe('founder-authorization workflow shape', () => {
       const m = /^ {2}([a-z_]+):/.exec(l);
       if (m?.[1] !== undefined) triggers.push(m[1]);
     }
-    assert.deepEqual(triggers, ['pull_request_target', 'issue_comment']);
+    assert.deepEqual(triggers, ['pull_request_target', 'issue_comment', 'issues']);
   });
 
   it('never checks out or references the PR head', () => {
@@ -252,7 +253,8 @@ esac
 
   function runScript(): string {
     const text = readFileSync(WORKFLOW, 'utf8').split('\n');
-    const start = text.findIndex((l) => /^\s+run: \|$/.test(l));
+    const step = text.findIndex((l) => l.trim() === `- name: ${JUDGE_STEP}`);
+    const start = text.findIndex((l, i) => i > step && /^\s+run: \|$/.test(l));
     assert.ok(start !== -1, 'expected one run: block');
     const runIndent = (text[start] ?? '').length - (text[start] ?? '').trimStart().length;
     const body: string[] = [];
@@ -407,7 +409,8 @@ esac
 
   function workflowRunScript(): string {
     const text = readFileSync(WORKFLOW, 'utf8').split('\n');
-    const start = text.findIndex((l) => /^\s+run: \|$/.test(l));
+    const step = text.findIndex((l) => l.trim() === `- name: ${JUDGE_STEP}`);
+    const start = text.findIndex((l, i) => i > step && /^\s+run: \|$/.test(l));
     const runIndent = (text[start] ?? '').length - (text[start] ?? '').trimStart().length;
     const body: string[] = [];
     for (const l of text.slice(start + 1)) {
@@ -551,5 +554,1174 @@ esac
     } finally {
       rmSync(s.dir, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * The envelope route (FOUNDER-ACT-20261031-BR-MILESTONE-AUTH-GUARD, Part B):
+ * a head with no single-PR authorization also counts when its description
+ * links a milestone-carrier issue holding a Founder envelope in the
+ * DEC-20261027-01 Appendix B form. The script is driven with ENVELOPE_INPUT
+ * in the shape the REST API returns: the PR, its file list, the carrier
+ * issue, and the carrier's comments.
+ */
+const CARRIER = 200;
+const CARRIER_URL = `https://github.com/${REPO}/issues/${CARRIER}`;
+const MILESTONE = 'BR-M7';
+const OTHER_HEAD = '1111111111111111111111111111111111111111';
+const STAMP = '2026-10-31T21:30:00Z';
+const BASE_SHA = '5eaa1f9a77ef66647adf8e7f1a1e43f5c4c79cfc';
+const TRUSTED_COMMENT_TEST = `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)`;
+const CARRIER_LABEL_TEST = "contains(github.event.issue.labels.*.name, 'milestone-carrier') || contains(github.event.pull_request.labels.*.name, 'milestone-carrier') || github.event.label.name == 'milestone-carrier'";
+
+interface EnvelopeFields {
+  milestone?: string;
+  boundedBy?: string;
+  scope?: string;
+  carrier?: string;
+  members?: string[];
+  attestation?: boolean;
+}
+
+function memberLine(repo: string, pr: number, head: string): string {
+  return `  MADVenturesLLC/${repo}#${pr}  head ${head}`;
+}
+
+const ATTESTATION = `I have reviewed each member's diff at the head named for it. Each line
+is a separate authorization. A line is void the moment that pull
+request's head moves, or when a later review finds an unresolved
+merge-blocking issue on it; the other lines stay in force. A void line
+is re-authorized only by a new comment, never by editing this one. This
+authorization does not cover any pull request that DEC-20261027-01
+clause 4 excludes, and does not extend to any pull request not listed
+above.`;
+
+/** DEC-20261027-01 Appendix B, completed. */
+function envelopeText(f: EnvelopeFields = {}): string {
+  const members = f.members ?? [
+    memberLine('founder-os-build-room', PR, HEAD),
+    memberLine('madventures-tui', 12, OLDER_HEAD),
+  ];
+  return [
+    'FOUNDER MILESTONE AUTHORIZATION',
+    'I, Michael Daley, Founder (MAD Ventures), authorize merge of each pull',
+    'request listed below at the full 40-character head named on its line.',
+    'Merge each only if its live head still matches the head named for it.',
+    '',
+    `  milestone: ${f.milestone ?? MILESTONE}`,
+    `  bounded by: ${f.boundedBy ?? 'Build Room plan BR-P3 task list'}`,
+    `  scope: ${f.scope ?? 'Phase 3 runtime slices'}`,
+    `  carrier: ${f.carrier ?? CARRIER_URL}`,
+    '',
+    ...members,
+    '',
+    ...(f.attestation === false ? [] : [ATTESTATION]),
+    '— Michael Daley',
+  ].join('\n');
+}
+
+interface IssueComment extends Comment {
+  created_at: string;
+  updated_at: string;
+}
+
+function carrierComment(id: number, body: string, opts: { login?: string; edited?: boolean } = {}): IssueComment {
+  return {
+    id,
+    html_url: `${CARRIER_URL}#issuecomment-${id}`,
+    user: { login: opts.login ?? FOUNDER },
+    body,
+    created_at: STAMP,
+    updated_at: opts.edited === true ? '2026-10-31T21:31:00Z' : STAMP,
+  };
+}
+
+interface FileEntry { filename: string; status?: string; previous_filename?: string }
+
+interface EnvelopeInput {
+  pull: { number: number; head: { sha: string }; body: string | null; changed_files: number; updated_at?: string; base?: { ref: string; sha?: string } };
+  files: FileEntry[];
+  compare_files?: FileEntry[] | null;
+  issue: Record<string, unknown> | null;
+  comments: IssueComment[];
+}
+
+function milestoneLine(id: string = MILESTONE, url: string = CARRIER_URL): string {
+  return `Milestone-Auth: ${id} ${url}`;
+}
+
+function envelopeInput(over: {
+  body?: string;
+  files?: FileEntry[];
+  compareFiles?: FileEntry[] | null;
+  changedFiles?: number;
+  issue?: Record<string, unknown> | null;
+  comments?: IssueComment[];
+} = {}): EnvelopeInput {
+  const files = over.files ?? [{ filename: 'packages/run-harness/src/cli.ts', status: 'modified' }];
+  return {
+    pull: {
+      number: PR,
+      head: { sha: HEAD },
+      body: over.body ?? `Phase 3 slice.\n\n${milestoneLine()}\n`,
+      changed_files: over.changedFiles ?? files.length,
+      updated_at: STAMP,
+      base: { ref: 'main', sha: BASE_SHA },
+    },
+    files,
+    compare_files: over.compareFiles === undefined ? files : over.compareFiles,
+    issue: over.issue === undefined
+      ? { number: CARRIER, state: 'open', labels: [{ name: 'milestone-carrier' }], html_url: CARRIER_URL }
+      : over.issue,
+    comments: over.comments ?? [carrierComment(900, envelopeText())],
+  };
+}
+
+function judgeEnvelope(input: EnvelopeInput | string, prComments: Comment[] = []) {
+  const dir = mkdtempSync(join(tmpdir(), 'founder-auth-env-'));
+  try {
+    const path = join(dir, 'envelope.json');
+    writeFileSync(path, typeof input === 'string' ? input : JSON.stringify(input));
+    const result = spawnSync('bash', [CHECK, REPO, String(PR), HEAD], {
+      input: JSON.stringify(prComments),
+      encoding: 'utf8',
+      env: { ...process.env, FOUNDER_LOGINS: FOUNDER, ENVELOPE_INPUT: path },
+    });
+    return { status: result.status, verdict: JSON.parse(result.stdout) as Verdict, stderr: result.stderr };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function assertRefused(r: ReturnType<typeof judgeEnvelope>, reason: RegExp): void {
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.verdict.authorized, false);
+  assert.equal(r.verdict.comment_id, null);
+  assert.match(r.verdict.description, reason);
+}
+
+describe('envelope route — authorized forms (B1, B2, B3)', () => {
+  it('accepts a complete envelope naming this PR at its current head', () => {
+    const r = judgeEnvelope(envelopeInput());
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.verdict.authorized, true);
+    assert.equal(r.verdict.comment_id, 900);
+    assert.equal(r.verdict.description, `Authorized at head ${HEAD.slice(0, 7)} by envelope comment 900 on carrier #${CARRIER}`);
+  });
+
+  it('names the single-PR comment, not the envelope, when the single-PR route authorizes (B3)', () => {
+    const r = judgeEnvelope(envelopeInput(), [comment(7, block())]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.verdict.comment_id, 7);
+    assert.equal(r.verdict.description, `Authorized at head ${HEAD.slice(0, 7)} by comment 7`);
+  });
+
+  it('ignores the envelope entirely when ENVELOPE_INPUT is not set (B5.1)', () => {
+    const r = judge([]);
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(r.verdict.description, `No Founder authorization names head ${HEAD.slice(0, 7)} on #${PR}`);
+  });
+
+  it('accepts carriage-return line endings', () => {
+    const r = judgeEnvelope(envelopeInput({ comments: [carrierComment(901, envelopeText().replace(/\n/g, '\r\n'))] }));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.verdict.comment_id, 901);
+  });
+
+  it('accepts an envelope inside one code fence', () => {
+    const r = judgeEnvelope(envelopeInput({ comments: [carrierComment(902, `\`\`\`text\n${envelopeText()}\n\`\`\`\n`)] }));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.verdict.comment_id, 902);
+  });
+
+  it("accepts Appendix B's sentences wrapped across lines differently", () => {
+    const rewrapped = envelopeText()
+      .replace('of each pull\nrequest', 'of each\npull request')
+      .replace('Each line\nis a separate', 'Each\nline is a separate')
+      .replace('stay in force. A void line\nis', 'stay\nin force.\n  A void line is')
+      .replace('— Michael Daley', '\n— Michael Daley');
+    assert.notEqual(rewrapped, envelopeText());
+    const r = judgeEnvelope(envelopeInput({ comments: [carrierComment(903, rewrapped)] }));
+    assert.equal(r.status, 0, r.stderr);
+  });
+
+  it('accepts a member reference turned into a Markdown link', () => {
+    const linked = `  [MADVenturesLLC/founder-os-build-room#${PR}](https://github.com/${REPO}/pull/${PR})  head ${HEAD}`;
+    const r = judgeEnvelope(envelopeInput({ comments: [carrierComment(904, envelopeText({
+      members: [linked, memberLine('madventures-tui', 12, OLDER_HEAD)],
+    }))] }));
+    assert.equal(r.status, 0, r.stderr);
+  });
+});
+
+describe('envelope route — refused descriptions (B1.1)', () => {
+  it('refuses a Milestone-Auth line naming another repository', () => {
+    const r = judgeEnvelope(envelopeInput({
+      body: milestoneLine(MILESTONE, `https://github.com/MADVenturesLLC/madventures-tui/issues/${CARRIER}`),
+    }));
+    assertRefused(r, /does not name an issue in/);
+  });
+
+  it('refuses two Milestone-Auth lines', () => {
+    const r = judgeEnvelope(envelopeInput({ body: `${milestoneLine()}\n${milestoneLine()}\n` }));
+    assertRefused(r, /2 Milestone-Auth lines/);
+  });
+});
+
+describe('envelope route — refused carriers (B1.2)', () => {
+  const base = { number: CARRIER, state: 'open', labels: [{ name: 'milestone-carrier' }] };
+  it('refuses a carrier that is a pull request', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ issue: { ...base, pull_request: { url: 'x' } } })), /is a pull request/);
+  });
+  it('refuses a closed carrier', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ issue: { ...base, state: 'closed' } })), /is not open/);
+  });
+  it('refuses a carrier without the milestone-carrier label', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ issue: { ...base, labels: [{ name: 'other' }] } })), /milestone-carrier label/);
+  });
+  it('refuses a carrier that could not be read', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ issue: null })), /could not be read/);
+  });
+});
+
+describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () => {
+  it('refuses an envelope by a login not allowed', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(910, envelopeText(), { login: 'cursor[bot]' })] })),
+      /no comment from an allowed login/);
+  });
+
+  it('refuses an edited envelope', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(911, envelopeText(), { edited: true })] })),
+      /has been edited/);
+  });
+
+  const placeholders: Array<[string, EnvelopeFields | ((t: string) => string)]> = [
+    ['<MILESTONE-ID>', (t) => t.replace(`milestone: ${MILESTONE}`, 'milestone: <MILESTONE-ID>')],
+    ['<governing plan / task list / ruling>', { boundedBy: '<governing plan / task list / ruling>' }],
+    ['<one line>', { scope: '<one line>' }],
+    ['<full URL of this milestone issue>', (t) => t.replace(`carrier: ${CARRIER_URL}`, 'carrier: <full URL of this milestone issue>')],
+    ['<repo>', (t) => t.replace('MADVenturesLLC/madventures-tui#12', 'MADVenturesLLC/<repo>#12')],
+    ['<n>', (t) => t.replace('MADVenturesLLC/madventures-tui#12', 'MADVenturesLLC/madventures-tui#<n>')],
+    ['<40-character SHA>', (t) => t.replace(`#12  head ${OLDER_HEAD}`, '#12  head <40-character SHA>')],
+  ];
+  for (const [p, edit] of placeholders) {
+    it(`refuses an envelope still holding the placeholder ${p}`, () => {
+      const text = typeof edit === 'function' ? edit(envelopeText()) : envelopeText(edit);
+      assert.ok(text.includes(p), `fixture holds ${p}`);
+      // Milestone placeholders also need the description to agree, so the
+      // placeholder rule is the one that refuses.
+      const body = p === '<MILESTONE-ID>' ? milestoneLine('<MILESTONE-ID>') : undefined;
+      assertRefused(judgeEnvelope(envelopeInput({ ...(body === undefined ? {} : { body }), comments: [carrierComment(912, text)] })),
+        /placeholder/);
+    });
+  }
+
+  const removed: Array<[string, (t: string) => string]> = [
+    ['the first-person sentence', (t) => t.replace(
+      'I, Michael Daley, Founder (MAD Ventures), authorize merge of each pull\nrequest listed below at the full 40-character head named on its line.\n', '')],
+    ['the live-head sentence', (t) => t.replace('Merge each only if its live head still matches the head named for it.\n', '')],
+    ['the closing signature line', (t) => t.replace('\n— Michael Daley', '')],
+    ['the opening heading', (t) => t.replace('FOUNDER MILESTONE AUTHORIZATION\n', '')],
+    ['the review sentence', (t) => t.replace("I have reviewed each member's diff at the head named for it. ", '')],
+  ];
+  for (const [part, cut] of removed) {
+    it(`refuses an envelope without ${part} (Tier-2 at 5c73e93, finding 2)`, () => {
+      const text = cut(envelopeText());
+      assert.notEqual(text, envelopeText(), `fixture removes ${part}`);
+      assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(929, text)] })), /is not the Appendix B text/);
+    });
+  }
+
+  it('refuses a placeholder hidden in a Markdown link target (Tier-2 at 2a4eea3, finding 2)', () => {
+    const text = envelopeText({ scope: '[Phase 3 runtime slices](https://example.invalid/<n>)' });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(932, text)] })), /placeholder/);
+  });
+
+  it('refuses an envelope comment with neither timestamp (Tier-2 at 2a4eea3, finding 2)', () => {
+    const bare: Partial<IssueComment> = carrierComment(933, envelopeText());
+    delete bare.created_at;
+    delete bare.updated_at;
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [bare as IssueComment] })), /has been edited/);
+  });
+
+  // Each sentence after the review sentence is mandatory too (Tier-2 at
+  // f8274c4, finding 2). The script collapses whitespace, so the paragraph is
+  // written on one line here and each sentence removed in turn.
+  const flatAttestation = ATTESTATION.replace(/\s+/g, ' ');
+  const laterSentences = [
+    'Each line is a separate authorization.',
+    "A line is void the moment that pull request's head moves, or when a later review finds an unresolved merge-blocking issue on it; the other lines stay in force.",
+    'A void line is re-authorized only by a new comment, never by editing this one.',
+    'This authorization does not cover any pull request that DEC-20261027-01 clause 4 excludes, and does not extend to any pull request not listed above.',
+  ];
+  for (const s of laterSentences) {
+    it(`refuses an envelope without the sentence "${s.slice(0, 30)}…"`, () => {
+      assert.ok(flatAttestation.includes(s), 'fixture holds the sentence');
+      const control = envelopeText().replace(ATTESTATION, flatAttestation);
+      const ok = judgeEnvelope(envelopeInput({ comments: [carrierComment(934, control)] }));
+      assert.equal(ok.verdict.authorized, true, 'the one-line paragraph is accepted');
+      const text = envelopeText().replace(ATTESTATION, flatAttestation.replace(` ${s}`, '').replace(`${s} `, ''));
+      assert.notEqual(text, control, 'fixture removes the sentence');
+      assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(934, text)] })), /is not the Appendix B text/);
+    });
+  }
+
+  it('refuses an envelope without the review-attestation paragraph', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(913, envelopeText({ attestation: false }))] })),
+      /is not the Appendix B text/);
+  });
+
+  it('refuses an empty bounded by field', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(914, envelopeText({ boundedBy: '' }))] })),
+      /not the Appendix B text|empty field/);
+  });
+
+  it('refuses an empty scope field', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(915, envelopeText({ scope: '' }))] })),
+      /not the Appendix B text|empty field/);
+  });
+
+  it("refuses a field value holding a later field's label (scope: inside bounded by)", () => {
+    const text = envelopeText({ boundedBy: 'plan X scope: all of it' });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(916, text)] })), /holding a later field label/);
+  });
+
+  it("refuses a field value holding two later fields' labels", () => {
+    const text = envelopeText({ boundedBy: 'plan X scope: everything carrier: anywhere' });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(918, text)] })), /holding a later field label/);
+  });
+
+  it("accepts an earlier field's label inside a later value (Tier-2 at 47d71ff, finding 4)", () => {
+    const text = envelopeText({ scope: 'Repair the milestone: display', boundedBy: 'plan for milestone: BR-M7' });
+    const r = judgeEnvelope(envelopeInput({ comments: [carrierComment(919, text)] }));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.verdict.comment_id, 919);
+  });
+
+  it('refuses a value holding its own label, which cannot be told apart from a later label hidden in an earlier value', () => {
+    const text = envelopeText({ scope: 'fix scope: creep' });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(925, text)] })), /holding a later field label/);
+  });
+
+  it('accepts a carriage return inside a word, which B2 removes rather than turning into a space', () => {
+    const text = envelopeText().replace('FOUNDER MILESTONE', 'FOU\rNDER MILESTONE');
+    const r = judgeEnvelope(envelopeInput({ comments: [carrierComment(926, text)] }));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.verdict.comment_id, 926);
+  });
+
+  it('refuses text after the envelope (Tier-2 at 33e29b0, finding 4)', () => {
+    const text = `${envelopeText()}\n\nWithdrawn: do not merge #81.`;
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(927, text)] })), /is not the Appendix B text/);
+  });
+
+  it('refuses text before or after the envelope', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(917, `Draft:\n${envelopeText()}`)] })),
+      /is not the Appendix B text/);
+  });
+});
+
+describe('envelope route — refused member entries and fields (B1.4, B1.5)', () => {
+  it('refuses a member entry naming another head', () => {
+    const text = envelopeText({ members: [memberLine('founder-os-build-room', PR, OTHER_HEAD)] });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(920, text)] })), /names another head/);
+  });
+
+  it('counts entries for this PR whatever the case of the repository name (Tier-2 at e528913, finding 2)', () => {
+    const text = envelopeText({ members: [memberLine('founder-os-build-room', PR, HEAD), memberLine('Founder-OS-Build-Room', PR, OTHER_HEAD)] });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(928, text)] })), /2 entries for #81/);
+  });
+
+  it('refuses two member entries for this pull request', () => {
+    const text = envelopeText({ members: [memberLine('founder-os-build-room', PR, HEAD), memberLine('founder-os-build-room', PR, HEAD)] });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(921, text)] })), /2 entries for #81/);
+  });
+
+  it('refuses an envelope with no member entry for this pull request', () => {
+    const text = envelopeText({ members: [memberLine('founder-os-build-room', 80, HEAD)] });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(922, text)] })), /0 entries for #81/);
+  });
+
+  it('refuses a MILESTONE-ID mismatch', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(923, envelopeText({ milestone: 'BR-M8' }))] })),
+      /names milestone BR-M8, not BR-M7/);
+  });
+
+  it('refuses a carrier URL mismatch', () => {
+    const text = envelopeText({ carrier: `https://github.com/${REPO}/issues/201` });
+    assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(924, text)] })), /names another carrier/);
+  });
+});
+
+describe('envelope route — excluded paths and incomplete file lists (B1.8)', () => {
+  const excluded = [
+    '.github/workflows/ci.yml',
+    'AGENTS.md',
+    'packages/gateway-daemon/AGENTS.md',
+    'CLAUDE.md',
+    'docs/CLAUDE.md',
+    'scripts/path-audit.sh',
+    'railway.toml',
+    'package.json',
+    'package-lock.json',
+    'packages/control-plane/src/migrations.ts',
+    'packages/control-plane/src/migrate-cli.ts',
+    'packages/control-plane/sql/0007_add.sql',
+  ];
+  for (const filename of excluded) {
+    it(`refuses a pull request changing ${filename}`, () => {
+      const files = [{ filename: 'packages/run-harness/src/cli.ts' }, { filename }];
+      assertRefused(judgeEnvelope(envelopeInput({ files })), new RegExp(`changes ${filename.replace(/\./g, '\\.')}, which`));
+    });
+  }
+
+  it('refuses a rename out of an excluded path', () => {
+    const files = [{ filename: 'docs/path-audit.sh', status: 'renamed', previous_filename: 'scripts/path-audit.sh' }];
+    assertRefused(judgeEnvelope(envelopeInput({ files })), /changes scripts\/path-audit\.sh, which/);
+  });
+
+  it('accepts files that only resemble excluded paths', () => {
+    const files = [
+      { filename: 'packages/control-plane/package.json.md' },
+      { filename: 'docs/scripts/notes.md' },
+      { filename: 'packages/x/src/migrations.ts' },
+    ];
+    const r = judgeEnvelope(envelopeInput({ files }));
+    assert.equal(r.status, 0, r.stderr);
+  });
+
+  it('refuses a file list holding fewer files than the pull request reports changed', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ changedFiles: 2 })), /may be incomplete/);
+  });
+
+  it("refuses a file list that reaches the API's 3,000-file limit", () => {
+    const files = Array.from({ length: 3000 }, (_, i) => ({ filename: `packages/x/src/f${i}.ts` }));
+    assertRefused(judgeEnvelope(envelopeInput({ files })), /may be incomplete/);
+  });
+
+  it('refuses a pull request object that does not report changed_files', () => {
+    const input = envelopeInput();
+    const pull = { ...input.pull } as Partial<EnvelopeInput['pull']>;
+    delete pull.changed_files;
+    assertRefused(judgeEnvelope({ ...input, pull: pull as EnvelopeInput['pull'] }), /may be incomplete/);
+  });
+
+  it('refuses envelope input describing another pull request', () => {
+    const input = envelopeInput();
+    assertRefused(judgeEnvelope({ ...input, pull: { ...input.pull, number: 80 } }), /another pull request or head/);
+  });
+
+  it('refuses envelope input describing another head', () => {
+    const input = envelopeInput();
+    assertRefused(judgeEnvelope({ ...input, pull: { ...input.pull, head: { sha: OTHER_HEAD } } }), /another pull request or head/);
+  });
+
+  it('refuses a file list that is not an array', () => {
+    const input = envelopeInput();
+    assertRefused(judgeEnvelope({ ...input, files: { filename: 'a.ts' } as unknown as FileEntry[] }), /file list is malformed/);
+  });
+
+  it('refuses a file entry without a filename', () => {
+    const input = envelopeInput({ files: [{ filename: 'packages/x/a.ts' }, { status: 'added' } as unknown as FileEntry] });
+    assertRefused(judgeEnvelope(input), /file list is malformed/);
+  });
+
+  it('refuses a rename without a previous_filename (Tier-2 at 11afcff, finding 2)', () => {
+    const files = [{ filename: 'docs/path-audit.sh', status: 'renamed' }];
+    assertRefused(judgeEnvelope(envelopeInput({ files })), /file list is malformed/);
+  });
+
+  it('refuses a previous_filename that is not a string', () => {
+    // Not marked as a rename, so only the type rule can refuse it.
+    const files = [{ filename: 'docs/a.ts', status: 'modified', previous_filename: 7 as unknown as string }];
+    assertRefused(judgeEnvelope(envelopeInput({ files })), /file list is malformed/);
+  });
+
+  it('refuses a file list naming one file twice', () => {
+    const files = [{ filename: 'packages/x/a.ts' }, { filename: 'packages/x/a.ts' }];
+    assertRefused(judgeEnvelope(envelopeInput({ files })), /file list is malformed/);
+  });
+
+  it('refuses a missing head comparison', () => {
+    assertRefused(judgeEnvelope(envelopeInput({ compareFiles: null })), /comparison file list is missing or malformed/);
+  });
+
+  it("refuses a rename whose source differs from the head comparison's (Tier-2 at e528913, finding 2)", () => {
+    const files = [{ filename: 'docs/ci.yml', status: 'renamed', previous_filename: 'docs/old-ci.yml' }];
+    const compareFiles = [{ filename: 'docs/ci.yml', status: 'renamed', previous_filename: '.github/workflows/ci.yml' }];
+    assertRefused(judgeEnvelope(envelopeInput({ files, compareFiles })), /does not match head cac5201/);
+  });
+
+  it("refuses a file list that differs from the head's own comparison (Tier-2 at 11afcff, finding 3)", () => {
+    const files = [{ filename: 'packages/run-harness/src/cli.ts' }];
+    const compareFiles = [{ filename: '.github/workflows/ci.yml' }];
+    assertRefused(judgeEnvelope(envelopeInput({ files, compareFiles })), /does not match head cac5201/);
+  });
+
+  it('refuses when the head comparison lists 300 or more files, which it cannot bind', () => {
+    const files = Array.from({ length: 300 }, (_, i) => ({ filename: `packages/x/src/f${i}.ts` }));
+    assertRefused(judgeEnvelope(envelopeInput({ files })), /cannot bind 300 or more/);
+  });
+
+  it('accepts a matching comparison that lists renames the same way', () => {
+    const files = [{ filename: 'docs/new.md', status: 'renamed', previous_filename: 'docs/old.md' }];
+    const r = judgeEnvelope(envelopeInput({ files }));
+    assert.equal(r.status, 0, r.stderr);
+  });
+
+  it('refuses carrier comments that are not an array', () => {
+    const input = envelopeInput();
+    assertRefused(judgeEnvelope({ ...input, comments: { id: 1 } as unknown as IssueComment[] }), /carrier comments are malformed/);
+  });
+
+  it('refuses envelope input that is not a JSON object (exit 2)', () => {
+    const r = judgeEnvelope('[1]');
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.verdict.description, /^refused: envelope input/);
+  });
+});
+
+/**
+ * The workflow's two steps run for real against a fake GitHub API that
+ * serves fixture files by URL path and logs every call, so the event-driven
+ * re-judging of B4 and the no-call promise of B5.2 can be observed.
+ */
+describe('founder-authorization workflow — envelope route and carrier re-judging', () => {
+  const ROUTED_CURL = `#!/usr/bin/env bash
+url=""; post=0; data=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -X) [[ "$2" == POST ]] && post=1; shift 2 ;;
+    -d) data="$2"; shift 2 ;;
+    -H) shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if [[ $post -eq 1 ]]; then printf '%s\\n' "$data" >> "$FAKE_DIR/posts.log"; echo '{}'; exit 0; fi
+printf '%s\\n' "$url" >> "$FAKE_DIR/calls.log"
+path="\${url#https://api.github.com/repos/*/*/}"
+query=""; [[ "$path" == *\\?* ]] && query="\${path#*\\?}"
+path="\${path%%\\?*}"
+page=1; [[ "$query" =~ (^|&)page=([0-9]+) ]] && page="\${BASH_REMATCH[2]}"
+name="\${path//\\//_}"
+if [[ -n "\${FAKE_FAIL:-}" && "$url" == *"$FAKE_FAIL"* ]]; then exit 22; fi
+key="$name"; [[ "$page" -gt 1 ]] && key="$name.p$page"
+count="$FAKE_DIR/.count-$key"; n=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$count"
+if [[ -e "$FAKE_DIR/$key.call$n" ]]; then cat "$FAKE_DIR/$key.call$n"; exit 0; fi
+if [[ -e "$FAKE_DIR/$key.always" ]]; then cat "$FAKE_DIR/$key.always"; exit 0; fi
+if [[ -e "$FAKE_DIR/$key" ]]; then cat "$FAKE_DIR/$key"; exit 0; fi
+if [[ "$page" -gt 1 ]]; then echo '[]'; exit 0; fi
+exit 22
+`;
+
+  function stepRun(name: string): string {
+    const text = readFileSync(WORKFLOW, 'utf8').split('\n');
+    const step = text.findIndex((l) => l.trim() === `- name: ${name}`);
+    assert.ok(step !== -1, `expected a step named ${name}`);
+    const start = text.findIndex((l, i) => i > step && /^\s+run: \|$/.test(l));
+    const runIndent = (text[start] ?? '').length - (text[start] ?? '').trimStart().length;
+    const body: string[] = [];
+    for (const l of text.slice(start + 1)) {
+      if (l.trim() !== '' && l.length - l.trimStart().length <= runIndent) break;
+      body.push(l.slice(runIndent + 2));
+    }
+    return body.join('\n');
+  }
+
+  interface World {
+    pull?: Record<string, unknown>;
+    files?: FileEntry[];
+    prComments?: Comment[];
+    open?: Array<Record<string, unknown>>;
+    issue?: Record<string, unknown> | null;
+    carrierComments?: IssueComment[];
+    pullSecondRead?: Record<string, unknown>;
+    compareFiles?: FileEntry[];
+  }
+
+  function stageWorld(w: World) {
+    const dir = mkdtempSync(join(tmpdir(), 'founder-auth-wf-'));
+    const bin = join(dir, 'bin');
+    spawnSync('mkdir', ['-p', bin]);
+    writeFileSync(join(bin, 'curl'), ROUTED_CURL);
+    chmodSync(join(bin, 'curl'), 0o755);
+    const input = envelopeInput();
+    const pull = w.pull ?? input.pull;
+    const files = w.files ?? input.files;
+    const put = (name: string, v: unknown) => writeFileSync(join(dir, name), JSON.stringify(v));
+    put(`pulls_${PR}`, pull);
+    if (w.pullSecondRead !== undefined) put(`pulls_${PR}.call2`, w.pullSecondRead);
+    put(`pulls_${PR}_files`, files);
+    put(`compare_${BASE_SHA}...${HEAD}`, { files: w.compareFiles === undefined ? files : w.compareFiles });
+    put(`issues_${PR}_comments`, w.prComments ?? []);
+    put('pulls', (w.open ?? [{ number: PR, head: { sha: HEAD }, body: pull.body }]).map((p) => ({ state: 'open', ...p })));
+    if (w.issue !== null) put(`issues_${CARRIER}`, w.issue ?? input.issue);
+    put(`issues_${CARRIER}_comments`, w.carrierComments ?? input.comments);
+    writeFileSync(join(dir, 'posts.log'), '');
+    writeFileSync(join(dir, 'calls.log'), '');
+    writeFileSync(join(dir, 'output'), '');
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      FAKE_DIR: dir,
+      PATH: `${bin}:${process.env.PATH ?? ''}`,
+      GH_TOKEN: 'fake-token-for-tests',
+      REPO,
+      FOUNDER_LOGINS: FOUNDER,
+      GITHUB_OUTPUT: join(dir, 'output'),
+    };
+    const read = (f: string) => readFileSync(join(dir, f), 'utf8').split('\n').filter((l) => l !== '');
+    return {
+      dir,
+      env,
+      put,
+      remove: (name: string) => rmSync(join(dir, name), { force: true }),
+      judge: (extra: NodeJS.ProcessEnv = {}) => {
+        writeFileSync(join(dir, 'posts.log'), '');
+        writeFileSync(join(dir, 'calls.log'), '');
+        for (const f of ['pulls', `pulls_${PR}`]) rmSync(join(dir, `.count-${f}`), { force: true });
+        const r = spawnSync('bash', ['-c', stepRun(JUDGE_STEP)], {
+          cwd: REPO_ROOT, encoding: 'utf8', env: { ...env, PR_NUMBER: String(PR), ...extra },
+        });
+        return {
+          status: r.status,
+          stderr: r.stderr,
+          posts: read('posts.log').map((l) => JSON.parse(l) as { state: string; description: string }),
+          calls: read('calls.log'),
+        };
+      },
+      targets: (event: {
+        EVENT_PR?: string; CARRIER?: string; SCAN_CARRIER?: string;
+      }) => {
+        writeFileSync(join(dir, 'output'), '');
+        spawnSync('bash', ['-c', 'rm -f "$1"/.count-*', 'reset', dir]);
+        const r = spawnSync('bash', ['-c', stepRun('Find the pull requests to judge')], {
+          cwd: REPO_ROOT,
+          encoding: 'utf8',
+          env: {
+            ...env,
+            EVENT_PR: event.EVENT_PR ?? '',
+            CARRIER: event.CARRIER ?? '',
+            SCAN_CARRIER: event.SCAN_CARRIER ?? 'false',
+          },
+        });
+        const line = read('output').find((l) => l.startsWith('prs='));
+        return { status: r.status, stderr: r.stderr, stdout: r.stdout, prs: line === undefined ? null : JSON.parse(line.slice(4)) as number[] };
+      },
+    };
+  }
+
+  it('publishes success for a member authorized by an envelope, naming the envelope and carrier', () => {
+    const w = stageWorld({});
+    try {
+      const r = w.judge();
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(r.posts.map((p) => p.state), ['success']);
+      assert.match(r.posts[0]?.description ?? '', /envelope comment 900 on carrier #200/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('makes no envelope API call when the description has no Milestone-Auth line (B5.2)', () => {
+    const input = envelopeInput();
+    const w = stageWorld({ pull: { ...input.pull, body: 'No milestone here.' } });
+    try {
+      const r = w.judge();
+      assert.notEqual(r.status, 0);
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.equal(r.posts[0]?.description, `No Founder authorization names head ${HEAD.slice(0, 7)} on #${PR}`);
+      assert.ok(!r.calls.some((u) => /\/files|\/issues\/200/.test(u)), `unexpected calls: ${r.calls.join(' ')}`);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('makes no envelope API call when the single-PR route already authorizes the head', () => {
+    const w = stageWorld({ prComments: [comment(60, block())] });
+    try {
+      const r = w.judge();
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.posts[0]?.description ?? '', /by comment 60$/);
+      assert.ok(!r.calls.some((u) => /\/files|\/issues\/200/.test(u)), `unexpected calls: ${r.calls.join(' ')}`);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses when the head moves while the envelope inputs are read', () => {
+    const input = envelopeInput();
+    const w = stageWorld({ pullSecondRead: { ...input.pull, head: { sha: OTHER_HEAD } } });
+    try {
+      const r = w.judge();
+      assert.notEqual(r.status, 0);
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses when the changed-file count moves with head and description unchanged (Tier-2 at 47d71ff, finding 1)', () => {
+    const input = envelopeInput();
+    const w = stageWorld({ pullSecondRead: { ...input.pull, changed_files: 2 } });
+    try {
+      const r = w.judge();
+      assert.notEqual(r.status, 0);
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses when the base commit moves between the reads, since the comparison used the first (Tier-2 at 33e29b0, finding 2)', () => {
+    const input = envelopeInput();
+    const w = stageWorld({ pullSecondRead: { ...input.pull, base: { ref: 'main', sha: OTHER_HEAD } } });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses when the base branch moves (a retarget)', () => {
+    const input = envelopeInput();
+    // Same base commit, different branch: only the base.ref check can refuse it.
+    const w = stageWorld({ pullSecondRead: { ...input.pull, base: { ref: 'release', sha: BASE_SHA } } });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a head that went A, B and back to A, caught by updated_at', () => {
+    const input = envelopeInput();
+    const w = stageWorld({ pullSecondRead: { ...input.pull, updated_at: '2026-10-31T21:40:00Z' } });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a head that went A, B and back to A within one second, by the SHA-bound comparison (Tier-2 at 11afcff, finding 3)', () => {
+    // Both PR reads show head A with the same updated_at; /files was read
+    // while the head was B (one safe file). The comparison at A shows A's
+    // own one-file diff, which touches .github/.
+    const w = stageWorld({
+      files: [{ filename: 'packages/run-harness/src/cli.ts' }],
+      compareFiles: [{ filename: '.github/workflows/ci.yml' }],
+    });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /does not match head/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses when only the description changes between the two reads', () => {
+    const input = envelopeInput();
+    const w = stageWorld({ pullSecondRead: { ...input.pull, body: `${input.pull.body ?? ''}\nedited` } });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses when the PR carries no updated_at to compare', () => {
+    const input = envelopeInput();
+    const pull: Record<string, unknown> = { ...input.pull };
+    delete pull.updated_at;
+    const w = stageWorld({ pull });
+    try {
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changed during evaluation/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads every page of the file list, so an excluded path on page 2 is found', () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ filename: `packages/x/src/f${i}.ts` }));
+    const page2 = [{ filename: '.github/workflows/ci.yml' }];
+    const input = envelopeInput();
+    const w = stageWorld({ pull: { ...input.pull, changed_files: 101 }, files: page1, compareFiles: [...page1, ...page2] });
+    try {
+      w.put(`pulls_${PR}_files.p2.always`, page2);
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /changes \.github\/workflows\/ci\.yml/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('publishes failure when the file list cannot be fetched', () => {
+    const w = stageWorld({});
+    try {
+      const r = w.judge({ FAKE_FAIL: '/files' });
+      assert.notEqual(r.status, 0);
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /did not complete/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a carrier that cannot be read (deleted or transferred)', () => {
+    const w = stageWorld({ issue: null });
+    try {
+      const r = w.judge();
+      assert.notEqual(r.status, 0);
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /could not be read/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a PR event judges exactly that PR, with no API call', () => {
+    const w = stageWorld({});
+    try {
+      const t = w.targets({ EVENT_PR: String(PR), CARRIER: String(PR) });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a carrier event re-judges every open PR whose description links the carrier, and no other', () => {
+    const w = stageWorld({
+      open: [
+        { number: PR, body: `x\n${milestoneLine()}` },
+        { number: 82, body: `see ${CARRIER_URL.toUpperCase()}` },
+        { number: 83, body: `${CARRIER_URL}1 is another issue` },
+        { number: 84, body: null },
+      ],
+    });
+    try {
+      const t = w.targets({ CARRIER: String(CARRIER) });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR, 82]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('lists closed PRs too, so closing one cannot shift a member onto a page already read (Tier-2 at 11afcff, finding 1)', () => {
+    // Page 1 is 100 closed PRs; the open member is on page 2. Closing or
+    // reopening any of them changes only its state, never its place.
+    const closed = Array.from({ length: 100 }, (_, i) => ({ number: 1000 + i, state: 'closed', body: 'unrelated' }));
+    const w = stageWorld({});
+    try {
+      w.put('pulls.always', closed);
+      w.put('pulls.p2.always', [{ number: PR, state: 'open', body: `x\n${milestoneLine()}` }]);
+      const t = w.targets({ CARRIER: String(CARRIER) });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not judge a closed PR that links the carrier', () => {
+    const w = stageWorld({
+      open: [
+        { number: PR, state: 'open', body: `x\n${milestoneLine()}` },
+        { number: 82, state: 'closed', body: `x\n${milestoneLine()}` },
+      ],
+    });
+    try {
+      assert.deepEqual(w.targets({ CARRIER: String(CARRIER) }).prs, [PR]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails the job, judging none, when a page of the PR list cannot be read', () => {
+    const w = stageWorld({});
+    try {
+      // A full first page, then a second page that is not a JSON array.
+      w.put('pulls.always', Array.from({ length: 100 }, (_, i) => ({ number: 1000 + i, state: 'closed', body: '' })));
+      w.put('pulls.p2.always', 'not json');
+      const bad = w.targets({ CARRIER: String(CARRIER) });
+      assert.notEqual(bad.status, 0);
+      assert.equal(bad.prs, null);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  // A flood: many open PRs that merely mention the carrier, plus the real
+  // member #81.
+  function stageFlood(w: ReturnType<typeof stageWorld>, decoys: number): void {
+    const all = [
+      ...Array.from({ length: decoys }, (_, i) => ({ number: 2000 + i, state: 'open', body: milestoneLine() })),
+      { number: PR, state: 'open', body: `x\n${milestoneLine()}` },
+    ];
+    for (let p = 0; p * 100 < all.length; p++) {
+      w.put(p === 0 ? 'pulls.always' : `pulls.p${p + 1}.always`, all.slice(p * 100, p * 100 + 100));
+    }
+  }
+
+  it('fails visibly, judging none, when more than 256 open PRs link the carrier (Tier-2 at 47d71ff, finding 3)', () => {
+    const w = stageWorld({});
+    try {
+      stageFlood(w, 256);
+      const t = w.targets({ CARRIER: String(CARRIER) });
+      assert.notEqual(t.status, 0);
+      assert.equal(t.prs, null, 'no list is output, so the judging job does not run');
+      assert.match(t.stdout, /257 PRs to judge for carrier #200, more than the 256/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('in a flood, still judges a member that carries the carrier label itself, with an error (Tier-2 at f8274c4, finding 1)', () => {
+    const w = stageWorld({});
+    try {
+      // 256 other PRs link the member's own issue URL, so its scan overflows.
+      const ownUrl = `https://github.com/${REPO}/issues/${PR}`;
+      const all = [
+        ...Array.from({ length: 256 }, (_, i) => ({ number: 2000 + i, state: 'open', body: `see ${ownUrl}` })),
+        { number: PR, state: 'open', body: `x\n${milestoneLine()}` },
+      ];
+      for (let p = 0; p * 100 < all.length; p++) {
+        w.put(p === 0 ? 'pulls.always' : `pulls.p${p + 1}.always`, all.slice(p * 100, p * 100 + 100));
+      }
+      const t = w.targets({ EVENT_PR: String(PR), CARRIER: String(PR), SCAN_CARRIER: 'true' });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR], 'the member is still judged');
+      assert.match(t.stdout, /::error::257 PRs to judge for carrier #81, more than the 256/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('in a flood, an event on the member itself still judges it, with no listing (Founder ruling 2026-11-03)', () => {
+    const w = stageWorld({});
+    try {
+      stageFlood(w, 300);
+      w.put('pulls.always', 'not json');
+      const t = w.targets({ EVENT_PR: String(PR), CARRIER: String(PR), SCAN_CARRIER: 'false' });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('judges exactly 256 linking PRs', () => {
+    const w = stageWorld({});
+    try {
+      const linking = Array.from({ length: 256 }, (_, i) => ({ number: 2000 + i, state: 'open', body: milestoneLine() }));
+      w.put('pulls.always', linking.slice(0, 100));
+      w.put('pulls.p2.always', linking.slice(100, 200));
+      w.put('pulls.p3.always', linking.slice(200));
+      const t = w.targets({ CARRIER: String(CARRIER) });
+      assert.equal(t.status, 0, t.stderr);
+      assert.equal(t.prs?.length, 256);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('scans a labelled carrier converted into a PR when it is commented on, judging its members too (Tier-2 at 33e29b0, finding 1)', () => {
+    const w = stageWorld({
+      open: [
+        { number: PR, body: `x\n${milestoneLine()}` },
+        { number: CARRIER, body: 'the carrier, now a pull request' },
+      ],
+    });
+    try {
+      const t = w.targets({ EVENT_PR: String(CARRIER), CARRIER: String(CARRIER), SCAN_CARRIER: 'true' });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [PR, CARRIER].sort((a, b) => a - b));
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('judges only the commented PR, with no listing, when it does not carry the label', () => {
+    const w = stageWorld({ open: [{ number: PR, body: `x\n${milestoneLine()}` }] });
+    try {
+      w.put('pulls.always', 'not json');
+      const t = w.targets({ EVENT_PR: '82', CARRIER: '82', SCAN_CARRIER: 'false' });
+      assert.equal(t.status, 0, t.stderr);
+      assert.deepEqual(t.prs, [82]);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a carrier event with no linking PR yields an empty list, which the judging job skips', () => {
+    const w = stageWorld({ open: [{ number: 85, body: 'nothing' }] });
+    try {
+      assert.deepEqual(w.targets({ CARRIER: String(CARRIER) }).prs, []);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('removing the milestone-carrier label turns a member success into failure (B6.2)', () => {
+    const w = stageWorld({});
+    try {
+      assert.deepEqual(w.judge().posts.map((p) => p.state), ['success']);
+      // The unlabeled event names the member; its re-judgment fails.
+      assert.deepEqual(w.targets({ CARRIER: String(CARRIER) }).prs, [PR]);
+      w.put(`issues_${CARRIER}`, { number: CARRIER, state: 'open', labels: [] });
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /milestone-carrier label/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('deleting the envelope comment turns a member success into failure (B6.2)', () => {
+    const w = stageWorld({});
+    try {
+      assert.deepEqual(w.judge().posts.map((p) => p.state), ['success']);
+      assert.deepEqual(w.targets({ CARRIER: String(CARRIER) }).prs, [PR]);
+      w.put(`issues_${CARRIER}_comments`, []);
+      const r = w.judge();
+      assert.deepEqual(r.posts.map((p) => p.state), ['failure']);
+      assert.match(r.posts[0]?.description ?? '', /no comment from an allowed login/);
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('never lets envelope or description text reach the shell', () => {
+    const marker = join(tmpdir(), `founder-auth-pwned-${process.pid}`);
+    const hostile = `$(touch ${marker}) \`touch ${marker}\``;
+    const input = envelopeInput();
+    const w = stageWorld({
+      pull: { ...input.pull, body: `${hostile}\n${milestoneLine()}\n` },
+      carrierComments: [carrierComment(930, `${hostile}\n${envelopeText()}`), carrierComment(931, envelopeText())],
+      open: [{ number: PR, body: `${hostile} ${CARRIER_URL}` }],
+    });
+    try {
+      const r = w.judge();
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.posts[0]?.description ?? '', /envelope comment 931/);
+      assert.deepEqual(w.targets({ CARRIER: String(CARRIER) }).prs, [PR]);
+      assert.equal(existsSync(marker), false, 'no text was executed');
+    } finally {
+      rmSync(w.dir, { recursive: true, force: true });
+      rmSync(marker, { force: true });
+    }
+  });
+});
+
+describe('founder-authorization workflow shape — per-PR concurrency and carrier triggers (B4)', () => {
+  const text = readFileSync(WORKFLOW, 'utf8');
+  const lines = text.split('\n').filter((l) => l.trim() !== '' && !/^\s*#/.test(l));
+
+  function block(start: number): string[] {
+    const indent = (lines[start] ?? '').length - (lines[start] ?? '').trimStart().length;
+    const out: string[] = [];
+    for (const l of lines.slice(start + 1)) {
+      if (l.length - l.trimStart().length <= indent) break;
+      out.push(l);
+    }
+    return out;
+  }
+
+  it('sets concurrency per job, never at workflow level, keyed by the judged PR', () => {
+    assert.ok(!lines.some((l) => l === 'concurrency:'), 'no workflow-level concurrency');
+    const conc = lines.flatMap((l, i) => (/^\s+concurrency:$/.test(l) ? [i] : []));
+    const groups = conc.map((i) => block(i).map((l) => l.trim()));
+    assert.deepEqual(groups, [
+      // Judging: keyed by the judged PR only. Discovery has no group.
+      ['group: founder-authorization-${{ matrix.pr }}', 'cancel-in-progress: false'],
+    ]);
+  });
+
+  it('never groups discovery, so no pending discovery is replaced and its event text lost (Tier-2 at ca3a4a5, finding 2)', () => {
+    const jobs = lines.findIndex((l) => l === 'jobs:');
+    const targets = lines.findIndex((l, i) => i > jobs && l === '  targets:');
+    assert.ok(!block(targets).some((l) => l.trim() === 'concurrency:'), 'the targets job has no concurrency group');
+  });
+
+  it('reads the carrier label wherever GitHub puts it (Tier-2 at e528913, finding 1)', () => {
+    assert.ok(lines.some((l) => l.trim() === `SCAN_CARRIER: \${{ (${CARRIER_LABEL_TEST}) && (github.event_name != 'issue_comment' || ${TRUSTED_COMMENT_TEST}) }}`),
+      'the step reads issue labels, PR labels and a removed label, and scans for a comment only from a trusted author');
+    assert.ok(lines.some((l) => l.trim() === 'CARRIER: ${{ github.event.issue.number || github.event.pull_request.number }}'), 'a PR event supplies its own number as the carrier');
+  });
+
+  it('judges each PR in its own matrix job, and only the judging job carries the key', () => {
+    const jobs = lines.findIndex((l) => l === 'jobs:');
+    const evaluate = lines.findIndex((l, i) => i > jobs && l === '  evaluate:');
+    const job = block(evaluate).map((l) => l.trim());
+    assert.ok(job.includes('needs: targets'));
+    assert.ok(job.includes("if: needs.targets.outputs.prs != '' && needs.targets.outputs.prs != '[]'"), 'skipped by a condition on an empty list');
+    assert.ok(job.includes('pr: ${{ fromJSON(needs.targets.outputs.prs) }}'));
+    assert.ok(job.includes('concurrency:'), 'the judging job holds the concurrency key');
+    assert.ok(job.includes('PR_NUMBER: ${{ matrix.pr }}'), 'judges the matrix PR');
+    assert.ok(job.includes(`- name: ${JUDGE_STEP}`));
+  });
+
+  it('re-judges on carrier comments and the six carrier issue events', () => {
+    const on = lines.findIndex((l) => l === 'on:');
+    const triggers = block(on).map((l) => l.trim());
+    assert.deepEqual(triggers, [
+      'pull_request_target:',
+      'types: [opened, synchronize, reopened, edited, ready_for_review, unlabeled]',
+      'issue_comment:',
+      'types: [created, edited, deleted]',
+      'issues:',
+      'types: [labeled, unlabeled, closed, reopened, deleted, transferred]',
+    ]);
+  });
+
+  it('starts judging only for PR events and milestone-carrier issues', () => {
+    const targets = lines.findIndex((l) => l === '  targets:');
+    const cond = block(targets).map((l) => l.trim());
+    for (const want of [
+      "github.event_name == 'pull_request_target'",
+      '|| github.event.issue.pull_request',
+      // A comment on a carrier starts discovery only from a trusted author
+      // (Tier-2 at ca3a4a5, finding 2).
+      `|| (contains(github.event.issue.labels.*.name, 'milestone-carrier') && (github.event_name != 'issue_comment' || ${TRUSTED_COMMENT_TEST}))`,
+      "|| (github.event.action == 'unlabeled' && github.event.label.name == 'milestone-carrier')",
+      // Deletion and transfer revoke whatever labels the payload shows.
+      "|| (github.event_name == 'issues' && (github.event.action == 'deleted' || github.event.action == 'transferred'))",
+    ]) {
+      assert.ok(cond.includes(want), `targets condition holds: ${want}`);
+    }
+  });
+
+  it('lists all pull requests, not only open ones, when looking for carrier members', () => {
+    assert.ok(text.includes('pulls?state=all&sort=created&direction=asc&per_page=100'), 'discovery lists state=all, oldest first');
+    assert.ok(!text.includes('pulls?state=open&sort='), 'discovery no longer lists open PRs only');
+    assert.ok(text.includes('select(.state == "open")'), 'only open PRs are judged');
+  });
+
+  it('keeps ${{ }} out of every run: script', () => {
+    const runs = lines.flatMap((l, i) => (/^\s+run: \|$/.test(l) ? [i] : []));
+    assert.equal(runs.length, 2, 'two run: blocks');
+    for (const r of runs) {
+      for (const l of block(r)) assert.ok(!l.includes('${{'), `expression inside a run: script: ${l.trim()}`);
+    }
+  });
+
+  it('checks out only the default branch, once', () => {
+    assert.equal(lines.filter((l) => /uses:\s*actions\/checkout@/.test(l)).length, 1);
   });
 });
