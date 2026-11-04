@@ -107,11 +107,17 @@ export function evaluatePhase4Run(
   const decisionEvents = events.filter((e) => ['plan.revision_requested', 'plan.approved', 'founder.cancel'].includes(e.event));
   if (decisionEvents.some((e) => e.actor !== 'founder')) failures.push('decision_not_founder');
   // B5's decision time, judged from the record (FOUNDER-ACT-20261104-BR-
-  // PHASE4-DECISION-TIME B2): each decision against the plan.submitted most
-  // recently before it, on the control plane's commit times. The runner's own
-  // flag above still applies; this one cannot be outrun by a slow read.
+  // PHASE4-DECISION-TIME B2 as amended): a decision of a plan under review is
+  // timed against that plan's T3, on the control plane's committed_at. A cancel
+  // with no plan under review is not timed. The runner's own flag above still
+  // applies; this one cannot be outrun by a slow read.
   for (const decision of decisionEvents) {
-    const opened = events.slice(0, events.indexOf(decision)).reverse().find((e) => e.event === 'plan.submitted');
+    const latestPlanEvent = events
+      .slice(0, events.indexOf(decision))
+      .reverse()
+      .find((e) => PLAN_EVENTS.includes(e.event));
+    const opened = latestPlanEvent?.event === 'plan.submitted' ? latestPlanEvent : undefined;
+    if (opened === undefined && decision.event === 'founder.cancel') continue;
     const decidedAt = commitTime(decision);
     const openedAt = opened === undefined ? null : commitTime(opened);
     if (decidedAt === null || openedAt === null) {
@@ -198,6 +204,8 @@ function checkCommands(set: Phase4RunSet, commands: readonly Phase4RecordedComma
 }
 
 /** An event's commit time in milliseconds, or null when the record has none. */
+const PLAN_EVENTS: readonly string[] = ['plan.submitted', 'plan.revision_requested', 'plan.approved'];
+
 function commitTime(event: { readonly committedAt?: string }): number | null {
   if (event.committedAt === undefined) return null;
   const ms = Date.parse(event.committedAt);

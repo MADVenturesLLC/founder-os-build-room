@@ -427,6 +427,25 @@ describe('phase 4 run unit · the proposed judgment of one record', () => {
     assert.deepEqual(judge(timed(passingRecord(), { 't5': 'not a time' })), { outcome: 'failed', failures: ['decision_time_unrecorded'] });
   });
 
+  it('does not time a cancel with no plan under review, and times a cancel at plan_review (Amendment 1 M2, M3)', () => {
+    const cancel = (at: string) => event('t22', 'founder.cancel', 'founder', FOUNDER_ATTRIBUTION, { committedAt: at });
+    const cancelled = (r: Phase4RunRecord, events: Phase4RecordedEvent[]): Phase4RunRecord => ({ ...r, events, finalState: 'CLOSED_ABANDONED', decisions: [{ commandId: 'cmd_0', decision: 'founder.cancel' }] });
+    const decisionTimeCodes = (failures: readonly string[]) => failures.filter((f) => f === 'decision_time_unrecorded' || f === 'founder_decision_timeout');
+    // Before any plan: the room is planning, so nothing is timed.
+    const one = passingRecord();
+    const beforePlan = judge(cancelled(one, [...one.events.filter((e) => e.event !== 'plan.submitted' && e.event !== 'plan.approved'), cancel(after(LIMIT + 1))]));
+    assert.equal(beforePlan.outcome, 'rejected');
+    assert.deepEqual(decisionTimeCodes(beforePlan.failures), []);
+    // While the room plans again after a revision, long after round 1's plan: not timed.
+    const two = timed(passingRecord(1), { 't3-0': after(0), 't4-1': after(60_000) });
+    const replanning = judge(cancelled(two, [...two.events.filter((e) => e.eventId !== 't3-1' && e.eventId !== 't5'), cancel(after(LIMIT + 1))]));
+    assert.equal(replanning.outcome, 'rejected');
+    assert.deepEqual(decisionTimeCodes(replanning.failures), []);
+    // At plan_review: timed as any decision is.
+    assert.deepEqual(judge(cancelled(one, [...one.events.slice(0, -1), cancel(after(LIMIT))])), { outcome: 'rejected', failures: [] });
+    assert.deepEqual(judge(cancelled(one, [...one.events.slice(0, -1), cancel(after(LIMIT + 1))])), { outcome: 'interrupted', failures: ['founder_decision_timeout'] });
+  });
+
   it('fails a run whose decision has no plan before it in the record', () => {
     const r = passingRecord();
     const decision = r.events.find((e) => e.eventId === 't5')!;
