@@ -155,6 +155,13 @@ export interface Phase4RecordedEvent {
   readonly evidence: readonly { readonly kind: string; readonly ref: string; readonly digest?: string }[];
   /** `facts.planHash`, where the event carries one (T3, T5). */
   readonly planHash?: string;
+  /**
+   * When the control plane's database committed the event (the export's
+   * `committed_at`), as ISO 8601; absent when the row carries none readable.
+   * The run unit judges the Founder's decision time from it
+   * (FOUNDER-ACT-20261104-BR-PHASE4-DECISION-TIME B1).
+   */
+  readonly committedAt?: string;
 }
 
 /** One journal row of a planner command, the fields the run unit reads. */
@@ -212,6 +219,8 @@ export type Phase4RunFailure =
   | 'decision_not_founder'
   | 'activity_after_approval'
   | 'journal_unverified'
+  /** A decision, or the plan it decides on, carries no commit time in the record (DECISION-TIME B2). */
+  | 'decision_time_unrecorded'
   /** A caller's afterRound check stopped the run: it never counts, whatever the record shows. */
   | 'stopped_after_round';
 

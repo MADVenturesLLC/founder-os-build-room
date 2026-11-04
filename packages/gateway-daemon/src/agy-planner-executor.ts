@@ -73,7 +73,6 @@ import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdtemp, open, readdir, rename, rm, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
 import type {
   Clock,
   PlannerIdentityWire,
@@ -169,6 +168,10 @@ export const PLANNER_STOP_BUDGET_MS = 2 * STOP_GRACE_MS + REAP_ANSWER_MS + REAP_
 const MAX_TIMER_MS = 2_147_483_647;
 /** One stream-json line is never larger than this; a larger one fails the run. */
 const MAX_LINE_BYTES = 1024 * 1024;
+/** At most this many of agy's output lines after init are named in a closing record (fix act B2 item 1). */
+const STREAM_EVENTS_RECORDED = 64;
+const STREAM_EVENT_RE = /^[a-z_]{1,32}$/;
+const RESULT_STATUS_RE = /^[A-Z_]{1,32}$/;
 
 const REPOSITORY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/;
@@ -307,7 +310,7 @@ export function modelsNamed(value: unknown): string[] {
 export function plannerPrompt(work: PlannerWorkWire): string {
   const lines = [
     'You are the architect seat of the MAD Ventures Build Room, acting as its Planner.',
-    'Write an Implementation Plan for the goal below. Plan only: do not modify, create or delete any file, do not run any command that changes anything, and do not contact any service.',
+    'Write an Implementation Plan for the goal below. Plan only. You may read files in your working directory with your file-reading tool. You may not run any command or program of any kind, even one that only reads: a request to run one ends your turn with no plan. Do not modify, create or delete any file, and do not contact any service. Give your whole answer in this one turn.',
     `The repository ${work.repository} is checked out read-only in your working directory at commit ${work.baseSha}.`,
     '',
     'GOAL',
@@ -363,6 +366,14 @@ interface EvidenceRecord {
   readonly signal: string | null;
   /** Whether the run's checkout was removed (Amendment 1 C5); `null` when there was none, or the run is still going. */
   readonly checkoutRemoved: boolean | null;
+  /**
+   * How a run that started agy ended (FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX B2), on its
+   * closing record only: the `event` of each line agy wrote after init, the result's status,
+   * and the response's byte length. Never any text agy or the model wrote.
+   */
+  readonly streamEvents?: readonly string[];
+  readonly resultStatus?: string | null;
+  readonly responseBytes?: number | null;
 }
 
 /** Enough of a record's shape to close it at boot: an object with a command id and an outcome. */
@@ -648,7 +659,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     if (refused !== null) {
       // Nothing was written to agy's input: the work never left this host.
       const ended = await this.endRun(run, directory);
-      await this.evidence({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: refused, ...ended });
+      await this.evidence({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: refused, ...ended, ...run.diagnostics() });
       this.log('warn', 'agy.not_sent', { outcome: refused, initModel });
       return { kind: 'not_sent' };
     }
@@ -659,7 +670,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     const sentBase = { ...evidenceBase, sent: true };
     if (!(await this.evidence({ ...sentBase, endedAt: null, outcome: 'running', exitCode: null, signal: null, checkoutRemoved: null }))) {
       const ended = await this.endRun(run, directory);
-      return this.notSentOnceRecorded({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: 'evidence_write_failed', ...ended });
+      return this.notSentOnceRecorded({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: 'evidence_write_failed', ...ended, ...run.diagnostics() });
     }
     // The record took time to write: ask again, and make the last checks with nothing
     // awaited between them and the write, so neither a promotion nor a stop lands between.
@@ -673,7 +684,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
     if (late !== null) {
       const ended = await this.endRun(run, directory);
       this.log('warn', 'agy.not_sent', { outcome: late, initModel });
-      return this.notSentOnceRecorded({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: late, ...ended });
+      return this.notSentOnceRecorded({ ...evidenceBase, sent: false, endedAt: this.isoNow(), outcome: late, ...ended, ...run.diagnostics() });
     }
     run.send(agyInputLine(plannerPrompt(work)));
 
@@ -681,7 +692,7 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       const ended = await this.endRun(run, directory);
       // A run whose closing record cannot be written is not reported as having ended as it
       // did: the record would still say running, and boot would close it as a daemon death.
-      if (!(await this.evidence({ ...sentBase, endedAt: this.isoNow(), outcome: outcome.kind, ...ended }))) {
+      if (!(await this.evidence({ ...sentBase, endedAt: this.isoNow(), outcome: outcome.kind, ...ended, ...run.diagnostics() }))) {
         throw new Error(`the run ended (${outcome.kind}), but its record could not be written`);
       }
       if (outcome.kind !== 'plan') throw new Error(`agy run ended without a plan: ${outcome.kind}`);
@@ -1154,9 +1165,101 @@ type RunOutcome =
   | { readonly kind: 'plan'; readonly document: unknown }
   | { readonly kind: 'agy_error' | 'no_result' | 'unparseable_plan' | 'model_switched' | 'malformed_output' | 'timed_out' };
 
-/** One agy process: its output as events, its input written once, its end. */
+/**
+ * Splits agy's output into lines without ever holding more than one line's bytes
+ * (Tier-2 confirmation at ac1097f, under the Founder's ruling of 2026-11-03 bounding the
+ * buffer). Lines end where readline with `crlfDelay: Infinity` ends them: at LF, at CR LF
+ * (one break, even across chunks), and at a lone CR (the Founder's ruling of 2026-11-03 on
+ * the third review at 5cd4b33). A break is never part of a line, so a line is at most
+ * MAX_LINE_BYTES; one that grows past it is reported once, as soon as it does, and its
+ * remaining bytes are dropped up to its break. A final line without a break is a line.
+ */
+export class BoundedLineSplitter {
+  private readonly parts: Buffer[] = [];
+  private held = 0;
+  private dropping = false;
+  /** The last break was a CR: an LF that follows it, in this chunk or the next, is the same break. */
+  private afterCR = false;
+
+  constructor(
+    private readonly onLine: (line: string) => void,
+    private readonly onOversized: () => void,
+    private readonly maxLineBytes: number = MAX_LINE_BYTES,
+  ) {}
+
+  /** The bytes held for the line being assembled; never more than maxLineBytes. */
+  get heldBytes(): number {
+    return this.held;
+  }
+
+  push(chunk: Buffer): void {
+    let start = 0;
+    while (start < chunk.length) {
+      if (this.afterCR) {
+        this.afterCR = false;
+        if (chunk[start] === 0x0a) {
+          start += 1;
+          continue;
+        }
+      }
+      const lf = chunk.indexOf(0x0a, start);
+      const cr = chunk.indexOf(0x0d, start);
+      const brk = lf === -1 ? cr : cr === -1 ? lf : Math.min(lf, cr);
+      const end = brk === -1 ? chunk.length : brk;
+      if (!this.dropping) {
+        const piece = chunk.subarray(start, end);
+        if (this.held + piece.length > this.maxLineBytes) {
+          this.parts.length = 0;
+          this.held = 0;
+          this.dropping = true;
+          this.onOversized();
+        } else if (piece.length > 0) {
+          this.parts.push(Buffer.from(piece));
+          this.held += piece.length;
+        }
+      }
+      if (brk === -1) return;
+      if (chunk[brk] === 0x0d) this.afterCR = true;
+      this.finishLine();
+      start = brk + 1;
+    }
+  }
+
+  /** The stream ended: a last line without a break is still a line. */
+  end(): void {
+    if (this.dropping || this.held > 0) this.finishLine();
+  }
+
+  private finishLine(): void {
+    if (this.dropping) {
+      this.dropping = false;
+      return;
+    }
+    const line = Buffer.concat(this.parts, this.held);
+    this.parts.length = 0;
+    this.held = 0;
+    this.onLine(line.toString('utf8'));
+  }
+}
+
+/**
+ * One agy process: its output judged line by line, its input written once, its end.
+ *
+ * Nothing agy writes is kept beyond what judging it needs (fix act B2, the Founder's
+ * ruling of 2026-11-03 on Tier-2 finding 2): the first event, which start() checks; the
+ * run's outcome once a line decides it; the first result's status and size; and the
+ * names of at most STREAM_EVENTS_RECORDED lines after init. However long agy writes,
+ * memory stays bounded by one line (MAX_LINE_BYTES).
+ */
 class AgyRun {
-  private readonly events: Record<string, unknown>[] = [];
+  /** The first JSON object agy wrote, unless a line that was not one came before it. */
+  private first: Record<string, unknown> | null = null;
+  /** Set by the first line after `first` that decides how the run ends; later lines decide nothing. */
+  private outcome: RunOutcome | null = null;
+  private resultSummary: { readonly status: string | null; readonly bytes: number | null } | null = null;
+  /** The name of each output line after init, `other` when it has none that fits; at most STREAM_EVENTS_RECORDED. */
+  private readonly kinds: string[] = [];
+  private kindsOverflow = false;
   private readonly waiters: (() => void)[] = [];
   private closed = false;
   private malformed = false;
@@ -1180,26 +1283,122 @@ class AgyRun {
     });
     child.stdin.on('error', () => undefined);
     child.stderr.resume();
-    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-    lines.on('line', (line) => {
-      if (Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES) {
-        this.malformed = true;
-        return this.wake();
-      }
-      if (line.trim() === '') return;
-      const event = parseEvent(line);
-      if (event === null) this.malformed = true;
-      else this.events.push(event);
-      this.wake();
-    });
-    lines.on('close', () => {
+    const lines = new BoundedLineSplitter(
+      (line) => this.onLine(line),
+      () => {
+        this.noteKind(null);
+        this.markMalformed();
+        this.wake();
+      },
+    );
+    child.stdout.on('data', (chunk: Buffer) => lines.push(chunk));
+    let ended = false;
+    const finish = (): void => {
+      if (ended) return;
+      ended = true;
+      lines.end();
       this.closed = true;
       this.wake();
-    });
+    };
+    child.stdout.once('end', finish);
+    child.stdout.once('close', finish);
+  }
+
+  /** One complete line of agy's output, at most MAX_LINE_BYTES. */
+  private onLine(line: string): void {
+    // A blank line is a line, and has no event: it is named `other` (Tier-2 finding 1).
+    if (line.trim() === '') {
+      this.noteKind(null);
+      return;
+    }
+    const event = parseEvent(line);
+    if (event === null) {
+      this.noteKind(null);
+      this.markMalformed();
+      return this.wake();
+    }
+    if (this.first === null && !this.malformed) {
+      // start() checks the first event itself; only what follows it is judged here.
+      this.first = event;
+      if (event['event'] === 'init') {
+        // The kinds recorded are those after init: anything before it, blank lines only, is dropped.
+        this.kinds.length = 0;
+        this.kindsOverflow = false;
+      } else {
+        this.noteKind(event);
+      }
+      this.noteResult(event);
+      return this.wake();
+    }
+    this.noteKind(event);
+    this.noteResult(event);
+    this.judge(event);
+    this.wake();
   }
 
   private wake(): void {
     for (const waiter of this.waiters.splice(0)) waiter();
+  }
+
+  /** One more output line's kind: its `event` if that is a short lowercase name, otherwise `other`. */
+  private noteKind(event: Record<string, unknown> | null): void {
+    // What is beyond the recorded lines is only counted as more.
+    if (this.kinds.length >= STREAM_EVENTS_RECORDED) {
+      this.kindsOverflow = true;
+      return;
+    }
+    const name = event === null ? undefined : event['event'];
+    this.kinds.push(typeof name === 'string' && STREAM_EVENT_RE.test(name) ? name : 'other');
+  }
+
+  /** The first result event's status and response size, for the closing record; never its text. */
+  private noteResult(event: Record<string, unknown>): void {
+    if (this.resultSummary !== null || event['event'] !== 'result') return;
+    const result = objectAt(event, 'result');
+    const status = result === null ? undefined : result['status'];
+    const response = result === null ? undefined : result['response'];
+    this.resultSummary = {
+      status: typeof status === 'string' && RESULT_STATUS_RE.test(status) ? status : null,
+      bytes: typeof response === 'string' ? Buffer.byteLength(response, 'utf8') : null,
+    };
+  }
+
+  /** A line that is not a bounded JSON object: if nothing has decided the run yet, it ends malformed. */
+  private markMalformed(): void {
+    this.malformed = true;
+    if (this.first !== null && this.outcome === null) this.outcome = { kind: 'malformed_output' };
+  }
+
+  /** An event after the first: every one must name no other model, and the first `result` ends the run. */
+  private judge(event: Record<string, unknown>): void {
+    if (this.outcome !== null) return;
+    if (modelsNamed(event).some((model) => model !== AGY_PLANNER_LANE.agyModel)) {
+      this.outcome = { kind: 'model_switched' };
+      return;
+    }
+    if (event['event'] !== 'result') return;
+    const result = objectAt(event, 'result');
+    if (result === null || result['status'] !== 'SUCCESS' || typeof result['response'] !== 'string') {
+      this.outcome = { kind: 'agy_error' };
+      return;
+    }
+    try {
+      this.outcome = { kind: 'plan', document: planDocumentFrom(result['response']) };
+    } catch {
+      this.outcome = { kind: 'unparseable_plan' };
+    }
+  }
+
+  /**
+   * How the run ended, for its closing record (fix act B2): the kinds of the lines after
+   * init, the first result's status and its response's byte length. No text is kept.
+   */
+  diagnostics(): { streamEvents: string[]; resultStatus: string | null; responseBytes: number | null } {
+    return {
+      streamEvents: this.kindsOverflow ? [...this.kinds, 'truncated'] : [...this.kinds],
+      resultStatus: this.resultSummary?.status ?? null,
+      responseBytes: this.resultSummary?.bytes ?? null,
+    };
   }
 
   private next(timeoutMs: number): Promise<boolean> {
@@ -1215,36 +1414,23 @@ class AgyRun {
   /** The first output line, if it is a JSON object and arrives in time. Nothing has been written yet. */
   async firstEvent(timeoutMs: number): Promise<Record<string, unknown> | null> {
     const deadline = this.clock.monotonicNow() + timeoutMs;
-    while (this.events.length === 0 && !this.malformed && !this.closed) {
+    while (this.first === null && !this.malformed && !this.closed) {
       const remaining = deadline - this.clock.monotonicNow();
       if (remaining <= 0 || !(await this.next(remaining))) return null;
     }
-    return this.malformed ? null : (this.events[0] ?? null);
+    // A line that was not a JSON object before any that was leaves `first` unset.
+    return this.first;
   }
 
   send(line: string): void {
     this.child.stdin.end(line);
   }
 
-  /** Read on until the `result` event; every event after `init` must name no other model. */
+  /** Wait for the line that decides the run: the first `result`, another model named, or a malformed line. */
   async result(timeoutMs: number): Promise<RunOutcome> {
     const deadline = this.clock.monotonicNow() + timeoutMs;
-    let index = 1;
     for (;;) {
-      while (index < this.events.length) {
-        const event = this.events[index++] ?? {};
-        if (modelsNamed(event).some((model) => model !== AGY_PLANNER_LANE.agyModel)) return { kind: 'model_switched' };
-        if (event['event'] === 'result') {
-          const result = objectAt(event, 'result');
-          if (result === null || result['status'] !== 'SUCCESS' || typeof result['response'] !== 'string') return { kind: 'agy_error' };
-          try {
-            return { kind: 'plan', document: planDocumentFrom(result['response']) };
-          } catch {
-            return { kind: 'unparseable_plan' };
-          }
-        }
-      }
-      if (this.malformed) return { kind: 'malformed_output' };
+      if (this.outcome !== null) return this.outcome;
       if (this.closed) return { kind: 'no_result' };
       const remaining = deadline - this.clock.monotonicNow();
       if (remaining <= 0 || !(await this.next(remaining))) return { kind: 'timed_out' };

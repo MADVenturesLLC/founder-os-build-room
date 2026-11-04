@@ -69,6 +69,7 @@ export interface Phase4CliDeps {
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly pollMs?: number;
+  readonly requestTimeoutMs?: number;
   readonly out?: (line: string) => void;
 }
 
@@ -163,9 +164,36 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
       observeRemoteHead: (repository) => observeRemoteHead(git, repository),
       ...(deps.fetch === undefined ? {} : { fetch: deps.fetch }),
       now,
+      // A test's fake clock is also its elapsed-time clock; the command uses
+      // the driver's own monotonic clock.
+      ...(deps.now === undefined ? {} : { monotonicNow: deps.now }),
       ...(deps.sleep === undefined ? {} : { sleep: deps.sleep }),
       ...(deps.pollMs === undefined ? {} : { pollMs: deps.pollMs }),
+      ...(deps.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: deps.requestTimeoutMs }),
+      onRetry: (line) => out(`retry: ${line}`),
     });
+
+    // REHEARSAL-FIXES B2: at plan_review the plan is saved for the Founder to
+    // read before deciding. It only informs: whatever happens here, the run
+    // goes on waiting for the decision, and the runner never decides.
+    const savePlan = async (roomId: string, roundPlanHash: string | undefined): Promise<void> => {
+      try {
+        const plan = await driver.readPlan(roomId);
+        if (roundPlanHash === undefined || plan.planHash !== roundPlanHash || !SHA256_RE.test(plan.planHash)) {
+          out(`PLAN NOT SAVED: the plan route's hash ${plan.planHash} is not the round's ${roundPlanHash ?? '(none reported)'}; the runner goes on waiting for your decision`);
+          return;
+        }
+        if (leaksSecret(plan.document, secrets)) {
+          out('PLAN NOT SAVED: it holds a token; the runner goes on waiting for your decision');
+          return;
+        }
+        const name = `plan-${plan.planHash}.json`;
+        await writePhase4EvidenceFile(evidenceDir, name, `${JSON.stringify(plan.document, null, 2)}\n`);
+        out(`PLAN for your decision: ${join(evidenceDir, name)} (plan hash ${plan.planHash}, command ${plan.commandId})`);
+      } catch (error) {
+        out(`PLAN NOT SAVED (${describe(error)}): the runner goes on waiting for your decision`);
+      }
+    };
 
     const progress: { pending: Phase4StoredAttempt | null } = { pending: null };
     let liveCheck: (Phase4LiveCheckReading & { readonly readAt: string }) | undefined;
@@ -201,25 +229,30 @@ export async function phase4CountedRunMain(env: Readonly<Record<string, string |
         await save(attempt);
         out(`${run.label}: entry passed at ${attempt.startedAt}; room ${run.roomId}`);
       },
-      afterRound: async ({ label, roomId, round, kind }) => {
+      afterRound: async ({ label, roomId, round, kind, planHash }) => {
         out(`${label}: round ${round} settled (${kind}) at ${iso()}`);
-        if (label !== 'Phase4-CR1' || round !== 1) return 'continue';
-        let reading: Phase4LiveCheckReading;
-        try {
-          reading = withholdCredentials(evaluatePhase4LiveCheck(await driver.journalCommands(roomId)), secrets);
-        } catch (error) {
-          reading = { passed: false, commandId: null, initModel: null, providerConversationId: null, reason: `the journal could not be read: ${describe(error)}` };
-        }
-        liveCheck = { ...reading, readAt: iso() };
-        out(`LIVE CHECK at ${liveCheck.readAt}: command ${reading.commandId ?? 'none'}; init_model ${reading.initModel ?? 'absent'}; provider_conversation_id ${reading.providerConversationId ?? 'absent'}`);
-        if (reading.passed) {
-          out('LIVE CHECK PASSED: the run continues and counts.');
-          return 'continue';
-        }
-        out(`LIVE CHECK FAILED (${reading.reason ?? 'unknown'}): the run stops here and does not count; the set is spent, and nothing more is dispatched on this binding without a new act.`);
-        return 'stop';
+        if (label === 'Phase4-CR1' && round === 1 && !(await liveCheckPasses(roomId))) return 'stop';
+        if (kind === 'plan_review') await savePlan(roomId, planHash);
+        return 'continue';
       },
     });
+
+    async function liveCheckPasses(roomId: string): Promise<boolean> {
+      let reading: Phase4LiveCheckReading;
+      try {
+        reading = withholdCredentials(evaluatePhase4LiveCheck(await driver.journalCommands(roomId)), secrets);
+      } catch (error) {
+        reading = { passed: false, commandId: null, initModel: null, providerConversationId: null, reason: `the journal could not be read: ${describe(error)}` };
+      }
+      liveCheck = { ...reading, readAt: iso() };
+      out(`LIVE CHECK at ${liveCheck.readAt}: command ${reading.commandId ?? 'none'}; init_model ${reading.initModel ?? 'absent'}; provider_conversation_id ${reading.providerConversationId ?? 'absent'}`);
+      if (reading.passed) {
+        out('LIVE CHECK PASSED: the run continues and counts.');
+        return true;
+      }
+      out(`LIVE CHECK FAILED (${reading.reason ?? 'unknown'}): the run stops here and does not count; the set is spent, and nothing more is dispatched on this binding without a new act.`);
+      return false;
+    }
 
     // The control plane must be configured for this act and no other before
     // anything is written: a room run under another act's terms would spend

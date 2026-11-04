@@ -138,6 +138,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp, open as openFile, type FileHandle } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
+import { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -162,6 +164,7 @@ import {
   GatewayDaemon,
   gatewayPaths,
   planDocumentFrom,
+  plannerPrompt,
   childEnvironment,
   modelsNamed,
   pgrepProbe,
@@ -179,6 +182,7 @@ import {
   type PlannerExecutor,
   type PlannerRecord,
 } from '../packages/gateway-daemon/src/index.js';
+import { BoundedLineSplitter } from '../packages/gateway-daemon/src/agy-planner-executor.js';
 import { validatePlannerReportPayload, type PlannerIdentityWire, type PlannerResultWire, type PlannerWorkWire } from '../packages/gateway-protocol/src/index.js';
 import { judgePlanDoc } from '../packages/control-plane/src/plan-doc.js';
 import { readyPlanFor } from './support/synthetic-planner.js';
@@ -421,6 +425,101 @@ function placeEvidence(h: Harness, commandId: string, line: string): string {
   return path;
 }
 
+describe('agy\'s output is split into lines with no more than one line held (Tier-2 confirmation at ac1097f)', () => {
+  function split(max: number): { lines: string[]; oversized: number; splitter: BoundedLineSplitter } {
+    const lines: string[] = [];
+    const counts = { oversized: 0 };
+    const splitter = new BoundedLineSplitter((line) => lines.push(line), () => (counts.oversized += 1), max);
+    return {
+      lines,
+      get oversized() {
+        return counts.oversized;
+      },
+      splitter,
+    };
+  }
+
+  it('splits lines across chunks, keeps multi-byte characters whole, drops CR before LF, and keeps blank lines', () => {
+    const t = split(64);
+    for (const chunk of ['{"a":', '1}\r\n\nsecond', ' line\n']) t.splitter.push(Buffer.from(chunk, 'utf8'));
+    const euro = Buffer.from('€\n', 'utf8');
+    t.splitter.push(euro.subarray(0, 1));
+    t.splitter.push(euro.subarray(1));
+    t.splitter.push(Buffer.from('last', 'utf8'));
+    t.splitter.end();
+    assert.deepEqual(t.lines, ['{"a":1}', '', 'second line', '€', 'last']);
+    assert.equal(t.oversized, 0);
+  });
+
+  it('allows a line of exactly the limit, with or without a CR, and reports one byte more once', () => {
+    const t = split(8);
+    t.splitter.push(Buffer.from('12345678\n12345678\r\n123456789\nok\n', 'utf8'));
+    assert.deepEqual(t.lines, ['12345678', '12345678', 'ok']);
+    assert.equal(t.oversized, 1);
+  });
+
+  it('reports one byte over the limit at once, with no break after it (third review at 5cd4b33, finding 2)', () => {
+    const t = split(8);
+    t.splitter.push(Buffer.from('123456789', 'utf8'));
+    assert.equal(t.oversized, 1);
+    assert.equal(t.splitter.heldBytes, 0);
+  });
+
+  it('breaks lines exactly where readline with crlfDelay Infinity does, however the bytes are chunked (third review at 5cd4b33, finding 1)', async () => {
+    let seed = 0x5cd4b33;
+    const random = (n: number): number => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed % n;
+    };
+    const alphabet = ['a', 'b', '€', '\r', '\n', '\r\n', '{', '}', ' '];
+    for (let round = 0; round < 400; round += 1) {
+      let text = '';
+      const length = random(40);
+      for (let i = 0; i < length; i += 1) text += alphabet[random(alphabet.length)] ?? '';
+      const bytes = Buffer.from(text, 'utf8');
+      const chunks: Buffer[] = [];
+      for (let at = 0; at < bytes.length; ) {
+        const size = 1 + random(6);
+        chunks.push(bytes.subarray(at, at + size));
+        at += size;
+      }
+      const t = split(1024);
+      for (const chunk of chunks) t.splitter.push(chunk);
+      t.splitter.end();
+      const expected: string[] = [];
+      const reader = createInterface({ input: Readable.from(chunks), crlfDelay: Infinity });
+      for await (const line of reader) expected.push(line);
+      assert.deepEqual(t.lines, expected, JSON.stringify(text));
+    }
+  });
+
+  it('never holds more than one line however much arrives without a newline, and recovers at the next one', () => {
+    const t = split(1024 * 1024);
+    const block = Buffer.alloc(64 * 1024, 0x78);
+    let most = 0;
+    for (let part = 0; part < 256; part += 1) {
+      t.splitter.push(block);
+      most = Math.max(most, t.splitter.heldBytes);
+    }
+    assert.ok(most <= 1024 * 1024, `held ${most} bytes`);
+    assert.equal(t.splitter.heldBytes, 0, 'an oversized line is dropped, not kept');
+    assert.equal(t.oversized, 1, 'reported once, as soon as it is too long');
+    t.splitter.push(Buffer.from('tail\n{"event":"result"}\n', 'utf8'));
+    assert.deepEqual(t.lines, ['{"event":"result"}']);
+    assert.equal(t.oversized, 1);
+  });
+});
+
+describe('the prompt (FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX B1)', () => {
+  it('lets the Planner read files and forbids every command, even one that only reads', () => {
+    const prompt = plannerPrompt(work());
+    assert.match(prompt, /Plan only\. You may read files in your working directory with your file-reading tool\./);
+    assert.match(prompt, /You may not run any command or program of any kind, even one that only reads: a request to run one ends your turn with no plan\./);
+    assert.match(prompt, /Do not modify, create or delete any file, and do not contact any service\. Give your whole answer in this one turn\./);
+    assert.doesNotMatch(prompt, /changes anything/);
+  });
+});
+
 describe('the command line', () => {
   it('is sudo -n -u <planner user> -- <agy> and exactly the pinned arguments, in plan mode', () => {
     const { executor } = harness({ mode: 'ok' });
@@ -546,6 +645,10 @@ describe('start: the init gate', () => {
     assert.equal(evidence?.['conversationId'], '3b2c7a4c-1bda-46b1-8dc1-44641701df02');
     assert.equal(evidence?.['sent'], true);
     assert.equal(evidence?.['outcome'], 'plan');
+    // How it ended, without its text (FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX B2).
+    assert.deepEqual(evidence?.['streamEvents'], ['step_update', 'result']);
+    assert.equal(evidence?.['resultStatus'], 'SUCCESS');
+    assert.equal(evidence?.['responseBytes'], Buffer.byteLength(JSON.stringify(plan), 'utf8'));
   });
 
   for (const [mode, outcome] of [
@@ -569,6 +672,10 @@ describe('start: the init gate', () => {
       const [evidence] = evidenceOf(h.gatewayDirectory);
       assert.equal(evidence?.['sent'], false);
       assert.equal(evidence?.['outcome'], outcome);
+      // agy was started, so its closing record says how it ended (fix act B2).
+      assert.ok(Array.isArray(evidence?.['streamEvents']));
+      assert.equal(evidence?.['resultStatus'], null);
+      assert.equal(evidence?.['responseBytes'], null);
     });
   }
 });
@@ -589,6 +696,119 @@ describe('start: a run that fails after the work is sent', () => {
       assert.notEqual(evidence?.['outcome'], 'plan');
     });
   }
+
+  it('records how a run that asked for a command ended, and none of its text (fix act B2)', async () => {
+    const w = work();
+    const h = harness({ mode: 'tool_end', plan: readyPlanFor({ ...w } as never) });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind !== 'accepted') return;
+    await assert.rejects(started.completion, /unparseable_plan/);
+    const [evidence] = evidenceOf(h.gatewayDirectory);
+    assert.equal(evidence?.['outcome'], 'unparseable_plan');
+    assert.deepEqual(evidence?.['streamEvents'], ['tool_call', 'result']);
+    assert.equal(evidence?.['resultStatus'], 'SUCCESS');
+    assert.equal(evidence?.['responseBytes'], 0);
+    const written = readFileSync(join(h.gatewayDirectory, 'planner-evidence', readdirSync(join(h.gatewayDirectory, 'planner-evidence'))[0] ?? ''), 'utf8');
+    assert.doesNotMatch(written, /git log|run_command|CommandLine/, 'no text agy wrote is kept');
+  });
+
+  it('names a line whose event is not a short lowercase name "other"', async () => {
+    const w = work();
+    const plan = readyPlanFor({ ...w } as never);
+    const h = harness({ mode: 'odd_events', plan });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') assert.deepEqual(await started.completion, { kind: 'plan', document: plan });
+    assert.deepEqual(evidenceOf(h.gatewayDirectory)[0]?.['streamEvents'], ['other', 'other', 'other', 'result']);
+  });
+
+  it('names at most 64 lines after init, then "truncated"', async () => {
+    const w = work();
+    const plan = readyPlanFor({ ...w } as never);
+    const h = harness({ mode: 'many', plan });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') await started.completion;
+    const events = evidenceOf(h.gatewayDirectory)[0]?.['streamEvents'] as string[];
+    assert.equal(events.length, 65);
+    assert.deepEqual(events.slice(0, 64), new Array(64).fill('step_update'));
+    assert.equal(events[64], 'truncated');
+  });
+
+  it('names each blank line "other", and counts blank lines toward the cap (Tier-2 finding 1 at efaa1c9)', async () => {
+    for (const [mode, expected] of [
+      ['blanks', ['other', 'other', 'result']],
+      ['many_blanks', [...new Array<string>(64).fill('other'), 'truncated']],
+      ['blank_first', ['step_update', 'result']],
+    ] as const) {
+      const w = work();
+      const plan = readyPlanFor({ ...w } as never);
+      const h = harness({ mode, plan });
+      const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+      assert.equal(started.kind, 'accepted', mode);
+      if (started.kind === 'accepted') assert.deepEqual(await started.completion, { kind: 'plan', document: plan }, mode);
+      assert.deepEqual(evidenceOf(h.gatewayDirectory)[0]?.['streamEvents'], expected, mode);
+    }
+  });
+
+  it('ends malformed on a line that is not JSON before the result, whatever follows it', async () => {
+    const w = work();
+    const h = harness({ mode: 'bad_then_result', plan: readyPlanFor({ ...w } as never) });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind !== 'accepted') return;
+    await assert.rejects(started.completion, /malformed_output/);
+    const [evidence] = evidenceOf(h.gatewayDirectory);
+    assert.equal(evidence?.['outcome'], 'malformed_output');
+    assert.deepEqual(evidence?.['streamEvents'], ['other', 'result']);
+  });
+
+  it('lets the first line that decides the run decide it, even when a result follows in the same write', async () => {
+    const w = work();
+    const h = harness({ mode: 'switch_then_result', plan: readyPlanFor({ ...w } as never) });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind !== 'accepted') return;
+    await assert.rejects(started.completion, /model_switched/);
+    assert.equal(evidenceOf(h.gatewayDirectory)[0]?.['outcome'], 'model_switched');
+  });
+
+  it('judges a long stream line by line, keeping none of it (Tier-2 finding 2 at efaa1c9)', async () => {
+    const w = work();
+    const plan = readyPlanFor({ ...w } as never);
+    const h = harness({ mode: 'flood', plan });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') assert.deepEqual(await started.completion, { kind: 'plan', document: plan });
+    const [evidence] = evidenceOf(h.gatewayDirectory);
+    assert.equal((evidence?.['streamEvents'] as string[]).length, 65);
+    assert.equal(evidence?.['resultStatus'], 'SUCCESS');
+  });
+
+  it('reads a result after a step ended by a lone CR, as before (third review at 5cd4b33, finding 1)', async () => {
+    const w = work();
+    const plan = readyPlanFor({ ...w } as never);
+    const h = harness({ mode: 'cr_separated', plan });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind === 'accepted') assert.deepEqual(await started.completion, { kind: 'plan', document: plan });
+    assert.deepEqual(evidenceOf(h.gatewayDirectory)[0]?.['streamEvents'], ['step_update', 'result']);
+  });
+
+  it('ends malformed on output with no newline, without waiting for the run timeout (Tier-2 confirmation at ac1097f)', async () => {
+    const w = work();
+    const h = harness({ mode: 'unterminated', plan: readyPlanFor({ ...w } as never), timings: { runTimeoutMs: 20_000 } });
+    const started = await h.executor.start(w, await identityFor(h.executor, w.commandId));
+    assert.equal(started.kind, 'accepted');
+    if (started.kind !== 'accepted') return;
+    const began = Date.now();
+    await assert.rejects(started.completion, /malformed_output/);
+    assert.ok(Date.now() - began < 15_000, 'the oversized line ends the run as it arrives');
+    const [evidence] = evidenceOf(h.gatewayDirectory);
+    assert.equal(evidence?.['outcome'], 'malformed_output');
+    assert.deepEqual(evidence?.['streamEvents'], ['other']);
+  });
 
   it('reads a plan from a fenced JSON answer', async () => {
     const w = work();

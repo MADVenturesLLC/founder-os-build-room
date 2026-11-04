@@ -51,6 +51,7 @@ export function readPhase4Export(body: unknown, roomId: string): Phase4ExportRea
       return { kind: e['kind'], ref: e['ref'], ...(typeof e['digest'] === 'string' ? { digest: e['digest'] } : {}) };
     });
     const planHash = record(record(row['payload'])?.['facts'])?.['planHash'];
+    const committedAt = readTime(row['committed_at']);
     events.push({
       eventId: row['event_id'],
       event: row['event'],
@@ -58,9 +59,17 @@ export function readPhase4Export(body: unknown, roomId: string): Phase4ExportRea
       attribution,
       evidence: readEvidence,
       ...(typeof planHash === 'string' ? { planHash } : {}),
+      ...(committedAt === null ? {} : { committedAt }),
     });
   }
   return { finalState: state, events };
+}
+
+/** A row's commit time as ISO 8601, or null when it carries none readable. */
+function readTime(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : new Date(ms).toISOString();
 }
 
 function readAttribution(value: unknown): Phase4RecordedAttribution | null {

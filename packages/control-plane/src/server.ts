@@ -33,6 +33,7 @@ import { journalRouter } from './journal-routes.js';
 import { JournalStore } from './journal-store.js';
 import { PlanStore } from './plan-store.js';
 import { planDecisionRouter } from './plan-decision.js';
+import { planReadRouter } from './plan-read.js';
 import { countedRunRouter } from './counted-run.js';
 import { FounderGoalRefusedError, prepareFounderGoal } from './founder-goal.js';
 import { PostgresLedgerStore, RoomNotFoundError } from './store.js';
@@ -70,6 +71,8 @@ export interface ServerDeps {
    */
   readonly planStore?: Pick<PlanStore, 'inTransaction'>;
   readonly decisionJournal?: Pick<JournalStore, 'inTransaction'>;
+  /** The plan read's store (plan-read.ts). Built from `pool` when absent. */
+  readonly planReader?: Pick<PlanStore, 'planForEvent'>;
   /**
    * The execution-surface ids a counted run checks T2's surface against.
    * Defaults to the registry Build Room vendors; tests supply their own.
@@ -359,6 +362,12 @@ export function createServer(deps: ServerDeps): Express {
       requireLeader: deps.gateway.leadership.requireLeader(),
     }),
   );
+  /*
+   * The plan under a room's latest T3, to read before deciding on it
+   * (FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES B2): behind the API token,
+   * read only. Deciding stays behind the adjudication token above.
+   */
+  app.use(planReadRouter({ ledger: store, plans: deps.planReader ?? new PlanStore(pool), requireToken }));
   /*
    * The counted-run routes (run-unit Q9): behind the counted-run token and
    * nothing else, never the adjudication token (the Founder's §9 answer),
