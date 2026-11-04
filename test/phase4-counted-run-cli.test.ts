@@ -72,10 +72,10 @@ function passingRecordFor(label: 'Phase4-CR1' | 'Phase4-CR2' | 'Phase4-CR3', dis
     deploymentIdAtEnd: DEPLOYMENT,
     finalState: 'BUILDING',
     events: [
-      { eventId: 't1', event: 'scope.captured', actor: 'founder', attribution: a(null, 'founder', 'n/a (the Founder’s words, relayed verbatim)', 'claude-code'), evidence: [{ kind: 'founder_goal', ref: 'goal', digest: founderGoalDigest(run.inputs.goal) }] },
-      { eventId: 't2', event: 'task.dispatched.planner', actor: 'control-plane', attribution: a('builder', `control-plane:${DEPLOYMENT}`, PHASE4_DISPATCHER.actualModel, PHASE4_DISPATCHER.executionSurface), evidence: [] },
-      { eventId: 't3', event: 'plan.submitted', actor: 'agent.planner', attribution: planner, evidence: [], planHash },
-      { eventId: 't5', event: 'plan.approved', actor: 'founder', attribution: founder, evidence: [], planHash },
+      { eventId: 't1', event: 'scope.captured', actor: 'founder', attribution: a(null, 'founder', 'n/a (the Founder’s words, relayed verbatim)', 'claude-code'), evidence: [{ kind: 'founder_goal', ref: 'goal', digest: founderGoalDigest(run.inputs.goal) }], committedAt: '2026-11-02T14:00:00.000Z' },
+      { eventId: 't2', event: 'task.dispatched.planner', actor: 'control-plane', attribution: a('builder', `control-plane:${DEPLOYMENT}`, PHASE4_DISPATCHER.actualModel, PHASE4_DISPATCHER.executionSurface), evidence: [], committedAt: '2026-11-02T14:00:01.000Z' },
+      { eventId: 't3', event: 'plan.submitted', actor: 'agent.planner', attribution: planner, evidence: [], planHash, committedAt: '2026-11-02T14:06:00.000Z' },
+      { eventId: 't5', event: 'plan.approved', actor: 'founder', attribution: founder, evidence: [], planHash, committedAt: '2026-11-02T14:06:30.000Z' },
     ],
     commands: [
       {
@@ -328,7 +328,7 @@ function fakeControlPlane(options: { online?: boolean; dispatched?: Record<strin
       return json(200, {
         roomId: servedRoom.roomId,
         snapshot: { state: servedRoom.finalState },
-        events: servedRoom.events.map((e, seq) => ({ seq, outcome: 'transition', event_id: e.eventId, event: e.event, actor: e.actor, attribution: e.attribution, evidence: e.evidence, payload: { facts: e.planHash === undefined ? {} : { planHash: e.planHash } } })),
+        events: servedRoom.events.map((e, seq) => ({ seq, outcome: 'transition', event_id: e.eventId, event: e.event, actor: e.actor, attribution: e.attribution, evidence: e.evidence, payload: { facts: e.planHash === undefined ? {} : { planHash: e.planHash } }, ...(e.committedAt === undefined ? {} : { committed_at: e.committedAt }) })),
       });
     }
     if (servedRoom !== undefined && method === 'GET' && /\/journal$/.test(path)) {
