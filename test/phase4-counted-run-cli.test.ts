@@ -476,10 +476,14 @@ describe('npm run phase4:counted-run', () => {
 
   it('sends each token only to the routes it opens', async () => {
     const { env } = await workspace();
-    const plane = fakeControlPlane({ dispatched: {} });
-    await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock() });
+    // A passing live check, so the run reaches every route it calls, the
+    // plan read at plan_review included (REHEARSAL-FIXES B2; Copilot, PR 143).
+    const plane = fakeControlPlane({ dispatched: { initModel: 'gemini-4-argon-high', providerConversationId: 'conv-1' } });
+    await phase4CountedRunMain(env, { fetch: plane.fetch, git: fakeGit(), out: () => undefined, ...clock(), pollMs: 10_000 });
+    assert.ok(plane.requests.some((r) => r.method === 'GET' && /^\/control-plane\/rooms\/[^/]+\/plan$/.test(r.path)), 'the plan was read');
     for (const request of plane.requests) {
-      const expected = request.path === '/version' ? null : request.path.startsWith('/control-plane/rooms/') ? `Bearer ${COUNTED_TOKEN}` : `Bearer ${API_TOKEN}`;
+      const countedRoute = request.path.startsWith('/control-plane/rooms/') && !request.path.endsWith('/plan');
+      const expected = request.path === '/version' ? null : countedRoute ? `Bearer ${COUNTED_TOKEN}` : `Bearer ${API_TOKEN}`;
       assert.equal(request.authorization, expected, `${request.method} ${request.path}`);
     }
   });
