@@ -152,8 +152,8 @@ function narrowBlockReason(value: unknown): RoomBlockReason | undefined {
 /** The invariant checks shared by direct parse and the publisher boundary. */
 function assertInvariants(status: {
   agentPhase: AgentPhase;
-  blockReason?: RoomBlockReason;
-  slotPhases?: readonly AgentSlotPhase[];
+  blockReason?: RoomBlockReason | undefined;
+  slotPhases?: readonly AgentSlotPhase[] | undefined;
   evidenceRefs: readonly EvidenceRef[];
   occupancy: RoomOccupancy;
 }, strict: boolean): void {
