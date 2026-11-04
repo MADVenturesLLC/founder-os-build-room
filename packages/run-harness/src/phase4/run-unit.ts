@@ -106,6 +106,20 @@ export function evaluatePhase4Run(
   // The decisions: only the Founder's, revisions then one approval of the plan under review.
   const decisionEvents = events.filter((e) => ['plan.revision_requested', 'plan.approved', 'founder.cancel'].includes(e.event));
   if (decisionEvents.some((e) => e.actor !== 'founder')) failures.push('decision_not_founder');
+  // B5's decision time, judged from the record (FOUNDER-ACT-20261104-BR-
+  // PHASE4-DECISION-TIME B2): each decision against the plan.submitted most
+  // recently before it, on the control plane's commit times. The runner's own
+  // flag above still applies; this one cannot be outrun by a slow read.
+  for (const decision of decisionEvents) {
+    const opened = events.slice(0, events.indexOf(decision)).reverse().find((e) => e.event === 'plan.submitted');
+    const decidedAt = commitTime(decision);
+    const openedAt = opened === undefined ? null : commitTime(opened);
+    if (decidedAt === null || openedAt === null) {
+      if (!failures.includes('decision_time_unrecorded')) failures.push('decision_time_unrecorded');
+    } else if (decidedAt - openedAt > set.decisionTimeoutMs && !interrupted.includes('founder_decision_timeout')) {
+      interrupted.push('founder_decision_timeout');
+    }
+  }
   const rounds = openings.length;
   if (rounds > PHASE4_MAX_ROUNDS_PER_RUN && !interrupted.includes('too_many_rounds')) interrupted.push('too_many_rounds');
 
@@ -181,4 +195,11 @@ function checkCommands(set: Phase4RunSet, commands: readonly Phase4RecordedComma
   if (authorizationWrong) failures.push('command_authorization_wrong');
   if (routeWrong) failures.push('command_route_wrong');
   if (notClean) failures.push('command_not_clean');
+}
+
+/** An event's commit time in milliseconds, or null when the record has none. */
+function commitTime(event: { readonly committedAt?: string }): number | null {
+  if (event.committedAt === undefined) return null;
+  const ms = Date.parse(event.committedAt);
+  return Number.isNaN(ms) ? null : ms;
 }

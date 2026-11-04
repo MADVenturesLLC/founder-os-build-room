@@ -95,8 +95,11 @@ const PLANNER_ATTRIBUTION = attribution('architect', 'session:planner', 'gemini-
 const DISPATCHER_ATTRIBUTION = attribution('builder', `control-plane:${DEPLOYMENT}`, PHASE4_DISPATCHER.actualModel, PHASE4_DISPATCHER.executionSurface);
 const FOUNDER_ATTRIBUTION = attribution(null, 'founder', 'n/a (human Founder decision)', 'claude-code');
 
+/** Every fixture event is committed at one instant unless a test says otherwise (DECISION-TIME B1). */
+const COMMITTED_AT = '2026-11-02T14:00:00.000Z';
+
 function event(eventId: string, name: string, actor: string, a: Phase4RecordedEvent['attribution'], extra: Partial<Phase4RecordedEvent> = {}): Phase4RecordedEvent {
-  return { eventId, event: name, actor, attribution: a, evidence: [], ...extra };
+  return { eventId, event: name, actor, attribution: a, evidence: [], committedAt: COMMITTED_AT, ...extra };
 }
 
 function command(commandId: string, terminal: { eventType: string; failureClassification?: string } = { eventType: 'completed' }) {
@@ -388,6 +391,50 @@ describe('phase 4 run unit · the proposed judgment of one record', () => {
     assert.deepEqual(judge(passingRecord(3)), { outcome: 'interrupted', failures: ['too_many_rounds'] });
   });
 
+  // FOUNDER-ACT-20261104-BR-PHASE4-DECISION-TIME B2: the decision time is judged from the record.
+  const timed = (r: Phase4RunRecord, times: Record<string, string | undefined>): Phase4RunRecord => ({
+    ...r,
+    events: r.events.map((e) => {
+      if (!(e.eventId in times)) return e;
+      const at = times[e.eventId];
+      const rest = { ...e };
+      delete (rest as { committedAt?: string }).committedAt;
+      return at === undefined ? rest : { ...rest, committedAt: at };
+    }),
+  });
+  const LIMIT = set().decisionTimeoutMs;
+  const after = (ms: number) => new Date(Date.parse(COMMITTED_AT) + ms).toISOString();
+
+  it('takes a decision committed exactly the decision time after its plan, and interrupts one a millisecond later, whatever the runner saw', () => {
+    assert.deepEqual(judge(timed(passingRecord(), { 't5': after(LIMIT) })), { outcome: 'passed', failures: [] });
+    assert.deepEqual(judge(timed(passingRecord(), { 't5': after(LIMIT + 1) })), { outcome: 'interrupted', failures: ['founder_decision_timeout'] });
+    // The runner's own flag is not needed: the record alone decides.
+    assert.equal(judge(timed(passingRecord(), { 't5': after(LIMIT + 1) }), { decisionTimedOut: false }).outcome, 'interrupted');
+  });
+
+  it('judges each decision against its own round’s plan', () => {
+    // Round 1's plan at 0, the revision at LIMIT; round 2's plan at LIMIT + 60 s, the approval LIMIT later: in time.
+    const inTime = timed(passingRecord(1), { 't3-0': after(0), 't4-1': after(LIMIT), 't3-1': after(LIMIT + 60_000), 't5': after(2 * LIMIT + 60_000) });
+    assert.deepEqual(judge(inTime), { outcome: 'passed', failures: [] });
+    // Measured from the first plan, the approval would be late; measured from its own, it is not. And a late revision interrupts.
+    const lateRevision = timed(passingRecord(1), { 't3-0': after(0), 't4-1': after(LIMIT + 1), 't3-1': after(LIMIT + 60_000), 't5': after(LIMIT + 120_000) });
+    assert.deepEqual(judge(lateRevision), { outcome: 'interrupted', failures: ['founder_decision_timeout'] });
+  });
+
+  it('fails a run whose decision, or the plan it decides on, carries no commit time', () => {
+    assert.deepEqual(judge(timed(passingRecord(), { 't5': undefined })), { outcome: 'failed', failures: ['decision_time_unrecorded'] });
+    assert.deepEqual(judge(timed(passingRecord(), { 't3-0': undefined })), { outcome: 'failed', failures: ['decision_time_unrecorded'] });
+    assert.deepEqual(judge(timed(passingRecord(), { 't5': 'not a time' })), { outcome: 'failed', failures: ['decision_time_unrecorded'] });
+  });
+
+  it('fails a run whose decision has no plan before it in the record', () => {
+    const r = passingRecord();
+    const decision = r.events.find((e) => e.eventId === 't5')!;
+    const reordered = { ...r, events: [decision, ...r.events.filter((e) => e !== decision)] };
+    assert.ok(judge(reordered).failures.includes('decision_time_unrecorded'));
+    assert.equal(judge(reordered).outcome, 'failed');
+  });
+
   const defects: [string, (r: Phase4RunRecord) => Phase4RunRecord, string][] = [
     ['the journal does not verify', (r) => ({ ...r, journalVerified: false }), 'journal_unverified'],
     ['the goal digest is not the act’s goal', (r) => ({ ...r, events: [{ ...r.events[0]!, evidence: [{ kind: 'founder_goal', ref: 'goal', digest: 'f'.repeat(64) }] }, ...r.events.slice(1)] }), 'goal_not_bound'],
@@ -592,6 +639,12 @@ describe('phase 4 export reader · the room export, read whole or refused', () =
     assert.deepEqual(reading.events, [
       { eventId: 't3', event: 'plan.submitted', actor: 'agent.planner', attribution: PLANNER_ATTRIBUTION, evidence: [{ kind: 'plan', ref: 'p', digest: 'd'.repeat(64) }], planHash: 'e'.repeat(64) },
     ]);
+  });
+
+  it('carries each row’s committed_at as committedAt, and reads a row without one (DECISION-TIME B1)', () => {
+    const reading = readPhase4Export(body([row({ committed_at: '2026-11-04T11:56:59.747+00:00' }), row({ event_id: 't4', committed_at: 'not a time' })]), roomId);
+    assert.equal(reading.events[0]!.committedAt, '2026-11-04T11:56:59.747Z');
+    assert.equal('committedAt' in reading.events[1]!, false);
   });
 
   it('refuses another room’s export, a row missing its attribution, and unreadable evidence', () => {
