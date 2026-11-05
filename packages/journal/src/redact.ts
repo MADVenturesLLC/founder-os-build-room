@@ -78,6 +78,29 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
     name: 'pem_private_key',
     pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/,
   },
+  // `Bearer <token>` is written with a space and no separator, so it needs
+  // its own shape: requiring `:` or `=` missed the standard HTTP form.
+  // FOUNDER-ACT-20261105-BR-BEARER-SHAPE and its Amendments 1, 3 and 4: the
+  // value is either 32 or more characters that are not whitespace, or 20 or
+  // more characters of the alphabet below. With eight of the alphabet,
+  // English prose such as "bearer credentials" matched, and a Planner's plan
+  // was refused for it. The control plane's config requires
+  // CONTROL_PLANE_TOKEN, PHASE3_ADJUDICATION_TOKEN and
+  // PHASE4_COUNTED_RUN_TOKEN to be at least 32 characters but does not
+  // restrict their characters (packages/control-plane/src/config.ts), so the
+  // non-whitespace branch is what catches a token with punctuation in it.
+  // A match ends where its branch ends, so that branch comes first; and this
+  // shape comes before every shape but the PEM block, so that 32 or more
+  // non-whitespace characters after "Bearer" are redacted whole before
+  // another shape can redact part of them and leave the rest too short.
+  // Stated limits: a value under 32 characters whose leading run is under
+  // 20, or one holding whitespace, is not caught, and one under 32 whose run
+  // is 20 or more is redacted only to its first punctuation; detection
+  // removes redaction markers first, so a value holding the marker's text is
+  // judged on what remains; another credential that reaches its own shape's
+  // length only with "bearer" glued after it loses that match; and 32 or
+  // more non-space characters after "bearer", such as a long URL, are caught.
+  { name: 'bearer_token', pattern: /(?<![A-Za-z0-9])Bearer\s+(?:\S{32,}|[A-Za-z0-9._~+/=-]{20,})/i },
   { name: 'provider_api_key', pattern: /(?<![A-Za-z0-9])(?:sk|pk|rk|ak)-[A-Za-z0-9_-]{16,}(?![A-Za-z0-9])/ },
   { name: 'github_token', pattern: /(?<![A-Za-z0-9])(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/ },
   { name: 'github_fine_grained_pat', pattern: /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9])/ },
@@ -93,25 +116,6 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
     name: 'labelled_secret',
     pattern: /(?<![A-Za-z0-9])(?:token|api[_-]?key|secret|password|passwd|credential)\s*[:=]\s*\S+/i,
   },
-  // `Bearer <token>` is written with a space and no separator, so it needs
-  // its own shape: requiring `:` or `=` missed the standard HTTP form.
-  // FOUNDER-ACT-20261105-BR-BEARER-SHAPE and its Amendments 1 and 3: the
-  // value is either 32 or more characters that are not whitespace, or 20 or
-  // more characters of the alphabet below. With eight of the alphabet,
-  // English prose such as "bearer credentials" matched, and a Planner's plan
-  // was refused for it. The non-whitespace branch keeps every token the
-  // control plane accepts, unless it holds whitespace: its config requires
-  // CONTROL_PLANE_TOKEN, PHASE3_ADJUDICATION_TOKEN and
-  // PHASE4_COUNTED_RUN_TOKEN to be at least 32 characters but does not
-  // restrict their characters (packages/control-plane/src/config.ts), and
-  // punctuation ends the alphabet branch's run early. It comes first because
-  // a match ends where its branch ends: so placed, a value of 32 or more is
-  // redacted up to the next whitespace, not only to its first punctuation.
-  // Stated limits: a value under 32 characters whose leading run is under
-  // 20, or one holding whitespace, is not caught, and one under 32 whose run
-  // is 20 or more is redacted only to its first punctuation; 32 or more
-  // non-space characters after "bearer", such as a long URL, are caught.
-  { name: 'bearer_token', pattern: /(?<![A-Za-z0-9])Bearer\s+(?:\S{32,}|[A-Za-z0-9._~+/=-]{20,})/i },
   // A JWT is base64URL, whose `-` and `_` fall outside the entropy shape's
   // alphabet, so it would otherwise reach a row untouched.
   {
