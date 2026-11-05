@@ -94,8 +94,12 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
     pattern: /(?<![A-Za-z0-9])(?:token|api[_-]?key|secret|password|passwd|credential)\s*[:=]\s*\S+/i,
   },
   // `Bearer <token>` is written with a space and no separator, so it needs
-  // its own shape: requiring `:` or `=` missed the standard HTTP form.
-  { name: 'bearer_token', pattern: /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+/=-]{8,}/i },
+  // its own shape: requiring `:` or `=` missed the standard HTTP form. The
+  // value must be 20 characters or more (FOUNDER-ACT-20261105-BR-BEARER-SHAPE):
+  // with eight, English prose such as "bearer credentials" matched, and a
+  // Planner's plan was refused for it. No credential this system accepts or
+  // mints is shorter than 32 characters.
+  { name: 'bearer_token', pattern: /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+/=-]{20,}/i },
   // A JWT is base64URL, whose `-` and `_` fall outside the entropy shape's
   // alphabet, so it would otherwise reach a row untouched.
   {

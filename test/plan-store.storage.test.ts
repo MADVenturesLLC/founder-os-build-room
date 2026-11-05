@@ -276,6 +276,16 @@ describe('plan store — only a ready, valid, credential-free plan is kept', { s
     });
   }
 
+  it('keeps a plan whose prose says "bearer" before an ordinary word (FOUNDER-ACT-20261105-BR-BEARER-SHAPE)', async () => {
+    const roomId = await newRoom();
+    const document = plan({ trust_and_security_boundaries: 'The route takes a bearer credential; no secrets.', known_risks: ['A stale note on bearer credentials.'] });
+    const stored = await inRuntimeTransaction(async (client) => {
+      await insertT3(client, roomId, 1, 'evt_ps_bearer_prose', hashOf(document));
+      return store!.inTransaction(client).recordPlan({ roomId, commandId: 'cmd_ps_bearer_prose', lifecycleEventId: 'evt_ps_bearer_prose', document });
+    });
+    assert.equal(stored.planHash, hashOf(document));
+  });
+
   it('refuses a malformed submission', async () => {
     await inRuntimeTransaction(async (client) => {
       const tx = store!.inTransaction(client);
