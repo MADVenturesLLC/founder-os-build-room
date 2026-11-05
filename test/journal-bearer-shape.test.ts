@@ -1,11 +1,14 @@
 /**
- * The journal guard's bearer shape (FOUNDER-ACT-20261105-BR-BEARER-SHAPE).
+ * The journal guard's bearer shape (FOUNDER-ACT-20261105-BR-BEARER-SHAPE and
+ * its Amendment 1).
  *
  * Phase4-CR1 of the counted set of 2026-11-04 returned a valid plan whose
  * prose said "bearer" followed by an ordinary word, and the plan store refused
- * it as credential material. A bearer value must now be 20 characters or more:
- * prose passes, every credential this system accepts or mints is still caught,
- * and a value of 19 characters is the stated limit of the act's B2.
+ * it as credential material. A bearer value now counts when it is 20 or more
+ * characters of the shape's alphabet, or 32 or more characters that are not
+ * whitespace: prose passes, and every token the control plane accepts (at
+ * least 32 characters, of any kind) is still caught. The amendment's stated
+ * limits and its false positive are pinned below.
  *
  * Token-shaped fixtures are assembled at runtime, as `journal-7.3-secrets`
  * does, so the repository's secret scan does not read them as leaks.
@@ -29,6 +32,25 @@ const TWENTY = `${scheme} ${'Zq7'.repeat(6)}xy`;
 const HEX64 = `${scheme} ${'0123456789abcdef'.repeat(4)}`;
 const LOWERCASE_HEX64 = `${scheme.toLowerCase()} ${'fedcba9876543210'.repeat(4)}`;
 const NINETEEN = `${scheme} ${'Zq7'.repeat(6)}x`;
+/** Amendment 1 M1: a 32-character token whose alphabet run is cut to 16 by punctuation. */
+const PUNCTUATED32 = `${scheme} ${'q7R'.repeat(5)}X!${'m8S'.repeat(5)}`;
+const PUNCTUATION32 = `${scheme} ${'!@#%^&*()?'.repeat(3)}!@`;
+/** 31 characters, leading run 16: under both branches. */
+const PUNCTUATED31 = `${scheme} ${'q7R'.repeat(5)}X!${'m8S'.repeat(4)}mm`;
+const LONG_URL = 'The client sends a bearer https://rare-enjoyment-production-0869.up.railway.app/control-plane value.';
+const DOLLAR = String.fromCharCode(36);
+const TICK = String.fromCharCode(96);
+const TOKEN_VARIABLES = ['CONTROL_PLANE_TOKEN', 'PHASE3_ADJUDICATION_TOKEN', 'PHASE4_COUNTED_RUN_TOKEN'];
+/** Amendment 2 N2: every name with a leading $, with or without backticks, and CONTROL_PLANE_TOKEN bare. */
+const NAMES_NOT_DETECTED = [
+  ...TOKEN_VARIABLES.flatMap((name) => [
+    `Authorization: ${scheme} ${DOLLAR}${name}`,
+    `${TICK}Authorization: ${scheme} ${DOLLAR}${name}${TICK}`,
+  ]),
+  `Authorization: ${scheme} CONTROL_PLANE_TOKEN`,
+];
+/** Amendment 2 N2 and N3: the two bare names of 20 or more characters, detected as they were at 3a1409a. */
+const NAMES_DETECTED = [`Authorization: ${scheme} PHASE3_ADJUDICATION_TOKEN`, `Authorization: ${scheme} PHASE4_COUNTED_RUN_TOKEN`];
 
 /** Every key and string value of a document, as the plan store scans it. */
 function stringsOf(value: unknown, out: string[] = []): string[] {
@@ -104,5 +126,32 @@ describe('journal guard · bearer shape (FOUNDER-ACT-20261105-BR-BEARER-SHAPE)',
 
   it('does not detect a bearer value of 19 characters: the stated limit of B2', () => {
     assert.equal(containsCredentialMaterial([NINETEEN]), false);
+  });
+
+  it('detects and redacts a 32-character token broken by punctuation, in either case, and 32 characters of punctuation (Amendment 1 M2)', () => {
+    for (const secret of [PUNCTUATED32, PUNCTUATED32.replace(scheme, scheme.toLowerCase()), PUNCTUATION32]) {
+      assert.equal(containsCredentialMaterial([secret]), true, secret.slice(0, 12));
+      assert.equal(containsCredentialMaterial([`fetch failed for ${secret}`]), true);
+      const [redacted] = redactArgv([`authorization: ${secret}`]);
+      assert.ok(redacted?.includes(REDACTED), 'the value is redacted');
+      const value = secret.slice(7);
+      for (const part of [value.slice(0, 16), value.slice(16)]) assert.ok(!redacted?.includes(part), 'no part of the value survives');
+    }
+  });
+
+  it('does not detect a 31-character punctuated value whose leading run is under 20: the stated limit of Amendment 1 M3', () => {
+    assert.equal(containsCredentialMaterial([PUNCTUATED31]), false);
+  });
+
+  it('detects a long URL right after "bearer": the false positive Amendment 1 M3 accepts', () => {
+    assert.equal(containsCredentialMaterial([LONG_URL]), true);
+  });
+
+  it('does not detect a token variable name written with a leading $, or CONTROL_PLANE_TOKEN written bare (Amendment 2 N2)', () => {
+    for (const text of NAMES_NOT_DETECTED) assert.equal(containsCredentialMaterial([text]), false, text);
+  });
+
+  it('detects PHASE3_ADJUDICATION_TOKEN and PHASE4_COUNTED_RUN_TOKEN written bare: the false positive Amendment 2 N3 accepts', () => {
+    for (const text of NAMES_DETECTED) assert.equal(containsCredentialMaterial([text]), true, text);
   });
 });
