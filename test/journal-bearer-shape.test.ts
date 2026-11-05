@@ -1,14 +1,15 @@
 /**
  * The journal guard's bearer shape (FOUNDER-ACT-20261105-BR-BEARER-SHAPE and
- * its Amendment 1).
+ * its Amendments 1 to 3).
  *
  * Phase4-CR1 of the counted set of 2026-11-04 returned a valid plan whose
  * prose said "bearer" followed by an ordinary word, and the plan store refused
- * it as credential material. A bearer value now counts when it is 20 or more
- * characters of the shape's alphabet, or 32 or more characters that are not
- * whitespace: prose passes, and every token the control plane accepts (at
- * least 32 characters, of any kind) is still caught. The amendment's stated
- * limits and its false positive are pinned below.
+ * it as credential material. A bearer value now counts when it is 32 or more
+ * characters that are not whitespace, or 20 or more characters of the shape's
+ * alphabet: prose passes, and every token the control plane accepts (at least
+ * 32 characters, of any kind) is still caught and, with no whitespace in it,
+ * redacted whole. The amendments' stated limits and false positives are
+ * pinned below.
  *
  * Token-shaped fixtures are assembled at runtime, as `journal-7.3-secrets`
  * does, so the repository's secret scan does not read them as leaks.
@@ -37,6 +38,10 @@ const PUNCTUATED32 = `${scheme} ${'q7R'.repeat(5)}X!${'m8S'.repeat(5)}`;
 const PUNCTUATION32 = `${scheme} ${'!@#%^&*()?'.repeat(3)}!@`;
 /** 31 characters, leading run 16: under both branches. */
 const PUNCTUATED31 = `${scheme} ${'q7R'.repeat(5)}X!${'m8S'.repeat(4)}mm`;
+/** Amendment 3 P1: a leading run of 21, then punctuation, 34 characters in all. */
+const RUN21_PUNCTUATED34 = `${scheme} ${'q7R'.repeat(7)}!${'m8S'.repeat(4)}`;
+/** Amendment 3 P3: a leading run of 20, then punctuation, 26 characters in all. */
+const RUN20_PUNCTUATED26 = `${scheme} ${'Zq7'.repeat(6)}xy!m8Smm`;
 const LONG_URL = 'The client sends a bearer https://rare-enjoyment-production-0869.up.railway.app/control-plane value.';
 const DOLLAR = String.fromCharCode(36);
 const TICK = String.fromCharCode(96);
@@ -153,5 +158,18 @@ describe('journal guard · bearer shape (FOUNDER-ACT-20261105-BR-BEARER-SHAPE)',
 
   it('detects PHASE3_ADJUDICATION_TOKEN and PHASE4_COUNTED_RUN_TOKEN written bare: the false positive Amendment 2 N3 accepts', () => {
     for (const text of NAMES_DETECTED) assert.equal(containsCredentialMaterial([text]), true, text);
+  });
+
+  it('redacts whole a value of 32 or more whose leading run is 20 or more, then punctuation, in either case (Amendment 3 P2)', () => {
+    for (const secret of [RUN21_PUNCTUATED34, RUN21_PUNCTUATED34.replace(scheme, scheme.toLowerCase())]) {
+      assert.equal(containsCredentialMaterial([secret]), true, secret.slice(0, 12));
+      const [redacted] = redactArgv([`authorization: ${secret}`]);
+      assert.equal(redacted, `authorization: ${REDACTED}`, 'no part of the value survives');
+    }
+  });
+
+  it('redacts a value under 32 whose leading run is 20 or more only to its first punctuation: the stated limit of Amendment 3 P3', () => {
+    const [redacted] = redactArgv([`authorization: ${RUN20_PUNCTUATED26}`]);
+    assert.equal(redacted, `authorization: ${REDACTED}!m8Smm`);
   });
 });
