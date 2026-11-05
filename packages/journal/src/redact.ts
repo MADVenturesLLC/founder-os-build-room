@@ -97,8 +97,11 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   // its own shape: requiring `:` or `=` missed the standard HTTP form. The
   // value must be 20 characters or more (FOUNDER-ACT-20261105-BR-BEARER-SHAPE):
   // with eight, English prose such as "bearer credentials" matched, and a
-  // Planner's plan was refused for it. No credential this system accepts or
-  // mints is shorter than 32 characters.
+  // Planner's plan was refused for it. The control plane's own bearer tokens
+  // are at least 32 characters, because its config refuses to boot with a
+  // shorter CONTROL_PLANE_TOKEN, PHASE3_ADJUDICATION_TOKEN or
+  // PHASE4_COUNTED_RUN_TOKEN (packages/control-plane/src/config.ts). A
+  // shorter bearer value is not caught here: the act's stated limit.
   { name: 'bearer_token', pattern: /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+/=-]{20,}/i },
   // A JWT is base64URL, whose `-` and `_` fall outside the entropy shape's
   // alphabet, so it would otherwise reach a row untouched.
