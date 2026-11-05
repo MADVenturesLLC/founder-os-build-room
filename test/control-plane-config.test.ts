@@ -66,6 +66,24 @@ describe('control plane — configuration', () => {
     }
   });
 
+  it('refuses each token holding a character outside RFC 6750\'s token alphabet, without echoing it (FOUNDER-ACT-20261105-BR-BEARER-SHAPE, Amendment 5)', () => {
+    const outside = [`${'q7R'.repeat(11)}!`, `${'a'.repeat(20)} ${'b'.repeat(20)}`, `${'c'.repeat(31)}"`, `${'d'.repeat(22)}[REDACTED]`];
+    const inside = ['0123456789abcdef'.repeat(4), `${'Zq7_-x'.repeat(7)}a`, `${'e'.repeat(28)}._~+/=`];
+    for (const key of ['CONTROL_PLANE_TOKEN', 'PHASE3_ADJUDICATION_TOKEN', 'PHASE4_COUNTED_RUN_TOKEN']) {
+      const base = { DATABASE_URL: VALID_URL, CONTROL_PLANE_TOKEN: VALID_TOKEN };
+      for (const value of outside) {
+        assert.throws(
+          () => loadConfig({ ...base, [key]: value }),
+          (error: unknown) =>
+            error instanceof ConfigError &&
+            Array.from({ length: value.length - 7 }, (_, i) => value.slice(i, i + 8)).every((part) => !error.message.includes(part)),
+          `${key} with a character outside the alphabet`,
+        );
+      }
+      for (const value of inside) assert.doesNotThrow(() => loadConfig({ ...base, [key]: value }), `${key} of the alphabet`);
+    }
+  });
+
   it('gives the pool its own connect budget, larger than the readiness probe', () => {
     /*
      * `connectionTimeoutMillis` was wired to `readyProbeTimeoutMs`. Two

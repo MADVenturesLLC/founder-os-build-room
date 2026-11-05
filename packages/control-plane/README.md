@@ -21,7 +21,7 @@ criterion 1).
 | Variable | What it is |
 |---|---|
 | `DATABASE_URL` | Postgres connection string. Must begin `postgres://` or `postgresql://`. Never echoed in an error, because it carries a credential. |
-| `CONTROL_PLANE_TOKEN` | Shared secret the room endpoints require on `Authorization: Bearer <token>`. At least 32 characters. Never echoed. |
+| `CONTROL_PLANE_TOKEN` | Shared secret the room endpoints require on `Authorization: Bearer <token>`. At least 32 characters of A-Z, a-z, 0-9 and `. _ ~ + / = -` (RFC 6750's token alphabet, which the journal's bearer shape redacts whole), or boot refuses. Never echoed. |
 
 **`CONTROL_PLANE_TOKEN` has no "unauthenticated" mode, deliberately.** The
 service has a public URL; without the guard, any caller who found it could
@@ -38,8 +38,8 @@ same value as `CONTROL_PLANE_TOKEN`, or every room request answers 401.
 
 | Variable | Default | What it is |
 |---|---|---|
-| `PHASE3_ADJUDICATION_TOKEN` | route absent | Founder-only credential for Phase 3 pass/fail adjudication. At least 32 characters, distinct from `CONTROL_PLANE_TOKEN`, and never available to the counted-run harness. |
-| `PHASE4_COUNTED_RUN_TOKEN` | routes 503 | The counted-run credential (run-unit proposal §9): opens the three counted-run routes and nothing else, the plan decision included. At least 32 characters, distinct from `CONTROL_PLANE_TOKEN` and `PHASE3_ADJUDICATION_TOKEN`, or boot refuses. It is the one credential besides the API token that the Phase 4 harness holds. |
+| `PHASE3_ADJUDICATION_TOKEN` | route absent | Founder-only credential for Phase 3 pass/fail adjudication. At least 32 characters of the same alphabet, distinct from `CONTROL_PLANE_TOKEN`, and never available to the counted-run harness. |
+| `PHASE4_COUNTED_RUN_TOKEN` | routes 503 | The counted-run credential (run-unit proposal §9): opens the three counted-run routes and nothing else, the plan decision included. At least 32 characters of the same alphabet, distinct from `CONTROL_PLANE_TOKEN` and `PHASE3_ADJUDICATION_TOKEN`, or boot refuses. It is the one credential besides the API token that the Phase 4 harness holds. |
 | `PHASE4_COUNTED_RUN` | routes inert | The Founder's counted-run act's terms, as JSON `{ actId, gatewayId, planner, seats: { builder, reviewer } }` — **surfaces, never models** (`BR-PHASE4-SURFACE-KEYED-SEATS-R1`): `planner` is the Planner's execution surface and must be the counted run's adapter surface (`antigravity`; an approved-lane surface the adapter cannot run is refused at boot), and each seat is a lane token, `surface` or `surface:provider`, checked against its seat's approved lanes by `surface_id`, `provider` and `binding_status`. A bare surface that carries more than one provider's approved lanes on that seat (today the reviewer's `antigravity`: `antigravity:google` and `antigravity:anthropic`) is refused; name the provider. Models stay in the seat registry as routing detail: the parsed planner carries the approved lane's provider and model, never the act's terms, and each parsed seat carries its surface and the provider of the lane it resolved to (`{ surface, provider }`; a bare surface gets its seat's one provider), never a model. The room's role assignment carries those providers too; the journal does not record them, and G2's `reviewerIsNotBuilder` still compares surfaces. The reviewer's surface must differ from the builder's, and its lane's provider from the builder lane's (`DEC-20261020-01` clause 7). Absent, every counted-run route answers 503. Present, it must be exactly that shape on approved lanes, or boot refuses. Setting it is the Founder's act. |
 | `PORT` | `8080` | TCP port for the HTTP surface. |
 | `RAILWAY_GIT_COMMIT_SHA` / `COMMIT_SHA` | `unknown` | The commit `/version` reports. Reported as `unknown` rather than guessed — evidence bound to a wrong SHA is worse than evidence bound to none. |

@@ -80,27 +80,23 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   },
   // `Bearer <token>` is written with a space and no separator, so it needs
   // its own shape: requiring `:` or `=` missed the standard HTTP form.
-  // FOUNDER-ACT-20261105-BR-BEARER-SHAPE and its Amendments 1, 3 and 4: the
-  // value is either 32 or more characters that are not whitespace, or 20 or
-  // more characters of the alphabet below. With eight of the alphabet,
+  // FOUNDER-ACT-20261105-BR-BEARER-SHAPE as amended (Amendment 5): the value
+  // is 20 or more characters of RFC 6750's token alphabet below. With eight,
   // English prose such as "bearer credentials" matched, and a Planner's plan
-  // was refused for it. The control plane's config requires
-  // CONTROL_PLANE_TOKEN, PHASE3_ADJUDICATION_TOKEN and
-  // PHASE4_COUNTED_RUN_TOKEN to be at least 32 characters but does not
-  // restrict their characters (packages/control-plane/src/config.ts), so the
-  // non-whitespace branch is what catches a token with punctuation in it.
-  // A match ends where its branch ends, so that branch comes first; and this
-  // shape comes before every shape but the PEM block, so that 32 or more
-  // non-whitespace characters after "Bearer" are redacted whole before
-  // another shape can redact part of them and leave the rest too short.
-  // Stated limits: a value under 32 characters whose leading run is under
-  // 20, or one holding whitespace, is not caught, and one under 32 whose run
-  // is 20 or more is redacted only to its first punctuation; detection
-  // removes redaction markers first, so a value holding the marker's text is
-  // judged on what remains; another credential that reaches its own shape's
-  // length only with "bearer" glued after it loses that match; and 32 or
-  // more non-space characters after "bearer", such as a long URL, are caught.
-  { name: 'bearer_token', pattern: /(?<![A-Za-z0-9])Bearer\s+(?:\S{32,}|[A-Za-z0-9._~+/=-]{20,})/i },
+  // was refused for it. The control plane's config refuses to boot with
+  // CONTROL_PLANE_TOKEN, PHASE3_ADJUDICATION_TOKEN or PHASE4_COUNTED_RUN_TOKEN
+  // shorter than 32 characters or holding a character outside this alphabet
+  // (packages/control-plane/src/config.ts), so every token it accepts is
+  // matched whole. This shape comes before every shape but the PEM block, so
+  // that such a token is redacted whole before another shape can redact part
+  // of it and leave the rest too short to match.
+  // Stated limits: a value with fewer than 20 characters of the alphabet
+  // before its first other character is not caught, and a longer one is
+  // redacted only up to that character; another credential that reaches its
+  // own shape's length only with "bearer" glued after it loses that match;
+  // and 20 or more characters of the alphabet after "bearer", such as a bare
+  // PHASE4_COUNTED_RUN_TOKEN or a file path, are caught although not secret.
+  { name: 'bearer_token', pattern: /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+/=-]{20,}/i },
   { name: 'provider_api_key', pattern: /(?<![A-Za-z0-9])(?:sk|pk|rk|ak)-[A-Za-z0-9_-]{16,}(?![A-Za-z0-9])/ },
   { name: 'github_token', pattern: /(?<![A-Za-z0-9])(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/ },
   { name: 'github_fine_grained_pat', pattern: /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9])/ },
