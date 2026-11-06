@@ -157,6 +157,9 @@ interface Env {
   readonly [key: string]: string | undefined;
 }
 
+/** RFC 6750's token alphabet, which the journal's bearer shape matches whole. */
+const TOKEN_ALPHABET = /^[A-Za-z0-9._~+/=-]+$/;
+
 function required(env: Env, key: string): string {
   const raw = env[key];
   if (raw === undefined || raw.trim() === '') {
@@ -283,25 +286,30 @@ export function loadConfig(env: Env): Config {
   }
 
   /*
-   * Length is checked, and the value is never echoed. A short shared secret is
-   * a guessable one, and the error must not become the disclosure it is meant
-   * to prevent.
+   * Length and alphabet are checked, and the value is never echoed. A short
+   * shared secret is a guessable one, and the error must not become the
+   * disclosure it is meant to prevent. Each token must be 32 or more
+   * characters of RFC 6750's token alphabet, A-Z, a-z, 0-9 and . _ ~ + / = -
+   * (FOUNDER-ACT-20261105-BR-BEARER-SHAPE, Amendment 5): the journal's
+   * bearer shape (packages/journal/src/redact.ts) detects and redacts a
+   * bearer value of that alphabet whole, and a character outside it would
+   * end the match early.
    */
   const apiToken = required(env, 'CONTROL_PLANE_TOKEN');
-  if (apiToken.length < 32) {
+  if (apiToken.length < 32 || !TOKEN_ALPHABET.test(apiToken)) {
     throw new ConfigError(
-      'CONTROL_PLANE_TOKEN must be at least 32 characters. The value is not ' +
-        'echoed here because it is a credential.',
+      'CONTROL_PLANE_TOKEN must be at least 32 characters of A-Z, a-z, 0-9 and ' +
+        '. _ ~ + / = -. The value is not echoed here because it is a credential.',
     );
   }
   const rawAdjudicationToken = env['PHASE3_ADJUDICATION_TOKEN'];
   let phase3AdjudicationToken: string | null = null;
   if (rawAdjudicationToken !== undefined) {
     const candidate = rawAdjudicationToken.trim();
-    if (candidate.length < 32 || candidate === apiToken) {
+    if (candidate.length < 32 || !TOKEN_ALPHABET.test(candidate) || candidate === apiToken) {
       throw new ConfigError(
-        'PHASE3_ADJUDICATION_TOKEN must be at least 32 characters and distinct from ' +
-          'CONTROL_PLANE_TOKEN. Neither credential is echoed.',
+        'PHASE3_ADJUDICATION_TOKEN must be at least 32 characters of A-Z, a-z, 0-9 and ' +
+          '. _ ~ + / = -, and distinct from CONTROL_PLANE_TOKEN. Neither credential is echoed.',
       );
     }
     phase3AdjudicationToken = candidate;
@@ -310,10 +318,16 @@ export function loadConfig(env: Env): Config {
   let countedRunToken: string | null = null;
   if (rawCountedRunToken !== undefined) {
     const candidate = rawCountedRunToken.trim();
-    if (candidate.length < 32 || candidate === apiToken || candidate === phase3AdjudicationToken) {
+    if (
+      candidate.length < 32 ||
+      !TOKEN_ALPHABET.test(candidate) ||
+      candidate === apiToken ||
+      candidate === phase3AdjudicationToken
+    ) {
       throw new ConfigError(
-        'PHASE4_COUNTED_RUN_TOKEN must be at least 32 characters and distinct from ' +
-          'CONTROL_PLANE_TOKEN and PHASE3_ADJUDICATION_TOKEN. No credential is echoed.',
+        'PHASE4_COUNTED_RUN_TOKEN must be at least 32 characters of A-Z, a-z, 0-9 and ' +
+          '. _ ~ + / = -, and distinct from CONTROL_PLANE_TOKEN and PHASE3_ADJUDICATION_TOKEN. ' +
+          'No credential is echoed.',
       );
     }
     countedRunToken = candidate;
