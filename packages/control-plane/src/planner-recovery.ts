@@ -66,15 +66,18 @@ import { randomUUID } from 'node:crypto';
 import type { CommandEventRow } from '../../journal/src/index.js';
 import {
   PLANNER_FAILURES,
+  consolePlannerLog,
   initFields,
   initRequired,
   judgeRoundPlan,
+  logPlanRefused,
   plannerRoundsOf,
   readRoundInputs,
   submitRoundPlan,
   type ObservedRoute,
   type PlannerFailure,
   type PlannerInit,
+  type PlannerLog,
   type PlannerPort,
   type PlannerReconciliation,
   type PlannerRoute,
@@ -92,6 +95,8 @@ export interface PlannerRecoveryDeps {
   readonly route: Pick<PlannerRoute, 'actorId'>;
   readonly now?: () => Date;
   readonly mintEventId?: () => string;
+  /** Where `planner.plan_refused` is written; a JSON line on the console when absent. */
+  readonly log?: PlannerLog;
 }
 
 /** Why an `unresolved` command stays so: the consumed §3.5 reading of the Planner's answer. */
@@ -130,11 +135,13 @@ export class PlannerRecoveryUnfencedError extends Error {
 export class PlannerRecovery {
   private readonly now: () => Date;
   private readonly mintEventId: () => string;
+  private readonly log: PlannerLog;
 
   constructor(private readonly deps: PlannerRecoveryDeps) {
     if (!deps.ledger.isFenced()) throw new PlannerRecoveryUnfencedError();
     this.now = deps.now ?? (() => new Date());
     this.mintEventId = deps.mintEventId ?? (() => `evt_${randomUUID()}`);
+    this.log = deps.log ?? consolePlannerLog;
   }
 
   /** Reconcile the room's open planner command, if it has one. */
@@ -267,7 +274,10 @@ export class PlannerRecovery {
     if (result.kind === 'failed') return failure('planner_reported_failure');
     if (!open.latestRound) return failure('round_superseded');
     const verdict = judgeRoundPlan(result.document, open.inputs);
-    if (!verdict.ok) return failure(verdict.classification);
+    if (!verdict.ok) {
+      logPlanRefused(this.log, roomId, commandId, verdict);
+      return failure(verdict.classification);
+    }
     const submitted = await submitRoundPlan(
       { ledger: this.deps.ledger, journal: this.deps.journal, plans: this.deps.plans, route: this.deps.route, now: this.now, mintEventId: this.mintEventId },
       { roomId, commandId, observed, document: result.document, planHash: verdict.planHash, terminal },

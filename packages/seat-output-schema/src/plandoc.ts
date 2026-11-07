@@ -47,14 +47,23 @@ export type PlanTerminalStatus = (typeof PLAN_TERMINAL_STATUSES)[number];
 export const PLAN_READY_STATUS: PlanTerminalStatus = 'PLAN_READY_FOR_FOUNDER_APPROVAL';
 
 const PROSE_MAX = 20_000;
-const ITEM_MAX = 4_000;
+/** `objective`: the one statement of what the plan is for. */
+const OBJECTIVE_MAX = 4_000;
+/**
+ * One item of a list section: as long as a prose section may be
+ * (FOUNDER-ACT-20261107-BR-PLANDOC-ITEM-LIMIT B2). It was 4,000 until
+ * rehearsal R2 of 2026-11-07, whose revision round returned a complete plan
+ * with one 4,808-character implementation step and was refused for it alone.
+ * Only widened: every plan valid before stays valid, with the same hash.
+ */
+const LIST_ITEM_MAX = PROSE_MAX;
 
 const prose = (min = 1): OutputSchema => ({ type: 'string', min_length: min, max_length: PROSE_MAX });
 const items = (minItems: number): OutputSchema => ({
   type: 'array',
   min_items: minItems,
   max_items: 200,
-  items: { type: 'string', min_length: 1, max_length: ITEM_MAX },
+  items: { type: 'string', min_length: 1, max_length: LIST_ITEM_MAX },
 });
 
 const PROSE_SECTIONS = [
@@ -103,7 +112,7 @@ export const PLANDOC_SCHEMA_V1: ObjectSchema = {
   properties: {
     schema_version: { type: 'string', enum: [PLANDOC_SCHEMA_VERSION] },
     work_id: { type: 'string', min_length: 1, max_length: 200 },
-    objective: { type: 'string', min_length: 1, max_length: ITEM_MAX },
+    objective: { type: 'string', min_length: 1, max_length: OBJECTIVE_MAX },
     terminal_status: { type: 'string', enum: [...PLAN_TERMINAL_STATUSES] },
     controlling_inputs: {
       type: 'array',

@@ -89,7 +89,13 @@ import { checkScopePaths } from '../../contracts/src/index.js';
 import type { LedgerEntry, LedgerState, LifecycleEvent } from '../../ledger/src/index.js';
 import { envelopeDigest, normalizeForJournal, type CommandEventRow, type GovernedCommandRequest } from '../../journal/src/index.js';
 import type { ExecutionIdentity } from '../../madbridge-consumed/src/adapter/adapter-v1.js';
-import { judgePlanDoc } from './plan-doc.js';
+import { judgePlanDoc, type PlanDocVerdict } from './plan-doc.js';
+import {
+  PLANDOC_SCHEMA_V1,
+  type OutputSchema,
+  type PlanTerminalStatus,
+  type ViolationCode,
+} from '../../seat-output-schema/src/index.js';
 import { FOUNDER_GOAL_EVIDENCE_KIND, founderGoalDigest } from './founder-goal.js';
 import {
   DISPATCH_POLICY,
@@ -317,7 +323,18 @@ export interface PlannerLoopDeps {
   readonly authorizeRoute: CompletionAuthorizationResolver;
   readonly now?: () => Date;
   readonly mintEventId?: () => string;
+  /** Where `planner.plan_refused` is written; a JSON line on the console when absent. */
+  readonly log?: PlannerLog;
 }
+
+/** A structured log line, as `main.ts` and `gateway/leadership.ts` write them. */
+export type PlannerLog = (level: 'info' | 'error', at: string, fields: Record<string, unknown>) => void;
+
+export const consolePlannerLog: PlannerLog = (level, at, fields) => {
+  const line = JSON.stringify({ level, at, ts: new Date().toISOString(), ...fields });
+  if (level === 'error') console.error(line);
+  else console.log(line);
+};
 
 /** The closed set of failure classifications a round records. */
 export const PLANNER_FAILURES = [
@@ -391,11 +408,13 @@ const T4_PAYLOAD_SQL = `SELECT e.payload->>'feedback' AS feedback
 export class PlannerLoop {
   private readonly now: () => Date;
   private readonly mintEventId: () => string;
+  private readonly log: PlannerLog;
 
   constructor(private readonly deps: PlannerLoopDeps) {
     if (!deps.ledger.isFenced()) throw new PlannerLoopUnfencedError();
     this.now = deps.now ?? (() => new Date());
     this.mintEventId = deps.mintEventId ?? (() => `evt_${randomUUID()}`);
+    this.log = deps.log ?? consolePlannerLog;
   }
 
   /** Run one planning round for the room. Every outcome is recorded before it is returned. */
@@ -690,7 +709,10 @@ export class PlannerLoop {
     if (result.kind === 'failed') return this.fail(commandId, 'planner_reported_failure');
 
     const verdict = judgeRoundPlan(result.document, inputs);
-    if (!verdict.ok) return this.fail(commandId, verdict.classification);
+    if (!verdict.ok) {
+      logPlanRefused(this.log, roomId, commandId, verdict);
+      return this.fail(commandId, verdict.classification);
+    }
 
     const submitted = await submitRoundPlan(this.submitDeps(), {
       roomId,
@@ -724,22 +746,147 @@ export class PlannerLoop {
 // ---------------------------------------------------------------------------
 // Shared with recovery: the plan check, the T3 transaction, the round inputs
 
+/**
+ * Why `judgeRoundPlan` refused a plan (FOUNDER-ACT-20261107-BR-PLANDOC-ITEM-LIMIT
+ * B3). It holds no string the plan wrote: schema paths keep only the names
+ * the schema declares and array indices, `terminal_status` is one of the
+ * schema's five values, and everything else is a code, a number or a boolean.
+ */
+export type PlanRefusalReason =
+  | { readonly kind: 'schema'; readonly violationCount: number; readonly violations: readonly PlanRefusalViolation[] }
+  | { readonly kind: 'scope_path'; readonly index: number | null }
+  | { readonly kind: 'encoding' }
+  | { readonly kind: 'not_ready'; readonly terminalStatus: PlanTerminalStatus }
+  | {
+      readonly kind: 'outside_captured_scope';
+      readonly repositoryMatches: boolean;
+      readonly baseShaMatches: boolean;
+      readonly scopePathsWithin: boolean;
+    };
+
+export interface PlanRefusalViolation {
+  readonly code: ViolationCode;
+  /** The violation's path, with any segment the schema does not declare written as `<undeclared key>`. */
+  readonly path: string;
+  /** The length of the undeclared key, when the path holds one. */
+  readonly undeclaredKeyLength?: number;
+  /** A `length` violation: the characters or items found, and the bound they broke. */
+  readonly found?: number;
+  readonly bound?: number;
+}
+
+/** How many of a schema refusal's violations the reason keeps. */
+export const PLAN_REFUSAL_VIOLATIONS_KEPT = 20;
+
+export const UNDECLARED_KEY = '<undeclared key>';
+
+export type RoundPlanVerdict =
+  | { readonly ok: true; readonly planHash: string }
+  | { readonly ok: false; readonly classification: 'plan_invalid' | 'plan_outside_captured_scope'; readonly reason: PlanRefusalReason };
+
 /** Whether a returned document is a ready plan inside the round's captured repository, base and scope. */
-export function judgeRoundPlan(
-  document: unknown,
-  inputs: RoundInputs,
-): { readonly ok: true; readonly planHash: string } | { readonly ok: false; readonly classification: 'plan_invalid' | 'plan_outside_captured_scope' } {
+export function judgeRoundPlan(document: unknown, inputs: RoundInputs): RoundPlanVerdict {
   const verdict = judgePlanDoc(document);
-  if (!verdict.ok || !verdict.readyForDecision) return { ok: false, classification: 'plan_invalid' };
+  if (!verdict.ok) return { ok: false, classification: 'plan_invalid', reason: planDocRefusalReason(verdict, document) };
   const plan = verdict.document;
-  if (
-    plan.repository !== inputs.repository
-    || plan.base_sha !== inputs.baseSha
-    || !plan.scope_paths.every((path) => isWithinScope(path, inputs.scopePaths))
-  ) {
-    return { ok: false, classification: 'plan_outside_captured_scope' };
+  if (!verdict.readyForDecision) {
+    return { ok: false, classification: 'plan_invalid', reason: { kind: 'not_ready', terminalStatus: plan.terminal_status } };
+  }
+  const repositoryMatches = plan.repository === inputs.repository;
+  const baseShaMatches = plan.base_sha === inputs.baseSha;
+  const scopePathsWithin = plan.scope_paths.every((path) => isWithinScope(path, inputs.scopePaths));
+  if (!repositoryMatches || !baseShaMatches || !scopePathsWithin) {
+    return {
+      ok: false,
+      classification: 'plan_outside_captured_scope',
+      reason: { kind: 'outside_captured_scope', repositoryMatches, baseShaMatches, scopePathsWithin },
+    };
   }
   return { ok: true, planHash: verdict.planHash };
+}
+
+/** The reason for one of `judgePlanDoc`'s refusals, from its verdict and the document it judged. */
+export function planDocRefusalReason(verdict: Extract<PlanDocVerdict, { ok: false }>, document: unknown): PlanRefusalReason {
+  switch (verdict.kind) {
+    case 'schema':
+      return {
+        kind: 'schema',
+        violationCount: verdict.violations.length,
+        violations: verdict.violations.slice(0, PLAN_REFUSAL_VIOLATIONS_KEPT).map((violation) => refusalViolation(violation.code, violation.path, document)),
+      };
+    case 'scope':
+      return { kind: 'scope_path', index: verdict.index };
+    case 'encoding':
+      return { kind: 'encoding' };
+  }
+}
+
+/**
+ * One violation, its path walked against PLANDOC_SCHEMA_V1 and the document
+ * together. A segment is kept while the schema declares it (an object's
+ * property, or an array's index); from the first segment it does not, the
+ * rest of the path is the name of a key the plan wrote and is replaced, its
+ * length kept. A `length` violation also carries what was found and the bound.
+ */
+function refusalViolation(code: ViolationCode, rawPath: string, document: unknown): PlanRefusalViolation {
+  const segments = rawPath === '' ? [] : rawPath.slice(1).split('/');
+  const kept: string[] = [];
+  let schema: OutputSchema | undefined = PLANDOC_SCHEMA_V1;
+  let value: unknown = document;
+  let undeclaredKeyLength: number | undefined;
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i] as string;
+    if (schema?.type === 'object' && Object.hasOwn(schema.properties, segment)) {
+      kept.push(segment);
+      schema = schema.properties[segment];
+      value = isRecord(value) ? value[segment] : undefined;
+      continue;
+    }
+    if (schema?.type === 'array' && /^(0|[1-9][0-9]*)$/.test(segment)) {
+      kept.push(segment);
+      schema = schema.items;
+      value = Array.isArray(value) ? value[Number(segment)] : undefined;
+      continue;
+    }
+    undeclaredKeyLength = segments.slice(i).join('/').length;
+    kept.push(UNDECLARED_KEY);
+    schema = undefined;
+    value = undefined;
+    break;
+  }
+  const path = kept.length === 0 ? '' : `/${kept.join('/')}`;
+  const base: PlanRefusalViolation = { code, path, ...(undeclaredKeyLength === undefined ? {} : { undeclaredKeyLength }) };
+  if (code !== 'length' || schema === undefined) return base;
+  if (schema.type === 'string' && typeof value === 'string') {
+    const bound = schema.max_length !== undefined && value.length > schema.max_length ? schema.max_length : schema.min_length;
+    return bound === undefined ? base : { ...base, found: value.length, bound };
+  }
+  if (schema.type === 'array' && Array.isArray(value)) {
+    const bound = schema.max_items !== undefined && value.length > schema.max_items ? schema.max_items : schema.min_items;
+    return bound === undefined ? base : { ...base, found: value.length, bound };
+  }
+  return base;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Write the one `planner.plan_refused` line for a refused plan. A log that
+ * throws changes nothing: the round ends as it would have.
+ */
+export function logPlanRefused(
+  log: PlannerLog,
+  roomId: string,
+  commandId: string,
+  verdict: Extract<RoundPlanVerdict, { ok: false }>,
+): void {
+  try {
+    log('error', 'planner.plan_refused', { roomId, commandId, classification: verdict.classification, reason: verdict.reason });
+  } catch {
+    // The refusal is journaled either way; a lost log line is not a lost record.
+  }
 }
 
 export interface SubmitDeps {
