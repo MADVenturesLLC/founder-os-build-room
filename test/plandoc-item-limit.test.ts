@@ -18,6 +18,7 @@ import { judgePlanDoc } from '../packages/control-plane/src/plan-doc.js';
 import {
   PLAN_REFUSAL_VIOLATIONS_KEPT,
   UNDECLARED_KEY,
+  UNRESOLVED_PATH,
   consolePlannerLog,
   judgeRoundPlan,
   logPlanRefused,
@@ -167,6 +168,70 @@ describe('judgeRoundPlan: why a plan was refused', () => {
         { code: 'additional_property', path: `/controlling_inputs/0/${UNDECLARED_KEY}`, undeclaredKeyLength: 4 },
       ],
     );
+  });
+
+  it('a key holding slashes that spell declared names is still an undeclared key, never a declared path', () => {
+    // The validator joins raw keys with '/', so these keys read like structure.
+    const collision = refused(judgeRoundPlan(plan({ 'claims/plan_approved': false }), INPUTS));
+    assert.deepEqual(collision.reason, {
+      kind: 'schema',
+      violationCount: 1,
+      violations: [{ code: 'additional_property', path: `/${UNDECLARED_KEY}`, undeclaredKeyLength: 20 }],
+    });
+    const digits = refused(judgeRoundPlan(plan({ 'known_risks/123456789': 'x', 'controlling_inputs/0/sha256': 'y' }), INPUTS));
+    assert.deepEqual(digits.reason, {
+      kind: 'schema',
+      violationCount: 2,
+      violations: [
+        { code: 'additional_property', path: `/${UNDECLARED_KEY}`, undeclaredKeyLength: 21 },
+        { code: 'additional_property', path: `/${UNDECLARED_KEY}`, undeclaredKeyLength: 27 },
+      ],
+    });
+    const lines: string[] = [];
+    logPlanRefused((level, at, fields) => lines.push(JSON.stringify({ level, at, ...fields })), 'room-1', 'cmd_planner_1', digits);
+    assert.doesNotMatch(lines.join('\n'), /123456789/, 'digits the plan chose never reach the line');
+  });
+
+  it('a violation path that does not match the schema and the document is not written at all', () => {
+    const document = plan();
+    const reason = planDocRefusalReason({
+      ok: false,
+      kind: 'schema',
+      violations: [
+        { path: '/known_risks/123456789', code: 'type_mismatch', message: '' },
+        { path: '/qz7canary', code: 'type_mismatch', message: '' },
+        { path: '/objective/qz7canary', code: 'length', message: '' },
+        { path: '/qz7canary', code: 'additional_property', message: '' },
+        { path: '/implementation_sequence/1', code: 'length', message: '' },
+      ],
+    }, document);
+    assert.deepEqual(reason, {
+      kind: 'schema',
+      violationCount: 5,
+      violations: [
+        { code: 'type_mismatch', path: UNRESOLVED_PATH },
+        { code: 'type_mismatch', path: UNRESOLVED_PATH },
+        { code: 'length', path: UNRESOLVED_PATH },
+        { code: 'additional_property', path: UNRESOLVED_PATH },
+        { code: 'length', path: '/implementation_sequence/1', found: 8, bound: 1 },
+      ],
+    });
+    assert.doesNotMatch(JSON.stringify(reason), /qz7canary|123456789/);
+  });
+
+  it('two undeclared keys with the same raw path are each matched to their own place', () => {
+    const document = plan({ 'claims/x': 'root key' });
+    document['claims'] = { plan_approved: false, builder_authorized: false, x: 'nested key' };
+    // claims comes before 'claims/x' in the document, so the validator reports the nested key first.
+    const verdict = refused(judgeRoundPlan(document, INPUTS));
+    assert.deepEqual(verdict.reason, {
+      kind: 'schema',
+      violationCount: 2,
+      violations: [
+        { code: 'additional_property', path: `/claims/${UNDECLARED_KEY}`, undeclaredKeyLength: 1 },
+        { code: 'additional_property', path: `/${UNDECLARED_KEY}`, undeclaredKeyLength: 8 },
+      ],
+    });
   });
 
   it('keeps the first 20 violations and counts them all', () => {

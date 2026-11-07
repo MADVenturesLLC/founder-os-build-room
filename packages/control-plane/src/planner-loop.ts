@@ -766,7 +766,11 @@ export type PlanRefusalReason =
 
 export interface PlanRefusalViolation {
   readonly code: ViolationCode;
-  /** The violation's path, with any segment the schema does not declare written as `<undeclared key>`. */
+  /**
+   * The violation's path, with any key the schema does not declare written as
+   * `<undeclared key>`; `<unresolved path>` when the path cannot be matched to
+   * the schema and the document, and so is not written.
+   */
   readonly path: string;
   /** The length of the undeclared key, when the path holds one. */
   readonly undeclaredKeyLength?: number;
@@ -808,12 +812,20 @@ export function judgeRoundPlan(document: unknown, inputs: RoundInputs): RoundPla
 /** The reason for one of `judgePlanDoc`'s refusals, from its verdict and the document it judged. */
 export function planDocRefusalReason(verdict: Extract<PlanDocVerdict, { ok: false }>, document: unknown): PlanRefusalReason {
   switch (verdict.kind) {
-    case 'schema':
+    case 'schema': {
+      const undeclared = undeclaredKeysOf(document);
       return {
         kind: 'schema',
         violationCount: verdict.violations.length,
-        violations: verdict.violations.slice(0, PLAN_REFUSAL_VIOLATIONS_KEPT).map((violation) => refusalViolation(violation.code, violation.path, document)),
+        violations: verdict.violations
+          .slice(0, PLAN_REFUSAL_VIOLATIONS_KEPT)
+          .map((violation) =>
+            violation.code === 'additional_property'
+              ? undeclaredViolation(violation.path, undeclared)
+              : refusalViolation(violation.code, violation.path, document),
+          ),
       };
+    }
     case 'scope':
       return { kind: 'scope_path', index: verdict.index };
     case 'encoding':
@@ -821,42 +833,86 @@ export function planDocRefusalReason(verdict: Extract<PlanDocVerdict, { ok: fals
   }
 }
 
+/** Written in place of a violation's path that cannot be matched to the schema and the document. */
+export const UNRESOLVED_PATH = '<unresolved path>';
+
+interface UndeclaredKey {
+  /** The path the validator writes for it: the declared path, then the key as the plan wrote it. */
+  readonly raw: string;
+  /** The same path with the key replaced. */
+  readonly masked: string;
+  readonly length: number;
+  used: boolean;
+}
+
 /**
- * One violation, its path walked against PLANDOC_SCHEMA_V1 and the document
- * together. A segment is kept while the schema declares it (an object's
- * property, or an array's index); from the first segment it does not, the
- * rest of the path is the name of a key the plan wrote and is replaced, its
- * length kept. A `length` violation also carries what was found and the bound.
+ * Every key the schema does not declare, found by walking the document along
+ * the schema in the validator's own order (`walkValue` in
+ * seat-output-schema's schema.ts: an object's entries in order, descending
+ * only into declared properties and array items). The validator joins raw
+ * keys with `/`, so its path alone cannot tell a key holding `/` (such as
+ * `claims/plan_approved`, or `known_risks/123`) from declared structure; the
+ * structure can.
+ */
+function undeclaredKeysOf(document: unknown): UndeclaredKey[] {
+  const found: UndeclaredKey[] = [];
+  const walk = (schema: OutputSchema, value: unknown, path: string): void => {
+    if (schema.type === 'object' && isRecord(value)) {
+      for (const [key, child] of Object.entries(value)) {
+        const declared = Object.hasOwn(schema.properties, key) ? schema.properties[key] : undefined;
+        if (declared === undefined) {
+          found.push({ raw: `${path}/${key}`, masked: `${path}/${UNDECLARED_KEY}`, length: key.length, used: false });
+        } else {
+          walk(declared, child, `${path}/${key}`);
+        }
+      }
+    } else if (schema.type === 'array' && Array.isArray(value)) {
+      value.forEach((item: unknown, index) => walk(schema.items, item, `${path}/${index}`));
+    }
+  };
+  walk(PLANDOC_SCHEMA_V1, document, '');
+  return found;
+}
+
+/**
+ * An additional_property violation, matched to the undeclared key it names.
+ * The keys are found in the order the validator reports them, so the first
+ * unused key with the same raw path is the one the violation names.
+ */
+function undeclaredViolation(rawPath: string, undeclared: UndeclaredKey[]): PlanRefusalViolation {
+  const key = undeclared.find((candidate) => !candidate.used && candidate.raw === rawPath);
+  if (key === undefined) return { code: 'additional_property', path: UNRESOLVED_PATH };
+  key.used = true;
+  return { code: 'additional_property', path: key.masked, undeclaredKeyLength: key.length };
+}
+
+/**
+ * Any other violation. The validator reaches these only through declared
+ * properties and the items an array holds, so its path is walked against
+ * the schema and the document together: each segment must be a property the
+ * schema declares, or the index of an item the array holds. A path with any
+ * other segment is not written at all. A `length` violation also carries
+ * what was found and the bound.
  */
 function refusalViolation(code: ViolationCode, rawPath: string, document: unknown): PlanRefusalViolation {
   const segments = rawPath === '' ? [] : rawPath.slice(1).split('/');
-  const kept: string[] = [];
-  let schema: OutputSchema | undefined = PLANDOC_SCHEMA_V1;
+  let schema: OutputSchema = PLANDOC_SCHEMA_V1;
   let value: unknown = document;
-  let undeclaredKeyLength: number | undefined;
-  for (let i = 0; i < segments.length; i += 1) {
-    const segment = segments[i] as string;
-    if (schema?.type === 'object' && Object.hasOwn(schema.properties, segment)) {
-      kept.push(segment);
-      schema = schema.properties[segment];
+  for (const segment of segments) {
+    if (schema.type === 'object' && Object.hasOwn(schema.properties, segment)) {
+      schema = schema.properties[segment] as OutputSchema;
       value = isRecord(value) ? value[segment] : undefined;
       continue;
     }
-    if (schema?.type === 'array' && /^(0|[1-9][0-9]*)$/.test(segment)) {
-      kept.push(segment);
+    if (schema.type === 'array' && /^(0|[1-9][0-9]*)$/.test(segment) && Array.isArray(value) && Number(segment) < value.length) {
       schema = schema.items;
-      value = Array.isArray(value) ? value[Number(segment)] : undefined;
+      value = value[Number(segment)];
       continue;
     }
-    undeclaredKeyLength = segments.slice(i).join('/').length;
-    kept.push(UNDECLARED_KEY);
-    schema = undefined;
-    value = undefined;
-    break;
+    return { code, path: UNRESOLVED_PATH };
   }
-  const path = kept.length === 0 ? '' : `/${kept.join('/')}`;
-  const base: PlanRefusalViolation = { code, path, ...(undeclaredKeyLength === undefined ? {} : { undeclaredKeyLength }) };
-  if (code !== 'length' || schema === undefined) return base;
+  const base: PlanRefusalViolation = { code, path: rawPath };
+  if (code !== 'length') return base;
   if (schema.type === 'string' && typeof value === 'string') {
     const bound = schema.max_length !== undefined && value.length > schema.max_length ? schema.max_length : schema.min_length;
     return bound === undefined ? base : { ...base, found: value.length, bound };
