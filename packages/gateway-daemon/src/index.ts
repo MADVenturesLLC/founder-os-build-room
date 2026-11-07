@@ -153,6 +153,8 @@ export {
   remainsAfterReap,
   sha256OfFile,
   planDocumentFrom,
+  parsePlanResponse,
+  repairInvalidEscapes,
   plannerPrompt,
   readOnly,
   recordAbsence,

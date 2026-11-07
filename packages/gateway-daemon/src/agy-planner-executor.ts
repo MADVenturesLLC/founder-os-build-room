@@ -346,9 +346,61 @@ export function agyInputLine(prompt: string): string {
 
 /** The plan document in agy's final response: the whole response, or one fenced JSON block. */
 export function planDocumentFrom(response: string): unknown {
+  return parsePlanResponse(response).document;
+}
+
+/**
+ * The plan document in agy's final response, and how many backslashes had to be read as
+ * literal backslashes for it to parse.
+ *
+ * JSON allows a backslash only before `"`, `\`, `/`, `b`, `f`, `n`, `r`, `t` or `u` and four
+ * hex digits. Phase4-CR1's second round of R1 (2026-11-06) returned 46,961 characters of
+ * one-line JSON with one other backslash in a string, and the strict parse threw the whole
+ * plan away. So: the strict parse first, always; only if it fails, each backslash that does
+ * not begin an allowed escape is read as a literal backslash, and the text is parsed once
+ * more. A valid document never reaches the repair, and the repair keeps every character the
+ * model wrote. Anything else that breaks the text, a missing quote or a cut-off answer, still
+ * throws, as before.
+ */
+export function parsePlanResponse(response: string): { readonly document: unknown; readonly invalidEscapesRepaired: number } {
   const trimmed = response.trim();
   const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/.exec(trimmed);
-  return JSON.parse(fenced === null ? trimmed : (fenced[1] ?? ''));
+  const body = fenced === null ? trimmed : (fenced[1] ?? '');
+  try {
+    return { document: JSON.parse(body), invalidEscapesRepaired: 0 };
+  } catch (error) {
+    const repaired = repairInvalidEscapes(body);
+    if (repaired.count === 0) throw error;
+    return { document: JSON.parse(repaired.text), invalidEscapesRepaired: repaired.count };
+  }
+}
+
+/**
+ * Each backslash that does not begin an escape JSON allows becomes an escaped backslash; an
+ * allowed escape, `\\` among them, is copied whole. `count` is how many were changed.
+ */
+export function repairInvalidEscapes(text: string): { readonly text: string; readonly count: number } {
+  const out: string[] = [];
+  let count = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (ch !== '\\') {
+      out.push(ch);
+      continue;
+    }
+    const next = text[i + 1];
+    if (next !== undefined && '"\\/bfnrt'.includes(next)) {
+      out.push(ch, next);
+      i += 1;
+    } else if (next === 'u' && /^[0-9A-Fa-f]{4}$/.test(text.slice(i + 2, i + 6))) {
+      out.push(text.slice(i, i + 6));
+      i += 5;
+    } else {
+      out.push('\\\\');
+      count += 1;
+    }
+  }
+  return { text: out.join(''), count };
 }
 
 interface EvidenceRecord {
@@ -374,6 +426,8 @@ interface EvidenceRecord {
   readonly streamEvents?: readonly string[];
   readonly resultStatus?: string | null;
   readonly responseBytes?: number | null;
+  /** Present only when the plan parsed after parsePlanResponse's repair: how many backslashes it read as literal. */
+  readonly invalidEscapesRepaired?: number;
 }
 
 /** Enough of a record's shape to close it at boot: an object with a command id and an outcome. */
@@ -1257,6 +1311,8 @@ class AgyRun {
   /** Set by the first line after `first` that decides how the run ends; later lines decide nothing. */
   private outcome: RunOutcome | null = null;
   private resultSummary: { readonly status: string | null; readonly bytes: number | null } | null = null;
+  /** How many backslashes the plan's parse read as literal (parsePlanResponse); 0 unless it repaired. */
+  private escapesRepaired = 0;
   /** The name of each output line after init, `other` when it has none that fits; at most STREAM_EVENTS_RECORDED. */
   private readonly kinds: string[] = [];
   private kindsOverflow = false;
@@ -1383,7 +1439,9 @@ class AgyRun {
       return;
     }
     try {
-      this.outcome = { kind: 'plan', document: planDocumentFrom(result['response']) };
+      const parsed = parsePlanResponse(result['response']);
+      this.escapesRepaired = parsed.invalidEscapesRepaired;
+      this.outcome = { kind: 'plan', document: parsed.document };
     } catch {
       this.outcome = { kind: 'unparseable_plan' };
     }
@@ -1391,13 +1449,15 @@ class AgyRun {
 
   /**
    * How the run ended, for its closing record (fix act B2): the kinds of the lines after
-   * init, the first result's status and its response's byte length. No text is kept.
+   * init, the first result's status and its response's byte length, and, only when the plan
+   * parsed after a repair, how many backslashes were read as literal. No text is kept.
    */
-  diagnostics(): { streamEvents: string[]; resultStatus: string | null; responseBytes: number | null } {
+  diagnostics(): { streamEvents: string[]; resultStatus: string | null; responseBytes: number | null; invalidEscapesRepaired?: number } {
     return {
       streamEvents: this.kindsOverflow ? [...this.kinds, 'truncated'] : [...this.kinds],
       resultStatus: this.resultSummary?.status ?? null,
       responseBytes: this.resultSummary?.bytes ?? null,
+      ...(this.escapesRepaired > 0 ? { invalidEscapesRepaired: this.escapesRepaired } : {}),
     };
   }
 
