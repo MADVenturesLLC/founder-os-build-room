@@ -306,6 +306,13 @@ export function modelsNamed(value: unknown): string[] {
  * The work as the Planner reads it. Everything here is public-class by the
  * ruling's B5: the goal and scope the Founder's counted-run act names, and
  * the schema the control plane judges the answer against.
+ *
+ * FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING adds three things and
+ * changes no earlier line: the rules for what a plan may name (B1), before
+ * ANSWER; a revision round's note that the Planner has only the feedback,
+ * not the earlier plan (B2), which is so because a revision carries the
+ * earlier plan's hash alone and agy starts afresh each round; and the
+ * prompt's last line, to write the answer once (B3).
  */
 export function plannerPrompt(work: PlannerWorkWire): string {
   const lines = [
@@ -321,7 +328,18 @@ export function plannerPrompt(work: PlannerWorkWire): string {
   ];
   if (work.revision !== undefined) {
     lines.push('', 'THE FOUNDER ASKED FOR A REVISION OF AN EARLIER PLAN', `Earlier plan hash: ${work.revision.revisingPlanHash}`, work.revision.feedback);
+    lines.push('You do not have the earlier plan, only this feedback on it. Treat each correction in the feedback as true, and check everything else against the checkout as the rules below say.');
   }
+  lines.push(
+    '',
+    'HOW TO WRITE THE PLAN',
+    '1. Name a file, directory, function, type, constant, route, table, field, environment variable, error code, script, test or value only if you saw it in this checkout during this turn, in a file you opened or a directory you listed. If you did not see it, describe the behaviour in plain words or leave it out. Never name something because it seems likely to exist.',
+    '2. Give a line number or a range of lines only for lines you read, and quote only text you read.',
+    '3. Name only what the plan needs. A plan does not need every function, constant or error code of the code it describes.',
+    '4. You cannot run commands, so you do not know whether any test, lint, type check or other check passes at this commit. Do not say that one passes or fails. Where the plan relies on a check, require only that the change adds no new failure to it compared with this commit.',
+    '5. Before you answer, check every name, path, line number and quotation in the plan against what you saw, and remove any you did not see.',
+    '6. Keep the whole answer under 25,000 characters.',
+  );
   lines.push(
     '',
     'ANSWER',
@@ -329,6 +347,7 @@ export function plannerPrompt(work: PlannerWorkWire): string {
     JSON.stringify(PLANDOC_SCHEMA_V1),
     `Use "repository": ${JSON.stringify(work.repository)}, "base_sha": ${JSON.stringify(work.baseSha)} and "work_id": ${JSON.stringify(work.commandId)}.`,
     'Set "terminal_status" to "PLAN_READY_FOR_FOUNDER_APPROVAL" only if the plan is complete; otherwise to the blocked or inconclusive status that applies.',
+    'Write that object once, at the end of your turn, after you have finished reading.',
   );
   return lines.join('\n');
 }
