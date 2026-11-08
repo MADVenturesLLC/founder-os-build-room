@@ -66,6 +66,8 @@ export const RUNTIME_ROLE_EXCLUDED: Readonly<Record<string, string>> = {
     'already builds the complete journal writer on a genuine br_app_runtime login on its own owned instance, including the decision path\'s lifecycle insert, and destroys that instance at teardown',
   'plan-decision':
     'already drives the plan decision end to end on a genuine br_app_runtime login on its own owned instance, the fenced HTTP route included, and destroys that instance at teardown',
+  'plan-refusal-log':
+    'already drives refused and accepted planner rounds and a recovered round on a genuine br_app_runtime login on its own owned instance, as planner-loop does; its subject is the refusal log line, and it destroys that instance at teardown',
   'plan-store':
     'already builds the plan store on a genuine br_app_runtime login on its own owned instance, including the T3 insert the plan is bound to, and destroys that instance at teardown',
   'planner-loop':
