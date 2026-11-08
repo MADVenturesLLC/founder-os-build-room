@@ -350,8 +350,9 @@ export function planDocumentFrom(response: string): unknown {
 }
 
 /**
- * The plan document in agy's final response, and how many backslashes had to be read as
- * literal backslashes for it to parse.
+ * The plan document in agy's final response, how many backslashes had to be read as literal
+ * backslashes for it to parse, and, when the response held more than one complete answer,
+ * how many.
  *
  * JSON allows a backslash only before `"`, `\`, `/`, `b`, `f`, `n`, `r`, `t` or `u` and four
  * hex digits. Phase4-CR1's second round of R1 (2026-11-06) returned 46,961 characters of
@@ -359,20 +360,110 @@ export function planDocumentFrom(response: string): unknown {
  * plan away. So: the strict parse first, always; only if it fails, each backslash that does
  * not begin an allowed escape is read as a literal backslash, and the text is parsed once
  * more. A valid document never reaches the repair, and the repair keeps every character the
- * model wrote. Anything else that breaks the text, a missing quote or a cut-off answer, still
- * throws, as before.
+ * model wrote.
+ *
+ * agy's result joins every text the Planner writes in its turn. In round 3 of R3
+ * (2026-11-08) the Planner wrote a complete answer, read nine more files, and wrote a second
+ * complete answer; agy returned both, 48,172 bytes, and the whole was not one document. So,
+ * only when the single reading fails: a response made of two or more answers, each a JSON
+ * object or one fenced JSON block, with nothing but whitespace between them, is read as its
+ * last answer, the Planner's final word. Every answer must parse (each with the same
+ * repair) and be an object, or nothing is taken. Anything else that breaks the text, a
+ * missing quote, a cut-off answer or prose around the JSON, still throws, as before.
  */
-export function parsePlanResponse(response: string): { readonly document: unknown; readonly invalidEscapesRepaired: number } {
+export function parsePlanResponse(response: string): {
+  readonly document: unknown;
+  readonly invalidEscapesRepaired: number;
+  /** Present only when the response held more than one answer and the document is its last: how many. */
+  readonly answersJoined?: number;
+} {
   const trimmed = response.trim();
   const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/.exec(trimmed);
   const body = fenced === null ? trimmed : (fenced[1] ?? '');
   try {
-    return { document: JSON.parse(body), invalidEscapesRepaired: 0 };
+    return parseOneAnswer(body);
   } catch (error) {
-    const repaired = repairInvalidEscapes(body);
+    const answers = joinedAnswers(trimmed);
+    if (answers === null) throw error;
+    const read = answers.map((answer) => {
+      try {
+        return parseOneAnswer(answer);
+      } catch {
+        return null;
+      }
+    });
+    if (read.some((one) => one === null || !isPlainObject(one.document))) throw error;
+    const last = read[read.length - 1]!;
+    return { document: last.document, invalidEscapesRepaired: last.invalidEscapesRepaired, answersJoined: answers.length };
+  }
+}
+
+/** One answer: the strict parse, then, only if it fails and there is a backslash to repair, one more. */
+function parseOneAnswer(text: string): { readonly document: unknown; readonly invalidEscapesRepaired: number } {
+  try {
+    return { document: JSON.parse(text), invalidEscapesRepaired: 0 };
+  } catch (error) {
+    const repaired = repairInvalidEscapes(text);
     if (repaired.count === 0) throw error;
     return { document: JSON.parse(repaired.text), invalidEscapesRepaired: repaired.count };
   }
+}
+
+function isPlainObject(value: unknown): boolean {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * The answers in a response made only of answers: each a span from `{` to its matching `}`
+ * (outside strings), or one fenced block, with whitespace alone around and between them.
+ * `null` when the response is anything else or holds fewer than two. Whether each answer is
+ * JSON is the caller's question.
+ */
+function joinedAnswers(text: string): string[] | null {
+  const answers: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    if (/\s/.test(text[i]!)) {
+      i += 1;
+      continue;
+    }
+    if (text.startsWith('```', i)) {
+      const block = /^```(?:json)?\s*\n([\s\S]*?)\n```/.exec(text.slice(i));
+      if (block === null) return null;
+      answers.push(block[1] ?? '');
+      i += block[0].length;
+      continue;
+    }
+    if (text[i] !== '{') return null;
+    const end = objectEnd(text, i);
+    if (end === -1) return null;
+    answers.push(text.slice(i, end));
+    i = end;
+  }
+  return answers.length >= 2 ? answers : null;
+}
+
+/** The index just past the `}` that closes the `{` at `start`, counting brackets outside strings; -1 if none does. */
+function objectEnd(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') depth += 1;
+    else if (ch === '}' || ch === ']') {
+      depth -= 1;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return -1;
 }
 
 /**
@@ -428,6 +519,8 @@ interface EvidenceRecord {
   readonly responseBytes?: number | null;
   /** Present only when the plan parsed after parsePlanResponse's repair: how many backslashes it read as literal. */
   readonly invalidEscapesRepaired?: number;
+  /** Present only when the response held more than one answer and the plan is its last (parsePlanResponse): how many. */
+  readonly answersJoined?: number;
 }
 
 /** Enough of a record's shape to close it at boot: an object with a command id and an outcome. */
@@ -1313,6 +1406,8 @@ class AgyRun {
   private resultSummary: { readonly status: string | null; readonly bytes: number | null } | null = null;
   /** How many backslashes the plan's parse read as literal (parsePlanResponse); 0 unless it repaired. */
   private escapesRepaired = 0;
+  /** How many answers the response held when the plan is the last of several (parsePlanResponse); 0 otherwise. */
+  private answersJoined = 0;
   /** The name of each output line after init, `other` when it has none that fits; at most STREAM_EVENTS_RECORDED. */
   private readonly kinds: string[] = [];
   private kindsOverflow = false;
@@ -1441,6 +1536,7 @@ class AgyRun {
     try {
       const parsed = parsePlanResponse(result['response']);
       this.escapesRepaired = parsed.invalidEscapesRepaired;
+      this.answersJoined = parsed.answersJoined ?? 0;
       this.outcome = { kind: 'plan', document: parsed.document };
     } catch {
       this.outcome = { kind: 'unparseable_plan' };
@@ -1449,15 +1545,23 @@ class AgyRun {
 
   /**
    * How the run ended, for its closing record (fix act B2): the kinds of the lines after
-   * init, the first result's status and its response's byte length, and, only when the plan
-   * parsed after a repair, how many backslashes were read as literal. No text is kept.
+   * init, the first result's status and its response's byte length; only when the plan
+   * parsed after a repair, how many backslashes were read as literal; and only when the plan
+   * is the last of several answers, how many there were. No text is kept.
    */
-  diagnostics(): { streamEvents: string[]; resultStatus: string | null; responseBytes: number | null; invalidEscapesRepaired?: number } {
+  diagnostics(): {
+    streamEvents: string[];
+    resultStatus: string | null;
+    responseBytes: number | null;
+    invalidEscapesRepaired?: number;
+    answersJoined?: number;
+  } {
     return {
       streamEvents: this.kindsOverflow ? [...this.kinds, 'truncated'] : [...this.kinds],
       resultStatus: this.resultSummary?.status ?? null,
       responseBytes: this.resultSummary?.bytes ?? null,
       ...(this.escapesRepaired > 0 ? { invalidEscapesRepaired: this.escapesRepaired } : {}),
+      ...(this.answersJoined > 1 ? { answersJoined: this.answersJoined } : {}),
     };
   }
 
