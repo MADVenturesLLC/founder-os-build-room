@@ -832,6 +832,33 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
     });
   }
 
+  // Every member entry needs a full 40-character head, not only the entry for
+  // the PR being judged (Tier-2 at 9ce46f0, finding 1). The template reads the
+  // first entry and the repeated entries with separate patterns, so the
+  // other member's entry is placed both first and second, and carries the
+  // abbreviated, shortened or lengthened head.
+  const otherMemberHeads: Array<[string, string]> = [
+    ['a seven-character head', '9ead123'],
+    ['a 39-character head', OLDER_HEAD.slice(0, 39)],
+    ['a 41-character head', `${OLDER_HEAD}a`],
+  ];
+  for (const [what, head] of otherMemberHeads) {
+    for (const otherFirst of [false, true]) {
+      it(`refuses an envelope whose other member, listed ${otherFirst ? 'first' : 'second'}, has ${what}`, () => {
+        const order = (other: string): string[] => {
+          const own = memberLine('founder-os-build-room', PR, HEAD);
+          const tui = memberLine('madventures-tui', 12, other);
+          return otherFirst ? [tui, own] : [own, tui];
+        };
+        const control = envelopeText({ members: order(OLDER_HEAD) });
+        assert.equal(judgeEnvelope(envelopeInput({ comments: [carrierComment(935, control)] })).verdict.authorized, true, 'the full-width control is accepted');
+        const text = envelopeText({ members: order(head) });
+        assert.notEqual(text, control, 'fixture changes only the other member');
+        assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(935, text)] })), /is not the Appendix B text/);
+      });
+    }
+  }
+
   it('refuses a placeholder hidden in a Markdown link target (Tier-2 at 2a4eea3, finding 2)', () => {
     const text = envelopeText({ scope: '[Phase 3 runtime slices](https://example.invalid/<n>)' });
     assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(932, text)] })), /placeholder/);
