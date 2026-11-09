@@ -31,7 +31,7 @@ import pgDefault from 'pg';
 import type { Client as PgClient, Pool as PgPool } from 'pg';
 import { destroyOwnedInstance, resolveServerBinaries, startOwnedInstance, type OwnedInstance } from './support/owned-postgres.js';
 import { SYNTHETIC_ROUTE, SyntheticPlanner } from './support/synthetic-planner.js';
-import { PlanStore } from '../packages/control-plane/src/plan-store.js';
+import { PlanIntegrityError, PlanStore, type PlanTransaction } from '../packages/control-plane/src/plan-store.js';
 import { PostgresLedgerStore, type RoomAppendFence } from '../packages/control-plane/src/store.js';
 import {
   JournalStore,
@@ -52,7 +52,7 @@ import {
   type PlannerLoopDeps,
   type RoomRoleAssignment,
 } from '../packages/control-plane/src/planner-loop.js';
-import { journalRowSpec, type CommandEventRow } from '../packages/journal/src/index.js';
+import { journalRowSpec, planHash, type CanonicalDocument, type CommandEventRow } from '../packages/journal/src/index.js';
 import type { LifecycleEvent } from '../packages/ledger/src/index.js';
 import { founderGoalDigest, prepareFounderGoal } from '../packages/control-plane/src/founder-goal.js';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -358,7 +358,8 @@ describe('planner loop on PostgreSQL', { skip: SKIP_REASON }, () => {
     assert.equal(second.commandId, roundTwo);
     assert.deepEqual(await eventTypes(roundTwo), ['journaled', 'identity_bound', 'dispatched', 'completed']);
     assert.deepEqual((await rowsOf(roundTwo))[0]!.lifecycleEventRef, { roomId, eventId: t4Id });
-    assert.deepEqual(planner.calls.dispatched[0]!.revision, { feedback: 'Narrow it to the handler.', revisingPlanHash: outcome.planHash });
+    const earlierPlan = (await plans!.planForCommand(outcome.commandId))!.document;
+    assert.deepEqual(planner.calls.dispatched[0]!.revision, { feedback: 'Narrow it to the handler.', revisingPlanHash: outcome.planHash, earlierPlan });
     assert.notEqual(second.planHash, outcome.planHash);
 
     const approved = await decidePlan(decisionDeps!, roomId, approve(second.planHash));
@@ -367,6 +368,69 @@ describe('planner loop on PostgreSQL', { skip: SKIP_REASON }, () => {
     assert.deepEqual(await decisionsFor(roundTwo), ['plan.approved']);
     assert.deepEqual(await decisionsFor(outcome.commandId), ['plan.revision_requested']);
   });
+
+  it('a revision round sends the plan it revises, bound to the hash its revision request recorded (revision-context act B2)', async () => {
+    const { roomId, outcome } = await roundOne();
+    assert.ok(outcome.kind === 'plan_review');
+    await decidePlan(decisionDeps!, roomId, revise(outcome.planHash, 'Keep the rest; fix the route.'));
+
+    planner.reset();
+    const second = await new PlannerLoop(loopDeps()).runRound(roomId);
+    assert.equal(second.kind, 'plan_review', JSON.stringify(second));
+    const revision = planner.calls.dispatched[0]!.revision!;
+    const stored = (await plans!.planForCommand(outcome.commandId))!;
+    assert.equal(revision.revisingPlanHash, outcome.planHash);
+    assert.deepEqual(revision.earlierPlan, stored.document);
+    assert.equal(planHash(revision.earlierPlan as CanonicalDocument), revision.revisingPlanHash, 'the plan sent is the plan the hash names');
+
+    // A second revision sends the plan it revises, round two's, not round one's.
+    assert.ok(second.kind === 'plan_review');
+    await decidePlan(decisionDeps!, roomId, revise(second.planHash, 'One more fix.'));
+    planner.reset();
+    const third = await new PlannerLoop(loopDeps()).runRound(roomId);
+    assert.equal(third.kind, 'plan_review', JSON.stringify(third));
+    const again = planner.calls.dispatched[0]!.revision!;
+    assert.equal(again.revisingPlanHash, second.planHash);
+    assert.deepEqual(again.earlierPlan, (await plans!.planForCommand(second.commandId))!.document);
+    assert.notDeepEqual(again.earlierPlan, revision.earlierPlan);
+  });
+
+  for (const [name, planForEvent] of [
+    ['is missing from the plan store', () => async () => null],
+    ['is another plan than the one revised', (real: PlanTransaction) => async (roomId: string, eventId: string) => {
+      const stored = await real.planForEvent(roomId, eventId);
+      return stored === null ? null : { ...stored, planHash: 'f'.repeat(64) };
+    }],
+    ['fails its integrity check', () => async () => {
+      throw new PlanIntegrityError('cmd_planner_test', 'the stored plan_hash does not match its document');
+    }],
+  ] as const) {
+    it(`a revision round whose earlier plan ${name} is refused before any journal row or contact (revision-context act B2)`, async () => {
+      const { roomId, outcome } = await roundOne();
+      assert.ok(outcome.kind === 'plan_review');
+      const revised = await decidePlan(decisionDeps!, roomId, revise(outcome.planHash, 'Fix the route.'));
+      const roundTwo = plannerCommandIdFor(roomId, revised.appended.event.eventId);
+
+      planner.reset();
+      const stubbed: Pick<PlanStore, 'inTransaction'> = {
+        inTransaction: (client) => {
+          const real = plans!.inTransaction(client);
+          return { ...real, planForEvent: planForEvent(real) };
+        },
+      };
+      const refused = await new PlannerLoop(loopDeps({ plans: stubbed })).runRound(roomId);
+      assert.equal(refused.kind === 'refused' && refused.code, 'not_plannable', JSON.stringify(refused));
+      assert.deepEqual(await eventTypes(roundTwo), [], 'nothing is journaled');
+      assert.equal(planner.calls.attest, 0, 'the Planner is not asked to attest');
+      assert.equal(planner.calls.dispatched.length, 0, 'nothing is sent');
+      assert.equal(await stateOf(roomId), 'PLANNING');
+
+      // Nothing was left behind: with the plan store's own answer, the round opens.
+      const opened = await new PlannerLoop(loopDeps()).runRound(roomId);
+      assert.equal(opened.kind, 'plan_review', JSON.stringify(opened));
+      assert.equal(opened.kind === 'plan_review' && opened.commandId, roundTwo);
+    });
+  }
 
   it('gateway offline: T2 is the recorded rejection and no command exists; cancel stays unavailable', async () => {
     gatewayOnline = false;

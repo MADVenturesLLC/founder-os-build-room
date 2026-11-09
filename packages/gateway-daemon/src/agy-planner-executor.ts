@@ -307,12 +307,13 @@ export function modelsNamed(value: unknown): string[] {
  * ruling's B5: the goal and scope the Founder's counted-run act names, and
  * the schema the control plane judges the answer against.
  *
- * FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING adds three things and
- * changes no earlier line: the rules for what a plan may name (B1), before
- * ANSWER; a revision round's note that the Planner has only the feedback,
- * not the earlier plan (B2), which is so because a revision carries the
- * earlier plan's hash alone and agy starts afresh each round; and the
- * prompt's last line, to write the answer once (B3).
+ * FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING adds the rules for what a
+ * plan may name (B1), before ANSWER, and the prompt's last line, to write the
+ * answer once (B3). Its B2 note, that a revision round had only the feedback,
+ * gave way to FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT B3: agy starts
+ * afresh each round, so a revision round now carries the earlier plan itself,
+ * which the Planner is told to revise rather than replace, and which follows
+ * as one line of JSON. A first round's prompt is unchanged.
  */
 export function plannerPrompt(work: PlannerWorkWire): string {
   const lines = [
@@ -328,7 +329,13 @@ export function plannerPrompt(work: PlannerWorkWire): string {
   ];
   if (work.revision !== undefined) {
     lines.push('', 'THE FOUNDER ASKED FOR A REVISION OF AN EARLIER PLAN', `Earlier plan hash: ${work.revision.revisingPlanHash}`, work.revision.feedback);
-    lines.push('You do not have the earlier plan, only this feedback on it. Treat each correction in the feedback as true, and check everything else against the checkout as the rules below say.');
+    lines.push(
+      'Your earlier plan follows, exactly as the control plane stored it. Revise that plan; do not write a new one. Make each correction and change the feedback asks for, and treat each correction as true. Keep every other statement of the earlier plan as it is, unless the feedback asks you to change it, you find in the checkout that it is false, or you must remove it to keep within rule 6 below. Add nothing the feedback does not ask for. Take repository, base_sha and work_id from the ANSWER section, not from the earlier plan.',
+      'Rules 1, 2 and 5 below apply to what you add or change in this round. A statement you keep unchanged from the earlier plan needs no new reading.',
+      '',
+      'EARLIER PLAN',
+      JSON.stringify(work.revision.earlierPlan),
+    );
   }
   lines.push(
     '',

@@ -406,7 +406,8 @@ describe('phase 4 lifecycle · goal to approved plan over the real surfaces', { 
     assert.notEqual(second.commandId, first.commandId, 'a revision round is a second command');
     assert.notEqual(second.planHash, first.planHash, 'the revised plan is a different document');
     const handed = executor.works.find((w) => w.commandId === second.commandId);
-    assert.deepEqual(handed?.revision, { feedback: 'Narrow it to one field.', revisingPlanHash: first.planHash });
+    const earlierPlan = (await freshStores().plans.planForCommand(first.commandId))!.document;
+    assert.deepEqual(handed?.revision, { feedback: 'Narrow it to one field.', revisingPlanHash: first.planHash, earlierPlan });
 
     // The first plan's hash no longer approves anything.
     const stale = await decide(roomId, { decision: 'plan.approved', planHash: first.planHash });
