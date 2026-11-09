@@ -269,11 +269,18 @@ function connectV2(socketPath: string): Promise<V2Client> {
           new Promise((res, rej) => {
             const queued = queue.shift();
             if (queued) return res(queued);
-            const timer = setTimeout(() => rej(new Error('no v2 frame within timeout')), timeoutMs);
-            waiters.push((frame) => {
+            const waiter = (frame: { type: number; body: Record<string, unknown> }): void => {
               clearTimeout(timer);
               res(frame);
-            });
+            };
+            // A read that times out withdraws its waiter, so the next frame
+            // goes to the next read instead of to this settled promise.
+            const timer = setTimeout(() => {
+              const index = waiters.indexOf(waiter);
+              if (index !== -1) waiters.splice(index, 1);
+              rej(new Error('no v2 frame within timeout'));
+            }, timeoutMs);
+            waiters.push(waiter);
           }),
       });
     });
@@ -529,10 +536,16 @@ function launchRunner(env: Record<string, string> = {}): RunnerProcess {
 }
 
 async function exitWithin(runner: RunnerProcess, ms = 10_000): Promise<number | null> {
+  // The bound's timer is cleared once the race settles: left running, it kept
+  // the test process alive for up to `ms` after the runner had already exited.
+  let bound: NodeJS.Timeout | undefined;
   const outcome = await Promise.race([
     runner.exit().then((result) => ({ timedOut: false as const, ...result })),
-    sleep(ms).then(() => ({ timedOut: true as const, code: null, signal: null })),
+    new Promise<{ timedOut: true; code: null; signal: null }>((resolvePromise) => {
+      bound = setTimeout(() => resolvePromise({ timedOut: true, code: null, signal: null }), ms);
+    }),
   ]);
+  clearTimeout(bound);
   assert.equal(outcome.timedOut, false, `the runner exited within ${String(ms)}ms rather than hanging; stderr: ${runner.stderr()}`);
   return outcome.code;
 }
@@ -1127,11 +1140,21 @@ describe('R5 correction — Slice D — enforceable capacity', () => {
         // Gap + backpressure disconnect. The healthy viewer is drained between
         // batches and its own queue never approaches the bound (6 × ~8 KiB).
         const patchText = 'd'.repeat(8 * 1_024);
+        const PATCHES_PER_BATCH = 6;
         let healthyPatches = 0;
-        const drainHealthy = async (budget: number): Promise<void> => {
-          for (let i = 0; i < budget; i++) {
+        // Read until this batch's patches have arrived, then stop. A batch
+        // brings exactly PATCHES_PER_BATCH patches (the first also two
+        // RoomDelta frames), so reading a fixed number of frames larger than
+        // that waited out the 1.5 s timeout in every batch: 200 batches,
+        // about 300 s.
+        const drainHealthy = async (patches: number): Promise<void> => {
+          let seen = 0;
+          while (seen < patches) {
             const frame = await healthy.next(1_500);
-            if (frame.type === FRAME_TYPE_VT_PATCH) healthyPatches += 1;
+            if (frame.type === FRAME_TYPE_VT_PATCH) {
+              healthyPatches += 1;
+              seen += 1;
+            }
           }
         };
         let slowDisconnected = false;
@@ -1142,10 +1165,10 @@ describe('R5 correction — Slice D — enforceable capacity', () => {
         // resuming would drain its kernel buffer and defeat the backpressure
         // under test).
         for (let batch = 0; batch < 200; batch++) {
-          for (let i = 0; i < 6; i++) {
+          for (let i = 0; i < PATCHES_PER_BATCH; i++) {
             rooms.emitFixturePatch(FIXTURE_ROOM_ID, i % 2 === 0 ? 'slot-a' : 'slot-b', patchText);
           }
-          await drainHealthy(10).catch(() => undefined);
+          await drainHealthy(PATCHES_PER_BATCH).catch(() => undefined);
         }
         // The Table-11 bound fired: the slow viewer holds a durable
         // viewer_backpressure disconnect (the attachment may already read
