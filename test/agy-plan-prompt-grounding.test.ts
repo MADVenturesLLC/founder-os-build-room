@@ -37,6 +37,21 @@ const RULES: readonly string[] = [
 const REVISION_NOTE =
   'You do not have the earlier plan, only this feedback on it. Treat each correction in the feedback as true, and check everything else against the checkout as the rules below say.';
 
+/**
+ * B2's note gave way to B3 of FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT: a revision
+ * round carries the earlier plan, and these lines follow the feedback in the note's place,
+ * the last of them the earlier plan as one line of JSON. Written out from that act's text.
+ */
+function revisionLines(work: PlannerWorkWire): string[] {
+  return [
+    'Your earlier plan follows, exactly as the control plane stored it. Revise that plan; do not write a new one. Make each correction and change the feedback asks for, and treat each correction as true. Keep every other statement of the earlier plan as it is, unless the feedback asks you to change it, you find in the checkout that it is false, or you must remove it to keep within rule 6 below. Add nothing the feedback does not ask for. Take repository, base_sha and work_id from the ANSWER section, not from the earlier plan.',
+    'Rules 1, 2 and 5 below apply to what you add or change in this round. A statement you keep unchanged from the earlier plan needs no new reading.',
+    '',
+    'EARLIER PLAN',
+    JSON.stringify(work.revision!.earlierPlan),
+  ];
+}
+
 /** B3. */
 const ANSWER_ONCE = 'Write that object once, at the end of your turn, after you have finished reading.';
 
@@ -93,6 +108,7 @@ function revisionRound(): PlannerWorkWire {
     revision: {
       revisingPlanHash: 'b'.repeat(64),
       feedback: 'Revise. Two statements are false.\n1. There is no src/codec.ts.\n2. The route is /health, not /status.',
+      earlierPlan: { objective: 'Describe the health route in the README.', implementation_sequence: ['Read src/codec.ts.'] },
     },
   };
 }
@@ -132,20 +148,22 @@ describe('the rules for what a plan may name (B1)', () => {
   });
 });
 
-describe('the revision note (B2)', () => {
-  it('a revision prompt holds the note once, right after the whole feedback', () => {
+describe('the revision lines (B2, as B3 of FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT replaced it)', () => {
+  it('a revision prompt holds the new lines once, right after the whole feedback, and the note nowhere', () => {
     const work = revisionRound();
     const prompt = plannerPrompt(work);
-    assert.equal(count(prompt.split('\n'), REVISION_NOTE), 1);
-    assert.ok(prompt.includes(`${work.revision!.feedback}\n${REVISION_NOTE}\n`), 'the note follows the feedback\'s last line');
+    assert.equal(count(prompt.split('\n'), REVISION_NOTE), 0);
+    assert.ok(prompt.includes(`${work.revision!.feedback}\n${revisionLines(work).join('\n')}\n`), 'the lines follow the feedback\'s last line');
   });
 
-  it('the rules come after the note in a revision prompt', () => {
-    const lines = linesOf(revisionRound());
-    const note = lines.indexOf(REVISION_NOTE);
+  it('the rules come right after the earlier plan in a revision prompt', () => {
+    const work = revisionRound();
+    const lines = linesOf(work);
+    const block = indexOfBlock(lines, revisionLines(work));
     const rules = indexOfBlock(lines, RULES);
+    assert.notEqual(block, -1);
     assert.notEqual(rules, -1);
-    assert.equal(rules, note + 1, 'the block starts on the line after the note');
+    assert.equal(rules, block + revisionLines(work).length, 'the rules block starts on the line after the earlier plan');
   });
 });
 
@@ -167,9 +185,9 @@ describe('every earlier line is kept (B4)', () => {
       assert.notEqual(start, -1);
       lines.splice(start, RULES.length);
       if (work.revision !== undefined) {
-        const note = lines.indexOf(REVISION_NOTE);
-        assert.notEqual(note, -1);
-        lines.splice(note, 1);
+        const block = indexOfBlock(lines, revisionLines(work));
+        assert.notEqual(block, -1);
+        lines.splice(block, revisionLines(work).length);
       }
       assert.equal(lines.pop(), ANSWER_ONCE);
       assert.deepEqual(lines, promptBeforeTheAct(work).split('\n'));

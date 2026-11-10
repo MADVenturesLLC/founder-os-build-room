@@ -93,6 +93,7 @@ import { judgePlanDoc, type PlanDocVerdict } from './plan-doc.js';
 import {
   PLANDOC_SCHEMA_V1,
   type OutputSchema,
+  type PlanDocV1,
   type PlanTerminalStatus,
   type ViolationCode,
 } from '../../seat-output-schema/src/index.js';
@@ -104,7 +105,7 @@ import {
   type DeploymentBucket,
   type RetryBudgetState,
 } from '../../seat-registry/src/index.js';
-import { PlanRefusedError, type PlanStore } from './plan-store.js';
+import { PlanIntegrityError, PlanRefusedError, type PlanStore, type PlanTransaction, type StoredPlan } from './plan-store.js';
 import type { PostgresLedgerStore } from './store.js';
 import {
   JournalCompletionRefusedError,
@@ -183,8 +184,21 @@ export interface PlannerWork {
   /** The Founder goal captured with the scope, and its recorded digest (plan r1 Q7c). */
   readonly goal: string;
   readonly goalDigest: string;
-  /** Present on a revision round: the Founder's feedback and the plan it revises. */
-  readonly revision?: { readonly feedback: string; readonly revisingPlanHash: string };
+  /** Present on a revision round: the Founder's feedback, and the plan it revises with its hash. */
+  readonly revision?: PlannerRevision;
+}
+
+/**
+ * A revision round as the Planner receives it (FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT
+ * B1, B2): the Founder's feedback, the hash of the plan it revises, and that plan's
+ * document, read from the plan store and bound to the hash. agy starts afresh each round,
+ * so without the document the Planner could not keep what it had right.
+ */
+export interface PlannerRevision {
+  readonly feedback: string;
+  readonly revisingPlanHash: string;
+  /** The PlanDoc the plan store returned for `revisingPlanHash`, carried to the Planner as is. */
+  readonly earlierPlan: { readonly [key: string]: unknown };
 }
 
 export interface ObservedRoute {
@@ -391,10 +405,16 @@ export interface RoundInputs {
   readonly revision?: { readonly feedback: string; readonly revisingPlanHash: string };
 }
 
+/** A round's inputs before any revision: what a first round plans from. */
+type FirstRoundInputs = Omit<RoundInputs, 'revision'>;
+
+/** What an opened round dispatches: its inputs and, on a revision, the plan it revises (B2). */
+export type RoundWork = FirstRoundInputs & { readonly revision?: PlannerRevision };
+
 interface OpenedRound {
   readonly commandId: string;
   readonly opening: string;
-  readonly inputs: RoundInputs;
+  readonly inputs: RoundWork;
 }
 
 const T1_FACTS_SQL = `SELECT e.payload->'facts'->>'baseSha' AS base_sha, e.payload->>'goal' AS goal
@@ -467,7 +487,7 @@ export class PlannerLoop {
   private async openFirstRound(roomId: string): Promise<OpenedRound | PlannerRoundOutcome> {
     const eventId = this.mintEventId();
     const commandId = plannerCommandIdFor(roomId, eventId);
-    let inputs: RoundInputs | null = null;
+    let inputs: FirstRoundInputs | null = null;
     const roles = await this.deps.roomRoles(roomId);
     const appended = await this.deps.ledger.appendDerived(roomId, {
       build: async (client, current) => {
@@ -549,11 +569,20 @@ export class PlannerLoop {
       }
       const commandId = latest.commandIds[journaled.length] as string;
       const inputs = await roundInputs(client, roomId, current, latest.opening.transition === 'T4' ? latest.opening : null);
+      // A revision round sends the plan it revises; reading it can stop the round, so it
+      // is read before anything is journaled (FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT B2).
+      const { revision, ...firstRound } = inputs;
+      let work: RoundWork = firstRound;
+      if (revision !== undefined) {
+        const plans = this.deps.plans.inTransaction(client);
+        const earlierPlan = await earlierPlanOf(plans, roomId, current, latest.opening, revision.revisingPlanHash);
+        work = { ...firstRound, revision: { ...revision, earlierPlan } };
+      }
       await tx.appendJournaled(this.plannerRequest(roomId, commandId, latest.opening.eventId, inputs, last?.commandId ?? null), {
         roomId,
         lifecycleEventRef: { roomId, eventId: latest.opening.eventId },
       });
-      return { commandId, opening: latest.opening.eventId, inputs };
+      return { commandId, opening: latest.opening.eventId, inputs: work };
     });
     if (locked.status === 'not_leader') {
       return { kind: 'refused', code: 'not_leader', reason: 'the fence refused the round' };
@@ -1112,4 +1141,38 @@ async function roundInputs(
     throw new RoundStateChangedError('the revision request carries no feedback or no revised plan');
   }
   return { ...base, revision: { feedback, revisingPlanHash: revised.digest } };
+}
+
+/**
+ * The plan a revision round revises, as the Planner is to receive it
+ * (FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT B2): the plan stored under the
+ * room's latest T3 before the revision request, read through the plan store in the
+ * round's own transaction, which judges the document again and recomputes its hash.
+ * The document is used only when that hash is the one the revision request recorded.
+ * Anything else stops the round before it is journaled, so nothing is sent: no
+ * stored plan, a stored plan that fails its integrity check, or another plan.
+ */
+async function earlierPlanOf(
+  plans: Pick<PlanTransaction, 'planForEvent'>,
+  roomId: string,
+  current: LedgerState,
+  revisionOpening: LedgerEntry,
+  revisingPlanHash: string,
+): Promise<PlanDocV1> {
+  const at = current.entries.findIndex((entry) => entry.eventId === revisionOpening.eventId);
+  const submitted = current.entries
+    .slice(0, Math.max(at, 0))
+    .reverse()
+    .find((entry) => entry.transition === 'T3');
+  if (at < 0 || submitted === undefined) throw new RoundStateChangedError('the revision request follows no submitted plan');
+  let stored: StoredPlan | null;
+  try {
+    stored = await plans.planForEvent(roomId, submitted.eventId);
+  } catch (error) {
+    if (error instanceof PlanIntegrityError) throw new RoundStateChangedError(`the revised plan fails its integrity check: ${error.reason}`);
+    throw error;
+  }
+  if (stored === null) throw new RoundStateChangedError('the revised plan is not in the plan store');
+  if (stored.planHash !== revisingPlanHash) throw new RoundStateChangedError('the stored plan is not the plan the revision request revises');
+  return stored.document;
 }

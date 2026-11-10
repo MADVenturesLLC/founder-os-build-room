@@ -19,6 +19,7 @@
  * that passes is exactly one of the shapes below. Nothing is coerced.
  */
 
+import { MAX_PLANNER_PAYLOAD_BYTES } from './constants.js';
 import { isCanonicalUuid } from './encoding.js';
 
 /** The adapter surfaces an attestation may name: the registered set (`adapter-v1.ts`). */
@@ -54,7 +55,20 @@ export interface PlannerWorkWire {
   readonly goalEventId: string;
   readonly goal: string;
   readonly goalDigest: string;
-  readonly revision?: { readonly feedback: string; readonly revisingPlanHash: string };
+  readonly revision?: PlannerRevisionWire;
+}
+
+/**
+ * A revision round's own inputs: the Founder's feedback, the hash of the plan it
+ * revises, and that plan's document (FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT
+ * B1). The control plane reads the document from its plan store and sends it only
+ * when the store's recomputed hash is `revisingPlanHash` (B2), so the Planner can
+ * revise the plan it wrote instead of writing a new one.
+ */
+export interface PlannerRevisionWire {
+  readonly feedback: string;
+  readonly revisingPlanHash: string;
+  readonly earlierPlan: { readonly [key: string]: unknown };
 }
 
 export type PlannerRequestWire =
@@ -162,6 +176,22 @@ function isIdentity(value: unknown): value is PlannerIdentityWire {
   );
 }
 
+/**
+ * The earlier plan's document: a plain JSON object whose JSON text fits the bound a
+ * plan's report payload has (B1). A stored plan arrived inside such a payload, so the
+ * bound never refuses one; it keeps a request from carrying more than a report can.
+ */
+function isEarlierPlan(value: unknown): value is { readonly [key: string]: unknown } {
+  if (asRecord(value) === null) return false;
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    return false;
+  }
+  return typeof text === 'string' && new TextEncoder().encode(text).length <= MAX_PLANNER_PAYLOAD_BYTES;
+}
+
 function isWork(value: unknown): value is PlannerWorkWire {
   const record = asRecord(value);
   if (
@@ -182,9 +212,10 @@ function isWork(value: unknown): value is PlannerWorkWire {
     const revision = asRecord(record['revision']);
     if (
       revision === null ||
-      !exactKeys(revision, ['feedback', 'revisingPlanHash']) ||
+      !exactKeys(revision, ['feedback', 'revisingPlanHash', 'earlierPlan']) ||
       !isText(revision['feedback'], MAX_TEXT_LENGTH) ||
-      !isText(revision['revisingPlanHash'])
+      !isText(revision['revisingPlanHash']) ||
+      !isEarlierPlan(revision['earlierPlan'])
     ) {
       return false;
     }

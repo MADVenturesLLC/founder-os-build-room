@@ -174,7 +174,7 @@ describe('gateway-planner-protocol · requests and reports', () => {
         kind: 'execute',
         commandId: WORK.commandId,
         executionId: 'exec-1',
-        work: { ...WORK, revision: { feedback: 'Narrower.', revisingPlanHash: 'c'.repeat(64) } },
+        work: { ...WORK, revision: { feedback: 'Narrower.', revisingPlanHash: 'c'.repeat(64), earlierPlan: { objective: 'Wider.' } } },
       }),
     );
     assert.ok(validatePlannerRequest({ requestId, kind: 'status', commandId: 'cmd_1' }));
