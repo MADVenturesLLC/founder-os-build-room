@@ -23,6 +23,7 @@
 
 import { founderGoalDigest } from '../../../control-plane/src/founder-goal.js';
 import { MAX_ROUND_ATTEMPTS, plannerCommandIdFor } from '../../../control-plane/src/planner-loop.js';
+import { REASKED_FAILURE_REASONS } from '../../../gateway-protocol/src/index.js';
 import {
   PHASE4_DISPATCHER,
   PHASE4_MAX_ROUNDS_PER_RUN,
@@ -30,6 +31,7 @@ import {
   PHASE4_PLANNER_SURFACE,
   type Phase4PlannedRun,
   type Phase4RecordedCommand,
+  type Phase4RecordedCommandRow,
   type Phase4RunFailure,
   type Phase4RunRecord,
   type Phase4RunSet,
@@ -175,17 +177,38 @@ function attemptsOf(
   return attempts;
 }
 
-/** The failures a round re-asks after, once (FOUNDER-ACT-20261111-BR-PLANNER-REASK B1). */
-const REASKED_FAILURES: readonly string[] = ['plan_invalid', 'planner_reported_failure'];
+/**
+ * A row's evidence references, as the journal route returns every row. The record's
+ * row type does not name them, so they are read here, and a row without them has none.
+ */
+function evidenceOf(row: Phase4RecordedCommandRow | undefined): readonly string[] {
+  const refs = (row as { readonly evidenceRefs?: unknown } | undefined)?.evidenceRefs;
+  return Array.isArray(refs) ? refs.filter((ref): ref is string => typeof ref === 'string') : [];
+}
+
+/**
+ * Whether a failed attempt is one the round re-asks after, once, by its own row
+ * (FOUNDER-ACT-20261111-BR-PLANNER-REASK B1): a
+ * `plan_invalid`, or a `planner_reported_failure` whose journaled reason is malformed
+ * or missing output. A timeout, a model switch or a failure with no reason is not.
+ */
+function reaskable(failed: Phase4RecordedCommandRow): boolean {
+  if (failed.failureClassification === 'plan_invalid') return true;
+  if (failed.failureClassification !== 'planner_reported_failure') return false;
+  return evidenceOf(failed).some(
+    (ref) => ref.startsWith('planner-failure/') && (REASKED_FAILURE_REASONS as readonly string[]).includes(ref.slice('planner-failure/'.length)),
+  );
+}
 
 /**
  * Every planner command: journaled under the act, on the act's route, and
  * dispatched on it. The last command of each round completed; an earlier
  * attempt of a round may have failed `not_sent` (Q8's governed retry), or
  * `plan_invalid` or `planner_reported_failure` when the round's next attempt
- * follows it, which is the round's one re-ask; a round holds at most one
- * attempt after such a failure (B2(5) of FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS
- * as FOUNDER-ACT-20261111-BR-PLANNER-REASK B8 amends it). An `unresolved` or
+ * follows it as the round's one re-ask: journaled as a retry of that attempt
+ * for that reason, after a failure B1 re-asks; and a round holds no attempt
+ * after its re-ask (B2(5) of FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS as
+ * FOUNDER-ACT-20261111-BR-PLANNER-REASK B8 amends it). An `unresolved` or
  * `resolved` row anywhere means the outcome was once unknown, which a counted
  * run may not contain.
  */
@@ -198,7 +221,8 @@ function checkCommands(
   let authorizationWrong = false;
   let routeWrong = false;
   let notClean = commands.length === 0;
-  const reasked = new Set<string>();
+  /** Each round that re-asked, and its re-ask's attempt number. */
+  const reasked = new Map<string, number>();
   for (const [index, command] of commands.entries()) {
     const journaled = command.rows.find((r) => r.eventType === 'journaled');
     if (
@@ -219,22 +243,28 @@ function checkCommands(
     }
     const types = command.rows.map((r) => r.eventType);
     if (types.includes('unresolved') || types.includes('resolved')) notClean = true;
+    // A round holds at most one attempt after the failure it re-asked (B8): nothing after its re-ask.
+    const self = attempts.get(command.commandId);
+    const reaskAt = self === undefined ? undefined : reasked.get(self.opening);
+    if (self !== undefined && reaskAt !== undefined && self.attempt > reaskAt) notClean = true;
     const last = command.rows.at(-1);
     const nextIsRetry = index < commands.length - 1;
     if (last?.eventType === 'completed') continue;
     if (last?.eventType === 'failed' && last.failureClassification === 'not_sent' && nextIsRetry) continue;
-    if (last?.eventType === 'failed' && REASKED_FAILURES.includes(last.failureClassification ?? '')) {
-      const self = attempts.get(command.commandId);
+    if (last?.eventType === 'failed' && reaskable(last)) {
       const next = commands[index + 1];
       const following = next === undefined ? undefined : attempts.get(next.commandId);
+      const nextRequest = evidenceOf(next?.rows.find((r) => r.eventType === 'journaled'));
       if (
         self !== undefined &&
         following !== undefined &&
         following.opening === self.opening &&
         following.attempt === self.attempt + 1 &&
-        !reasked.has(self.opening)
+        !reasked.has(self.opening) &&
+        nextRequest.includes(`retry-of/${command.commandId}`) &&
+        nextRequest.includes(`retry-reason/${last.failureClassification ?? ''}`)
       ) {
-        reasked.add(self.opening);
+        reasked.set(self.opening, following.attempt);
         continue;
       }
     }

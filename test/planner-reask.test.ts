@@ -527,11 +527,14 @@ const ev = (eventId: string, name: string, actor: string, a: Phase4RecordedEvent
   ...extra,
 });
 
-function cmd(commandId: string, terminal: { eventType: string; failureClassification?: string } = { eventType: 'completed' }) {
+type Terminal = { readonly eventType: string; readonly failureClassification?: string; readonly evidenceRefs?: readonly string[] };
+
+/** One command's rows as the journal route returns them, its request's evidence references included. */
+function cmd(commandId: string, terminal: Terminal = { eventType: 'completed' }, requestRefs: readonly string[] = []) {
   return {
     commandId,
     rows: [
-      { eventType: 'journaled', authorizationRef: SET_ID, intendedProvider: 'google', intendedModel: 'gemini-4-argon', intendedSurface: 'antigravity' },
+      { eventType: 'journaled', authorizationRef: SET_ID, intendedProvider: 'google', intendedModel: 'gemini-4-argon', intendedSurface: 'antigravity', evidenceRefs: requestRefs },
       { eventType: 'identity_bound' },
       { eventType: 'dispatched', provider: 'google', model: 'gemini-4-argon', executionSurface: 'antigravity' },
       terminal,
@@ -539,13 +542,18 @@ function cmd(commandId: string, terminal: { eventType: string; failureClassifica
   };
 }
 
-const failedAs = (failureClassification: string) => ({ eventType: 'failed', failureClassification });
+/** A failed row; a planner_reported_failure carries the Gateway's reason, unparseable_plan unless `refs` says otherwise. */
+const failedAs = (failureClassification: string, refs?: readonly string[]): Terminal => ({
+  eventType: 'failed',
+  failureClassification,
+  evidenceRefs: refs ?? (failureClassification === 'planner_reported_failure' ? ['planner-failure/unparseable_plan'] : []),
+});
 
 /**
  * One round, opened by t2, to approval; `revised` adds a revision round opened by t4-1.
  * `attempts` gives each round's commands as its attempts' terminal rows, in order.
  */
-function record(attempts: ReadonlyArray<ReadonlyArray<ReturnType<typeof failedAs> | { eventType: 'completed' }>>): Phase4RunRecord {
+function record(attempts: ReadonlyArray<ReadonlyArray<Terminal>>): Phase4RunRecord {
   const planner = who('architect', 'session:planner', 'gemini-4-argon', 'antigravity');
   const founder = who(null, 'founder', 'n/a (human Founder decision)', 'claude-code');
   const events: Phase4RecordedEvent[] = [
@@ -562,7 +570,12 @@ function record(attempts: ReadonlyArray<ReadonlyArray<ReturnType<typeof failedAs
       events.push(ev(opening, 'plan.revision_requested', 'founder', founder));
       decisions.push({ commandId: commands.at(-1)!.commandId, decision: 'plan.revision_requested', planHash: `h${r - 1}`.padEnd(64, '0') });
     }
-    round.forEach((terminal, a) => commands.push(cmd(plannerCommandIdFor(ROOM, opening, a + 1), terminal)));
+    // Each later attempt is journaled as a retry of the one before, for its reason, as the loop journals it.
+    round.forEach((terminal, a) => {
+      const before = a === 0 ? undefined : round[a - 1];
+      const retry = before === undefined ? [] : [`retry-of/${plannerCommandIdFor(ROOM, opening, a)}`, `retry-reason/${before.failureClassification ?? 'none'}`];
+      commands.push(cmd(plannerCommandIdFor(ROOM, opening, a + 1), terminal, retry));
+    });
     events.push(ev(`t3-${r}`, 'plan.submitted', 'agent.planner', planner, { planHash: `h${r}`.padEnd(64, '0') }));
   });
   const reviewed = `h${attempts.length - 1}`.padEnd(64, '0');
@@ -572,7 +585,7 @@ function record(attempts: ReadonlyArray<ReadonlyArray<ReturnType<typeof failedAs
 }
 
 const judge = (r: Phase4RunRecord) => evaluatePhase4Run(runSet(), runSet().runs[0]!, r);
-const done = { eventType: 'completed' } as const;
+const done: Terminal = { eventType: 'completed' };
 
 describe('the re-ask act · the run unit (B8; B11(e))', () => {
   it('passes a round re-asked after plan_invalid or planner_reported_failure, first round or revision', () => {
@@ -583,6 +596,10 @@ describe('the re-ask act · the run unit (B8; B11(e))', () => {
       assert.deepEqual(judge(record([[failedAs(classification), done], [failedAs(classification), done]])), { outcome: 'passed', failures: [] }, 'one re-ask in each round');
     }
     assert.deepEqual(judge(record([[failedAs('not_sent'), failedAs('plan_invalid'), done]])), { outcome: 'passed', failures: [] }, 'after a not_sent retry');
+    for (const reason of REASKED_FAILURE_REASONS) {
+      const r = record([[failedAs('planner_reported_failure', [`planner-failure/${reason}`]), done]]);
+      assert.deepEqual(judge(r), { outcome: 'passed', failures: [] }, reason);
+    }
   });
 
   it('fails a second re-ask in a round, a failure followed by another round\'s attempt, a failed last command, or any other failure', () => {
@@ -592,6 +609,26 @@ describe('the re-ask act · the run unit (B8; B11(e))', () => {
     notClean(record([[done], [failedAs('plan_invalid')]]), 'a failed last command');
     for (const classification of ['plan_outside_captured_scope', 'plan_refused', 'route_mismatch', 'identity_mismatch', 'completion_not_covered']) {
       notClean(record([[failedAs(classification), done]]), classification);
+    }
+    const crossed = record([[failedAs('plan_invalid')], [done]]);
+    const [first, other] = crossed.commands;
+    const asRetry = other!.rows.map((row) =>
+      row.eventType === 'journaled' ? { ...row, evidenceRefs: [`retry-of/${first!.commandId}`, 'retry-reason/plan_invalid'] } : row,
+    );
+    notClean(
+      { ...crossed, commands: [first!, { commandId: plannerCommandIdFor(ROOM, 't4-1', 2), rows: asRetry }] },
+      'a failure followed by the next attempt number of another round, journaled as its retry',
+    );
+    notClean(record([[failedAs('plan_invalid'), done, done]]), 'an attempt after the re-ask, though both completed');
+    notClean(record([[failedAs('plan_invalid'), failedAs('not_sent'), done]]), 'a retry after the re-ask');
+    for (const refs of [['planner-failure/timed_out'], ['planner-failure/model_switched'], [], ['planner-failure/other']]) {
+      notClean(record([[failedAs('planner_reported_failure', refs), done]]), `a failure the round does not re-ask: ${JSON.stringify(refs)}`);
+    }
+    const unmarked = record([[failedAs('plan_invalid'), done]]);
+    const [failed, reask] = unmarked.commands;
+    for (const refs of [[], [`retry-of/${failed!.commandId}`], ['retry-reason/plan_invalid'], [`retry-of/${failed!.commandId}`, 'retry-reason/not_sent']]) {
+      const rows = reask!.rows.map((row) => (row.eventType === 'journaled' ? { ...row, evidenceRefs: refs } : row));
+      notClean({ ...unmarked, commands: [failed!, { ...reask!, rows }] }, `a next attempt not journaled as this re-ask: ${JSON.stringify(refs)}`);
     }
     const skipped = record([[failedAs('plan_invalid'), done]]);
     notClean({ ...skipped, commands: [skipped.commands[0]!, { ...skipped.commands[1]!, commandId: plannerCommandIdFor(ROOM, 't2', 3) }] }, 'an attempt skipped');
