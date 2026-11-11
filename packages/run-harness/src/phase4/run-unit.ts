@@ -186,18 +186,25 @@ function evidenceOf(row: Phase4RecordedCommandRow | undefined): readonly string[
   return Array.isArray(refs) ? refs.filter((ref): ref is string => typeof ref === 'string') : [];
 }
 
+/** The `plan_invalid` refusal kinds a round re-asks after (B1(a)): not a blocked or inconclusive plan. */
+const REASKED_REFUSAL_KINDS: readonly string[] = ['schema', 'scope_path', 'encoding'];
+
+/** Whether a row's references name, under `prefix`, one of `allowed`. */
+function namesOneOf(row: Phase4RecordedCommandRow, prefix: string, allowed: readonly string[]): boolean {
+  return evidenceOf(row).some((ref) => ref.startsWith(prefix) && allowed.includes(ref.slice(prefix.length)));
+}
+
 /**
  * Whether a failed attempt is one the round re-asks after, once, by its own row
- * (FOUNDER-ACT-20261111-BR-PLANNER-REASK B1): a
- * `plan_invalid`, or a `planner_reported_failure` whose journaled reason is malformed
- * or missing output. A timeout, a model switch or a failure with no reason is not.
+ * (FOUNDER-ACT-20261111-BR-PLANNER-REASK B1): a `plan_invalid` whose journaled refusal
+ * kind is its schema, a scope path or its encoding, or a `planner_reported_failure`
+ * whose journaled reason is malformed or missing output. A blocked or inconclusive plan,
+ * a timeout, a model switch or a failure with no reason is not.
  */
 function reaskable(failed: Phase4RecordedCommandRow): boolean {
-  if (failed.failureClassification === 'plan_invalid') return true;
+  if (failed.failureClassification === 'plan_invalid') return namesOneOf(failed, 'plan-refusal/', REASKED_REFUSAL_KINDS);
   if (failed.failureClassification !== 'planner_reported_failure') return false;
-  return evidenceOf(failed).some(
-    (ref) => ref.startsWith('planner-failure/') && (REASKED_FAILURE_REASONS as readonly string[]).includes(ref.slice('planner-failure/'.length)),
-  );
+  return namesOneOf(failed, 'planner-failure/', REASKED_FAILURE_REASONS);
 }
 
 /**

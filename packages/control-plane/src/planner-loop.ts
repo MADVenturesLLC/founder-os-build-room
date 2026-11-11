@@ -832,9 +832,10 @@ export class PlannerLoop {
       if (verdict.classification !== 'plan_invalid') return this.fail(commandId, verdict.classification);
       const reask = reaskFor({ classification: 'plan_invalid', reason: verdict.reason, document: result.document });
       if (reask !== null) offerReask(reask);
-      // The refused plan's hash, where it has one, so the answer agy kept can be matched (B4; act E3).
+      // The refusal's kind, so the run unit can tell a re-askable refusal from a blocked plan (B8), and
+      // the refused plan's hash where it has one, so the answer agy kept can be matched (B4; act E3).
       const refused = refusedPlanHash(result.document);
-      return this.fail(commandId, 'plan_invalid', refused === null ? [] : [`refused-plan/${refused}`]);
+      return this.fail(commandId, 'plan_invalid', [`plan-refusal/${verdict.reason.kind}`, ...(refused === null ? [] : [`refused-plan/${refused}`])]);
     }
 
     const submitted = await submitRoundPlan(this.submitDeps(), {

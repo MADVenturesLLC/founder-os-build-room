@@ -296,7 +296,7 @@ describe('the corrective re-ask on PostgreSQL (FOUNDER-ACT-20261111-BR-PLANNER-R
     const refusedDocument = readyPlanFor(refused, { objective: 7 });
     assert.deepEqual(await eventTypes(attempt(1)), [...ATTEMPT_ROWS, 'failed']);
     assert.equal(await classificationOf(attempt(1)), 'plan_invalid');
-    assert.deepEqual(await refsOf(attempt(1), 'failed'), [`refused-plan/${planHash(refusedDocument as unknown as CanonicalDocument)}`]);
+    assert.deepEqual(await refsOf(attempt(1), 'failed'), ['plan-refusal/schema', `refused-plan/${planHash(refusedDocument as unknown as CanonicalDocument)}`]);
     assert.equal(await planCount(attempt(1)), 0);
 
     // The re-ask: the next derived id, journaled with its reason, its work saying why (B3, B4).
@@ -345,7 +345,7 @@ describe('the corrective re-ask on PostgreSQL (FOUNDER-ACT-20261111-BR-PLANNER-R
 
   it('no re-ask for anything else: a blocked plan, a plan outside the scope, a timeout, a model switch, a failure with no reason', async () => {
     const cases: Array<[Step, PlannerFailure, readonly string[]]> = [
-      [{ answer: 'plan', overrides: { terminal_status: 'BLOCKED_FOUNDER_DECISION' } }, 'plan_invalid', ['refused-plan/']],
+      [{ answer: 'plan', overrides: { terminal_status: 'BLOCKED_FOUNDER_DECISION' } }, 'plan_invalid', ['plan-refusal/not_ready', 'refused-plan/']],
       [{ answer: 'plan', overrides: { scope_paths: ['docs/readme.md'] } }, 'plan_outside_captured_scope', []],
       [{ answer: 'failed', reason: 'timed_out' }, 'planner_reported_failure', ['planner-failure/timed_out']],
       [{ answer: 'failed', reason: 'model_switched' }, 'planner_reported_failure', ['planner-failure/model_switched']],

@@ -542,11 +542,16 @@ function cmd(commandId: string, terminal: Terminal = { eventType: 'completed' },
   };
 }
 
-/** A failed row; a planner_reported_failure carries the Gateway's reason, unparseable_plan unless `refs` says otherwise. */
+/** The references a failed row carries unless `refs` says otherwise: the reason a re-ask follows, as the loop journals it. */
+const DEFAULT_FAILED_REFS: Readonly<Record<string, readonly string[]>> = {
+  planner_reported_failure: ['planner-failure/unparseable_plan'],
+  plan_invalid: ['plan-refusal/schema', `refused-plan/${'d'.repeat(64)}`],
+};
+
 const failedAs = (failureClassification: string, refs?: readonly string[]): Terminal => ({
   eventType: 'failed',
   failureClassification,
-  evidenceRefs: refs ?? (failureClassification === 'planner_reported_failure' ? ['planner-failure/unparseable_plan'] : []),
+  evidenceRefs: refs ?? DEFAULT_FAILED_REFS[failureClassification] ?? [],
 });
 
 /**
@@ -600,6 +605,9 @@ describe('the re-ask act · the run unit (B8; B11(e))', () => {
       const r = record([[failedAs('planner_reported_failure', [`planner-failure/${reason}`]), done]]);
       assert.deepEqual(judge(r), { outcome: 'passed', failures: [] }, reason);
     }
+    for (const kind of ['schema', 'scope_path', 'encoding']) {
+      assert.deepEqual(judge(record([[failedAs('plan_invalid', [`plan-refusal/${kind}`]), done]])), { outcome: 'passed', failures: [] }, kind);
+    }
   });
 
   it('fails a second re-ask in a round, a failure followed by another round\'s attempt, a failed last command, or any other failure', () => {
@@ -623,6 +631,9 @@ describe('the re-ask act · the run unit (B8; B11(e))', () => {
     notClean(record([[failedAs('plan_invalid'), failedAs('not_sent'), done]]), 'a retry after the re-ask');
     for (const refs of [['planner-failure/timed_out'], ['planner-failure/model_switched'], [], ['planner-failure/other']]) {
       notClean(record([[failedAs('planner_reported_failure', refs), done]]), `a failure the round does not re-ask: ${JSON.stringify(refs)}`);
+    }
+    for (const refs of [['plan-refusal/not_ready'], [`refused-plan/${'d'.repeat(64)}`], [], ['plan-refusal/outside_captured_scope']]) {
+      notClean(record([[failedAs('plan_invalid', refs), done]]), `a refusal the round does not re-ask: ${JSON.stringify(refs)}`);
     }
     const unmarked = record([[failedAs('plan_invalid'), done]]);
     const [failed, reask] = unmarked.commands;
