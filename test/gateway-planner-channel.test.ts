@@ -375,7 +375,8 @@ describe('gateway-planner-channel · the worker executes at most once and says o
     await worker.settled();
     const answer = await worker.handle({ requestId: uuid(), kind: 'status', commandId: 'cmd_big' });
     assert.equal(answer?.kind, 'finished');
-    assert.deepEqual(answer?.kind === 'finished' && answer.result, { kind: 'failed' });
+    // Reported as oversize (FOUNDER-ACT-20261111-BR-PLANNER-REASK B2).
+    assert.deepEqual(answer?.kind === 'finished' && answer.result, { kind: 'failed', reason: 'oversize' });
   });
 
   it('sends no report the control plane would refuse: an over-long observed route goes unanswered', async () => {

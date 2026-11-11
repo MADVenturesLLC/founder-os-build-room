@@ -56,6 +56,8 @@ export interface PlannerWorkWire {
   readonly goal: string;
   readonly goalDigest: string;
   readonly revision?: PlannerRevisionWire;
+  /** Present only on a round's one corrective re-ask (FOUNDER-ACT-20261111-BR-PLANNER-REASK B3). */
+  readonly reask?: PlannerReaskWire;
 }
 
 /**
@@ -70,6 +72,86 @@ export interface PlannerRevisionWire {
   readonly revisingPlanHash: string;
   readonly earlierPlan: { readonly [key: string]: unknown };
 }
+
+/**
+ * How a run that gave no plan ended, as the Gateway reports it
+ * (FOUNDER-ACT-20261111-BR-PLANNER-REASK B2): the agy executor's run outcomes other than a
+ * plan, and `oversize`, a finished result too large for its report. A failed report
+ * carries none of these when the run failed in any other way.
+ */
+export const PLANNER_FAILURE_REASONS = [
+  'agy_error',
+  'no_result',
+  'unparseable_plan',
+  'model_switched',
+  'malformed_output',
+  'timed_out',
+  'oversize',
+] as const;
+export type PlannerFailureReason = (typeof PLANNER_FAILURE_REASONS)[number];
+
+/**
+ * The failure reasons a round re-asks (B1(b)): an answer that is malformed or missing.
+ * Not `timed_out` and not `model_switched` (the act's F2).
+ */
+export const REASKED_FAILURE_REASONS = [
+  'unparseable_plan',
+  'malformed_output',
+  'no_result',
+  'agy_error',
+  'oversize',
+] as const satisfies readonly PlannerFailureReason[];
+export type ReaskedFailureReason = (typeof REASKED_FAILURE_REASONS)[number];
+
+/**
+ * The schema validator's violation codes (`ViolationCode` in seat-output-schema's
+ * schema.ts), as a re-ask carries them. A test holds the two lists equal.
+ */
+export const PLANNER_REASK_VIOLATION_CODES = [
+  'type_mismatch',
+  'required_missing',
+  'additional_property',
+  'pattern_mismatch',
+  'enum_mismatch',
+  'length',
+  'range',
+  'const_mismatch',
+  'depth_exceeded',
+] as const;
+export type PlannerReaskViolationCode = (typeof PLANNER_REASK_VIOLATION_CODES)[number];
+
+/** How many violations a re-ask carries at most: the control plane's PLAN_REFUSAL_VIOLATIONS_KEPT. */
+export const PLANNER_REASK_VIOLATIONS_MAX = 20;
+/** The longest violation path a re-ask carries (B3(a)). */
+export const PLANNER_REASK_PATH_MAX = 1_024;
+
+/** One schema violation of a refused plan, in the shape the control plane's refusal reason has. */
+export interface PlannerReaskViolationWire {
+  readonly code: PlannerReaskViolationCode;
+  readonly path: string;
+  readonly undeclaredKeyLength?: number;
+  readonly found?: number;
+  readonly bound?: number;
+}
+
+/** Why the control plane refused a plan as `plan_invalid`, for the kinds a round re-asks (B1(a)). */
+export type PlannerReaskRefusalWire =
+  | { readonly kind: 'schema'; readonly violationCount: number; readonly violations: readonly PlannerReaskViolationWire[] }
+  | { readonly kind: 'scope_path'; readonly index: number | null }
+  | { readonly kind: 'encoding' };
+
+/**
+ * A round's one corrective re-ask (DEC-20260716-02 item 5; FOUNDER-ACT-20261111-BR-PLANNER-REASK
+ * B3): why the earlier answer was refused, and, when the control plane refused a plan it
+ * received, that plan, so the Planner can correct it rather than write a new one.
+ */
+export type PlannerReaskWire =
+  | {
+      readonly refused: 'plan_invalid';
+      readonly reason: PlannerReaskRefusalWire;
+      readonly refusedPlan: { readonly [key: string]: unknown };
+    }
+  | { readonly refused: 'planner_reported_failure'; readonly reason: ReaskedFailureReason };
 
 export type PlannerRequestWire =
   | {
@@ -88,7 +170,9 @@ export type PlannerRequestWire =
     }
   | { readonly requestId: string; readonly kind: 'status'; readonly commandId: string };
 
-export type PlannerResultWire = { readonly kind: 'plan'; readonly document: unknown } | { readonly kind: 'failed' };
+export type PlannerResultWire =
+  | { readonly kind: 'plan'; readonly document: unknown }
+  | { readonly kind: 'failed'; readonly reason?: PlannerFailureReason };
 
 /**
  * What the executor read from its init event before it sent the work: the model the event
@@ -192,6 +276,71 @@ function isEarlierPlan(value: unknown): value is { readonly [key: string]: unkno
   return typeof text === 'string' && new TextEncoder().encode(text).length <= MAX_PLANNER_PAYLOAD_BYTES;
 }
 
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isReaskViolation(value: unknown): value is PlannerReaskViolationWire {
+  const record = asRecord(value);
+  if (record === null || !exactKeys(record, ['code', 'path'], ['undeclaredKeyLength', 'found', 'bound'])) return false;
+  const path = record['path'];
+  return (
+    (PLANNER_REASK_VIOLATION_CODES as readonly unknown[]).includes(record['code']) &&
+    typeof path === 'string' &&
+    path.length <= PLANNER_REASK_PATH_MAX &&
+    ['undeclaredKeyLength', 'found', 'bound'].every((key) => !Object.prototype.hasOwnProperty.call(record, key) || isCount(record[key]))
+  );
+}
+
+function isReaskRefusal(value: unknown): value is PlannerReaskRefusalWire {
+  const record = asRecord(value);
+  if (record === null) return false;
+  switch (record['kind']) {
+    case 'schema': {
+      const violations = record['violations'];
+      return (
+        exactKeys(record, ['kind', 'violationCount', 'violations']) &&
+        Array.isArray(violations) &&
+        violations.length >= 1 &&
+        violations.length <= PLANNER_REASK_VIOLATIONS_MAX &&
+        violations.every(isReaskViolation) &&
+        isCount(record['violationCount']) &&
+        record['violationCount'] >= violations.length
+      );
+    }
+    case 'scope_path':
+      return exactKeys(record, ['kind', 'index']) && (record['index'] === null || isCount(record['index']));
+    case 'encoding':
+      return exactKeys(record, ['kind']);
+    default:
+      return false;
+  }
+}
+
+/**
+ * A re-ask as both sides validate it (B3). The refused plan has the bound an earlier plan
+ * has: it arrived inside a report payload, so the bound never refuses one.
+ */
+export function isPlannerReask(value: unknown): value is PlannerReaskWire {
+  const record = asRecord(value);
+  if (record === null) return false;
+  switch (record['refused']) {
+    case 'plan_invalid':
+      return (
+        exactKeys(record, ['refused', 'reason', 'refusedPlan']) &&
+        isReaskRefusal(record['reason']) &&
+        isEarlierPlan(record['refusedPlan'])
+      );
+    case 'planner_reported_failure':
+      return (
+        exactKeys(record, ['refused', 'reason']) &&
+        (REASKED_FAILURE_REASONS as readonly unknown[]).includes(record['reason'])
+      );
+    default:
+      return false;
+  }
+}
+
 function isWork(value: unknown): value is PlannerWorkWire {
   const record = asRecord(value);
   if (
@@ -199,7 +348,7 @@ function isWork(value: unknown): value is PlannerWorkWire {
     !exactKeys(
       record,
       ['commandId', 'roomId', 'repository', 'baseSha', 'scopePaths', 'goalEventId', 'goal', 'goalDigest'],
-      ['revision'],
+      ['revision', 'reask'],
     )
   ) {
     return false;
@@ -220,6 +369,7 @@ function isWork(value: unknown): value is PlannerWorkWire {
       return false;
     }
   }
+  if (Object.prototype.hasOwnProperty.call(record, 'reask') && !isPlannerReask(record['reask'])) return false;
   return (
     isText(record['commandId']) &&
     isText(record['roomId']) &&
@@ -243,7 +393,13 @@ function initPairHolds(record: Record<string, unknown>): boolean {
 function isResult(value: unknown): value is PlannerResultWire {
   const record = asRecord(value);
   if (record === null) return false;
-  if (record['kind'] === 'failed') return exactKeys(record, ['kind']);
+  if (record['kind'] === 'failed') {
+    return (
+      exactKeys(record, ['kind'], ['reason']) &&
+      (!Object.prototype.hasOwnProperty.call(record, 'reason') ||
+        (PLANNER_FAILURE_REASONS as readonly unknown[]).includes(record['reason']))
+    );
+  }
   return record['kind'] === 'plan' && exactKeys(record, ['kind', 'document']);
 }
 

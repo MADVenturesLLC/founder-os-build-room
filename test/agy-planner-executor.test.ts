@@ -1246,7 +1246,8 @@ describe('the daemon starting and stopping (Amendment 3 C2)', () => {
     assert.equal(h.reaps(), 2);
     const status = await worker.handle({ requestId: uuid(), kind: 'status', commandId: w.commandId });
     assert.equal(status?.kind, 'finished');
-    if (status?.kind === 'finished') assert.deepEqual(status.result, { kind: 'failed' });
+    // The run ended with no result, and the report says so (FOUNDER-ACT-20261111-BR-PLANNER-REASK B2).
+    if (status?.kind === 'finished') assert.deepEqual(status.result, { kind: 'failed', reason: 'no_result' });
   });
 });
 

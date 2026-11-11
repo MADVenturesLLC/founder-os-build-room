@@ -22,7 +22,7 @@
  */
 
 import { founderGoalDigest } from '../../../control-plane/src/founder-goal.js';
-import { plannerCommandIdFor } from '../../../control-plane/src/planner-loop.js';
+import { MAX_ROUND_ATTEMPTS, plannerCommandIdFor } from '../../../control-plane/src/planner-loop.js';
 import {
   PHASE4_DISPATCHER,
   PHASE4_MAX_ROUNDS_PER_RUN,
@@ -101,7 +101,7 @@ export function evaluatePhase4Run(
     }
   }
 
-  checkCommands(set, record.commands, failures);
+  checkCommands(set, record.commands, attemptsOf(record.roomId, openings), failures);
 
   // The decisions: only the Founder's, revisions then one approval of the plan under review.
   const decisionEvents = events.filter((e) => ['plan.revision_requested', 'plan.approved', 'founder.cancel'].includes(e.event));
@@ -161,17 +161,44 @@ export function evaluatePhase4Run(
   return { outcome: 'passed', failures: [] };
 }
 
+/** Each derivable command id of the run's rounds: its round's opening event and its attempt number. */
+function attemptsOf(
+  roomId: string,
+  openings: readonly { readonly eventId: string }[],
+): ReadonlyMap<string, { readonly opening: string; readonly attempt: number }> {
+  const attempts = new Map<string, { readonly opening: string; readonly attempt: number }>();
+  for (const opening of openings) {
+    for (let attempt = 1; attempt <= MAX_ROUND_ATTEMPTS; attempt += 1) {
+      attempts.set(plannerCommandIdFor(roomId, opening.eventId, attempt), { opening: opening.eventId, attempt });
+    }
+  }
+  return attempts;
+}
+
+/** The failures a round re-asks after, once (FOUNDER-ACT-20261111-BR-PLANNER-REASK B1). */
+const REASKED_FAILURES: readonly string[] = ['plan_invalid', 'planner_reported_failure'];
+
 /**
  * Every planner command: journaled under the act, on the act's route, and
  * dispatched on it. The last command of each round completed; an earlier
- * attempt of a round may have failed only `not_sent` (Q8's governed retry).
- * An `unresolved` or `resolved` row anywhere means the outcome was once
- * unknown, which a counted run may not contain.
+ * attempt of a round may have failed `not_sent` (Q8's governed retry), or
+ * `plan_invalid` or `planner_reported_failure` when the round's next attempt
+ * follows it, which is the round's one re-ask; a round holds at most one
+ * attempt after such a failure (B2(5) of FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS
+ * as FOUNDER-ACT-20261111-BR-PLANNER-REASK B8 amends it). An `unresolved` or
+ * `resolved` row anywhere means the outcome was once unknown, which a counted
+ * run may not contain.
  */
-function checkCommands(set: Phase4RunSet, commands: readonly Phase4RecordedCommand[], failures: Phase4RunFailure[]): void {
+function checkCommands(
+  set: Phase4RunSet,
+  commands: readonly Phase4RecordedCommand[],
+  attempts: ReadonlyMap<string, { readonly opening: string; readonly attempt: number }>,
+  failures: Phase4RunFailure[],
+): void {
   let authorizationWrong = false;
   let routeWrong = false;
   let notClean = commands.length === 0;
+  const reasked = new Set<string>();
   for (const [index, command] of commands.entries()) {
     const journaled = command.rows.find((r) => r.eventType === 'journaled');
     if (
@@ -196,6 +223,21 @@ function checkCommands(set: Phase4RunSet, commands: readonly Phase4RecordedComma
     const nextIsRetry = index < commands.length - 1;
     if (last?.eventType === 'completed') continue;
     if (last?.eventType === 'failed' && last.failureClassification === 'not_sent' && nextIsRetry) continue;
+    if (last?.eventType === 'failed' && REASKED_FAILURES.includes(last.failureClassification ?? '')) {
+      const self = attempts.get(command.commandId);
+      const next = commands[index + 1];
+      const following = next === undefined ? undefined : attempts.get(next.commandId);
+      if (
+        self !== undefined &&
+        following !== undefined &&
+        following.opening === self.opening &&
+        following.attempt === self.attempt + 1 &&
+        !reasked.has(self.opening)
+      ) {
+        reasked.add(self.opening);
+        continue;
+      }
+    }
     notClean = true;
   }
   if (authorizationWrong) failures.push('command_authorization_wrong');

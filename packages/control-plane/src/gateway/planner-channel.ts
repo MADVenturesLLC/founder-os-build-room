@@ -250,6 +250,7 @@ class GatewayPlannerPort implements PlannerPort {
           goal: work.goal,
           goalDigest: work.goalDigest,
           ...(work.revision === undefined ? {} : { revision: { ...work.revision } }),
+          ...(work.reask === undefined ? {} : { reask: work.reask }),
         },
       }),
       this.timings.answerTimeoutMs,
@@ -307,7 +308,10 @@ class GatewayPlannerPort implements PlannerPort {
           executionId: payload.executionId,
           observed: routeOf(payload.observed),
           ...initOf(payload),
-          result: payload.result.kind === 'plan' ? { kind: 'plan', document: payload.result.document } : { kind: 'failed' },
+          result:
+            payload.result.kind === 'plan'
+              ? { kind: 'plan', document: payload.result.document }
+              : { kind: 'failed', ...(payload.result.reason === undefined ? {} : { reason: payload.result.reason }) },
         };
       default:
         return null;
