@@ -189,9 +189,20 @@ function evidenceOf(row: Phase4RecordedCommandRow | undefined): readonly string[
 /** The `plan_invalid` refusal kinds a round re-asks after (B1(a)): not a blocked or inconclusive plan. */
 const REASKED_REFUSAL_KINDS: readonly string[] = ['schema', 'scope_path', 'encoding'];
 
-/** Whether a row's references name, under `prefix`, one of `allowed`. */
+/**
+ * The one reference a row carries under `prefix`, without the prefix. The control plane
+ * journals at most one under each prefix it reads here, so a row carrying none, or more
+ * than one, names nothing: two that contradict each other cannot both be its reason.
+ */
+function onlyRef(row: Phase4RecordedCommandRow | undefined, prefix: string): string | undefined {
+  const named = evidenceOf(row).filter((ref) => ref.startsWith(prefix));
+  return named.length === 1 ? named[0]?.slice(prefix.length) : undefined;
+}
+
+/** Whether a row's one reference under `prefix` names one of `allowed`. */
 function namesOneOf(row: Phase4RecordedCommandRow, prefix: string, allowed: readonly string[]): boolean {
-  return evidenceOf(row).some((ref) => ref.startsWith(prefix) && allowed.includes(ref.slice(prefix.length)));
+  const named = onlyRef(row, prefix);
+  return named !== undefined && allowed.includes(named);
 }
 
 /**
@@ -261,15 +272,15 @@ function checkCommands(
     if (last?.eventType === 'failed' && reaskable(last)) {
       const next = commands[index + 1];
       const following = next === undefined ? undefined : attempts.get(next.commandId);
-      const nextRequest = evidenceOf(next?.rows.find((r) => r.eventType === 'journaled'));
+      const nextRequest = next?.rows.find((r) => r.eventType === 'journaled');
       if (
         self !== undefined &&
         following !== undefined &&
         following.opening === self.opening &&
         following.attempt === self.attempt + 1 &&
         !reasked.has(self.opening) &&
-        nextRequest.includes(`retry-of/${command.commandId}`) &&
-        nextRequest.includes(`retry-reason/${last.failureClassification ?? ''}`)
+        onlyRef(nextRequest, 'retry-of/') === command.commandId &&
+        onlyRef(nextRequest, 'retry-reason/') === last.failureClassification
       ) {
         reasked.set(self.opening, following.attempt);
         continue;

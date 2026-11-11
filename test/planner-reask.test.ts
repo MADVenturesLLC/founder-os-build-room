@@ -637,7 +637,27 @@ describe('the re-ask act · the run unit (B8; B11(e))', () => {
     }
     const unmarked = record([[failedAs('plan_invalid'), done]]);
     const [failed, reask] = unmarked.commands;
-    for (const refs of [[], [`retry-of/${failed!.commandId}`], ['retry-reason/plan_invalid'], [`retry-of/${failed!.commandId}`, 'retry-reason/not_sent']]) {
+    // A row names its reason once: two references under one prefix, one of them allowed, name none.
+    for (const refs of [
+      ['planner-failure/timed_out', 'planner-failure/unparseable_plan'],
+      ['planner-failure/unparseable_plan', 'planner-failure/unparseable_plan'],
+    ]) {
+      notClean(record([[failedAs('planner_reported_failure', refs), done]]), `a failure naming two reasons: ${JSON.stringify(refs)}`);
+    }
+    for (const refs of [
+      ['plan-refusal/not_ready', 'plan-refusal/schema'],
+      ['plan-refusal/schema', 'plan-refusal/encoding'],
+    ]) {
+      notClean(record([[failedAs('plan_invalid', refs), done]]), `a refusal naming two kinds: ${JSON.stringify(refs)}`);
+    }
+    for (const refs of [
+      [],
+      [`retry-of/${failed!.commandId}`],
+      ['retry-reason/plan_invalid'],
+      [`retry-of/${failed!.commandId}`, 'retry-reason/not_sent'],
+      [`retry-of/${failed!.commandId}`, 'retry-reason/not_sent', 'retry-reason/plan_invalid'],
+      [`retry-of/${failed!.commandId}`, `retry-of/${plannerCommandIdFor(ROOM, 't2', 2)}`, 'retry-reason/plan_invalid'],
+    ]) {
       const rows = reask!.rows.map((row) => (row.eventType === 'journaled' ? { ...row, evidenceRefs: refs } : row));
       notClean({ ...unmarked, commands: [failed!, { ...reask!, rows }] }, `a next attempt not journaled as this re-ask: ${JSON.stringify(refs)}`);
     }
