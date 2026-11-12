@@ -49,7 +49,20 @@ import {
   type PlannerRouteWire,
   type PlannerWorkWire,
 } from '../../gateway-protocol/src/index.js';
+import type { PlannerFailureReason } from '../../gateway-protocol/src/planner.js';
 import { DIRECTORY_MODE, FILE_MODE } from './paths.js';
+
+/**
+ * A run that ended without a plan, and how (FOUNDER-ACT-20261111-BR-PLANNER-REASK B2).
+ * An executor that knows how its run ended rejects the completion with this, and the
+ * worker reports that reason with the failure; any other rejection is reported with none.
+ */
+export class PlannerRunEndedWithoutPlanError extends Error {
+  override readonly name = 'PlannerRunEndedWithoutPlanError';
+  constructor(readonly reason: PlannerFailureReason) {
+    super(`agy run ended without a plan: ${reason}`);
+  }
+}
 
 export type PlannerStart =
   /** The executor proves the work never reached a provider. */
@@ -375,7 +388,10 @@ function isIdentity(value: PlannerIdentityWire): boolean {
   );
 }
 
-/** A finished result whose report would not fit the payload bound is a failed run, not a truncated plan. */
+/**
+ * A finished result whose report would not fit the payload bound is a failed run, not a
+ * truncated plan, and is reported as `oversize` (FOUNDER-ACT-20261111-BR-PLANNER-REASK B2).
+ */
 function boundedResult(result: PlannerResultWire, record: Omit<Extract<PlannerRecord, { phase: 'finished' }>, 'result'>): PlannerResultWire {
   const payload: PlannerReportPayload = {
     kind: 'finished',
@@ -385,7 +401,7 @@ function boundedResult(result: PlannerResultWire, record: Omit<Extract<PlannerRe
     result,
   };
   const bytes = new TextEncoder().encode(JSON.stringify(payload)).length;
-  return bytes <= MAX_PLANNER_PAYLOAD_BYTES ? result : { kind: 'failed' };
+  return bytes <= MAX_PLANNER_PAYLOAD_BYTES ? result : { kind: 'failed', reason: 'oversize' };
 }
 
 export interface PlannerWorkerDeps {
@@ -566,7 +582,7 @@ export class GatewayPlannerWorker {
       (result) => boundedResult(result, { ...running, phase: 'finished' }),
       (error: unknown): PlannerResultWire => {
         this.log('warn', 'planner.run_failed', { message: describe(error) });
-        return { kind: 'failed' };
+        return error instanceof PlannerRunEndedWithoutPlanError ? { kind: 'failed', reason: error.reason } : { kind: 'failed' };
       },
     );
     // The store writes in order, so `finished` is written after `running`. A `running`

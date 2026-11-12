@@ -5,7 +5,10 @@
  * same journal rows, no plan stored and the room in PLANNING; an accepted
  * plan, R2's 4,808-character step among them, writes none; recovery writes
  * the same line when it refuses a reconciled plan; and no line holds a string
- * the plan wrote.
+ * the plan wrote. A plan refused for its schema or a scope path now earns the
+ * round its one corrective re-ask (FOUNDER-ACT-20261111-BR-PLANNER-REASK B1,
+ * B4), which this suite's Planner answers with the same refused plan: one line
+ * per refused answer, and the round ends failed on the re-ask's command.
  *
  * `TEST_DATABASE_URL` is only the run gate. The suite runs on its own
  * PostgreSQL instance, connected as `br_app_runtime`, as the planner-loop
@@ -219,30 +222,38 @@ describe('planner.plan_refused on PostgreSQL', { skip: SKIP_REASON }, () => {
     ];
     for (const [name, planOverrides, classification, kind] of cases) {
       const { roomId, outcome, commandId } = await roundOne({ planOverrides });
-      assert.deepEqual(outcome, { kind: 'failed', commandId, classification }, name);
-      assert.deepEqual(await eventTypes(commandId), ['journaled', 'identity_bound', 'dispatched', 'failed'], name);
-      assert.equal(await planCount(commandId), 0, name);
+      // A schema or scope path refusal is re-asked once (re-ask act B1); the re-ask is refused the same way.
+      const reasked = kind === 'schema' || kind === 'scope_path';
+      const attempts = reasked ? [commandId, plannerCommandIdFor(roomId, minted[0]!, 2)] : [commandId];
+      assert.deepEqual(outcome, { kind: 'failed', commandId: attempts.at(-1), classification }, name);
+      for (const attempt of attempts) {
+        assert.deepEqual(await eventTypes(attempt), ['journaled', 'identity_bound', 'dispatched', 'failed'], name);
+        assert.equal(await planCount(attempt), 0, name);
+      }
       assert.equal(await stateOf(roomId), 'PLANNING', name);
       const written = refusals();
-      assert.equal(written.length, 1, `${name}: exactly one line`);
-      const line = written[0]!;
-      assert.equal(line['roomId'], roomId, name);
-      assert.equal(line['commandId'], commandId, name);
-      assert.equal(line['classification'], classification, name);
-      assert.equal((line['reason'] as { kind: string }).kind, kind, name);
+      assert.equal(written.length, attempts.length, `${name}: exactly one line per refused answer`);
+      written.forEach((line, i) => {
+        assert.equal(line['roomId'], roomId, name);
+        assert.equal(line['commandId'], attempts[i], name);
+        assert.equal(line['classification'], classification, name);
+        assert.equal((line['reason'] as { kind: string }).kind, kind, name);
+      });
       assert.equal(lines.filter((l) => l.at === 'planner.plan_refused').every((l) => l.level === 'error'), true);
       assert.doesNotMatch(JSON.stringify(lines), /qz7canary/i, `${name}: no string from the plan`);
     }
   });
 
   it('names the broken rule: R2\'s shape, one step over the bound, gives its path, length and bound', async () => {
-    const { commandId } = await roundOne({ planOverrides: { implementation_sequence: ['Edit handler', 'z'.repeat(20_001)] } });
-    assert.deepEqual(refusals(), [{
-      roomId: refusals()[0]!['roomId'],
-      commandId,
+    const { roomId, commandId } = await roundOne({ planOverrides: { implementation_sequence: ['Edit handler', 'z'.repeat(20_001)] } });
+    // One line for the refused answer and one for its re-ask, refused the same way (re-ask act B1).
+    const line = (id: string) => ({
+      roomId,
+      commandId: id,
       classification: 'plan_invalid',
       reason: { kind: 'schema', violationCount: 1, violations: [{ code: 'length', path: '/implementation_sequence/1', found: 20_001, bound: 20_000 }] },
-    }]);
+    });
+    assert.deepEqual(refusals(), [line(commandId), line(plannerCommandIdFor(roomId, minted[0]!, 2))]);
   });
 
   it('an accepted plan writes no line: a 4,808-character step and one of 20,000 reach plan_review', async () => {

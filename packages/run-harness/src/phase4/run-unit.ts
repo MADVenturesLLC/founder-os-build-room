@@ -22,7 +22,8 @@
  */
 
 import { founderGoalDigest } from '../../../control-plane/src/founder-goal.js';
-import { plannerCommandIdFor } from '../../../control-plane/src/planner-loop.js';
+import { MAX_ROUND_ATTEMPTS, plannerCommandIdFor } from '../../../control-plane/src/planner-loop.js';
+import { REASKED_FAILURE_REASONS } from '../../../gateway-protocol/src/planner.js';
 import {
   PHASE4_DISPATCHER,
   PHASE4_MAX_ROUNDS_PER_RUN,
@@ -30,6 +31,7 @@ import {
   PHASE4_PLANNER_SURFACE,
   type Phase4PlannedRun,
   type Phase4RecordedCommand,
+  type Phase4RecordedCommandRow,
   type Phase4RunFailure,
   type Phase4RunRecord,
   type Phase4RunSet,
@@ -101,7 +103,7 @@ export function evaluatePhase4Run(
     }
   }
 
-  checkCommands(set, record.commands, failures);
+  checkCommands(set, record.commands, attemptsOf(record.roomId, openings), failures);
 
   // The decisions: only the Founder's, revisions then one approval of the plan under review.
   const decisionEvents = events.filter((e) => ['plan.revision_requested', 'plan.approved', 'founder.cancel'].includes(e.event));
@@ -161,17 +163,84 @@ export function evaluatePhase4Run(
   return { outcome: 'passed', failures: [] };
 }
 
+/** Each derivable command id of the run's rounds: its round's opening event and its attempt number. */
+function attemptsOf(
+  roomId: string,
+  openings: readonly { readonly eventId: string }[],
+): ReadonlyMap<string, { readonly opening: string; readonly attempt: number }> {
+  const attempts = new Map<string, { readonly opening: string; readonly attempt: number }>();
+  for (const opening of openings) {
+    for (let attempt = 1; attempt <= MAX_ROUND_ATTEMPTS; attempt += 1) {
+      attempts.set(plannerCommandIdFor(roomId, opening.eventId, attempt), { opening: opening.eventId, attempt });
+    }
+  }
+  return attempts;
+}
+
+/**
+ * A row's evidence references, as the journal route returns every row. The record's
+ * row type does not name them, so they are read here, and a row without them has none.
+ */
+function evidenceOf(row: Phase4RecordedCommandRow | undefined): readonly string[] {
+  const refs = (row as { readonly evidenceRefs?: unknown } | undefined)?.evidenceRefs;
+  return Array.isArray(refs) ? refs.filter((ref): ref is string => typeof ref === 'string') : [];
+}
+
+/** The `plan_invalid` refusal kinds a round re-asks after (B1(a)): not a blocked or inconclusive plan. */
+const REASKED_REFUSAL_KINDS: readonly string[] = ['schema', 'scope_path', 'encoding'];
+
+/**
+ * The one reference a row carries under `prefix`, without the prefix. The control plane
+ * journals at most one under each prefix it reads here, so a row carrying none, or more
+ * than one, names nothing: two that contradict each other cannot both be its reason.
+ */
+function onlyRef(row: Phase4RecordedCommandRow | undefined, prefix: string): string | undefined {
+  const named = evidenceOf(row).filter((ref) => ref.startsWith(prefix));
+  return named.length === 1 ? named[0]?.slice(prefix.length) : undefined;
+}
+
+/** Whether a row's one reference under `prefix` names one of `allowed`. */
+function namesOneOf(row: Phase4RecordedCommandRow, prefix: string, allowed: readonly string[]): boolean {
+  const named = onlyRef(row, prefix);
+  return named !== undefined && allowed.includes(named);
+}
+
+/**
+ * Whether a failed attempt is one the round re-asks after, once, by its own row
+ * (FOUNDER-ACT-20261111-BR-PLANNER-REASK B1): a `plan_invalid` whose journaled refusal
+ * kind is its schema, a scope path or its encoding, or a `planner_reported_failure`
+ * whose journaled reason is malformed or missing output. A blocked or inconclusive plan,
+ * a timeout, a model switch or a failure with no reason is not.
+ */
+function reaskable(failed: Phase4RecordedCommandRow): boolean {
+  if (failed.failureClassification === 'plan_invalid') return namesOneOf(failed, 'plan-refusal/', REASKED_REFUSAL_KINDS);
+  if (failed.failureClassification !== 'planner_reported_failure') return false;
+  return namesOneOf(failed, 'planner-failure/', REASKED_FAILURE_REASONS);
+}
+
 /**
  * Every planner command: journaled under the act, on the act's route, and
  * dispatched on it. The last command of each round completed; an earlier
- * attempt of a round may have failed only `not_sent` (Q8's governed retry).
- * An `unresolved` or `resolved` row anywhere means the outcome was once
- * unknown, which a counted run may not contain.
+ * attempt of a round may have failed `not_sent` (Q8's governed retry), or
+ * `plan_invalid` or `planner_reported_failure` when the round's next attempt
+ * follows it as the round's one re-ask: journaled as a retry of that attempt
+ * for that reason, after a failure B1 re-asks; and a round holds no attempt
+ * after its re-ask (B2(5) of FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS as
+ * FOUNDER-ACT-20261111-BR-PLANNER-REASK B8 amends it). An `unresolved` or
+ * `resolved` row anywhere means the outcome was once unknown, which a counted
+ * run may not contain.
  */
-function checkCommands(set: Phase4RunSet, commands: readonly Phase4RecordedCommand[], failures: Phase4RunFailure[]): void {
+function checkCommands(
+  set: Phase4RunSet,
+  commands: readonly Phase4RecordedCommand[],
+  attempts: ReadonlyMap<string, { readonly opening: string; readonly attempt: number }>,
+  failures: Phase4RunFailure[],
+): void {
   let authorizationWrong = false;
   let routeWrong = false;
   let notClean = commands.length === 0;
+  /** Each round that re-asked, and its re-ask's attempt number. */
+  const reasked = new Map<string, number>();
   for (const [index, command] of commands.entries()) {
     const journaled = command.rows.find((r) => r.eventType === 'journaled');
     if (
@@ -192,10 +261,31 @@ function checkCommands(set: Phase4RunSet, commands: readonly Phase4RecordedComma
     }
     const types = command.rows.map((r) => r.eventType);
     if (types.includes('unresolved') || types.includes('resolved')) notClean = true;
+    // A round holds at most one attempt after the failure it re-asked (B8): nothing after its re-ask.
+    const self = attempts.get(command.commandId);
+    const reaskAt = self === undefined ? undefined : reasked.get(self.opening);
+    if (self !== undefined && reaskAt !== undefined && self.attempt > reaskAt) notClean = true;
     const last = command.rows.at(-1);
     const nextIsRetry = index < commands.length - 1;
     if (last?.eventType === 'completed') continue;
     if (last?.eventType === 'failed' && last.failureClassification === 'not_sent' && nextIsRetry) continue;
+    if (last?.eventType === 'failed' && reaskable(last)) {
+      const next = commands[index + 1];
+      const following = next === undefined ? undefined : attempts.get(next.commandId);
+      const nextRequest = next?.rows.find((r) => r.eventType === 'journaled');
+      if (
+        self !== undefined &&
+        following !== undefined &&
+        following.opening === self.opening &&
+        following.attempt === self.attempt + 1 &&
+        !reasked.has(self.opening) &&
+        onlyRef(nextRequest, 'retry-of/') === command.commandId &&
+        onlyRef(nextRequest, 'retry-reason/') === last.failureClassification
+      ) {
+        reasked.set(self.opening, following.attempt);
+        continue;
+      }
+    }
     notClean = true;
   }
   if (authorizationWrong) failures.push('command_authorization_wrong');

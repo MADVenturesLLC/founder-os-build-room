@@ -63,8 +63,19 @@
  * is never dispatched twice. A round whose latest attempt failed `not_sent`
  * (it provably never left) may journal a new attempt, a new command id,
  * when the ratified budget's `retryBudgetTransition` allows it: two retries
- * per round. Any other failure ends the round, and a pending or unresolved
- * attempt blocks it. An interrupted round is reconciled by
+ * per round. A pending or unresolved attempt blocks the round.
+ *
+ * THE RE-ASK (DEC-20260716-02 item 5; FOUNDER-ACT-20261111-BR-PLANNER-REASK).
+ * An answer that is malformed or missing earns the round one corrective
+ * re-ask: a plan refused as `plan_invalid` for its schema, a scope path or its
+ * encoding, or a `planner_reported_failure` the Gateway names as
+ * unparseable_plan, malformed_output, no_result, agy_error or oversize. In the
+ * same `runRound` call, the round's next attempt is journaled with the reason,
+ * its work says why the answer was refused and, for a refused plan, carries
+ * that plan back to be corrected. It is not a transport retry and does not
+ * consult the budget. A round re-asks once; no later call, no recovery and no
+ * restarted control plane re-asks. Any other failure ends the round, as does
+ * the re-ask's own. An interrupted round is reconciled by
  * `planner-recovery.ts`, which shares this module's plan check and T3
  * transaction. The Founder can cancel at any time once a planner command
  * exists; a cancel of a running round is unconfirmed (Q6,
@@ -87,7 +98,20 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { checkScopePaths } from '../../contracts/src/index.js';
 import type { LedgerEntry, LedgerState, LifecycleEvent } from '../../ledger/src/index.js';
-import { envelopeDigest, normalizeForJournal, type CommandEventRow, type GovernedCommandRequest } from '../../journal/src/index.js';
+import {
+  envelopeDigest,
+  normalizeForJournal,
+  planHash,
+  type CanonicalDocument,
+  type CommandEventRow,
+  type GovernedCommandRequest,
+} from '../../journal/src/index.js';
+import {
+  REASKED_FAILURE_REASONS,
+  isPlannerReask,
+  type PlannerFailureReason,
+  type PlannerReaskWire,
+} from '../../gateway-protocol/src/planner.js';
 import type { ExecutionIdentity } from '../../madbridge-consumed/src/adapter/adapter-v1.js';
 import { judgePlanDoc, type PlanDocVerdict } from './plan-doc.js';
 import {
@@ -186,7 +210,16 @@ export interface PlannerWork {
   readonly goalDigest: string;
   /** Present on a revision round: the Founder's feedback, and the plan it revises with its hash. */
   readonly revision?: PlannerRevision;
+  /** Present only on a round's one corrective re-ask (FOUNDER-ACT-20261111-BR-PLANNER-REASK B3). */
+  readonly reask?: PlannerReask;
 }
+
+/**
+ * A round's one corrective re-ask as the Planner receives it: why the earlier answer
+ * was refused and, for a refused plan, that plan (FOUNDER-ACT-20261111-BR-PLANNER-REASK
+ * B3). The wire's own shape, which both sides validate with one implementation.
+ */
+export type PlannerReask = PlannerReaskWire;
 
 /**
  * A revision round as the Planner receives it (FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT
@@ -233,7 +266,8 @@ export type PlannerDispatchReceipt =
 
 export type PlannerResult =
   | { readonly kind: 'plan'; readonly document: unknown }
-  | { readonly kind: 'failed' };
+  /** `reason`: how the run ended without a plan, when the Gateway says (FOUNDER-ACT-20261111-BR-PLANNER-REASK B2). */
+  | { readonly kind: 'failed'; readonly reason?: PlannerFailureReason };
 
 /**
  * What the Planner knows of one command when asked by its id (journal
@@ -408,8 +442,11 @@ export interface RoundInputs {
 /** A round's inputs before any revision: what a first round plans from. */
 type FirstRoundInputs = Omit<RoundInputs, 'revision'>;
 
-/** What an opened round dispatches: its inputs and, on a revision, the plan it revises (B2). */
-export type RoundWork = FirstRoundInputs & { readonly revision?: PlannerRevision };
+/**
+ * What an opened round dispatches: its inputs and, on a revision, the plan it revises (B2);
+ * on the round's one re-ask, why the earlier answer was refused (FOUNDER-ACT-20261111-BR-PLANNER-REASK B3).
+ */
+export type RoundWork = FirstRoundInputs & { readonly revision?: PlannerRevision; readonly reask?: PlannerReask };
 
 interface OpenedRound {
   readonly commandId: string;
@@ -450,7 +487,24 @@ export class PlannerLoop {
       throw error;
     }
     if ('kind' in opened) return opened;
-    return this.execute(roomId, opened);
+    const attempted = await this.execute(roomId, opened);
+    const failed = attempted.outcome;
+    if (attempted.reask === undefined || failed.kind !== 'failed') return failed;
+    if (failed.classification !== 'plan_invalid' && failed.classification !== 'planner_reported_failure') return failed;
+    // The round's one corrective re-ask, in this call only (FOUNDER-ACT-20261111-BR-PLANNER-REASK
+    // B4). A re-ask that cannot open leaves the round failed, as it was.
+    let reopened: OpenedRound | PlannerRoundOutcome;
+    try {
+      reopened = await this.openNextAttempt(roomId, {
+        failed: { commandId: failed.commandId, classification: failed.classification },
+        reask: attempted.reask,
+      });
+    } catch (error) {
+      if (error instanceof RoundStateChangedError) return failed;
+      throw error;
+    }
+    if ('kind' in reopened) return failed;
+    return (await this.execute(roomId, reopened)).outcome;
   }
 
   // ---- opening a round ----------------------------------------------------
@@ -460,7 +514,7 @@ export class PlannerLoop {
     commandId: string,
     openingEventId: string,
     inputs: RoundInputs,
-    retryOf: string | null = null,
+    retry: { readonly of: string; readonly reason: 'not_sent' | ReaskClassification } | null = null,
   ): GovernedCommandRequest {
     const { route } = this.deps;
     return {
@@ -478,7 +532,7 @@ export class PlannerLoop {
       evidenceRefs: [
         `scope.captured/${inputs.goalEventId}`,
         `founder-goal/${inputs.goalDigest}`,
-        ...(retryOf === null ? [] : [`retry-of/${retryOf}`, 'retry-reason/not_sent']),
+        ...(retry === null ? [] : [`retry-of/${retry.of}`, `retry-reason/${retry.reason}`]),
       ],
       commandId,
     };
@@ -533,11 +587,12 @@ export class PlannerLoop {
   /**
    * Under the room lock, in PLANNING: journal the round's next command. That
    * is attempt 1 of a revision round T4 opened, or a retry of a round whose
-   * latest attempt failed as `not_sent` — the only retry the Founder's Q8
-   * answer allows — when `retryBudgetTransition` allows it. Anything else
-   * opens nothing.
+   * latest attempt failed as `not_sent` — the retry the Founder's Q8 answer
+   * allows — when `retryBudgetTransition` allows it, or, given `reaskOf`, the
+   * round's one corrective re-ask of the attempt that just failed
+   * (FOUNDER-ACT-20261111-BR-PLANNER-REASK B4). Anything else opens nothing.
    */
-  private async openNextAttempt(roomId: string): Promise<OpenedRound | PlannerRoundOutcome> {
+  private async openNextAttempt(roomId: string, reaskOf?: ReaskOf): Promise<OpenedRound | PlannerRoundOutcome> {
     const locked = await this.deps.ledger.underRoomLock(roomId, async (client, current): Promise<OpenedRound | PlannerRoundOutcome> => {
       if (current.state !== 'PLANNING') throw new RoundStateChangedError(`the room left PLANNING (now ${current.state})`);
       const latest = plannerRoundsOf(roomId, current).at(-1);
@@ -554,17 +609,36 @@ export class PlannerLoop {
       if (last === undefined && latest.opening.transition === 'T2') {
         throw new RoundStateChangedError('the round T2 opened has no journaled command');
       }
+      if (reaskOf !== undefined && last === undefined) {
+        return { kind: 'refused', code: 'round_failed', reason: 'a re-ask follows a failed attempt of its round' };
+      }
       if (last !== undefined) {
         if (last.outcome !== 'failed') {
           return { kind: 'refused', code: 'round_already_open', reason: `the round's latest command is ${last.outcome}` };
         }
         const failed = last.rows.at(-1);
-        if (failed?.eventType !== 'failed' || failed.failureClassification !== 'not_sent') {
-          return { kind: 'refused', code: 'round_failed', reason: 'only a not_sent failure is retried (plan r1 Q8)' };
-        }
-        const budget = retryBudgetTransition(this.retryState(roomId, latest, journaled), { kind: 'retry_request', bucket: this.bucket() });
-        if (!budget.allowed || journaled.length >= MAX_ROUND_ATTEMPTS) {
-          return { kind: 'refused', code: 'retry_budget_exhausted', reason: budget.reason };
+        if (reaskOf !== undefined) {
+          if (
+            last.commandId !== reaskOf.failed.commandId ||
+            failed?.eventType !== 'failed' ||
+            failed.failureClassification !== reaskOf.failed.classification
+          ) {
+            return { kind: 'refused', code: 'round_failed', reason: "the attempt to re-ask is not the round's latest failure" };
+          }
+          if (journaled.some((attempt) => isReaskRequest(attempt.rows))) {
+            return { kind: 'refused', code: 'round_failed', reason: 'the round has made its one re-ask' };
+          }
+          if (journaled.length >= MAX_ROUND_ATTEMPTS) {
+            return { kind: 'refused', code: 'retry_budget_exhausted', reason: `a round journals at most ${MAX_ROUND_ATTEMPTS} attempts` };
+          }
+        } else {
+          if (failed?.eventType !== 'failed' || failed.failureClassification !== 'not_sent') {
+            return { kind: 'refused', code: 'round_failed', reason: 'only a not_sent failure is retried (plan r1 Q8)' };
+          }
+          const budget = retryBudgetTransition(this.retryState(roomId, latest, journaled), { kind: 'retry_request', bucket: this.bucket() });
+          if (!budget.allowed || journaled.length >= MAX_ROUND_ATTEMPTS) {
+            return { kind: 'refused', code: 'retry_budget_exhausted', reason: budget.reason };
+          }
         }
       }
       const commandId = latest.commandIds[journaled.length] as string;
@@ -578,7 +652,9 @@ export class PlannerLoop {
         const earlierPlan = await earlierPlanOf(plans, roomId, current, latest.opening, revision.revisingPlanHash);
         work = { ...firstRound, revision: { ...revision, earlierPlan } };
       }
-      await tx.appendJournaled(this.plannerRequest(roomId, commandId, latest.opening.eventId, inputs, last?.commandId ?? null), {
+      if (reaskOf !== undefined) work = { ...work, reask: reaskOf.reask };
+      const retry = last === undefined ? null : { of: last.commandId, reason: reaskOf?.failed.classification ?? ('not_sent' as const) };
+      await tx.appendJournaled(this.plannerRequest(roomId, commandId, latest.opening.eventId, inputs, retry), {
         roomId,
         lifecycleEventRef: { roomId, eventId: latest.opening.eventId },
       });
@@ -627,8 +703,8 @@ export class PlannerLoop {
 
   // ---- executing an opened round -----------------------------------------
 
-  private async fail(commandId: string, classification: PlannerFailure): Promise<PlannerRoundOutcome> {
-    await this.deps.journal.appendCommandEvent({ eventType: 'failed', commandId, failureClassification: classification, evidenceRefs: [] });
+  private async fail(commandId: string, classification: PlannerFailure, evidenceRefs: readonly string[] = []): Promise<PlannerRoundOutcome> {
+    await this.deps.journal.appendCommandEvent({ eventType: 'failed', commandId, failureClassification: classification, evidenceRefs: [...evidenceRefs] });
     return { kind: 'failed', commandId, classification };
   }
 
@@ -643,18 +719,26 @@ export class PlannerLoop {
    * next append is refused as out of sequence: that is reported as
    * `cancelled`, never retried and never treated as success.
    */
-  private async execute(roomId: string, round: OpenedRound): Promise<PlannerRoundOutcome> {
+  private async execute(roomId: string, round: OpenedRound): Promise<Attempted> {
+    let reask: PlannerReask | undefined;
     try {
-      return await this.executeRound(roomId, round);
+      const outcome = await this.executeRound(roomId, round, (offered) => {
+        reask = offered;
+      });
+      return reask === undefined ? { outcome } : { outcome, reask };
     } catch (error) {
       if (error instanceof JournalSequenceError && (await this.deps.ledger.loadRoom(roomId)).state.state === 'CLOSED_ABANDONED') {
-        return { kind: 'cancelled', commandId: round.commandId };
+        return { outcome: { kind: 'cancelled', commandId: round.commandId } };
       }
       throw error;
     }
   }
 
-  private async executeRound(roomId: string, round: OpenedRound): Promise<PlannerRoundOutcome> {
+  /**
+   * Run one attempt. `offerReask` is told the re-ask its failure earns, if any, just
+   * before the failure is journaled (FOUNDER-ACT-20261111-BR-PLANNER-REASK B1).
+   */
+  private async executeRound(roomId: string, round: OpenedRound, offerReask: (reask: PlannerReask) => void): Promise<PlannerRoundOutcome> {
     const { route, planner } = this.deps;
     const { commandId, inputs } = round;
     const intended: ObservedRoute = {
@@ -735,12 +819,23 @@ export class PlannerLoop {
     } catch {
       return this.unresolved(commandId, 'plan outcome unknown');
     }
-    if (result.kind === 'failed') return this.fail(commandId, 'planner_reported_failure');
+    if (result.kind === 'failed') {
+      const reask = reaskFor({ classification: 'planner_reported_failure', reason: result.reason });
+      if (reask !== null) offerReask(reask);
+      // How the run ended, as the Gateway reports it (FOUNDER-ACT-20261111-BR-PLANNER-REASK B2).
+      return this.fail(commandId, 'planner_reported_failure', result.reason === undefined ? [] : [`planner-failure/${result.reason}`]);
+    }
 
     const verdict = judgeRoundPlan(result.document, inputs);
     if (!verdict.ok) {
       logPlanRefused(this.log, roomId, commandId, verdict);
-      return this.fail(commandId, verdict.classification);
+      if (verdict.classification !== 'plan_invalid') return this.fail(commandId, verdict.classification);
+      const reask = reaskFor({ classification: 'plan_invalid', reason: verdict.reason, document: result.document });
+      if (reask !== null) offerReask(reask);
+      // The refusal's kind, so the run unit can tell a re-askable refusal from a blocked plan (B8), and
+      // the refused plan's hash where it has one, so the answer agy kept can be matched (B4; act E3).
+      const refused = refusedPlanHash(result.document);
+      return this.fail(commandId, 'plan_invalid', [`plan-refusal/${verdict.reason.kind}`, ...(refused === null ? [] : [`refused-plan/${refused}`])]);
     }
 
     const submitted = await submitRoundPlan(this.submitDeps(), {
@@ -770,6 +865,69 @@ export class PlannerLoop {
     return { ledger: this.deps.ledger, journal: this.deps.journal, plans: this.deps.plans, route: this.deps.route, now: this.now, mintEventId: this.mintEventId };
   }
 
+}
+
+// ---------------------------------------------------------------------------
+// The corrective re-ask (DEC-20260716-02 item 5; FOUNDER-ACT-20261111-BR-PLANNER-REASK)
+
+/** The failure classifications a round re-asks after (B1). */
+export type ReaskClassification = 'plan_invalid' | 'planner_reported_failure';
+
+/** The attempt a re-ask follows, and the re-ask it earned. */
+interface ReaskOf {
+  readonly failed: { readonly commandId: string; readonly classification: ReaskClassification };
+  readonly reask: PlannerReask;
+}
+
+/** One attempt's outcome, and the re-ask its failure earned, if any. */
+interface Attempted {
+  readonly outcome: PlannerRoundOutcome;
+  readonly reask?: PlannerReask;
+}
+
+export type ReaskableFailure =
+  | { readonly classification: 'plan_invalid'; readonly reason: PlanRefusalReason; readonly document: unknown }
+  | { readonly classification: 'planner_reported_failure'; readonly reason?: PlannerFailureReason | undefined };
+
+/**
+ * The re-ask a failed attempt earns, or `null` (B1, B3): a plan refused as `plan_invalid`
+ * for its schema, a scope path or its encoding, carried back with that reason; or a
+ * Planner failure the Gateway names as malformed or missing output. Nothing else earns
+ * one: not a blocked or inconclusive plan, a timeout, a model switch, or a failure the
+ * Gateway gives no reason for. A re-ask the wire would refuse, such as a refused
+ * document that is not a plain JSON object within the payload bound, is not made, and
+ * the round fails as it would without one.
+ */
+export function reaskFor(failure: ReaskableFailure): PlannerReask | null {
+  let reask: unknown;
+  if (failure.classification === 'planner_reported_failure') {
+    const reason = failure.reason;
+    if (reason === undefined || !(REASKED_FAILURE_REASONS as readonly string[]).includes(reason)) return null;
+    reask = { refused: 'planner_reported_failure', reason };
+  } else {
+    const reason = failure.reason;
+    if (reason.kind !== 'schema' && reason.kind !== 'scope_path' && reason.kind !== 'encoding') return null;
+    reask = { refused: 'plan_invalid', reason, refusedPlan: failure.document };
+  }
+  return isPlannerReask(reask) ? reask : null;
+}
+
+/** A refused document's plan hash, or `null` when it has none (an `encoding` refusal, a root that is not an object). */
+export function refusedPlanHash(document: unknown): string | null {
+  try {
+    return planHash(document as CanonicalDocument);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether an attempt's journaled request was a re-ask: its retry reason is one B1 names. */
+function isReaskRequest(rows: readonly CommandEventRow[]): boolean {
+  const journaled = rows.find((row) => row.eventType === 'journaled');
+  return (
+    journaled !== undefined &&
+    journaled.evidenceRefs.some((ref) => ref === 'retry-reason/plan_invalid' || ref === 'retry-reason/planner_reported_failure')
+  );
 }
 
 // ---------------------------------------------------------------------------

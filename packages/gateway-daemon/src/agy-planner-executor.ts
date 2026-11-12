@@ -80,10 +80,20 @@ import type {
   PlannerRouteWire,
   PlannerWorkWire,
 } from '../../gateway-protocol/src/index.js';
+import type { PlannerReaskWire } from '../../gateway-protocol/src/planner.js';
 import { PLANDOC_SCHEMA_V1 } from '../../seat-output-schema/src/index.js';
 import { createDaemonClock } from './clock.js';
 import { FILE_MODE } from './paths.js';
-import { makeLeafDirectory, readRegularFile, rewriteInFull, syncDirectory, syncMadeDirectories, type PlannerExecutor, type PlannerStart } from './planner-worker.js';
+import {
+  PlannerRunEndedWithoutPlanError,
+  makeLeafDirectory,
+  readRegularFile,
+  rewriteInFull,
+  syncDirectory,
+  syncMadeDirectories,
+  type PlannerExecutor,
+  type PlannerStart,
+} from './planner-worker.js';
 
 /** The one lane this executor serves (the ruling's B1). */
 export const AGY_PLANNER_LANE = {
@@ -314,6 +324,12 @@ export function modelsNamed(value: unknown): string[] {
  * afresh each round, so a revision round now carries the earlier plan itself,
  * which the Planner is told to revise rather than replace, and which follows
  * as one line of JSON. A first round's prompt is unchanged.
+ *
+ * FOUNDER-ACT-20261111-BR-PLANNER-REASK B5 and B6: a round's one corrective re-ask
+ * says why the earlier answer was refused, after the revision lines when there are
+ * any and otherwise after the scope paths. A refused plan follows as one line of
+ * JSON, to be corrected rather than rewritten; an answer that never arrived is asked
+ * for again in full. Work without a re-ask is written as before, byte for byte.
  */
 export function plannerPrompt(work: PlannerWorkWire): string {
   const lines = [
@@ -337,6 +353,24 @@ export function plannerPrompt(work: PlannerWorkWire): string {
       JSON.stringify(work.revision.earlierPlan),
     );
   }
+  if (work.reask !== undefined) {
+    lines.push(
+      '',
+      'YOUR EARLIER ANSWER TO THIS REQUEST WAS REFUSED',
+      'You have answered this request once already. The control plane refused that answer, for this reason:',
+      ...reaskReasonLines(work.reask),
+    );
+    if (work.reask.refused === 'plan_invalid') {
+      lines.push(
+        'Your refused answer follows, exactly as the control plane received it. Correct what the reason names, change nothing else, and give the whole corrected plan as your answer. Rules 1, 2 and 5 below apply to what you change.',
+        '',
+        'REFUSED ANSWER',
+        JSON.stringify(work.reask.refusedPlan),
+      );
+    } else {
+      lines.push('Answer the request again, in full, following every rule below.');
+    }
+  }
   lines.push(
     '',
     'HOW TO WRITE THE PLAN',
@@ -357,6 +391,47 @@ export function plannerPrompt(work: PlannerWorkWire): string {
     'Write that object once, at the end of your turn, after you have finished reading.',
   );
   return lines.join('\n');
+}
+
+/** Why the earlier answer was refused, in the lines of FOUNDER-ACT-20261111-BR-PLANNER-REASK B6. */
+export function reaskReasonLines(reask: PlannerReaskWire): string[] {
+  if (reask.refused === 'planner_reported_failure') {
+    switch (reask.reason) {
+      case 'unparseable_plan':
+        return ['It was not one JSON object.'];
+      case 'oversize':
+        return ['It was too large to send. Keep within rule 6 below.'];
+      case 'malformed_output':
+      case 'no_result':
+      case 'agy_error':
+        return ['No answer reached the control plane.'];
+    }
+  }
+  const reason = reask.reason;
+  switch (reason.kind) {
+    case 'schema': {
+      const lines = [
+        'It does not satisfy the schema in the ANSWER section. Each line below names a place in that answer, as a JSON pointer, and what is wrong there:',
+        ...reason.violations.map((violation) => {
+          const sizes =
+            violation.code === 'length' && violation.found !== undefined && violation.bound !== undefined
+              ? ` (found ${violation.found}, limit ${violation.bound})`
+              : '';
+          return `- ${violation.path}: ${violation.code}${sizes}`;
+        }),
+      ];
+      if (reason.violationCount > reason.violations.length) lines.push(`- and ${reason.violationCount - reason.violations.length} more`);
+      return lines;
+    }
+    case 'scope_path':
+      return [
+        reason.index === null
+          ? 'Its scope_paths are not valid repository paths.'
+          : `Its scope_paths entry at index ${reason.index} is not a valid repository path.`,
+      ];
+    case 'encoding':
+      return ['It holds a number that is not a whole number, or a negative zero, which a plan cannot carry.'];
+  }
 }
 
 /**
@@ -868,7 +943,8 @@ export class AgyPlannerExecutor implements PlannerExecutor {
       if (!(await this.evidence({ ...sentBase, endedAt: this.isoNow(), outcome: outcome.kind, ...ended, ...run.diagnostics() }))) {
         throw new Error(`the run ended (${outcome.kind}), but its record could not be written`);
       }
-      if (outcome.kind !== 'plan') throw new Error(`agy run ended without a plan: ${outcome.kind}`);
+      // How the run ended goes to the control plane with the failure (FOUNDER-ACT-20261111-BR-PLANNER-REASK B2).
+      if (outcome.kind !== 'plan') throw new PlannerRunEndedWithoutPlanError(outcome.kind);
       return { kind: 'plan', document: outcome.document } satisfies PlannerResultWire;
     });
     // Both were checked above, the model against the lane and the conversation id non-empty,
