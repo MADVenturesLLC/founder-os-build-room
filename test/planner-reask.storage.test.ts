@@ -36,7 +36,7 @@ import { planHash, type CanonicalDocument, type CommandEventRow } from '../packa
 import type { LifecycleEvent } from '../packages/ledger/src/index.js';
 import { founderGoalDigest, prepareFounderGoal } from '../packages/control-plane/src/founder-goal.js';
 import type { ExecutionIdentity } from '../packages/madbridge-consumed/src/adapter/adapter-v1.js';
-import type { PlannerFailureReason } from '../packages/gateway-protocol/src/index.js';
+import type { PlannerFailureReason } from '../packages/gateway-protocol/src/planner.js';
 
 const { Client, Pool } = pgDefault;
 

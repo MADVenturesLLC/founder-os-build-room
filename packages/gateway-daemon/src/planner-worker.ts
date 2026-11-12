@@ -41,7 +41,6 @@ import {
   PLANNER_SURFACES,
   validatePlannerReportPayload,
   validatePlannerRequest,
-  type PlannerFailureReason,
   type PlannerIdentityWire,
   type PlannerInitWire,
   type PlannerReportPayload,
@@ -50,6 +49,7 @@ import {
   type PlannerRouteWire,
   type PlannerWorkWire,
 } from '../../gateway-protocol/src/index.js';
+import type { PlannerFailureReason } from '../../gateway-protocol/src/planner.js';
 import { DIRECTORY_MODE, FILE_MODE } from './paths.js';
 
 /**

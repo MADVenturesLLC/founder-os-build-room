@@ -17,20 +17,22 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   MAX_PLANNER_PAYLOAD_BYTES,
+  validatePlannerReportPayload,
+  validatePlannerRequest,
+  type PlannerIdentityWire,
+  type PlannerResultWire,
+  type PlannerRouteWire,
+  type PlannerWorkWire,
+} from '../packages/gateway-protocol/src/index.js';
+import {
   PLANNER_FAILURE_REASONS,
   PLANNER_REASK_PATH_MAX,
   PLANNER_REASK_VIOLATIONS_MAX,
   REASKED_FAILURE_REASONS,
   isPlannerReask,
-  validatePlannerReportPayload,
-  validatePlannerRequest,
-  type PlannerIdentityWire,
   type PlannerReaskViolationCode,
   type PlannerReaskWire,
-  type PlannerResultWire,
-  type PlannerRouteWire,
-  type PlannerWorkWire,
-} from '../packages/gateway-protocol/src/index.js';
+} from '../packages/gateway-protocol/src/planner.js';
 import type { ViolationCode } from '../packages/seat-output-schema/src/index.js';
 import {
   PLAN_REFUSAL_VIOLATIONS_KEPT,

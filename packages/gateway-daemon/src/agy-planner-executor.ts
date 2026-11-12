@@ -76,11 +76,11 @@ import { join } from 'node:path';
 import type {
   Clock,
   PlannerIdentityWire,
-  PlannerReaskWire,
   PlannerResultWire,
   PlannerRouteWire,
   PlannerWorkWire,
 } from '../../gateway-protocol/src/index.js';
+import type { PlannerReaskWire } from '../../gateway-protocol/src/planner.js';
 import { PLANDOC_SCHEMA_V1 } from '../../seat-output-schema/src/index.js';
 import { createDaemonClock } from './clock.js';
 import { FILE_MODE } from './paths.js';

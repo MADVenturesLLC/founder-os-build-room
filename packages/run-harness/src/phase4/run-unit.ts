@@ -23,7 +23,7 @@
 
 import { founderGoalDigest } from '../../../control-plane/src/founder-goal.js';
 import { MAX_ROUND_ATTEMPTS, plannerCommandIdFor } from '../../../control-plane/src/planner-loop.js';
-import { REASKED_FAILURE_REASONS } from '../../../gateway-protocol/src/index.js';
+import { REASKED_FAILURE_REASONS } from '../../../gateway-protocol/src/planner.js';
 import {
   PHASE4_DISPATCHER,
   PHASE4_MAX_ROUNDS_PER_RUN,

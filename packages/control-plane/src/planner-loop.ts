@@ -111,7 +111,7 @@ import {
   isPlannerReask,
   type PlannerFailureReason,
   type PlannerReaskWire,
-} from '../../gateway-protocol/src/index.js';
+} from '../../gateway-protocol/src/planner.js';
 import type { ExecutionIdentity } from '../../madbridge-consumed/src/adapter/adapter-v1.js';
 import { judgePlanDoc, type PlanDocVerdict } from './plan-doc.js';
 import {
