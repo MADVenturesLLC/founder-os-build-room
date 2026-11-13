@@ -7,8 +7,10 @@
  * it as credential material. A bearer value now counts when it is 20 or more
  * characters of RFC 6750's token alphabet, and the control plane refuses to
  * boot with a token outside that alphabet, so every token it accepts is
- * detected and redacted whole. The shape redacts before every shape but the
- * PEM block. The act's stated limits and false positives are pinned below.
+ * detected and redacted whole. Since FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION
+ * every shape's matches are found in the value as it was written, so the order
+ * of the shapes no longer decides what is redacted. The stated limits and
+ * false positives that remain are pinned below.
  *
  * Token-shaped fixtures are assembled at runtime, as `journal-7.3-secrets`
  * does, so the repository's secret scan does not read them as leaks.
@@ -173,9 +175,9 @@ describe('journal guard · bearer shape (FOUNDER-ACT-20261105-BR-BEARER-SHAPE)',
     for (const text of NAMES_DETECTED) assert.equal(containsCredentialMaterial([text]), true, text);
   });
 
-  it('leaves the start of a provider-key shape that reached its length only with "-bearer" glued after it: a stated limit', () => {
+  it('redacts whole a provider-key shape that reached its length only with "-bearer" glued after it: the limit of Amendment 4 Q3, closed', () => {
     assert.equal(containsCredentialMaterial([GLUED]), true);
     const [redacted] = redactArgv([GLUED]);
-    assert.equal(redacted, `${GLUED_PREFIX}${REDACTED}`);
+    assert.equal(redacted, REDACTED);
   });
 });

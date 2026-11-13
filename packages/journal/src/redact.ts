@@ -87,15 +87,16 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   // CONTROL_PLANE_TOKEN, PHASE3_ADJUDICATION_TOKEN or PHASE4_COUNTED_RUN_TOKEN
   // shorter than 32 characters or holding a character outside this alphabet
   // (packages/control-plane/src/config.ts), so every token it accepts is
-  // matched whole. This shape comes before every shape but the PEM block, so
-  // that such a token is redacted whole before another shape can redact part
-  // of it and leave the rest too short to match.
+  // matched whole. redactString finds every shape's matches in the value as
+  // it was written (FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION), so the
+  // order of this list decides nothing that is redacted: such a token is
+  // redacted whole even where another shape matches inside it, and a secret's
+  // label glued to its end is still found by labelled_secret.
   // Stated limits: a value with fewer than 20 characters of the alphabet
   // before its first other character is not caught, and a longer one is
-  // redacted only up to that character; another credential that reaches its
-  // own shape's length only with "bearer" glued after it loses that match;
-  // and 20 or more characters of the alphabet after "bearer", such as a bare
-  // PHASE4_COUNTED_RUN_TOKEN or a file path, are caught although not secret.
+  // redacted only up to that character; and 20 or more characters of the
+  // alphabet after "bearer", such as a bare PHASE4_COUNTED_RUN_TOKEN or a
+  // file path, are caught although not secret.
   { name: 'bearer_token', pattern: /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+/=-]{20,}/i },
   { name: 'provider_api_key', pattern: /(?<![A-Za-z0-9])(?:sk|pk|rk|ak)-[A-Za-z0-9_-]{16,}(?![A-Za-z0-9])/ },
   { name: 'github_token', pattern: /(?<![A-Za-z0-9])(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/ },
@@ -131,6 +132,13 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
  * base64-ish shape, and redacting them would corrupt exactly the argv a
  * governed `git` command needs for the §7.1 reconstruction property. A hex
  * run is a digest or an object id, not a credential.
+ *
+ * Stated limit (FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION B7): on a
+ * long run that alternates word and non-word characters of this alphabet,
+ * such as "a+" repeated, the time this pattern takes grows with the square of
+ * the run's length, about three seconds for 65,536 characters. The journal
+ * route's 64 KB body limit, behind the control-plane token, is its only
+ * bound. A fix needs a separate act.
  */
 const ENTROPY_SHAPES: readonly RegExp[] = [
   /\b(?![0-9a-fA-F]+\b)[A-Za-z0-9+/]{40,}={0,2}\b/g,
@@ -163,15 +171,105 @@ const SECRET_BEARING_FLAG = /^--?(?:token|api-?key|secret|password|passwd|creden
 const SECRET_BEARING_FLAG_INLINE =
   /^(--?(?:token|api-?key|secret|password|passwd|credential))=/i;
 
-function redactString(value: string): string {
-  let out = value;
-  // `String.replace` with a global regex resets lastIndex itself, so these
-  // are safe to reuse across calls; `.test()` would not be.
-  for (const pattern of CREDENTIAL_SHAPES_GLOBAL) {
-    out = out.replace(pattern, REDACTED);
+/** Every shape that redacts, global: the credential shapes, then the entropy shape. */
+const REDACTION_SHAPES_GLOBAL: readonly RegExp[] = [...CREDENTIAL_SHAPES_GLOBAL, ...ENTROPY_SHAPES];
+
+/**
+ * Every range, `[start, end)`, that any shape matches in `value` as it was
+ * written. Each shape scans the whole value from its start, leftmost first,
+ * as `String.replace` with that global pattern would, and never sees what
+ * another shape matched (FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION B1).
+ * Replacing shape after shape instead let one shape's match decide what a
+ * later shape could see: a bearer value took a secret's label as characters
+ * of its alphabet, and the labelled value after it stayed in the row.
+ */
+function matchedRanges(value: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (const pattern of REDACTION_SHAPES_GLOBAL) {
+    // A failed `exec` resets lastIndex to 0, so each scan ends where the next
+    // one must start; it is set here as well, so a scan never depends on that.
+    pattern.lastIndex = 0;
+    for (let match = pattern.exec(value); match !== null; match = pattern.exec(value)) {
+      if (match[0].length === 0) {
+        pattern.lastIndex += 1;
+        continue;
+      }
+      ranges.push([match.index, match.index + match[0].length]);
+    }
   }
-  for (const pattern of ENTROPY_SHAPES) {
-    out = out.replace(pattern, REDACTED);
+  return ranges;
+}
+
+/**
+ * `value` with each range replaced by REDACTED. Ranges that overlap are
+ * merged and take one marker; ranges that only touch keep one marker each.
+ */
+function replaceRanges(value: string, ranges: Array<[number, number]>): string {
+  if (ranges.length === 0) {
+    return value;
+  }
+  ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let out = '';
+  let cursor = 0;
+  let [start, end] = ranges[0]!;
+  for (let i = 1; i < ranges.length; i++) {
+    const [nextStart, nextEnd] = ranges[i]!;
+    if (nextStart < end) {
+      end = Math.max(end, nextEnd);
+      continue;
+    }
+    out += value.slice(cursor, start) + REDACTED;
+    cursor = end;
+    start = nextStart;
+    end = nextEnd;
+  }
+  return out + value.slice(cursor, start) + REDACTED + value.slice(end);
+}
+
+/**
+ * The first credential shape that `containsCredentialMaterial` would still
+ * find in `value`, as a range of `value` itself, or null. The guard reads
+ * `value` with every marker removed, so text on either side of a marker can
+ * join into a shape; the match is found in that view, as the guard finds
+ * it, and mapped back, taking in any marker that lies inside it.
+ */
+function firstSurvivingMatch(value: string): [number, number] | null {
+  const positions: number[] = [];
+  let view = '';
+  for (let i = 0; i < value.length; ) {
+    if (value.startsWith(REDACTED, i)) {
+      i += REDACTED.length;
+      continue;
+    }
+    positions.push(i);
+    view += value.charAt(i);
+    i += 1;
+  }
+  for (const shape of CREDENTIAL_SHAPES) {
+    const match = shape.pattern.exec(view);
+    if (match !== null && match[0].length > 0) {
+      return [positions[match.index]!, positions[match.index + match[0].length - 1]! + 1];
+    }
+  }
+  return null;
+}
+
+/**
+ * Redact every match of every shape in the value as it was written (B1),
+ * then, while the guard would still find a credential shape in what is left,
+ * redact that match too (B2), so the result always passes the guard's shape
+ * test. Each pass of B2 replaces at least one character that is not part of
+ * a marker, so it ends.
+ *
+ * Stated limit (B5): on some inputs this keeps a character that replacing
+ * shape after shape removed, such as the "!" of "token:Bearer <value>!".
+ * B2 means no such character is left where the guard finds a credential
+ * shape.
+ */
+function redactString(value: string): string {
+  let out = replaceRanges(value, matchedRanges(value));
+  for (let range = firstSurvivingMatch(out); range !== null; range = firstSurvivingMatch(out)) {
+    out = out.slice(0, range[0]) + REDACTED + out.slice(range[1]);
   }
   return out;
 }
