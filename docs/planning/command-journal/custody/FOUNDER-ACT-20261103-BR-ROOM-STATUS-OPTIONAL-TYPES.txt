@@ -1,0 +1,53 @@
+FOUNDER-ACT-20261103-BR-ROOM-STATUS-OPTIONAL-TYPES: room-status typechecks for a consumer that sets exactOptionalPropertyTypes, with no change to what Build Room builds
+
+Status: DRAFT r2, prepared by the builder for my review. It has no effect until I sign it.
+Repository: MADVenturesLLC/founder-os-build-room
+origin/main when drafted: 03cd29f95fbd93f854cc236f61d93fcf85da8848
+Acts under: FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE B2, C1 and C4, recorded in FounderOS DEC-20260815-17
+Read with: madventures-tui FOUNDER-ACT-20261102-TUI-ROOM-STATUS-B2, whose B2 pins the merge of this act
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows.
+
+A1. Basis. B2 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE has madventures-tui consume packages/room-status by a vendored copy, byte for byte, pinned to a named Build Room commit. madventures-tui sets exactOptionalPropertyTypes in its TypeScript settings; this repository's tsconfig.base.json sets it false. Under madventures-tui's settings, packages/room-status/src/status.ts at 03cd29f fails with one error, TS2379 at line 226: parseRoomStatus passes assertInvariants an object whose blockReason and slotPhases may hold undefined, and the parameter type of assertInvariants declares both as optional properties that may not. The vendored copy may not be edited, so the fix is made here.
+
+A2. What the drafting assistant checked. In a scratch copy at 03cd29f, outside any repository, with the change of B1: npm run build emitted a dist/ byte-identical to the one it emitted before the change; node --test dist/test/room-status-ir.test.js passed 16 of 16 before and after; eslint reported nothing on packages/room-status; and a typecheck of packages/room-status/src/index.ts with exactOptionalPropertyTypes set reported the one error of A1 before and none after. In a scratch copy of madventures-tui at its main, 93e7d1c4c16d7951dd3fde23b6516e8b1e5e738b, the vendored files with this change typechecked under its root and projector settings. That check is not this build's evidence.
+
+A3. The drafting assistant. The builder drafted this act and proposed the change and its proof. None of that is an independent review.
+
+B1. The change. In packages/room-status/src/status.ts, the parameter type of assertInvariants changes on two lines and nowhere else:
+
+    blockReason?: RoomBlockReason;
+  becomes
+    blockReason?: RoomBlockReason | undefined;
+
+    slotPhases?: readonly AgentSlotPhase[];
+  becomes
+    slotPhases?: readonly AgentSlotPhase[] | undefined;
+
+After the change the file is 11,768 bytes with SHA-256 3e705cbe96414e967ed942df581ac5de69ba07d93e55055c79248373414c9beb. No other byte of that file, of packages/room-status, or of this repository changes. No behavior changes: assertInvariants is not exported, and the change is to a type annotation, which emits no code.
+
+B2. Base. The builder starts from main at 03cd29f95fbd93f854cc236f61d93fcf85da8848, or at a later commit that changes no file under packages/room-status and does not change packages/gateway-protocol/src/ipc-v2.ts, whose bytes madventures-tui pins with these. If the base differs, or B1 would leave status.ts with any other SHA-256, the builder stops and reports to me.
+
+B3. Proof. In the pull request:
+1. A typecheck of packages/room-status/src/index.ts under a temporary configuration kept outside the repository, which extends tsconfig.base.json and sets exactOptionalPropertyTypes, reporting the one error of A1 before the change and exiting 0 after it.
+2. npm run build before and after the change, and a recursive comparison showing dist/ byte-identical.
+3. node --test dist/test/room-status-ir.test.js passing before and after the change.
+4. The SHA-256 of status.ts at the head, matching B1.
+5. The checks required on main passing at the head.
+No test is added, changed, skipped or deleted.
+
+C1. Review. No Tier-2 review is required for this change. Advisory reviews that run on the pull request are dispositioned under C4 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE. A finding that would need any change beyond B1 is reported to me and not made.
+
+C2. Merge. The pull request needs my separate SHA-named merge authorization. Merging starts a deployment of rare-enjoyment from main; dist/ is unchanged, so the new revision boots the same control-plane code that is serving. The merge is made before my D5 amendment of FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS is signed, or after its set completes or is spent; never between. That act's D6 requires Build Room main at the commit of D5 or a later one that changes nothing under packages/, and this change is under packages/.
+
+C3. Filing. After the merge, the builder files custody under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE: this act verbatim, any rulings on it, the outputs of B3, the merge verification, and the /health polls across the deployment the merge starts, with one receipt, in one pull request that needs my separate authorization.
+
+C4. Not authorized. This act does not authorize: any other change to packages/room-status, to packages/gateway-protocol or to any other file, including tsconfig.base.json, tsconfig.json, package.json, package-lock.json, any workflow and any test; a standing check of room-status under exactOptionalPropertyTypes; any change in madventures-tui; a counted run; a deployment, redeploy or rollback other than the one the merge starts; a migration apply; or any change to a Railway variable, a Neon role, a secret or a Gateway host. Each needs my separate act.
+
+Signed:
+
+— Michael Daley
+
+Date:
+
+Actor-Id: founder

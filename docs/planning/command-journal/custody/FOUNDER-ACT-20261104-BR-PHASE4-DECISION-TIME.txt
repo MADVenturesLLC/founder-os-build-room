@@ -1,0 +1,39 @@
+FOUNDER-ACT-20261104-BR-PHASE4-DECISION-TIME: the run unit judges my decision time from the record
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+origin/main when drafted: 5cbadd475dc832dc30a97af45f3221bc46d36d0a
+Under: FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES (SHA-256 af53b4933b1b4abd7aabd7ebacb578f1729f8862db002cc7499f5bb618555f94) and my ruling on its pull request 143 of 2026-11-04, "Accept, fix before D3"; FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS (c65afbc1afedefdf19a3705f3d0a8fda45ec2f89643c862c70485cf370d15053) B3 and B5; FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE C1 and C4; FOUNDER-ACT-20261028-VELOCITY (83b1ffd5753f48b191ec7e62c8d724ccd4d13f6c024bbe5cc9fc4020f4cbc27a) B1 to B4.
+The builder read, before drafting, at 5cbadd4: packages/run-harness/src/phase4/runner.ts, run-unit.ts, export-reader.ts and model.ts, and the room export of packages/control-plane/src/store.ts and server.ts.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. What B5 and B3 say. B5 of the counted-run act gives me 4 hours (14400000 ms) to decide each plan, from the round's plan_review to my decision. B3 makes a run interrupted when I did not decide within that time.
+A2. What the code does. The runner waits on my decision by reading the room's state (runner.ts, awaitFounder). It takes a room that has left PLAN_REVIEW before it checks the deadline, and checks the deadline only between reads. Since pull request 143, one read may be retried for up to about ten minutes through an outage. A decision I made up to about ten minutes after the 4 hours could then be taken as in time. The run unit judges the decision time only by the runner's own flag, never from the record.
+A3. What the record holds. The control plane's room export, which the runner already reads into the run's record, gives every lifecycle event its committed_at: the time the control plane's database committed it. The control plane alone writes it, and no caller can set it. The plan's T3 (plan.submitted) opens plan_review; my decision is T4, T5 or T22.
+A4. My ruling. On 2026-11-04 I ruled that pull request 143 merge as reviewed and that this be fixed in a follow-up pull request that judges the decision time from the record and merges before my new counted-run act.
+
+Part B: The change
+B1. The record. Each event in the run's record (Phase4RecordedEvent) gains committedAt, the export row's committed_at as an ISO 8601 string. An event row without a readable committed_at leaves committedAt absent; the record is still read.
+B2. The judgment. In packages/run-harness/src/phase4/run-unit.ts, for each decision event (plan.revision_requested, plan.approved, founder.cancel), the plan.submitted event most recently before it in the record opens its time. If the decision's committedAt is more than the set's decisionTimeoutMs after that plan.submitted's committedAt, the run is interrupted with founder_decision_timeout, the code the runner's flag already gives. If either event lacks committedAt, or a decision has no plan.submitted before it, the run fails with decision_time_unrecorded. Every other part of the judgment is unchanged, and the runner's own flag still applies.
+B3. Paths: packages/run-harness/src/phase4/ (model.ts, export-reader.ts, run-unit.ts) and tests under test/. Nothing in packages/control-plane, which already serves committed_at; nothing in the runner's waiting, the driver's retries, the gateway daemon, the journal, the ledger, the migrations or the PC. If the change needs any other path, the builder stops and asks me.
+B4. Tests: a decision committed exactly decisionTimeoutMs after its T3 passes; one millisecond later is interrupted founder_decision_timeout, whatever the runner's flag says; a revision then an approval are each judged against their own round's T3; a decision or its T3 without committedAt fails decision_time_unrecorded; the export reader carries committed_at into committedAt and tolerates its absence; every existing run-unit and runner test still passes. Each test fails when the change it covers is reverted, and the builder shows that.
+
+Part C: Review, merge and filing
+C1. Review: Codex Tier-2 of the exact final head under FOUNDER-ACT-20261028-VELOCITY B1 to B4. Advisory reviews are dispositioned under C4 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE.
+C2. Merge: my separate SHA-named authorization. Merging deploys the control plane (rare-enjoyment), whose code this does not change; under B3 of FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY that authorization also authorizes the deploy, and the builder verifies that it reached SUCCESS and that its boot.start names the merge commit.
+C3. Order. It merges before my new counted-run act is signed. It may merge before or after the pull request of FOUNDER-ACT-20261103-BR-ROOM-STATUS-OPTIONAL-TYPES and the custody filings, each under its own authorization.
+C4. Filing: under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, after the merge, with this act verbatim, its review, the merge verification and the deploy reading. It may share one pull request with the other filings of 2026-11-02 to 2026-11-04.
+
+Part D: What follows
+D1. No rehearsal is needed for this change: it changes how a finished record is judged, and nothing the run does. My new counted-run act follows its merge.
+
+Part E: Not authorized
+- Any change beyond Part B, including to the runner's waiting, the driver's retries, the decision time itself or any other run-unit rule.
+- Any change to agy's arguments, the sudo rule, the PC, a Railway variable, a Neon role, a secret or a Gateway host.
+- Any run, counted or not, and my counted-run act.
+- Any merge without my separate authorization.
+
+Signed: Michael Daley
+Date: 2026-11-04 (UTC)
+Actor-Id: founder

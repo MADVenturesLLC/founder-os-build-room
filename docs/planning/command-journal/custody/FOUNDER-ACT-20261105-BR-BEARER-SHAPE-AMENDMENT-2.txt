@@ -1,0 +1,17 @@
+FOUNDER-ACT-20261105-BR-BEARER-SHAPE, Amendment 2: what M4 of Amendment 1 says about the token variables' names, corrected
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+Amends: FOUNDER-ACT-20261105-BR-BEARER-SHAPE (SHA-256 b90b0ce7d14462cfd4fcb0374e7f3d6c0658a73ebcfb9fe4ea2a0f25b2dce34e) as amended by its Amendment 1 (954155f9f6a4de501abf86df589c2a337c267428c078b04dfb85890bb0ecb925)
+Pull request: MADVenturesLLC/founder-os-build-room#146, head when drafted 13ab9054692ccac35a0f22917c44ea05ce307606, with Amendment 1's change made but not committed
+Basis: the builder's finding, while writing Amendment 1's tests, that the last test of its M4 cannot pass with the pattern of its M2; and my ruling in the builder's session on 2026-11-05, "Correct M4 to the truth".
+
+I, Michael Daley, Founder of MAD Ventures, amend the act as follows. Every part not named here stands as signed and amended.
+
+N1. What was wrong. The alphabet of bearer_token, [A-Za-z0-9._~+/=-], holds the underscore. So the name PHASE3_ADJUDICATION_TOKEN (25 characters) or PHASE4_COUNTED_RUN_TOKEN (24) written bare after "Bearer" is one run of 20 or more, and M2's pattern detects it; at 3a1409a, needing 8, the pattern detected it too. CONTROL_PLANE_TOKEN (19 characters) written bare was detected at 3a1409a and is not under M2. Any of the three names written after "Bearer" with a leading $, with or without backticks around it, was not detected at 3a1409a and is not under M2. The builder checked each of the nine cases against both patterns. M4 of Amendment 1 said none of the names is detected, with or without a leading $; that was the builder's drafting error, from a check of the $ form alone.
+N2. The last clause of M4 of Amendment 1, "the names of the control plane's token variables written after 'Bearer', with or without a leading $ and closing backtick, are not detected", is replaced by: "each of the control plane's three token variable names written after 'Bearer' with a leading $, with or without backticks around it, is not detected; CONTROL_PLANE_TOKEN written bare is not detected; PHASE3_ADJUDICATION_TOKEN and PHASE4_COUNTED_RUN_TOKEN written bare are detected, as they were at 3a1409a."
+N3. Stated limit. A false positive is added to those M3 of Amendment 1 accepts: a bare name of 20 or more characters of the alphabet written right after "Bearer", such as PHASE4_COUNTED_RUN_TOKEN, is detected and redacted although it is not a credential, as it was before this act. I accept it.
+N4. Nothing else changes. M2's pattern stands exactly. M5 of Amendment 1 stands: the change under M2, M4 as corrected here, and this amendment is the pull request's one correction, and its confirmation is a codex review of the exact final head.
+
+Signed: Michael Daley
+Date: 2026-11-05 (UTC)
+Actor-Id: founder

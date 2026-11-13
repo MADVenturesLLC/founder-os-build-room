@@ -1,0 +1,28 @@
+FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS Amendment 2: the paths pull request 2 needs, and where the fields may appear
+Amends: FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS (SHA-256 d7c81dd37a6f4b30707b45d2eee81d85016395b00ea60bf04be540a61a55917e) as amended by Amendment 1 (SHA-256 85585e9ed8712a88c6c46918174331ab9af37f05c0629400382091b4b80504c8). No text of either is edited; Part B below adds to and replaces only what it names.
+Drafted by the builder (claude-code) after the codex Tier-2 review of pull request 135 at 958981cc98528b615e3bcfb99adcf9a2fe45ea92 (REQUEST-CHANGES, finding 1, blocking; finding 2, advisory). The builder read the code each ruling names before drafting it. It takes effect when I sign it in the builder's session.
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows.
+
+Part A: Basis
+A1. C1 omits three files that pull request 2 cannot do its work without. The builder drafted C1 and missed them; the reviewer is right that serving the act's purpose does not authorize a path.
+  - packages/control-plane/src/planner-recovery.ts. Recovery is the second writer of the dispatched event: after a crash it journals dispatched from the Planner's running or finished answer. Without it, a recovered agy command would be journaled dispatched without the fields that B1 and B2 require.
+  - packages/control-plane/src/gateway/planner-channel.ts. It turns the Gateway's wire answer into the receipt the loop and recovery read. Without it, the fields would reach the control plane's process and stop there.
+  - packages/gateway-protocol/src/index.ts. It exports the package's types; the change adds one type export, PlannerInitWire.
+A2. C1's last line, "the tests for each", is read here to cover the shared test fixtures under test/support/ that those tests use: the synthetic planner and the synthetic executor.
+A3. The act's B2 says the fields are on dispatched "exactly when the accepted answer carries them", and contract v0.18 §2 says "where the executor reports an init event". The BRJ:c:2 spec, ratified by the merge of pull request 134, adds "The fields are absent for every other lane." The spec says it creates no governance authority and that the contract governs on conflict, and the sentence is not a byte rule. Today only the agy executor reports an init event, so the two readings differ only if another executor starts reporting one.
+
+Part B: Rulings
+B1. C1 gains these paths for pull request 2: packages/control-plane/src/planner-recovery.ts, packages/control-plane/src/gateway/planner-channel.ts, packages/gateway-protocol/src/index.ts, and the test/support/ fixtures that the tests of the C1 paths use.
+B2. Presence. The control plane journals the two fields on dispatched exactly when the Gateway's answer carries them, on any lane, as the act's B2 and contract v0.18 §2 say. Only on the agy lane is an answer that lacks them refused. This is not the "other lane" that C3 puts out of scope: no other lane is added, wired or changed.
+B3. Pull request 2 corrects the BRJ:c:2 spec's last sentence under "Event-type matrix" to match B2. The byte grammar, the vectors and the spec identifier are unchanged, so no new spec version is needed under the spec's non-retroactivity rule. This ruling is my ratification of that one correction.
+
+Part C: Not changed
+- The act and Amendment 1 stand in every part B does not add to or replace, including C3 and Part E, and Amendment 1 B5 and B6.
+- This amendment authorizes no deployment, no migration, no SQL, no counted run and no change on the PC or the MacBook.
+- It takes effect on my signature and is filed with the act under FOUNDER-ACT-20261028-VELOCITY B6.
+
+Part D: Signature
+Signed: Michael Daley
+Date: 2026-10-29 (UTC)
+Actor-Id: founder

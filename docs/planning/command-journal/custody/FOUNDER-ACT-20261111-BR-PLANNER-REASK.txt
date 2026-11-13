@@ -1,0 +1,103 @@
+FOUNDER-ACT-20261111-BR-PLANNER-REASK: one corrective re-ask when the Planner's answer is malformed or missing
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+origin/main when drafted: 8a62e2cea084eb38c486aebc73e1f7feacc41e39
+Under: DEC-20260716-02 item 5; DEC-20260815-17, Founder Authorization - Phase 4 (Planner Loop) (2026-08-31), Section 7; DEC-20260718-04; DEC-20260718-05 clause 12; FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE C1 and C4; FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR (SHA-256 d2868a5978c6dd54e55b9959511ea7586b44b9760c439f3306d79fdcae0da008) B5; my answer to Q8 of PHASE4-STEPS-3-6-PLAN-r1.md (2026-10-15); FOUNDER-ACT-20261028-VELOCITY (83b1ffd5753f48b191ec7e62c8d724ccd4d13f6c024bbe5cc9fc4020f4cbc27a) B1 to B4; FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY (f6057c260f1d3faa6ad261b80e1b0dbb35b01bfd93c74ab529b3d5b49eed2268) B3; FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS (c65afbc1afedefdf19a3705f3d0a8fda45ec2f89643c862c70485cf370d15053) B2; FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS (a8fb3b2a91aa32388960af1741a7af0b9cb3196716c2c8876fac76da7d65a955) B3, Parts C, D and E, with its Amendment 1 (754f8dc1d563a7ec6dbeb360458491d3785e246d88490c9e224c28974ccd3ab2) and Amendment 2 (a7f07372b81ef19d5f802ffb4bb9a26183fc84a0564287b779f9e2ab50c3b974); FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT (70607860c38ab919b0cd40af19277575012dc9bc0bd8419608861feab126c0af) B2 and F3.
+The builder read, before drafting, at 8a62e2c: in packages/control-plane/src/planner-loop.ts, runRound, openNextAttempt, plannerRequest, retryState, executeRound, PLANNER_FAILURES, PlanRefusalReason, PLAN_REFUSAL_VIOLATIONS_KEPT and judgeRoundPlan; MAX_ROUND_ATTEMPTS and plannerCommandIdFor; transport_retries_max and retryBudgetTransition in packages/seat-registry/src/dispatch-policy.ts; judgePlanDoc in packages/control-plane/src/plan-doc.ts and planHash in packages/journal/src/plandoc.ts; ViolationCode in packages/seat-output-schema/src/schema.ts; PlannerWorkWire, PlannerResultWire and their validation in packages/gateway-protocol/src/planner.ts, and MAX_PLANNER_PAYLOAD_BYTES; in packages/gateway-daemon/src/agy-planner-executor.ts, plannerPrompt, RunOutcome, how a run is judged and how a run that ends without a plan is reported, AGY_PRINT_TIMEOUT, INIT_TIMEOUT_MS and RUN_GRACE_MS; boundedResult and the run-failure path in packages/gateway-daemon/src/planner-worker.ts; evaluatePhase4Run and checkCommands in packages/run-harness/src/phase4/run-unit.ts, the round loop in runner.ts and runRound in http-driver.ts; the planner-round route in packages/control-plane/src/counted-run.ts; Q8 and the builder's note on it in docs/planning/phase4-planner-loop/PHASE4-STEPS-3-6-PLAN-r1.md; DEC-20260716-02 item 5 in FounderOS; and its own audit record of rehearsals R2 to R9.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. At 8a62e2c, rehearsals R6 to R9 sent the Planner 13 rounds. 11 returned a plan the control plane accepted. 2 did not, and each spent its rehearsal's set: R8 Phase4-CR3 round 2, refused as plan_invalid for a pattern_mismatch at /controlling_inputs/0/sha256 (record 46ee0b34b94bb6a17fb4a5208fe0d15fd2d82911297bfe3429838b8f8c503b0c); and R9 Phase4-CR1 round 1, failed at 18:59:56.050Z (record 52dccc0e7190b80abe6e3be7908c85299d210bacf05b3bba358422800b2e9f97) as planner_reported_failure. The Gateway's evidence record for it says outcome unparseable_plan, result status SUCCESS, 33,514 bytes: after a turn of 98 steps, in which agy compacted its context once, the Planner gave one answer that did not parse as one JSON object. The other two sets, R6 and R7, ended on my decision time, which this act does not touch.
+A2. Earlier rehearsals ended the same way: R2 round 2, plan_invalid (an item of 4,808 characters against a limit of 4,000); R3 round 3, unparseable_plan (two complete answers joined); R5 round 3, plan_invalid (implementation_sequence items that were not strings). Fixes since then removed the causes of R2 and R3. None removed the class: an answer that is malformed or missing ends the round.
+A3. What the code does. At 8a62e2c only a not_sent failure may be retried, under my answer to Q8 (I selected "Retry only not_sent", whose text ends "Nothing else retries."), and the runner never asks for that retry. Any other failure ends the round, the runner ends the run, and B2(5) of FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS fails it. The Gateway reports every run that ended without a plan as failed, with no reason, so the control plane cannot tell a malformed answer from a timeout or a model switch.
+A4. The doctrine. DEC-20260716-02 item 5: "Malformed structured output receives exactly one corrective re-ask before the execution fails, preserving the malformed payload for audit." The builder's note on Q8 named this re-ask as the alternative to retrying nothing. This act brings the Planner under it.
+A5. Time. agy's part of an attempt is bounded by 1,020 seconds (INIT_TIMEOUT_MS 60 s, AGY_PRINT_TIMEOUT 900 s, RUN_GRACE_MS 60 s). Two attempts take at most 34 minutes of that, which leaves about 11 minutes of the runner's 45-minute wait for a round (roundTimeoutMs in http-driver.ts) for the checkouts and transport.
+A6. What this act does not do. It does not change what I see: I decide only plans the control plane accepted, as now, and the re-ask is in the record. It re-asks nothing a second time. It does not re-ask after a timeout, a model switch, a blocked or inconclusive plan, a plan outside the captured scope, or a route, identity, attestation or authorization failure. A prompt steers the model and does not bind it: my check of every plan stays the control.
+
+Part B: The change
+B1. What is re-asked. A round re-asks once when its attempt fails as one of these, and only these:
+  (a) plan_invalid, where the refusal reason judgeRoundPlan gave is of kind schema, scope_path or encoding (not not_ready);
+  (b) planner_reported_failure, where the Gateway's report names one of unparseable_plan, malformed_output, no_result, agy_error or oversize (B2).
+If the re-ask's attempt fails, for any reason, the round fails as it does today. A round holds at most one re-ask, and its attempts stay within MAX_ROUND_ATTEMPTS. The re-ask is not a transport retry: retryBudgetTransition is not consulted for it, and the not_sent rule of Q8 is unchanged.
+B2. The Gateway's report. In packages/gateway-protocol/src/planner.ts, the failed member of PlannerResultWire gains an optional member reason, one of: agy_error, no_result, unparseable_plan, model_switched, malformed_output, timed_out (the executor's run outcomes other than a plan), and oversize (a finished result too large for its report, boundedResult in planner-worker.ts). Any other value or member is refused, and a failed report without reason stays valid. The Gateway sends reason when the run ended in one of those outcomes, and none when it failed in any other way. The control plane journals it on the attempt's failed row as the evidence reference planner-failure/<reason>.
+B3. The re-ask's work. PlannerWorkWire gains an optional member reask, which is exactly one of:
+  (a) { refused: "plan_invalid", reason, refusedPlan }: reason is the refusal reason of B1(a) in the shape PlanRefusalReason has at 8a62e2c, with each violation's code among ViolationCode, at most PLAN_REFUSAL_VIOLATIONS_KEPT violations, and each path a string of at most 1,024 characters; refusedPlan is the document the control plane refused, a plain JSON object whose JSON text fits MAX_PLANNER_PAYLOAD_BYTES in UTF-8;
+  (b) { refused: "planner_reported_failure", reason }: reason one of the five of B1(b).
+Any other shape is refused. Both sides validate with this one implementation, as now. A work without reask is unchanged.
+B4. The control plane. In runRound, when the attempt it has just run fails as B1 names and the round has made no re-ask, the control plane opens the round's next attempt in the same call, under the room lock, as openNextAttempt opens any attempt: a new command id from plannerCommandIdFor with the next attempt number, journaled before any contact. Its evidence references add retry-of/<the failed command id> and retry-reason/<plan_invalid or planner_reported_failure> (item 5: each retry is logged with its reason). A revision round reads its earlierPlan again, under B2 of FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT. The work carries B3's reask. The attempt then runs as any other, and runRound returns its outcome. On a plan_invalid failure the control plane also journals, on the failed row, refused-plan/<the document's planHash>, when planHash can compute one. A re-ask opens only in the call whose attempt failed: no later call, recovery or restarted control plane opens one, and a round whose re-ask could not open is failed as today.
+B5. The prompt. In plannerPrompt in packages/gateway-daemon/src/agy-planner-executor.ts, when the work carries reask, these lines are added, each a line of its own, after the revision lines when there are any and otherwise after the scope paths, and before the blank line that opens HOW TO WRITE THE PLAN:
+  (blank line)
+  YOUR EARLIER ANSWER TO THIS REQUEST WAS REFUSED
+  You have answered this request once already. The control plane refused that answer, for this reason:
+  the reason lines of B6
+Then, for a plan_invalid re-ask:
+  Your refused answer follows, exactly as the control plane received it. Correct what the reason names, change nothing else, and give the whole corrected plan as your answer. Rules 1, 2 and 5 below apply to what you change.
+  (blank line)
+  REFUSED ANSWER
+  the refused answer as one line of JSON (JSON.stringify of refusedPlan)
+and for a planner_reported_failure re-ask:
+  Answer the request again, in full, following every rule below.
+B6. The reason lines.
+  schema: "It does not satisfy the schema in the ANSWER section. Each line below names a place in that answer, as a JSON pointer, and what is wrong there:", then one line "- <path>: <code>" per violation kept, ending " (found <found>, limit <bound>)" for a length violation that carries both; then, when the refusal counted more violations than it kept, "- and <n> more".
+  scope_path: "Its scope_paths entry at index <index> is not a valid repository path." With no index: "Its scope_paths are not valid repository paths."
+  encoding: "It holds a number that is not a whole number, or a negative zero, which a plan cannot carry."
+  unparseable_plan: "It was not one JSON object."
+  oversize: "It was too large to send. Keep within rule 6 below."
+  malformed_output, no_result and agy_error: "No answer reached the control plane."
+B7. Every other line of the prompt stays word for word and in its order. A prompt for work without reask is unchanged, byte for byte, from 8a62e2c.
+B8. The run unit. B2(5) of FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS is amended to read: "(5) each command completed, except that an earlier attempt of a round does not fail the run when it failed not_sent and was retried within the loop's budget, or failed plan_invalid or planner_reported_failure and was followed by that round's one re-ask; a round holds at most one attempt after a plan_invalid or planner_reported_failure; and a command with an unresolved or resolved row fails the run." checkCommands in packages/run-harness/src/phase4/run-unit.ts changes to match, and nothing else of the judgment.
+B9. Q8. My answer to Q8 reads with "Nothing else retries" followed by "except the one corrective re-ask of FOUNDER-ACT-20261111-BR-PLANNER-REASK". F3 of FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT is lifted for B1's classes only.
+B10. Paths: packages/gateway-protocol/src/planner.ts; in packages/gateway-daemon/src/agy-planner-executor.ts, plannerPrompt and its doc comment and the report of how a run ended without a plan, and nothing of agy's command line, the user it runs as, its sudo use, the reap, its timeouts or its lane; packages/gateway-daemon/src/planner-worker.ts; packages/control-plane/src/planner-loop.ts, with its doc comment on retries, and packages/control-plane/src/gateway/planner-channel.ts; checkCommands in packages/run-harness/src/phase4/run-unit.ts; new tests under test/. An existing test changes only where a shape it builds or expects gains a member, or where it asserts the not_sent-only rule that B1 and B8 change, and the pull request body lists each such change. Nothing else: not plan-store.ts, plan-doc.ts, plan-decision.ts, counted-run.ts, journal-store.ts or planner-recovery.ts in packages/control-plane/src; not live-check.ts, runner.ts, model.ts, entry.ts or run-set.ts in packages/run-harness/src/phase4; nothing in packages/journal, packages/ledger, packages/seat-output-schema or packages/seat-registry; not the migrations or the PC. If the change needs anything else, the builder stops and asks me.
+B11. Tests.
+  (a) The wire: reason and reask pass both sides' validation in every shape B2 and B3 allow; any other value, member or shape, a refusedPlan that is not a plain object or is over the byte bound, and a path over its bound are refused; a work without reask and a failed report without reason are unchanged.
+  (b) The control plane, against a real database as the existing planner-loop storage tests run: for each class of B1, a round whose first attempt fails that way journals one more attempt, with the next derived command id, B4's evidence references and the failed row's, and its work carries reask; when the re-ask returns a valid plan the round reaches plan_review with the re-ask's command; when the re-ask fails the round fails, with no third attempt; each failure outside B1 (not_ready, plan_outside_captured_scope, timed_out, model_switched, a failed report without reason, route_mismatch) opens no re-ask; a revision round's re-ask carries earlierPlan as well; no round exceeds MAX_ROUND_ATTEMPTS.
+  (c) The prompt: a re-ask prompt equals the same work's prompt without reask with B5's lines inserted at B5's place, line for line, for each reason of B6; the REFUSED ANSWER line parses back to a document equal to refusedPlan; a prompt for work without reask equals the 8a62e2c prompt.
+  (d) The Gateway: a run ending in each outcome of B2 reports that reason; a result too large for its report reports oversize; any other failure reports none.
+  (e) The run unit: a record whose round has a plan_invalid or planner_reported_failure attempt followed by that round's re-ask, which completed, passes checkCommands; a second re-ask in a round, an attempt followed by an attempt of another round, and a failed last command each fail it.
+  (f) Each new test fails when what it covers is removed or changed, and the builder shows that by mutation, as for pull requests 149, 150 and 152.
+
+Part C: Review, merge and deploy
+C1. Review: Codex Tier-2 of the exact final head under FOUNDER-ACT-20261028-VELOCITY B1 to B4. The brief asks the reviewer to check B1's classes against the code, that no path opens a second re-ask or a re-ask outside the failed call, B7, B8, B10, and that a re-ask work at its largest (earlierPlan and refusedPlan each at the byte bound) passes every size bound between the control plane and the Gateway. Advisory reviews are dispositioned under C4 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE.
+C2. Merge: my separate SHA-named authorization. Merging deploys the control plane, whose code this changes; under B3 of FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY that authorization also authorizes the deploy, and the builder verifies it reached SUCCESS and that /version and boot.start name the merge commit.
+C3. Order. Between the deploy and the Gateway move of Part D, the control plane would send a plan_invalid re-ask that the PC's Gateway, still at 8a62e2c, does not validate and leaves unanswered, which the control plane records as unresolved. Only the counted-run route opens a planner round, and it answers 503 while PHASE4_COUNTED_RUN is unset. So the merge is made only when no rehearsal window is open, and no rehearsal starts until Part D's move is complete. The builder states both at the merge and at my line of E1.
+
+Part D: The Gateway move
+D1. The change reaches the Planner only when the PC's Gateway runs the merge commit. That move is made under Part C of FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS, on my line "Move the Gateway to <commit>", with one change to its C2, for this move only: "nothing of B3(e) changes" reads "nothing of B3(e) changes except B2, B5 and B6 of FOUNDER-ACT-20261111-BR-PLANNER-REASK". The builder's list of differing files must hold packages/gateway-daemon/src/agy-planner-executor.ts, changed only in plannerPrompt, its doc comment and the report of B2; packages/gateway-daemon/src/planner-worker.ts; and packages/gateway-protocol/src/planner.ts; and nothing else.
+D2. Every other condition of that Part C applies, C4 among them.
+
+Part E: The rehearsals that measure it
+E1. After the move, rehearsals under Part D of FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS as its Amendments 1 and 2 govern them, on my lines.
+E2. For each re-ask, the builder reports: the label and round; the failed attempt's classification and reason; the re-ask's outcome; how long each attempt took; and, for a re-asked plan I am asked to decide, its check against the checkout, as for every plan. Over each rehearsal it reports, for all rounds and for re-asked rounds alone, how many returned a plan the control plane accepted.
+E3. The refused answer, kept for audit (item 5). Its hash and the reason are in the journal (B2, B4). The whole answer is in agy's own record of that attempt's conversation on the PC, whose id the attempt's dispatched row holds. Nothing in Build Room deletes it, and I keep it on the PC until the filing of Part G. E2 of the standing act is unchanged: it is read only under a ruling of mine. After each rehearsal with a re-ask, I make the read of E1(c) of the standing act for each re-asked attempt, and the builder records that the conversation's record exists and its last step's length. No plan text is printed.
+E4. Whatever the result, it is evidence for my next decision and nothing else follows from it.
+
+Part F: Named, and not authorized
+F1. A second re-ask in a round, or a re-ask of a re-ask.
+F2. Re-asking after a timeout, a model switch, a blocked or inconclusive plan, a plan outside the captured scope, or a route, identity, attestation or authorization failure.
+F3. A re-ask opened by a later call, by recovery or after a restart.
+F4. Retrying a not_sent failure in the same call.
+F5. A control-plane store of refused answers (it needs a migration).
+F6. Any change to my decision time, its reminders or the runner.
+F7. Any change to agy's arguments or the sudo rule.
+F8. A counted-run act.
+
+Part G: Records and filing
+G1. The builder records each line of mine, each reading and each result in its audit record, stamped from the clock.
+G2. This act, its review, the merge and deploy verification, the move's readings and the rehearsals' evidence are filed with the next custody filing under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, which needs my separate authorization.
+
+Part H: Not authorized
+- Any change beyond Part B.
+- Any change to agy's arguments, the sudo rule, the planner user, the PC beyond the move of Part D, a Railway variable or setting beyond Part D of the standing act, a Neon role, a secret or a Gateway host.
+- Any run, counted or not, beyond Part E; any counted-run act.
+- Any merge without my separate authorization.
+- Any repository other than MADVenturesLLC/founder-os-build-room.
+
+Part I: Signature
+Signed:
+
+— Michael Daley
+
+Date:
+
+Actor-Id: founder

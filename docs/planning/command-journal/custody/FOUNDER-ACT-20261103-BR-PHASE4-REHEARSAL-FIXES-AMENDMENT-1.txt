@@ -1,0 +1,87 @@
+FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES Amendment 1: my amendment of D1, naming the second rehearsal's commits, rooms and terms file
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Under: FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES (SHA-256 af53b4933b1b4abd7aabd7ebacb578f1729f8862db002cc7499f5bb618555f94), D1; FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL (6623ce5b4f17d571c514fd022081490b1b4c42343b5a07659b724e74d55f0998), whose Parts B3 to F govern the run under D2.
+The builder read, before drafting: Build Room main at 5cbadd475dc832dc30a97af45f3221bc46d36d0a; FounderOS main at 973717daaff9a89538fab8def71d199428e3629d; Railway's deployment a4c2ad8a of rare-enjoyment and the control plane's /version and /health at 2026-11-04T05:04Z. It checked the terms file of B5 with the runner's own validatePhase4RunSet, and B6's variable with the control plane's own parseCountedRunConfig, both at 5cbadd4; both accepted them.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. C2 is done. Build Room pull request 143 merged as 5cbadd475dc832dc30a97af45f3221bc46d36d0a on 2026-11-04 under my authorization (comment 6622997111), after Codex's third review passed at its head. The builder verified the merge commit and its deployment, a4c2ad8a: SUCCESS, its boot.start at 05:04:02.495Z naming 5cbadd4, its preflight enforced with nothing forbidden, no boot refusal, /version naming 5cbadd4, /health 200, and the new plan route answering 401 without a token.
+A2. The PC. Between 44dcb1c, from which the Gateway on the PC runs under Amendment 4 of the PC act, and 5cbadd4, no file under packages/gateway-daemon, packages/gateway-protocol or packages/gateway-cli changes. The PC needs no change for this run.
+
+Part B: What D1 names
+B1. The base commit of the run: 5cbadd475dc832dc30a97af45f3221bc46d36d0a.
+B2. The Build Room commit the control plane must serve: 5cbadd475dc832dc30a97af45f3221bc46d36d0a.
+B3. The FounderOS commit: 973717daaff9a89538fab8def71d199428e3629d, as in the first rehearsal.
+B4. The three rooms: 7e82f03d-b0d5-45c1-84e8-776eb6a43285 for the one authorized run, labelled Phase4-CR1; 87543377-8be4-43b9-bb3f-8157d3e3d54a and 09c99e46-2f6e-4d11-a2e2-4cf5ad9a1934, which are never created.
+B5. The terms file is phase4-rehearsal2-terms.json, 1,930 bytes, SHA-256 73b294eedd9c6bae26e4ff38fb76ec70f567c372c2fb10588a059e2568d16981. It differs from the first rehearsal's terms file (062b6cdaa53b2958198c8d5a0a35948e83177b3949cc0b19261046f9883ccc50) in the set identifier, the Build Room commit, the three base commits and the three room identifiers only. Its text is exactly the following, with one final newline:
+
+{
+  "setId": "FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES",
+  "founderOsSha": "973717daaff9a89538fab8def71d199428e3629d",
+  "buildRoomSha": "5cbadd475dc832dc30a97af45f3221bc46d36d0a",
+  "controlPlaneOrigin": "https://rare-enjoyment-production-0869.up.railway.app",
+  "gatewayId": "1880c12d-d98d-4a91-b25a-23320aa7f58a",
+  "planner": {
+    "provider": "google",
+    "model": "gemini-4-argon"
+  },
+  "seats": {
+    "builder": "claude-code:anthropic",
+    "reviewer": "codex:openai"
+  },
+  "founderRelay": {
+    "actualModel": "n/a (deterministic run-harness relay of the act's text)",
+    "executionSurface": "build-room-run-harness"
+  },
+  "decisionTimeoutMs": 14400000,
+  "runs": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "7e82f03d-b0d5-45c1-84e8-776eb6a43285",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "5cbadd475dc832dc30a97af45f3221bc46d36d0a",
+        "scopePaths": [
+          "README.md"
+        ],
+        "goal": "Plan a section for README.md that describes the Phase 4 planner loop as it is built."
+      }
+    },
+    {
+      "label": "Phase4-CR2",
+      "roomId": "87543377-8be4-43b9-bb3f-8157d3e3d54a",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "5cbadd475dc832dc30a97af45f3221bc46d36d0a",
+        "scopePaths": [
+          "docs/command-journal-contract.md"
+        ],
+        "goal": "Plan a glossary for docs/command-journal-contract.md."
+      }
+    },
+    {
+      "label": "Phase4-CR3",
+      "roomId": "09c99e46-2f6e-4d11-a2e2-4cf5ad9a1934",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "5cbadd475dc832dc30a97af45f3221bc46d36d0a",
+        "scopePaths": [
+          "docs/gateway-ops-actions-log-runbook.md"
+        ],
+        "goal": "Plan a troubleshooting section for docs/gateway-ops-actions-log-runbook.md."
+      }
+    }
+  ]
+}
+
+B6. For clarity, the value of PHASE4_COUNTED_RUN under D2 is exactly {"actId":"FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES","gatewayId":"1880c12d-d98d-4a91-b25a-23320aa7f58a","planner":"antigravity:google","seats":{"builder":"claude-code:anthropic","reviewer":"codex:openai"}}.
+B7. For clarity, the readings of the rehearsal act's C3 and C4 under D2 read: Build Room main at 5cbadd475dc832dc30a97af45f3221bc46d36d0a; a new Build Room checkout on my Mac at that commit, ~/phase4-rehearsal2/br; an empty evidence directory, ~/phase4-rehearsal2/evidence; B5's terms file in ~/phase4-rehearsal2; my FounderOS checkout ~/phase4-set/fos at B3's commit; and on the PC the service running from ~/buildroom-gateway-44dcb1c.
+
+Part C: Nothing else
+C1. Nothing else in FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES changes by this amendment. The freeze of the rehearsal act's C2 applies from the deployment that sets B6's value until the deployment that removes it is verified. If Build Room main moves before that first deployment, B5's terms are stale, and the builder drafts a further amendment for me to sign before anything else.
+
+Part D: Signature
+Signed: Michael Daley
+Date: 2026-11-04 (UTC)
+Actor-Id: founder

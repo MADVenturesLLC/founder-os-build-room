@@ -1,0 +1,64 @@
+FOUNDER-ACT-20261030-BR-PC-PLANNER Amendment 4: the Gateway moves to 44dcb1c, with the Planner prompt fix
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Under: FOUNDER-ACT-20261030-BR-PC-PLANNER (SHA-256 8a78e3a2632cfd25732c272ec6fbd7df47391aa7a6020062958cc8a3f32f20b0), its Amendment 1 (38cc5f9bea6e1d347f7df5cf663408a5edd8a284def52cd9342468463ae78dac), its Amendment 2 (303ee80039db78e83bf9fc3a15848ccec6dd37af881ef3f5ef87ba185523d885) and its Amendment 3 (0ccf84d7079bcbad9070ec95255d39b220232982b0c503ad25a5c539bbf27f52).
+The builder read Build Room main at 44dcb1c63e5a383203331e259c43700a6a5e873e before drafting.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. What happened. Phase4-CR1 ended on 2026-11-03 with no plan: the Planner asked agy to run a command that only reads, and agy, headless, ended its turn there. FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX (SHA-256 b0e0af94328460819eadc8d42797d99cd5387f999b8ae835645176f38b2a5024) fixed the prompt, and Build Room pull request 142, merged as 44dcb1c63e5a383203331e259c43700a6a5e873e, carries it. The daemon on the PC still runs from ~/buildroom-gateway-2a56dab, which has the old prompt. Nothing of the fix reaches the Planner until the daemon runs from the new commit.
+A2. What changes. Between 2a56dab and 44dcb1c only one file changes under packages/gateway-daemon, packages/gateway-protocol and packages/gateway-cli: packages/gateway-daemon/src/agy-planner-executor.ts. It changes the prompt's second line, adds three fields to the closing evidence record, and replaces the reading of agy's output with a bounded one. agy's arguments, the sudo rule, the executor's environment variables, the reap, the halt, the directory lock, main.ts, the Gateway CLI and package-lock.json are unchanged. Evidence records written at 2a56dab read and close at boot as before.
+A3. What this amendment is. A checkout and a restart, nothing else. Restricting agy's command tool, adding --json-schema, or any change to the sudo rule or agy's arguments is a later act of mine.
+
+Part B: Before
+B1. The builder reads, within 15 minutes before Part C: Build Room main at 44dcb1c or a later commit that changes no file under packages/gateway-daemon, packages/gateway-protocol or packages/gateway-cli; /health 200; /version naming the commit Railway serves; and Railway's serving deployment of rare-enjoyment SUCCESS with nothing building. If any fails, I stop and nothing is changed.
+B2. My readings, none of which changes anything, given to the builder. If any differs from what is stated, I stop and change nothing:
+  systemctl --user status buildroom-gateway.service --no-pager, active (running);
+  readlink /proc/$(systemctl --user show -p MainPID --value buildroom-gateway.service)/cwd, printing $HOME/buildroom-gateway-2a56dab in full;
+  test -e "$HOME/Library/Application Support/founder-os/gateway/planner-halted.json"; echo "exit $?", printing exit 1;
+  /usr/bin/pgrep -u buildroom-planner; echo "exit $?", printing exit 1;
+  sha256sum /opt/buildroom-planner/bin/agy, printing 4341b80b43fc3b4437ff65041673f0f71c950e49d69a6256e3b6f212c4694ed4.
+
+Part C: The move
+C1. New checkout, beside the old:
+  git clone https://github.com/MADVenturesLLC/founder-os-build-room.git ~/buildroom-gateway-44dcb1c
+  git -C ~/buildroom-gateway-44dcb1c checkout --detach 44dcb1c63e5a383203331e259c43700a6a5e873e
+  cd ~/buildroom-gateway-44dcb1c && PATH="$HOME/.nvm/versions/node/v22.23.2/bin:$PATH" npm ci && PATH="$HOME/.nvm/versions/node/v22.23.2/bin:$PATH" npm run build
+rev-parse HEAD must print 44dcb1c63e5a383203331e259c43700a6a5e873e, status --short nothing, and dist/packages/gateway-daemon/src/main.js must exist. Two more readings, on the PC:
+  git -C ~/buildroom-gateway-44dcb1c diff --name-only 2a56dab4da08c43da0eb9a4dae4b5e51b388849b HEAD -- packages/gateway-daemon packages/gateway-protocol packages/gateway-cli, printing packages/gateway-daemon/src/agy-planner-executor.ts and nothing else;
+  grep -c "even one that only reads" ~/buildroom-gateway-44dcb1c/dist/packages/gateway-daemon/src/agy-planner-executor.js, printing 1.
+~/buildroom-gateway, ~/buildroom-gateway-056ffd1, ~/buildroom-gateway-413ba83 and ~/buildroom-gateway-2a56dab are not touched.
+C2. Stop. Immediately before it, /usr/bin/pgrep -u buildroom-planner; echo "exit $?" prints exit 1 again; if it does not, I stop and change nothing. Then systemctl --user stop buildroom-gateway.service, and systemctl --user is-active buildroom-gateway.service prints inactive.
+C3. The unit. I change ~/.config/systemd/user/buildroom-gateway.service in one line only, from WorkingDirectory=%h/buildroom-gateway-2a56dab to WorkingDirectory=%h/buildroom-gateway-44dcb1c. Then systemctl --user daemon-reload, and systemctl --user cat buildroom-gateway.service shows that line and the six BUILDROOM_ variables unchanged, BUILDROOM_PLANNER_AGY_SHA256 being 4341b80b43fc3b4437ff65041673f0f71c950e49d69a6256e3b6f212c4694ed4.
+C4. Start. systemctl --user start buildroom-gateway.service.
+
+Part D: After
+D1. Within 15 minutes of C4 I read and give the builder, from ~/buildroom-gateway-44dcb1c:
+  systemctl --user status buildroom-gateway.service --no-pager (active (running));
+  readlink /proc/$(systemctl --user show -p MainPID --value buildroom-gateway.service)/cwd, printing $HOME/buildroom-gateway-44dcb1c in full;
+  journalctl --user -u buildroom-gateway.service --since "-15 min" --no-pager, showing the "planner executor:" line with the same command line as at 2a56dab, and no agy.reap_failed, agy.probe_failed, agy.hash_mismatch or agy.halted line;
+  ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-cli/src/bin.js tail, showing daemon.booted after C4's start;
+  ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-cli/src/bin.js status, answered by the running daemon with primary HEARTBEATING;
+  the lock: ~/.nvm/versions/node/v22.23.2/bin/node dist/packages/gateway-daemon/src/main.js; echo "exit $?" prints "another Gateway daemon holds" and its directory, then exit 1, and the service stays active;
+  test -e "$HOME/Library/Application Support/founder-os/gateway/planner-halted.json"; echo "exit $?", printing exit 1;
+  /usr/bin/pgrep -u buildroom-planner; echo "exit $?", printing exit 1.
+The builder reads /health 200 and the control plane's record of Gateway 1880c12d-d98d-4a91-b25a-23320aa7f58a heartbeating after C4.
+
+Part E: Stop and rollback
+E1. If any reading of Parts B, C or D fails, I stop. If the daemon at 44dcb1c halts, I leave the halt file in place and the service as it is, and give the builder D1's readings and the halt file's contents; only my later direction lifts it.
+E2. Rollback is the unit as Amendment 3 C4 left it: I change the WorkingDirectory line back to WorkingDirectory=%h/buildroom-gateway-2a56dab, run systemctl --user daemon-reload and systemctl --user restart buildroom-gateway.service, and give the builder D1's readings with ~/buildroom-gateway-2a56dab in place of ~/buildroom-gateway-44dcb1c. The act's H1 stays available unchanged. The checkout at 44dcb1c stays in place, unused.
+
+Part F: Filing
+F1. This amendment, my readings of Parts B, C and D, with every user name, host name, address, tailnet name, node key and account name masked, and the builder's reads, are filed with the act under its Part I, in one pull request that needs my separate authorization.
+
+Part G: Not authorized
+- Everything the act's Part J excludes stays excluded, and what Amendment 3 Part G excludes stays excluded.
+- Any change to the sudo rule, agy's arguments or flags (--json-schema among them), the agy copy or its hash, the six BUILDROOM_ variables, the planner user, the filter, the resolver block or the allowlist.
+- Any planner command reaching agy through the daemon; a test run, a rehearsal or a counted run, or my act for either.
+- Any Railway variable or setting; any control-plane deploy, redeploy or rollback.
+- Lifting any halt; deleting or changing ~/buildroom-gateway, ~/buildroom-gateway-056ffd1, ~/buildroom-gateway-413ba83 or ~/buildroom-gateway-2a56dab; any npm audit fix or other change to the checkout's dependencies.
+
+Part H: Signature
+Signed: Michael Daley
+Date: 2026-11-03 (UTC)
+Actor-Id: founder

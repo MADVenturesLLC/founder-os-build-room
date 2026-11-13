@@ -1,0 +1,71 @@
+FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS: standing tracks for Phase 4 fixes, Gateway moves and uncounted rehearsals
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+Under: DEC-20260815-17, Founder Authorization - Phase 4 (Planner Loop) (2026-08-31), Section 7; DEC-20260718-04; DEC-20260718-05 clause 12; FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE C1 and C4; FOUNDER-ACT-20261028-VELOCITY (SHA-256 83b1ffd5753f48b191ec7e62c8d724ccd4d13f6c024bbe5cc9fc4020f4cbc27a) B2, B3, B5 and B6; FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY (f6057c260f1d3faa6ad261b80e1b0dbb35b01bfd93c74ab529b3d5b49eed2268) B3; FOUNDER-ACT-20261030-BR-PC-PLANNER, its Part J, and its Amendment 4 (f73de9374c3847e8ea8d0ec52c5e956f80f68040be0d0e0bc387808bb04b757b) Parts B to E; FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS (6ccac4bdb9c687f0ac35e47b53e87a68249b6d73fa9ad38d8dd6dc48fc1e8339) Parts B, D, E and F; FOUNDER-ACT-20261105-BR-BEARER-SHAPE Amendment 7 (1747dd7a061ce4a97d03912085cd0a105785b9e2d0e9f45957d2df66423c885a) V2 and V3.
+The builder read, before drafting: Build Room main at c440a470046ef2cfe1408ccfff849e3586b1626b (2026-11-06T02:50:56Z); packages/control-plane/src/counted-run-config.ts and packages/run-harness/src/phase4/run-set.ts, which take any set identifier of up to 128 safe characters; packages/run-harness/src/phase4/cli.ts, whose entry refuses unless the control plane's act identifier equals the terms' set identifier; packages/run-harness/src/phase4/run-unit.ts; packages/gateway-daemon/src/agy-planner-executor.ts, which drains agy's error output unread; the acts named above; and the control plane at 02:50:56Z: /health 200, /version naming c440a47 from deployment 356e3d69, deployed after PHASE4_COUNTED_RUN was removed (my report; verified 02:28:48Z). A terms file made by D2 for R1 passed validatePhase4RunSet, and its value passed parseCountedRunConfig, both at c440a47's tree.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. One change to one pattern took FOUNDER-ACT-20261105-BR-BEARER-SHAPE and six amendments, each signed by its hash, and its uncounted rehearsal a seventh. VELOCITY B5 already leaves corrections inside an act's scope to the builder; what was missing was a standing scope.
+A2. This act gives three standing tracks: fixes (Part B), Gateway moves (Part C) and uncounted rehearsals (Part D), with the reads that find a failure's cause (Part E). Each starts on one line of mine in the builder's session. Counted runs stay under their own acts, unchanged.
+
+Part B: The fix track
+B1. Start. My line "Fix: <what>", or "Fix it" in answer to a defect the builder has named, starts one fix. It assigns the builder role (DEC-20260718-05 clause 12). The builder opens no fix without it.
+B2. Scope. Any path in MADVenturesLLC/founder-os-build-room except those of B3.
+B3. These need my own act, and include at least the paths named:
+  (a) CI, gates and deployment: .github/, scripts/, harness/, railway.toml, package.json, package-lock.json.
+  (b) Credentials, tokens and identity: packages/journal/src/redact.ts, packages/redaction/, packages/control-plane/src/config.ts and counted-run-config.ts, the token checks in packages/control-plane/src/server.ts, packages/control-plane/src/gateway/ enroll-validation.ts, session.ts and session-state.ts, packages/gateway-cli/, packages/gateway-registry/, and packages/gateway-daemon/src/ signing.ts, custody.ts, custody-factory.ts and systemd-creds-custody.ts.
+  (c) The database: packages/control-plane/src/ migrations.ts, schema-preflight.ts, db.ts, pg-tls.ts and migrate-cli.ts; any schema, role or SQL migration.
+  (d) The record and its judge: packages/journal/, packages/ledger/, packages/control-plane/src/ store.ts, journal-store.ts, governed-events.ts, plan-decision.ts, founder-goal.ts, plan-doc.ts, plan-store.ts and counted-run.ts, packages/control-plane/src/gateway/room-append.ts, and packages/run-harness/src/phase4/ run-unit.ts, run-set.ts, live-check.ts, entry.ts, model.ts and runner.ts.
+  (e) The Planner's boundary, seats and lanes: in packages/gateway-daemon/src/agy-planner-executor.ts, agy's command line, the user it runs as, its sudo use, the reap, its timeouts, its lane and its prompt; packages/gateway-daemon/src/hooks/ and lanes.ts; packages/seat-registry/, packages/seat-output-schema/, packages/contracts/, contracts/, tools/ and packages/control-plane/src/seat-policy.ts.
+  (f) Spend and other phases: packages/spend-broker/, cost-meter/, completion-gate/, quarantine-advisor/, worker-supervisor/, checkpoint-writer/ and madbridge-consumed/; packages/control-plane/src/ phase3-run.ts, phase3-run-routes.ts, phase3-sequence.ts and gate-run-routes.ts; packages/run-harness/ outside src/phase4/.
+  (g) Contracts and records: docs/command-journal-contract.md, docs/planning/, evidence/ and source/.
+  (h) A change to or removal of an existing test whose subject is in (a) to (g). New tests may go anywhere.
+B4. The track check. Before a fix opens, the builder lists its changed paths and shows that none is in B3, in the pull request body. The Tier-2 brief asks the reviewer to check it. When unsure, the path is in B3. A path found in B3 later stops the fix until it is removed or my act covers it.
+B5. Review. VELOCITY B2 and B3 apply unchanged. Design changes made in review are the builder's under VELOCITY B5, and need no amendment. A finding the builder does not fix becomes a stated limit only by my ruling in the builder's session, and the merge authorization lists it.
+B6. Merge. My SHA-named authorization under DEC-20260718-04, as before; the merge deploys the control plane under B3 of FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY, and the builder verifies the merge commit and that deployment.
+B7. A merged change under packages/gateway-* reaches the PC only by Part C.
+
+Part C: The Gateway move
+C1. Start. My line "Move the Gateway to <commit>", after the builder has given me C2's list.
+C2. Conditions. The commit is on Build Room main. The builder lists every file that differs under packages/gateway-daemon, packages/gateway-protocol and packages/gateway-cli, and package-lock.json, between the commit the service runs from and this one; none is in B3, and nothing of B3(e) changes.
+C3. Steps. Parts B to E of Amendment 4 of the PC act, read with the new commit in place of 44dcb1c, the checkout the service runs from in place of 2a56dab (also for E2's rollback), and C2's list in place of A2 and of C1's diff reading, without C1's grep reading. The unit changes in its WorkingDirectory line only. The builder gives me the commands; I give the builder every reading.
+C4. No move during a rehearsal's window (D5) or a counted set's freeze.
+
+Part D: The rehearsal track
+D1. Start. The builder prepares D2's terms at the commit Build Room main is at. My line "Rehearse R<n> at <commit>, terms <SHA-256>" starts one rehearsal. They are numbered from R1, and one runs at a time.
+D2. The terms. The file of Amendment 7 V2(e), changed in these only: setId "FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS-R<n>"; buildRoomSha and each baseSha the commit; three new room identifiers, random version 4 UUIDs found in no earlier record. Everything else is unchanged: FounderOS 973717daaff9a89538fab8def71d199428e3629d, the origin, Gateway, Planner, seats, relay, decision time, labels, scope paths and goals. The value of PHASE4_COUNTED_RUN is Amendment 7 V2(f)'s with that setId as actId. Before my line, the builder checks the terms with validatePhase4RunSet and the value with parseCountedRunConfig at the commit, checks that each scope path exists there, states whether the Gateway packages differ between the PC's checkout and the commit, and gives me the file, its size and its SHA-256.
+D3. The run. One uncounted run, Phase4-CR1, in D2's first room, governed as Amendment 7 V3 governs its run, read with D2's setId in place of that amendment's act identifier, the commit in place of V2(a)'s and V2(b)'s, D2's rooms, terms and value in place of V2(d)'s, V2(e)'s and V2(f)'s, and these paths in place of V2(g)'s: ~/phase4-standing/R<n>/br, ~/phase4-standing/R<n>/evidence and the terms in ~/phase4-standing/R<n>; my FounderOS checkout ~/phase4-set/fos; the PC's service running from the checkout of the last move under Part C, or ~/buildroom-gateway-44dcb1c before any. No other run is made on that line.
+D4. Readings. To the PC readings of D5 of FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS I add uptime -s, recorded, and test -e /var/run/reboot-required; echo "exit $?", printing exit 1. If it prints exit 0, the rehearsal waits until I have restarted the PC and every reading passes again. During the window I install no update on the PC and do not restart it.
+D5. The window. From the deployment that sets D2's value until the deployment that removes it is verified, as Amendment 7 V3(e) says. I remove the value as soon as the runner exits, whatever the outcome, and no later than 14 hours after the deployment that set it, stopping the runner first if it has not exited.
+D6. Stale terms. If Build Room main moves before the deployment that sets the value, the terms are stale; the builder prepares new ones and I give a new line.
+D7. Outcome. A rehearsal counts for nothing under Section 7 item 13, passed or not. A pass is evidence I may cite in a counted-run act, and nothing else follows from it. After any other outcome, Part E applies.
+
+Part E: Finding a failure's cause
+E1. After a rehearsal or a counted run that does not pass, I may read, with commands the builder gives me, and give the builder: (a) the run's record, checked with phase4RecordDigest, printing its event names, actors and commit times and its command rows with their failure classifications; (b) the Gateway's evidence record for each command, the halt file, /usr/bin/pgrep -u buildroom-planner, and the Gateway's journal lines for the run; (c) agy's transcript of the conversation, printing for each step its type, status, tool names and length, and only values under keys named error, reason, code, status code or exit code, each up to 300 characters; (d) the names, sizes and times of the files the planner account wrote in the minute around the failure; (e) agy's own log of that run, printing its lines about errors or status that do not appear in a passing run's log, and its last lines, each up to 400 characters. The builder reads the control plane's deploy and HTTP logs.
+E2. Guards. The commands withhold any line or value holding a credential-like word. No read prints plan text from agy's transcript (Amendment 7 V3(d)). Nothing reads the planner account's OAuth token file or its conversation databases, or any file of that account beyond (c) to (e). I look over each output before I give it to the builder.
+E3. The builder reports the cause, or that it was not found, before any new line of mine under this act.
+
+Part F: Records and filing
+F1. The builder records each line of mine, each reading and each result in its audit record, stamped from the clock.
+F2. Each rehearsal's evidence, kept as F1 of FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS keeps a run's, Part E's outputs, and each move's readings are filed with the next custody filing under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, with every user name, host name, address, tailnet name, node key and account name masked, and no token. That filing needs my separate authorization.
+F3. This act is filed verbatim with the next custody filing (VELOCITY B6).
+
+Part G: Term
+G1. This act takes effect on my signature and lapses when Phase 4 closes or at the end of 2026-12-06 (UTC), whichever is first.
+G2. I revoke it, whole or in part, by one line in the builder's session; the builder stops that track at once.
+G3. During the freeze of a counted-run act, nothing is done under Parts B to D; Part E's reads may be made.
+
+Part H: Not changed and not authorized
+- Not changed: my SHA-named merge authorization (DEC-20260718-04); the drafting bars (DEC-20260801-02); the attribution and served-model rules; VELOCITY; the data-boundary policy; the counted-run acts; the Phase 4 stop gate.
+- Any counted run or counted-run act; closing Phase 4 or certifying item 13.
+- Any change in B3 without my act, the act of Amendment 6 U5 of FOUNDER-ACT-20261105-BR-BEARER-SHAPE among them.
+- Under Part C: any change to the sudo rule, agy's arguments or flags, the agy copy or its hash, the six BUILDROOM_ variables, the planner user, the filter, the resolver block or the allowlist; lifting a halt; deleting or changing an earlier checkout; npm audit fix or any other change to a checkout's dependencies.
+- Under Part D: any goal, scope path, repository, provider, adapter, lane, model, seat or Gateway other than D2's; dispatching a builder or a reviewer; building any approved plan; any Railway variable or setting other than setting and removing D2's value; any rollback, SQL or migration.
+- Any repository other than MADVenturesLLC/founder-os-build-room.
+
+Part I: Signature
+Signed: Michael Daley
+Date: 2026-11-06 (UTC)
+Actor-Id: founder

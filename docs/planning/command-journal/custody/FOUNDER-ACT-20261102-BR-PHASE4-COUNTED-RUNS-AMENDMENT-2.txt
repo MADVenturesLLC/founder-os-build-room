@@ -1,0 +1,27 @@
+FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS-AMENDMENT-2: Build Room main stays at the D5 commit for the whole set
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Under: FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS (SHA-256 c65afbc1afedefdf19a3705f3d0a8fda45ec2f89643c862c70485cf370d15053), as the act's author, amending D6 and E4.
+The builder read, before drafting: packages/run-harness/src/phase4/runner.ts, entry.ts and http-driver.ts at 03cd29f95fbd93f854cc236f61d93fcf85da8848.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. What D6 allows. D6 has the builder read "Build Room main at the commit of D5, or a later one that changes nothing under packages/". E4 bars a push to Build Room main only during a run.
+A2. What the runner does. Each run's base is the commit of AMENDMENT-1 B3. The runner's entry check reads the control plane's commit, not the repository's. After entry passes, the runner records the attempt as under way, creates the room, and only then, in T1, reads the repository's live head and refuses unless it equals the run's base. So if Build Room main moves at all after AMENDMENT-1 is signed, even by a commit that changes only documents, the next run fails after its room exists and its attempt is recorded, and the set is spent (C2). D6's "or a later one" therefore permits a reading under which the run cannot pass. The builder found this while building the runner, and did not raise it in the act it drafted.
+
+Part B: Amendment
+B1. D6's builder reading "Build Room main at the commit of D5, or a later one that changes nothing under packages/" becomes "Build Room main at the commit of D5, exactly".
+B2. From my signature of this amendment until the set completes or is spent, nothing is merged or pushed to Build Room main, between runs as well as during them. E4's other terms stand.
+B3. The Build Room fix of FOUNDER-ACT-20261103-BR-ROOM-STATUS-OPTIONAL-TYPES, and the custody filing of this act under F2, wait until then, as I directed in session on 2026-11-03.
+B4. Nothing else in the act changes.
+
+Part C: Filing
+C1. Filed with the act under F2.
+
+Signed:
+
+— Michael Daley
+
+Date:
+
+Actor-Id: founder

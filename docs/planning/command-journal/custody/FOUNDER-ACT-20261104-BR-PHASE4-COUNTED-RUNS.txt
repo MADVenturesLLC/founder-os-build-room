@@ -1,0 +1,120 @@
+FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS: a new set of three counted Phase 4 runs, after the first set was spent
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+Build Room main when drafted: 3a1409a91ea692e83c55d2f0831efa4e8bfc31f5
+Under: DEC-20260815-17, Founder Authorization - Phase 4 (Planner Loop) (2026-08-31), Section 7 item 13 and the reset rule after it; FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE C1, C5 and C6; FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS (SHA-256 c65afbc1afedefdf19a3705f3d0a8fda45ec2f89643c862c70485cf370d15053) and its Amendments 1 (0361c2ce9fd4848addbc0321cc2810e81f67bc60c42135b600960dc264720fd1) and 2 (d9f59ee33f47ad1f21f7d06de5b3fa718c32bd41be80ba9a965146d8e5f7b50e); FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX (b0e0af94328460819eadc8d42797d99cd5387f999b8ae835645176f38b2a5024) D3; FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL (6623ce5b4f17d571c514fd022081490b1b4c42343b5a07659b724e74d55f0998) B5; FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES (af53b4933b1b4abd7aabd7ebacb578f1729f8862db002cc7499f5bb618555f94) D3 and its Amendment 1 (847caeb7a002407297c58b77d0e15b25480ea812d56ad9b964726c85b1a6f815); FOUNDER-ACT-20261104-BR-PHASE4-DECISION-TIME (4963eef01d1c92877adc3e042f61011a5727a40c58fe4a356c13f107d5abacdc) and its Amendment 1 (19bd480914056169db67d9b757c6ec5de5091c9011ec441e815c95915db45666); FOUNDER-ACT-20261030-BR-PC-PLANNER and its Amendment 4 (f73de9374c3847e8ea8d0ec52c5e956f80f68040be0d0e0bc387808bb04b757b); FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR and its Amendments 1 to 5, as the first set's act cites them; FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY (f6057c260f1d3faa6ad261b80e1b0dbb35b01bfd93c74ab529b3d5b49eed2268); FOUNDER-ACT-20261028-VELOCITY (83b1ffd5753f48b191ec7e62c8d724ccd4d13f6c024bbe5cc9fc4020f4cbc27a).
+The builder read, before drafting, at 3a1409a: packages/run-harness/src/phase4/ (run-set.ts, run-unit.ts, runner.ts, cli.ts, model.ts) and packages/control-plane/src/counted-run-config.ts; the diff of packages/gateway-cli, packages/gateway-daemon, packages/gateway-protocol and packages/gateway-registry from 44dcb1c63e5a383203331e259c43700a6a5e873e, which is empty; FounderOS main, still 973717daaff9a89538fab8def71d199428e3629d; and Railway's deployments of rare-enjoyment, the serving deployment's boot lines, and the control plane's /version and /health at 2026-11-04T23:36:29Z.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. What this act must do. Section 7 item 13 requires the Phase 4 lifecycle to complete in three consecutive governed runs, and the entry authorization to define the run unit and say whether it authorizes the runs individually or as a set. Under C6 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE I authorize the three as one set, in one act, which defines the run unit. The first set, of FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS, is spent: its Phase4-CR1 ended interrupted on 2026-11-03 at 02:29:13Z, after the Planner ran a command and gave no plan. A new attempt after a spent set needs my new act (its C2). This is that act.
+A2. What was fixed since. The Planner's prompt forbids every command (pull request 142, 44dcb1c). A lost read is retried, every request times out, and a plan's text is served and saved (pull request 143, 5cbadd4). My decision time is judged from the record (pull request 145, ff89751). The first uncounted rehearsal at 44dcb1c ended interrupted by a lost read; the second, at 5cbadd4, passed on 2026-11-04 at 12:08:26.776Z, with record SHA-256 0417f0daac8473cf9ad24f88815b8c1e76d530e48c36522ca334002ba82161a2. In both, the Planner only read files. Neither counts for anything under item 13.
+A3. What is in place. Build Room main is 3a1409a91ea692e83c55d2f0831efa4e8bfc31f5 (pull request 139, the merge guard's envelope route). The control plane serves it: deployment 65d308e8, SUCCESS; boot.start at 2026-11-04T23:21:59.849Z names 3a1409a; its preflight is enforced with no forbidden attribute or membership; /version names 3a1409a and /health answered 200 at 23:36:29Z. The Gateway on the PC runs from ~/buildroom-gateway-44dcb1c since 2026-11-03T12:55:33Z under Amendment 4 of the PC act, and no Gateway package has changed from 44dcb1c to 3a1409a. FounderOS main is still 973717d. The command npm run phase4:counted-run, built under D2 of the first set's act, is unchanged in its interface. PHASE4_COUNTED_RUN was removed after the second rehearsal (deployment 3628658c, my statement, verified 2026-11-04T12:19:36Z). PHASE4_COUNTED_RUN_TOKEN is the value I generated under D3 of the first set's act.
+
+Part B: The run unit (Section 7 item 13)
+B1. One run is one room, from scope capture to a settled plan decision, judged on the run's own record by packages/run-harness/src/phase4/run-unit.ts at 3a1409a, never on anyone's summary of it.
+B2. A run passes only if every condition of B2 of the first set's act holds, read with this act's identifier in place of that act's: entry passed before anything was written; T1 carried this act's goal for the run, with its digest as the server's evidence; each T2 attributed to role builder, actor control-plane:<the deployment id the run started on>, model n/a (deterministic control-plane act), surface build-room-control-plane; each planner command journaled under this act's identifier on the route google, gemini-4-argon, antigravity, and dispatched on it; each command completed, except an earlier attempt of a round that failed not_sent and was retried within the loop's budget; each T3 attributed to the architect role on gemini-4-argon and the antigravity surface; every plan decision mine, at the control plane: zero or more revisions, then one approval of the last plan's hash; nothing after the approval, the room in BUILDING and no builder dispatched; the journal verifying from genesis after the run, and the control plane's deployment unchanged during it.
+B3. Outcomes: passed (all of B2); rejected (I cancelled the room); interrupted (the run did not settle: the deployment changed, I did not decide within B5's time, the round bound was reached, or the room stopped short of BUILDING without a cancel); failed (it settled and breaks B2); not_started (entry refused, nothing written).
+B4. The round bound is three: the first plan and up to two revisions.
+B5. My time to decide each plan: 4 hours (14400000 ms), from the round's plan_review to my decision, judged both by the runner and from the record as FOUNDER-ACT-20261104-BR-PHASE4-DECISION-TIME as amended sets it, with that act's stated limit: a decision committed up to one append transaction's length after the 4 hours can still read as in time. I start a run only when I can stay with it.
+
+Part C: The set
+C1. I authorize three runs as one set, labelled Phase4-CR1, Phase4-CR2 and Phase4-CR3, run in that order, each in its own fresh room. Three consecutive passes satisfy item 13.
+C2. Any outcome other than passed spends the set, a rejected run included, and no further run is made under this act. A not_started run spends nothing and uses no label. A new attempt after a spent set needs my new act.
+C3. The terms. The runner reads them from one file, phase4-counted-run2-terms.json, 1,927 bytes, SHA-256 786f3ea2b422d35c1d8c7aae919315a032e2fc82f264ba93c5003f9ce1ef0630, which changes for no run. Its text is exactly the following, with one final newline:
+
+{
+  "setId": "FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS",
+  "founderOsSha": "973717daaff9a89538fab8def71d199428e3629d",
+  "buildRoomSha": "3a1409a91ea692e83c55d2f0831efa4e8bfc31f5",
+  "controlPlaneOrigin": "https://rare-enjoyment-production-0869.up.railway.app",
+  "gatewayId": "1880c12d-d98d-4a91-b25a-23320aa7f58a",
+  "planner": {
+    "provider": "google",
+    "model": "gemini-4-argon"
+  },
+  "seats": {
+    "builder": "claude-code:anthropic",
+    "reviewer": "codex:openai"
+  },
+  "founderRelay": {
+    "actualModel": "n/a (deterministic run-harness relay of the act's text)",
+    "executionSurface": "build-room-run-harness"
+  },
+  "decisionTimeoutMs": 14400000,
+  "runs": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "64acc3e5-0016-4090-8efd-cf6657453399",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "3a1409a91ea692e83c55d2f0831efa4e8bfc31f5",
+        "scopePaths": [
+          "README.md"
+        ],
+        "goal": "Plan a section for README.md that describes the Phase 4 planner loop as it is built."
+      }
+    },
+    {
+      "label": "Phase4-CR2",
+      "roomId": "70798d9c-a369-4542-9920-7035018bc1b2",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "3a1409a91ea692e83c55d2f0831efa4e8bfc31f5",
+        "scopePaths": [
+          "docs/command-journal-contract.md"
+        ],
+        "goal": "Plan a glossary for docs/command-journal-contract.md."
+      }
+    },
+    {
+      "label": "Phase4-CR3",
+      "roomId": "e1fec8ff-de9b-45b2-9072-3f10b6468032",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "3a1409a91ea692e83c55d2f0831efa4e8bfc31f5",
+        "scopePaths": [
+          "docs/gateway-ops-actions-log-runbook.md"
+        ],
+        "goal": "Plan a troubleshooting section for docs/gateway-ops-actions-log-runbook.md."
+      }
+    }
+  ]
+}
+
+C4. What the terms say, in words. The set and act identifier is this act's. The control plane is rare-enjoyment at the origin above, and must serve 3a1409a. The Gateway is 1880c12d-d98d-4a91-b25a-23320aa7f58a. The Planner is the antigravity surface, google provider (lane token antigravity:google), resolving to gemini-4-argon at effort high, with no Auto mode. The seats are builder claude-code:anthropic and reviewer codex:openai; no builder or reviewer is dispatched in any run. The T1 relay is the runner's own copy of this act's text, attributed to me with no role, on the surface and model of Amendment 1 B4 of the first set's act. The FounderOS checkout is at 973717d with no local change. Each run's repository is MADVenturesLLC/founder-os-build-room, which is public, at base 3a1409a; each run's scope path and goal are those of the first set, in fresh rooms. Everything sent to agy is public-class (ruling B5): no goal names a secret, credential, internal document or private content. The Planner only plans; it changes no repository (ruling B7), and no plan approved here is built.
+C5. What the builder checked, which is not a run: the file passes validatePhase4RunSet at 3a1409a; D3's value is accepted by parseCountedRunConfig at 3a1409a; each scope path exists at 3a1409a; the three room ids are new. Nothing was sent to the control plane.
+
+Part D: Before Phase4-CR1, in this order
+D1. E3 of the PC act is met as D1 of the first set's act records it, and my choice there of 2026-11-02T13:04:10Z, "Proceed, accept the risk", stands for this set.
+D2. The token. PHASE4_COUNTED_RUN_TOKEN stays as I set it under D3 of the first set's act. It is never pasted into a session, a file in a repository, a comment or a message.
+D3. The terms. I set PHASE4_COUNTED_RUN in Railway to exactly {"actId":"FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS","gatewayId":"1880c12d-d98d-4a91-b25a-23320aa7f58a","planner":"antigravity:google","seats":{"builder":"claude-code:anthropic","reviewer":"codex:openai"}} and deploy it. The builder verifies that the deployment reached SUCCESS, that /version names 3a1409a, that no boot refusal follows, and that its boot.start names 3a1409a, or says that the log did not return it. The freeze of E4 runs from this deployment.
+D4. My Mac. A new Build Room checkout at ~/phase4-set2/br, detached at 3a1409a, clean, with npm ci done under Node 22; the FounderOS checkout ~/phase4-set/fos at 973717d with no local change; a new empty evidence directory ~/phase4-set2/evidence; the terms file of C3 there, its SHA-256 matching. The builder gives me the commands.
+D5. Readings within 15 minutes before each run. The builder: Build Room main at 3a1409a, exactly; /health 200; /version naming 3a1409a; D3's deployment serving, SUCCESS, with nothing building; Gateway 1880c12d heartbeating. Me, on the PC: the service active (running) from ~/buildroom-gateway-44dcb1c; no planner-halted.json in the Gateway's directory; /usr/bin/pgrep -u buildroom-planner printing exit 1; sha256sum /opt/buildroom-planner/bin/agy printing 4341b80b43fc3b4437ff65041673f0f71c950e49d69a6256e3b6f212c4694ed4. The runner's own entry check runs after these. If any fails, that run does not start and spends nothing.
+
+Part E: Running
+E1. I run each label myself, on my Mac, from ~/phase4-set2/br, under Node 22 and caffeinate -i, with npm run phase4:counted-run, holding the API token and the counted-run token in my environment. I hold the adjudication token separately; the runner never holds it and never calls the plan-decision route.
+E2. The live check (FOUNDER-ACT-20261029-BR-PLANNER-READINESS Part B, restated). Phase4-CR1's first planner command is the live check. Once its first round has settled, the runner reads the room's journal before it waits on my decision and prints, with the time, the dispatched row's init_model and provider_conversation_id. If both are present and non-empty, the run continues and counts. If no dispatched row is journaled for that command, or the row lacks either field, the run stops there and does not count, the set is spent, and nothing more is dispatched on this binding without my new act. I give the builder the printed reading.
+E3. My plan decisions. When a round reaches plan_review, I read the plan from the record, in the plan file the runner saves from the plan route, whose hash the runner has checked against the round's. I decide at POST /control-plane/rooms/<room>/plan-decision with the adjudication token and the plan's exact hash: approve, request a revision with feedback, or cancel. Each decision is attributed {"actualModel":"n/a (human Founder decision)","executionSurface":"founder-terminal"}, as I ruled for the rehearsals on 2026-11-03. The builder gives me the commands and never holds the token.
+E4. The freeze. From D3's deployment until the deployment of E6 is verified: nothing is merged or pushed to Build Room main, between runs as well as during them; no Railway variable or setting is changed; the control plane is not deployed, redeployed or restarted; nothing changes on the PC. The custody filings of 2026-11-02 to 2026-11-04 wait until then. A deployment change interrupts the run (B3) and spends the set. The Mac running the runner stays awake.
+E5. Stops. If the executor halts (planner-halted.json appears), the halt stays as Amendment 3 E1 of the PC act leaves it, and the run ends as the record judges it. If any reading or journal row suggests the token or any input left the allowlist, the builder stops and tells me, and I revoke the sign-in (ruling Amendment 2 D2). If the Planner asks to run a command, the builder reports it to me before the next run. In each case no later run of the set starts without my direction.
+E6. After the set completes or is spent, I remove PHASE4_COUNTED_RUN from Railway and deploy, and the builder verifies that deployment as D3, after which the counted-run routes are inert again.
+
+Part F: Evidence and filing
+F1. For each run: its record and the record's SHA-256 as the runner wrote them; the attempts file; the plan files the runner saved; its journal rows and room export from the control plane's routes, which I read and give the builder; the executor's evidence record for each command from the Gateway's directory on the PC, which I give the builder (ruling Amendment 5 B3); the readings of D3, D5, E2 and E6; and my plan decisions as the record shows them.
+F2. The builder files this act, my rulings under it and F1's evidence once, after the set completes or is spent, under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, with every user name, host name, address, tailnet name, node key and account name masked, and no token. It may share one pull request with the filings of 2026-11-02 to 2026-11-04. The pull request needs my separate authorization.
+
+Part G: Not authorized
+- Closing Phase 4 or certifying item 13: that is my separate stop-gate ruling under Section 7, after I review the evidence. Phase 5 stays unauthorized.
+- Dispatching a builder or a reviewer, building any approved plan, or any change to a target repository by anyone under this act.
+- Any provider, adapter, lane, model, seat or Gateway other than C4's; internal-class or higher material on this lane; any agy plugin or MCP server; any update of the agy copy; any change to agy's arguments or the sudo rule.
+- Any Railway variable or setting other than D3 and E6; any rollback; any SQL; any migration.
+- Any merge or push to Build Room main during E4's freeze.
+- Any run beyond C1's three, a retry of a spent set, or a run whose terms differ from C3.
+- Any change on the PC or the Mac beyond D4, D5 and F1.
+
+Part H: Signature
+Signed: Michael Daley
+Date: 2026-11-04 (UTC)
+Actor-Id: founder

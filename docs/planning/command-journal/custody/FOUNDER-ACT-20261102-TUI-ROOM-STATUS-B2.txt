@@ -1,0 +1,119 @@
+FOUNDER-ACT-20261102-TUI-ROOM-STATUS-B2: the madventures-tui commission for B2 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, room status in the terminal from one vendored copy
+
+> **Status:** DRAFT r3, prepared by the builder for my review. It has no effect until I sign it.
+> **Repository:** `MADVenturesLLC/madventures-tui` (the build); `MADVenturesLLC/founder-os-build-room` (the source of the vendored files, read only)
+> **`origin/main` when drafted:** madventures-tui `93e7d1c4c16d7951dd3fde23b6516e8b1e5e738b` (the merge of pull request 214); Build Room `03cd29f95fbd93f854cc236f61d93fcf85da8848`
+> **Acts under:** `FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE` B2 and C5, recorded in FounderOS `DEC-20260815-17`
+> **Read with:** this repository's `AGENTS.md` (approval gates; the `apps/madbridge/src/tui/**` freeze); `DEC-20261102-01` B4; `DEC-20261102-02` B4 to B7; `DEC-20261102-04` A6 and B5; `DEC-20261101-01` B6; `DEC-20261015-05` B3; `DEC-20261023-01` Part B; `HANDOFF-projector-room-status-v0-20260915.md`; Build Room `FOUNDER-ACT-20261103-BR-ROOM-STATUS-OPTIONAL-TYPES`
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows.
+
+## Part A: Basis
+
+A1. **What B2 ruled.** On 2026-10-15 I ruled that madventures-tui consumes Build Room's `packages/room-status` by a vendored copy pinned to a named Build Room commit, with a check in madventures-tui's CI that fails when the vendored bytes differ from that commit's; that no git dependency is used; and that madventures-tui mounts `RoomStatusBand` from the same projection, so that the terminal and every other surface use one vocabulary. C5 directed the builder to draft this commission under this repository's approval record. It was not drafted until now.
+
+A2. **What exists at the drafting base.**
+1. Build Room `packages/room-status/src/` has five files: `index.ts`, `vocabulary.ts`, `status.ts`, `store.ts` and `projection.ts`. It carries no package manifest and is not a workspace member. `projection.ts` imports only types from `../../gateway-protocol/src/ipc-v2.js`, a standalone file with no imports of its own that refers to Node's `Buffer` type. The bytes of `packages/room-status/` are identical to those at Build Room `81d1203e6c0c5382bcf2773d61eed5f0dde4f8ee`, a branch head that is not on `main`; `ipc-v2.ts` differs from that commit by the CreateRoom change, which reached `main` in `57fbcea`.
+2. `apps/madbridge/src/tui/components/RoomStatusBand.tsx` renders the TUI's own `room/projection.ts` over `@madventures/protocol`'s `RoomSnapshotBody`, not the room-status IR: a derived banner, the room's occupancy, block reason and input authority in Gateway terms, one row per execution in Gateway terms, and the qualifier "FIXTURE OCCUPANCY ONLY". Only `apps/madbridge/test/room-projection.test.tsx` uses it, and no screen mounts it.
+3. `apps/madbridge/src/tui/App.tsx` shows `FixtureBanner` only when its `fixture` prop is true. `apps/madbridge/src/tui/main.tsx` sets that prop in `--fixture` mode and passes broker fixture data; no room snapshot reaches `App`.
+4. `apps/projector-mc/src/lib/room-status.ts` holds a hand-copied mirror of the vocabulary, pinned by `apps/projector-mc/fixtures/room-status-vocabulary.pin.json` to Build Room `81d1203`. Its pin catches an edit on this side only.
+5. Under this repository's settings the vendored files at Build Room `03cd29f` do not typecheck: `tsc` reports one error, TS2379 at `status.ts` line 226, because this repository sets `exactOptionalPropertyTypes` and Build Room does not. The root `tsconfig.json` has no `include`, so a separate `tsconfig` under `vendor/` cannot take the files out of the root check, and an import pulls them in regardless. A two-line, type-only change in Build Room clears the error and leaves Build Room's emitted output unchanged; `FOUNDER-ACT-20261103-BR-ROOM-STATUS-OPTIONAL-TYPES` makes it.
+6. With that change, `@madventures/protocol`'s `RoomSnapshotBody` and the vendored one are each assignable to the other without a cast.
+7. Both repositories are public, so CI can fetch Build Room's files at a named commit without a credential.
+
+The drafting assistant checked items 5 and 6 in a scratch copy at the drafting base. That check is not this build's evidence.
+
+A3. **Why not now.** `AGENTS.md` bars changes to `apps/madbridge/src/tui/**` during Phase 3A without a later ruling that names that path. `DEC-20261102-01` B4 orders the rest of Phase 3A: Task 57 and the M25 review, the hardening builds (Hardening C among them, under `DEC-20261102-04` B5), Task 58 at one candidate commit, then Task 59. A change merged before Task 58's candidate commit is part of what Task 58 certifies; between that commit and the final merge review, B4 lets no other code or test change merge except under an act that also rules how Task 58 is repeated.
+
+A4. **The drafting assistant.** The builder drafted this act and proposed its layout, its check and its order. None of that is an independent review.
+
+## Part B: Founder rulings
+
+B1. **When.** The build starts only when both have happened: Phase 3A's final merge under Task 59's act, and the merge on Build Room `main` that B2 names. It runs from a binding base on `main` that contains Phase 3A's final merge and the merge of this act's filing, named in its builder prompt. It is not Phase 3A work, and nothing in it is part of Task 58's candidate commit.
+
+B2. **The pin.** The vendored copy is taken from the commit on Build Room `main` that merges the pull request of `FOUNDER-ACT-20261103-BR-ROOM-STATUS-OPTIONAL-TYPES`, which the builder prompt names by its full SHA. These six files, byte for byte, with these hashes:
+
+```
+15d2c8395eca80d43b791af6e429e814af11113cdfc44494298a4da14bdc39d0  packages/room-status/src/index.ts
+e69eaabd1e72429ce38517da3501a3d8897478c25b9b59331f9f8a818b30ee51  packages/room-status/src/vocabulary.ts
+3e705cbe96414e967ed942df581ac5de69ba07d93e55055c79248373414c9beb  packages/room-status/src/status.ts
+8cbe0dd4004205bfa99834d4e3f1d17fa5ecb2df3499e859e5d07ce82d917c02  packages/room-status/src/store.ts
+8265f3a49fc505bad8a9fa91ff79b1447e8d5363031b08f70b372f8cc33ffeb7  packages/room-status/src/projection.ts
+1addb1954d8f03027a1c76890eadc5c36989bb1e2d27953343a1470832dc40ad  packages/gateway-protocol/src/ipc-v2.ts
+```
+
+Five of these are the hashes at `03cd29f`; `status.ts`'s is the one that act's B1 fixes. This ruling widens B2's "packages/room-status" by `ipc-v2.ts`, which `projection.ts` needs for its types. A later pin is a new act of mine naming the new commit and hashes.
+
+B3. **The layout.** The files go under `vendor/founder-os-build-room/` at the same relative paths, so that `projection.ts`'s import resolves unchanged, beside a `PIN` file naming the repository, the commit and the six hashes above, and nothing else. No file is edited, reformatted or renamed. The directory has no package manifest and no `tsconfig`, is not a workspace member, and changes no `bun.lock`. It is consumed by relative source imports. The files must typecheck and run unmodified under this repository's existing settings; this act authorizes no change to any `tsconfig.json`. The builder never edits a vendored byte to make anything pass.
+
+B4. **The drift check.** It has two halves, sharing one script, `.github/scripts/vendored-room-status-check.ts`, which holds the repository and commit of B2 as constants:
+1. **Offline**, run by `test/vendored-room-status.test.ts` inside `bun test`, and so inside Verify. It fails when `PIN` names a repository or commit other than the script's, when any vendored file's SHA-256 differs from `PIN`, when a file `PIN` names is missing, or when `vendor/founder-os-build-room/` holds a file `PIN` does not name.
+2. **Upstream**, run by one new job in `.github/workflows/vendored-room-status.yml` on every pull request to `main`. It obtains the six files from Build Room at the script's commit by `git fetch` of that commit from the public repository, with no credential, and fails when any vendored byte differs from them.
+
+The job uses no secret except the custody token the Verify jobs already pass to `setup-qualified-bun`, only actions those jobs already pin, at the same SHAs, read-only `contents` permission, and a checkout that keeps no credential. A deliberate break of each failure path is made, shown failing and restored, with the restored file's SHA-256; such a break is not a change under B10. The job is not a required check on `main` unless a separate act of mine makes it one. Because the script is under `.github/`, a later re-pin changes a governance path and needs a Founder act naming its head.
+
+B5. **One vocabulary in the terminal.**
+1. `RoomStatusBand` renders one `RoomStatus` and nothing else: its occupancy, agent phase, block reason and each slot's phase, in the words of the vendored `vocabulary.ts`, with the qualifier "FIXTURE OCCUPANCY ONLY". No occupancy, block-reason or execution-state name of `@madventures/protocol` appears in it.
+2. It no longer renders `room/projection.ts`'s derived banner, viewer facts or recovery kind. `room/projection.ts` and its own tests stay unchanged; viewer facts are left to the act that binds a live viewer.
+3. `App` takes an optional room snapshot, projects it with the vendored `projectRoomSnapshot`, and mounts the band under the existing `FixtureBanner`, which still says "FIXTURE DATA — NOT A LIVE SESSION", only when `fixture` is true and a snapshot is given. `main.tsx` passes one fixture `RoomSnapshotBody` in `--fixture` mode only, defined in `main.tsx`, which passes `@madventures/protocol`'s `validateRoomSnapshotBody`. Live mode passes none and shows no band.
+4. The band decides no authority and never upgrades a fixture fact. If `@madventures/protocol`'s `RoomSnapshotBody` does not satisfy the vendored `RoomSnapshotBody` type without a cast, the build halts for my ruling.
+5. The tests show: each occupancy, agent phase and block reason rendered in the vendored words; no Gateway-term name in the band's output; the band and `FixtureBanner` in fixture mode, and no band in live mode; the fixture passing `validateRoomSnapshotBody`; and, at the type level, the two `RoomSnapshotBody` types each assignable to the other.
+
+If the `AGENTS.md` freeze still applies when the build runs, this act is the later ruling it requires for the paths in B7 under `apps/madbridge/src/tui/**`.
+
+B6. **One vocabulary in the projector.** `apps/projector-mc/src/lib/room-status.ts` takes its vocabulary, types and parser from the vendored copy and re-exports them, so that every other projector file keeps its imports. Its hand-copied arrays and parser, and `room-status-vocabulary.pin.json`, are removed. Its render model (`renderRoomStatus`, `shortEvidenceRef`, the tone maps and the types they use) is kept. Where the vendored parser accepts or refuses a record differently from the mirror, the projector's tests follow the vendored parser, and the build log lists each difference.
+
+B7. **Paths.** Only these change:
+1. `vendor/founder-os-build-room/**` (new: the six files and `PIN`, nothing else).
+2. `.github/workflows/vendored-room-status.yml` and `.github/scripts/vendored-room-status-check.ts` (both new).
+3. `test/vendored-room-status.test.ts` (new).
+4. `apps/madbridge/src/tui/components/RoomStatusBand.tsx`, `apps/madbridge/src/tui/App.tsx` and `apps/madbridge/src/tui/main.tsx`, only as B5 needs.
+5. `apps/projector-mc/src/lib/room-status.ts`, `apps/projector-mc/fixtures/room-status-vocabulary.pin.json` (removed), and `apps/projector-mc/test/room-status.test.ts`.
+6. Tests under `apps/madbridge/test/`. In `room-projection.test.tsx`, only the tests of its block K change, to test the band of B5; its test that the `FixtureBanner` text is unchanged stays, and its blocks F and L do not change.
+7. `docs/verification/tui-room-status-b2-build-log.md` (new).
+
+No `bun.lock`, package manifest, `tsconfig.json`, `AGENTS.md`, plan, spec, decision record, `apps/madbridge/src/tui/room/projection.ts` or other file changes.
+
+B8. **The builder, the sessions, the gates and the review.**
+1. **Builder and branch.** A fresh Claude Code session on my MacBook, Actor-Id `session:claude-code/tui-room-status-b2-r1`, on `build/tui-room-status-b2-r1`, under a builder prompt I sign.
+2. **Sessions.** `DEC-20261023-01` Part B, `DEC-20261102-02` B4 and B5, and the MCP rule of `DEC-20261102-04` B5 item 10 apply to every governed session of this build as they applied to the hardening builds, whether or not Phase 3A has closed; once it has, the Bun runtime the builder prompt names takes the place of the certification runtime. Every governed Claude Code session starts with `claude --strict-mcp-config --no-chrome` and loads no MCP server.
+3. **Gates.** `bunx tsc --noEmit`; `bunx tsc --noEmit -p apps/projector-mc`; `bun run projector:build`; the focused tests; the upstream half of B4, run locally; `bun test test/phase3a`; the full suite; and `git diff --check`. The build log records each with its command, exit status and log SHA-256, and the load before every test run.
+4. **Review.** The final head is reviewed only after Verify, Verify (macOS), code-review and the job of B4 pass at it on GitHub, by a fresh Gemini 4 session on Antigravity on my MacBook, reviewer id `antigravity`, under a review prompt I sign. A FAIL with a substantive finding is answered by one correction commit under an addendum I sign and a new review. A second FAIL halts for my ruling.
+5. **Counting.** This build is not a task of the Phase 3A plan. Plan §11.3 does not count its verdicts; they are recorded in its build log.
+
+B9. **Pull request and merge.** The builder makes no GitHub call. My guarded commands push the branch, open the pull request as a draft, and mark it ready after a posted Tier-2 PASS at its exact head. The pull request touches `.github/`, a governance path, so it merges only by a Founder act naming its exact head, by merge commit through my guarded command, after Verify, Verify (macOS), code-review and the job of B4 pass at that head, re-running held code-review runs one at a time as `DEC-20261101-01` B6 requires.
+
+B10. **Halts, closed.** The build halts and reports to me only when:
+1. a path outside B7 would change;
+2. a vendored byte would change, or a vendored file fails `tsc` or a test unmodified;
+3. the commit the builder prompt names is not the merge B2 describes, or any of its six files differs from B2's hash;
+4. B5's type does not fit without a cast;
+5. the band would need any data beyond B5's fixture;
+6. the projector cannot take the vendored vocabulary and parser without changing a file outside B7 item 5;
+7. a test fails unexpectedly in a run whose first load average was 2.0 or more, which it does not rerun;
+8. a governed session loads an MCP server; or
+9. the binding base differs from the builder prompt.
+
+Every other failure is handled under `DEC-20261023-01` Part B, whose self-fix rule and ban on rerunning a failed run to pass still apply, and anything Part B makes a stop stays a stop.
+
+## Part C: Filing
+
+C1. One docs-only pull request files this act under `DEC-20261015-05` B3 and changes nothing else. It touches `docs/decisions/`, so it merges only by a Founder act naming its exact head. Its custody in Build Room follows C1 of `FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE`.
+
+## Part D: Not authorized
+
+- Any path beyond B7; any change to `bun.lock`, a manifest, a `tsconfig.json`, `AGENTS.md`, the plan, the spec, another decision record, or `apps/madbridge/src/tui/room/projection.ts`.
+- A git dependency, a published package, or a workspace member for room status.
+- Any live binding, and any viewer fact in the band: the band and the projector stay on fixture data.
+- Making the job of B4 a required check on `main`.
+- Any change in Build Room. That is `FOUNDER-ACT-20261103-BR-ROOM-STATUS-OPTIONAL-TYPES`.
+
+## Part E: Signature
+
+Signed:
+
+— Michael Daley
+
+Date:
+
+Actor-Id: founder

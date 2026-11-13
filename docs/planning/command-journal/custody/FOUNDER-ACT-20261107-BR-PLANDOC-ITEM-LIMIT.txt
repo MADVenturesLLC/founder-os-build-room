@@ -1,0 +1,52 @@
+FOUNDER-ACT-20261107-BR-PLANDOC-ITEM-LIMIT: a plan's list items may run to 20,000 characters, and a refused plan names the rules it broke
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+Build Room main when drafted: 3bc3c5211cef798cf54ff0d248d056a48b32a682
+Under: FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS (SHA-256 a8fb3b2a91aa32388960af1741a7af0b9cb3196716c2c8876fac76da7d65a955) B3, E3 and Part C; FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE C1 and C4; FOUNDER-ACT-20261028-VELOCITY (83b1ffd5753f48b191ec7e62c8d724ccd4d13f6c024bbe5cc9fc4020f4cbc27a) B1 to B5; FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY (f6057c260f1d3faa6ad261b80e1b0dbb35b01bfd93c74ab529b3d5b49eed2268) B3; DEC-20260718-04; DEC-20260718-05 clause 12.
+The builder read, before drafting, at 3bc3c52: packages/seat-output-schema/src/plandoc.ts (PROSE_MAX 20,000; ITEM_MAX 4,000 for every list item and for objective; added in bc3e3d0 on 2026-10-15) and schema.ts (the violation codes and messages); packages/control-plane/src/plan-doc.ts (judgePlanDoc), planner-loop.ts (executeRound and judgeRoundPlan, lines 690 to 742), planner-recovery.ts (which calls judgeRoundPlan), plan-store.ts and plan-read.ts (which judge again with judgePlanDoc), counted-run.ts (which builds the PlannerLoop), main.ts and gateway/leadership.ts (the control plane's JSON log lines), and gateway/routes.ts (the Gateway's report body limit, 256 KB); packages/gateway-daemon/src/agy-planner-executor.ts (the prompt, lines 328 and 329, carries JSON.stringify(PLANDOC_SCHEMA_V1)); and every test that imports the schema or the judge. No test names the bound 4,000.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. What happened. Rehearsal R2 under the standing act, at 3bc3c52 in room a4f20289-2726-47b9-a274-840865a82dc6: round 1 settled at plan_review with plan a659c6ed95af407fd67a3b168ef7d7178c0987efc9c29f65f8481cb0279d1a49; I asked for a revision at 17:18:07Z on 2026-11-07; round 2 failed at 17:27:57.149Z, record SHA-256 3e1df6b5d1502287fe5cdf742d087969cca6e2081ed00f2d054395dcb2fa879e, its command row failed:plan_invalid.
+A2. The cause. agy finished normally (exit 0, result SUCCESS) and the Gateway parsed its 41,612-byte answer strictly and reported it as a plan. The control plane's judgePlanDoc refused it for one reason only: /implementation_sequence/1, the plan's second step, was 4,808 characters, and the schema allows 4,000. Every other field was within its bounds, and the repository, base commit, scope paths, work_id and terminal_status were right. Found with Part E's reads and one read beyond Part E's list that I allowed and that printed no plan text.
+A3. The bound. PlanDoc v1 allows 4,000 characters for each item of its five lists and for objective, and 20,000 for each of its fifteen prose sections. The planner's prompt already gives the model the schema with these bounds; the model went over by 808 characters. One violation refuses the whole plan, so a revision round can fail on length alone.
+A4. The record. The failed row holds only the classification plan_invalid. The rules a plan broke are thrown away, so learning them took a read on the PC.
+A5. My ruling. On 2026-11-07 I chose, from the options the builder presented, A (raise the per-item bound) and B (log the rules a refused plan broke).
+
+Part B: The change
+B1. Assignment. This act assigns the work to the builder role (DEC-20260718-05 clause 12).
+B2. The bound. In packages/seat-output-schema/src/plandoc.ts, each item of acceptance_criteria, implementation_sequence, known_risks, unresolved_founder_decisions and plan_drift_stop_conditions may be up to 20,000 characters, as a prose section may. objective stays at 4,000. Every other part of the schema stays as it is: item counts, minimum lengths, the prose sections, enums, constants, patterns, additional_properties false, and schema_version plandoc/1. The change only widens: every plan valid before stays valid, with the same plan hash.
+B3. The refusal log. Wherever judgeRoundPlan refuses a returned plan (planner-loop.ts, and planner-recovery.ts when it judges a reconciled plan), the control plane writes one JSON log line at "planner.plan_refused" with: roomId, commandId and the classification; and the reason, as follows.
+  (a) A schema refusal: the number of violations and the first 20, each with its code and its path. A path segment is written only when it is a property the schema declares or an array index; any other segment is written as "<undeclared key>" with its length. For a length violation, the length found and the bound, as numbers.
+  (b) A scope-path refusal: the index of the path. An encoding refusal: the word "encoding". A plan not ready for decision: its terminal_status, which the schema has already checked against its five values.
+  (c) plan_outside_captured_scope: whether the repository, the base commit and the scope paths matched, as three booleans.
+  No other string from the plan is written. judgeRoundPlan's verdicts, the failure classifications, the journal's rows, the plan store and the run record do not change. PlannerLoopDeps may gain an optional log function that defaults to a JSON line as gateway/leadership.ts writes one; counted-run.ts does not change.
+B4. The prompt. The planner's prompt carries the schema, so a Gateway running a checkout that includes B2 tells the model 20,000 for list items. That is the one change to the prompt this act allows, and the prompt's code does not change. The Gateway need not move for B2 to take effect, because the control plane judges the plan. A later Gateway move under Part C of the standing act to a commit that includes B2 may carry this one difference in the prompt, and C2's condition that nothing of B3(e) changes is met for it.
+B5. Paths: packages/seat-output-schema/src/plandoc.ts; packages/control-plane/src/planner-loop.ts and planner-recovery.ts, for B3 only; new tests under test/. No existing test is expected to change; if one must, the builder names it and why in the pull request and in the Tier-2 brief. Nothing in packages/journal, packages/control-plane/src/plan-doc.ts, plan-store.ts, plan-read.ts or counted-run.ts, the migrations, packages/run-harness, packages/gateway-*, the PC or Railway. If the change needs any other path, the builder stops and asks me.
+B6. Tests. (1) A plan with a list item of 4,808 characters, and one with an item of exactly 20,000, is accepted by judgePlanDoc and by judgeRoundPlan; an item of 20,001 is refused; an objective of 4,001 is still refused; the round-1 plan of R2, rebuilt from my pastes, keeps its hash a659c6ed95af407fd67a3b168ef7d7178c0987efc9c29f65f8481cb0279d1a49. (2) The schema plannerPrompt embeds states 20,000 for list items. (3) Each kind of refusal in B3 writes exactly one planner.plan_refused line with the fields B3 names, and the round ends as before with the same journal rows. (4) A distinctive string placed in every field of a refused plan, and as the name of an undeclared key, never appears in any log line. (5) An accepted plan writes no such line. Each new test fails when the change it covers is reverted, and the builder shows that.
+
+Part C: Review, merge and filing
+C1. Review: Codex Tier-2 of the exact final head under FOUNDER-ACT-20261028-VELOCITY B1 to B4; the brief gives A2 and asks the reviewer to check B3's rule that no plan string is logged. Advisory reviews are dispositioned under C4 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE. Design changes made in review are the builder's under VELOCITY B5, inside Part B.
+C2. Merge: my separate SHA-named authorization (DEC-20260718-04), not during a rehearsal's window or a counted set's freeze. Merging deploys the control plane; under B3 of FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY the authorization also authorizes that deploy, and the builder verifies that it reached SUCCESS, that /version names the merge commit, and boot.start.
+C3. Filing: with the next custody filing under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE: this act verbatim, R2's evidence under F2 of the standing act, the review and the merge and deploy verification.
+
+Part D: What follows
+D1. After the merge and its deploy, the builder prepares R3's terms under D2 of the standing act at the merge commit, and states that no Gateway package differs from the PC's checkout at 3bc3c52. My line "Rehearse R3 at <commit>, terms <SHA-256>" starts it; the Gateway stays at 3bc3c52 unless I give a line under Part C.
+
+Part E: Stated limits
+E1. Plans may grow. The Gateway's report route still refuses a body over 256 KB, so a plan larger than that fails its round at the report, as it would before this change.
+E2. A control plane rolled back to a commit before this change would judge a stored plan with an item over 4,000 characters invalid when it is read or decided on.
+E3. A Gateway at 3bc3c52 still asks the model for items of 4,000 or fewer; an item over that is now accepted up to 20,000.
+E4. The log names the rules a refused plan broke, not its content, and not the name of a key the schema does not declare.
+
+Part F: Not authorized
+- Any other change to PlanDoc v1: another bound, field or status, schema_version, or the plan hash.
+- Any change to the journal, its rows or failure classifications, the plan store, the run record or the run harness.
+- Any change to the prompt's code, agy's command line or arguments, the sudo rule, the PC, a Gateway move outside Part C of the standing act, or a Railway variable.
+- A Gateway that asks the model again after a violation (option C).
+- Any run; any merge without my separate authorization.
+
+Signed: Michael Daley
+Date: 2026-11-07 (UTC)
+Actor-Id: founder

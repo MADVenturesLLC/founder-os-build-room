@@ -1,0 +1,25 @@
+FOUNDER-ACT-20261104-BR-PHASE4-DECISION-TIME, Amendment 1: a cancel with no plan under review is not timed, and what committed_at is
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+Amends: FOUNDER-ACT-20261104-BR-PHASE4-DECISION-TIME (SHA-256 4963eef01d1c92877adc3e042f61011a5727a40c58fe4a356c13f107d5abacdc)
+Pull request: MADVenturesLLC/founder-os-build-room#145, head when drafted 6464b65f0d51581db0d7cd7ef7d31e4dccba7bf3
+Basis: Copilot's review 5768601404 of that head, and my two rulings on it in the builder's session on 2026-11-04 at 12:55Z, "Amend: time only plans under review" and "Accept the bound, correct A3".
+The builder read, before drafting, at 5cbadd4: packages/control-plane/src/migrations.ts (build_room_events), store.ts (append, lockAndReplay, insertEvent), gateway/room-append.ts, config.ts (statementTimeoutMs), db.ts, packages/contracts/src/transitions.ts (T22) and packages/run-harness/src/phase4/run-unit.ts.
+
+I, Michael Daley, Founder of MAD Ventures, amend the act as follows. Every part not named here stands as signed.
+
+M1. A3 is replaced by: "A3. What the record holds. The control plane's room export, which the runner already reads into the run's record, gives every lifecycle event its committed_at. The control plane alone writes it, and no caller can set it. It is the database's now() when the appending transaction began (the column's default; the insert does not set it): after the request reached the control plane, and before the transaction waited on its locks, replayed the room and wrote the event. Each of those statements is bounded by the control plane's statement_timeout (10 s in the code's default), so committed_at precedes the commit by at most that one transaction's length. The plan's T3 (plan.submitted) opens plan_review; my decision is T4, T5 or T22."
+
+M2. B2 is replaced by: "B2. The judgment. In packages/run-harness/src/phase4/run-unit.ts, a decision event (plan.revision_requested, plan.approved, founder.cancel) decides a plan under review when the latest of plan.submitted, plan.revision_requested and plan.approved before it in the record is a plan.submitted; that plan.submitted opens its time. For each decision that decides a plan under review: if the decision's committedAt is more than the set's decisionTimeoutMs after that plan.submitted's committedAt, the run is interrupted with founder_decision_timeout, the code the runner's flag already gives; if either event lacks committedAt, the run fails with decision_time_unrecorded. A founder.cancel that decides no plan under review (a cancel before any plan, or while the room plans again after a revision) is not timed: B5's 4 hours run only from plan_review. A plan.revision_requested or plan.approved that decides no plan under review fails the run with decision_time_unrecorded. Every other part of the judgment is unchanged, and the runner's own flag still applies."
+
+M3. B4 gains: "a cancel before any plan, and a cancel more than decisionTimeoutMs after round 1's plan while the room plans again after a revision, are each not timed and leave the run rejected with no decision-time code; a cancel at plan_review is timed as any decision is."
+
+M4. Stated limit. A decision the database committed up to one append transaction's length after the 4 hours can still be taken as in time, because committed_at is that transaction's start. I accept that limit, in place of the ten minutes or so the act fixes. The control plane is not changed for it. The pull request's body states it.
+
+M5. Review. The Tier-2 review of C1 is of the head that carries M2 and M3. No Codex review has been made of the pull request before this amendment, so this is its one review under FOUNDER-ACT-20261028-VELOCITY B2.
+
+M6. Part E stands: nothing here authorizes any change to packages/control-plane, a run, or a merge without my separate authorization.
+
+Signed: Michael Daley
+Date: 2026-11-04 (UTC)
+Actor-Id: founder

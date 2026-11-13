@@ -1,0 +1,75 @@
+FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING: the Planner's prompt tells it to name only what it saw, and says what a revision round lacks
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+origin/main when drafted: 0a7f2a7a21da745f0cee16fff76dc36c13d01c39
+Under: DEC-20260815-17, Founder Authorization - Phase 4 (Planner Loop) (2026-08-31), Section 7; DEC-20260718-04; DEC-20260718-05 clause 12; FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE C1 and C4; FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR B5; FOUNDER-ACT-20261028-VELOCITY (SHA-256 83b1ffd5753f48b191ec7e62c8d724ccd4d13f6c024bbe5cc9fc4020f4cbc27a) B1 to B4; FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY (f6057c260f1d3faa6ad261b80e1b0dbb35b01bfd93c74ab529b3d5b49eed2268) B3; FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX (b0e0af94328460819eadc8d42797d99cd5387f999b8ae835645176f38b2a5024) B1; FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS (a8fb3b2a91aa32388960af1741a7af0b9cb3196716c2c8876fac76da7d65a955) B3(e), Part C and Part D.
+The builder read, before drafting: at 0a7f2a7, plannerPrompt, PINNED_AGY_ARGUMENTS and BANNED_AGY_ARGUMENTS in packages/gateway-daemon/src/agy-planner-executor.ts; PlannerWorkWire in packages/gateway-protocol/src/planner.ts; the revision work built in packages/control-plane/src/planner-loop.ts; the prompt tests in test/agy-planner-executor.test.ts and test/plandoc-item-limit.test.ts; and R4's three plans, which I printed on my Mac and gave the builder, with the builder's check of each against the checkout, in its audit record.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. Four uncounted rehearsals under FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS have run, and none has passed Phase4-CR1. R1 to R3 ended on defects in how the Gateway and the control plane read and judged the Planner's answer, each fixed and merged (pull requests 147, 148 and 149). R4, at 0a7f2a7, was the first in which all three rounds returned a plan the control plane accepted for my decision.
+A2. What R4's plans held. The builder checked every plan against the checkout. Round 1 (plan 12605d7b5b724e47140e1c449be974ad0fbe2cc30cc29ce710a15e19fc0e69f6, 29,120 characters) held 15 groups of false statements: files, functions, states, scripts and seven test files that do not exist. Round 2 (a241678be7f8faeb1070b08f1f3ad6646aedb7db6f6e8fd3a66970ef2ecc5e6a, 34,355) took all 15 corrections and added 15 new groups, two of them things round 1 had right. Round 3 (3c8d9d311c2d24330593ca1d9c2df721e547eae21682ebebca736b83776f15a2, 27,292), after feedback telling it to name only what it had seen and what the plan needed, and to check every name, named about 70 things, all of which exist; but one acceptance criterion required npm run lint to pass, and at 0a7f2a7 lint fails with 30 errors in 15 tracked files outside the plan's scope (CI runs it as advisory). I cancelled at round 3 (20:35:41Z); CR1 was rejected, record 3b7bad4c469e880b5c5c36d30258473af9931c9f9859c25eea5f4c1abb6b4b0e, and the window closed with deployment 244339f4 (SUCCESS 20:44:03Z).
+A3. Why, as far as the code shows.
+  (a) The prompt gives the goal, the scope and the schema, and says nothing about naming only what the Planner has seen. It named what seemed likely to exist.
+  (b) The Planner may not run commands (B1 of FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX), so it cannot know whether a check passes; the prompt does not say so, and round 3 asserted one that fails.
+  (c) A revision round gives the Planner my feedback and the earlier plan's hash only (PlannerWorkWire.revision), and each round starts agy afresh, with --continue and --conversation banned. The Planner never sees its earlier plan, so it cannot keep what was right; round 2 regressed.
+  (d) The feedback that worked in round 3 is, in substance, the rules Part B puts in the prompt.
+A4. What this act does not do. It does not give the Planner its earlier plan: that changes the planner wire protocol and the control plane, and is named in Part F. It changes no argument of agy, the sudo rule, the lane, the schema or the judge. A prompt steers the model and does not bind it: my check of every plan stays the control, and only a rehearsal shows whether this helps.
+
+Part B: The change
+B1. In plannerPrompt in packages/gateway-daemon/src/agy-planner-executor.ts, after the scope paths and after the revision lines when there are any, and before the line "ANSWER", these lines are added, each a line of its own:
+  (blank line)
+  HOW TO WRITE THE PLAN
+  1. Name a file, directory, function, type, constant, route, table, field, environment variable, error code, script, test or value only if you saw it in this checkout during this turn, in a file you opened or a directory you listed. If you did not see it, describe the behaviour in plain words or leave it out. Never name something because it seems likely to exist.
+  2. Give a line number or a range of lines only for lines you read, and quote only text you read.
+  3. Name only what the plan needs. A plan does not need every function, constant or error code of the code it describes.
+  4. You cannot run commands, so you do not know whether any test, lint, type check or other check passes at this commit. Do not say that one passes or fails. Where the plan relies on a check, require only that the change adds no new failure to it compared with this commit.
+  5. Before you answer, check every name, path, line number and quotation in the plan against what you saw, and remove any you did not see.
+  6. Keep the whole answer under 25,000 characters.
+B2. In a revision round, after the line carrying my feedback, this line is added:
+  You do not have the earlier plan, only this feedback on it. Treat each correction in the feedback as true, and check everything else against the checkout as the rules below say.
+B3. After the last line of the ANSWER section, this line is added:
+  Write that object once, at the end of your turn, after you have finished reading.
+B4. Every existing line of the prompt stays word for word and in its order, the schema line among them. The tests of B1 of FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX and of FOUNDER-ACT-20261107-BR-PLANDOC-ITEM-LIMIT pass unchanged.
+B5. Paths: plannerPrompt in packages/gateway-daemon/src/agy-planner-executor.ts, and new tests under test/. Nothing else: not agy's command line, the user it runs as, its sudo use, the reap, its timeouts or its lane; nothing in packages/gateway-protocol, packages/control-plane, packages/journal, packages/seat-output-schema, packages/run-harness, the migrations or the PC. No existing test changes. If the change needs anything else, the builder stops and asks me.
+B6. Tests: a first-round prompt holds B1's lines exactly once, after the scope paths and before ANSWER, and not B2's line; a revision prompt holds B2's line once, right after the feedback, and B1's lines after it; B3's line is the prompt's last; every line of the prompt before this change is still present, in order. Each test fails when the line it covers is removed or changed, and the builder shows that by mutation, as for pull request 149.
+
+Part C: Review, merge and deploy
+C1. Review: Codex Tier-2 of the exact final head under FOUNDER-ACT-20261028-VELOCITY B1 to B4; the brief asks the reviewer to check B4 and B5. Advisory reviews are dispositioned under C4 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE.
+C2. Merge: my separate SHA-named authorization. Merging deploys the control plane, whose code this does not change; under B3 of FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY that authorization also authorizes the deploy, and the builder verifies it reached SUCCESS and that /version and boot.start name the merge commit.
+
+Part D: The Gateway move
+D1. The prompt reaches the Planner only when the PC's Gateway runs the merge commit. That move is made under Part C of FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS, on my line "Move the Gateway to <commit>", with one change to its C2, for this move only: "nothing of B3(e) changes" reads "nothing of B3(e) changes except Part B of FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING". The builder's list of differing files must show that, and nothing else of B3.
+D2. Every other condition of that Part C applies, C4 among them.
+
+Part E: The rehearsal that measures it
+E1. After the move, one rehearsal under Part D of FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS, unchanged, on my line.
+E2. The builder checks every plan of it against the checkout, as for R4, and reports for each round the false statements found, with R4's beside them (round 1: 15 groups; round 2: 15; round 3: 1 unachievable criterion and 1 overstatement).
+E3. Whatever the result, it is evidence for my next decision and nothing else follows from it.
+
+Part F: Named, and not authorized
+F1. Giving the Planner its earlier plan in a revision round: a change to PlannerWorkWire, the control plane's revision work and the prompt, with its size limits. My own act, if E2 shows revision rounds still regress.
+F2. Enforcing a plan size in the judge (packages/control-plane/src/plan-doc.ts, B3(d) of the standing act).
+F3. Any change to agy's arguments or the sudo rule, among them restricting its tools.
+F4. A counted-run act.
+
+Part G: Records and filing
+G1. The builder records each line of mine, each reading and each result in its audit record, stamped from the clock.
+G2. This act, its review, the merge and deploy verification, the move's readings and the rehearsal's evidence are filed with the next custody filing under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, which needs my separate authorization.
+
+Part H: Not authorized
+- Any change beyond Part B.
+- Any change to agy's arguments, the sudo rule, the planner user, the PC beyond the move of Part D, a Railway variable or setting beyond Part D of the standing act, a Neon role, a secret or a Gateway host.
+- Any run, counted or not, beyond Part E; any counted-run act.
+- Any merge without my separate authorization.
+- Any repository other than MADVenturesLLC/founder-os-build-room.
+
+Part I: Signature
+Signed:
+
+— Michael Daley
+
+Date:
+
+Actor-Id: founder

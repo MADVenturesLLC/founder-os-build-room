@@ -1,0 +1,179 @@
+BUILDER PROMPT: FOUNDER-ACT-20261103-BR-ROOM-STATUS-OPTIONAL-TYPES, the two-line room-status type fix in Build Room
+
+Status: DRAFT r2, prepared by the builder for my review. It has no effect until I sign it.
+Repository: MADVenturesLLC/founder-os-build-room
+Binding base: main at 03cd29f95fbd93f854cc236f61d93fcf85da8848, or a later commit under B2 of the act
+Branch: build/room-status-optional-types
+Act: FOUNDER-ACT-20261103-BR-ROOM-STATUS-OPTIONAL-TYPES, SHA-256 3b42c0d5a5c971a1f5bba062da3ebec91bf8a5014e89a926ca2045dc75d00f12
+
+I, Michael Daley, Founder of MAD Ventures, give you this task.
+
+1. ROLE AND AUTHORITY
+
+1.1. You are a fresh Claude Code session. This prompt assigns you the builder role. Your commit trailers are:
+  Role-Id: builder
+  Actor-Id: session:claude-code/<this session's own id>
+  Execution-Surface: claude-code
+Write the Actor-Id from your own session id, as recent Build Room commits do. Never copy another session's id. Keep each trailer line at 72 characters or fewer.
+
+1.2. Your authority is the act named above. I signed it by reference to its SHA-256, without editing its file. Its text comes with this prompt. Hash it with shasum -a 256. If the hash differs from the one above, stop before step 3.
+
+1.3. Read this repository's AGENTS.md before you start. Where this prompt and the act disagree, the act wins: stop and report.
+
+2. WHAT YOU DO, IN ONE LINE
+
+In packages/room-status/src/status.ts, add "| undefined" to two optional fields in the parameter type of assertInvariants. Prove that this changes nothing Build Room builds. Open the pull request, and bring it to the point where I can authorize the merge. You do not merge.
+
+3. PREFLIGHT (stop if any item fails)
+
+3.1. Clone the repository fresh, or confirm a clean checkout with no local changes. Run: git fetch origin main.
+
+3.2. Base. Record git rev-parse origin/main. It must be 03cd29f95fbd93f854cc236f61d93fcf85da8848, or a later commit for which this exits 0:
+  git diff --quiet 03cd29f95fbd93f854cc236f61d93fcf85da8848 origin/main -- packages/room-status packages/gateway-protocol/src/ipc-v2.ts
+Create build/room-status-optional-types from that commit. That commit is your binding base.
+
+3.3. At the base, shasum -a 256 packages/room-status/src/status.ts prints:
+  7e5e2988f4093586b0475ef8ae213d847aac2799773176ff091cce679c8713d4
+
+3.4. node --version prints v22, as .nvmrc requires.
+
+3.5. If you will use gh, run gh auth status. It must show daley40-lab. On a 401, stop and report, as AGENTS.md says. Never print a token.
+
+3.6. Make a logs folder outside the clone. Every command in step 4 writes its full output there, one file per command, through tee. Record each log's SHA-256.
+
+4. THE BUILD
+
+Run each command from the repository root. Record its exit status. Set REPO to the absolute path of the clone and LOGS to the logs folder.
+
+4.1. Install.
+  npm ci
+Afterwards, git status --short must print nothing.
+
+4.2. The strict-optional configuration. Write this file as $LOGS/strict-optional.json, with $REPO replaced by the absolute path. It is never written inside the repository.
+  {
+    "extends": "$REPO/tsconfig.base.json",
+    "compilerOptions": {
+      "exactOptionalPropertyTypes": true,
+      "noEmit": true,
+      "composite": false,
+      "declaration": false,
+      "declarationMap": false,
+      "rootDir": "$REPO",
+      "types": ["node"],
+      "typeRoots": ["$REPO/node_modules/@types"]
+    },
+    "files": ["$REPO/packages/room-status/src/index.ts"]
+  }
+
+4.3. Before the change:
+  a. rm -rf dist && npm run build. Exit 0.
+  b. cp -R dist "$LOGS/dist-before"
+  c. node --test dist/test/room-status-ir.test.js. Exit 0, pass 16, fail 0.
+  d. npx tsc -p "$LOGS/strict-optional.json". Exit 2. Exactly one error, beginning:
+     packages/room-status/src/status.ts(226,20): error TS2379
+   Any other result is a stop.
+
+4.4. The change. In packages/room-status/src/status.ts, inside the parameter type of assertInvariants (lines 155 and 156 at the base), make exactly these two replacements:
+    blockReason?: RoomBlockReason;
+  becomes
+    blockReason?: RoomBlockReason | undefined;
+  and
+    slotPhases?: readonly AgentSlotPhase[];
+  becomes
+    slotPhases?: readonly AgentSlotPhase[] | undefined;
+Keep the indentation and line endings exactly as they are. Then check:
+  a. shasum -a 256 packages/room-status/src/status.ts prints
+     3e705cbe96414e967ed942df581ac5de69ba07d93e55055c79248373414c9beb
+     and wc -c prints 11768.
+  b. git diff --numstat prints exactly: 2	2	packages/room-status/src/status.ts
+  c. git status --short shows only that file.
+  d. git diff --check prints nothing.
+
+4.5. After the change:
+  a. rm -rf dist && npm run build. Exit 0.
+  b. diff -r "$LOGS/dist-before" dist. Exit 0 with no output. This includes dist/tsconfig.tsbuildinfo.
+  c. node --test dist/test/room-status-ir.test.js. Exit 0, pass 16, fail 0.
+  d. npx tsc -p "$LOGS/strict-optional.json". Exit 0.
+  e. npx eslint packages/room-status. Exit 0.
+
+4.6. Commit. One commit, with subject:
+  room-status: typecheck under exactOptionalPropertyTypes
+The body names the act and says the change emits no code. The commit ends with the three trailers of 1.1, plus the Co-Authored-By trailer your harness adds; that trailer is the served-model record. Do not amend, rebase or force-push it afterwards.
+
+4.7. Push the branch.
+
+5. THE PULL REQUEST
+
+5.1. Open it as a draft against main, titled:
+  room-status: typecheck under exactOptionalPropertyTypes
+Use a short placeholder body. If your tool appends a footer to the body, the later body write removes it.
+
+5.2. Post the proof as one PR comment headed "B3 proof". Give each command of step 4 with its exit status, its key output line and its log's SHA-256. Include the base SHA, the head SHA, and status.ts's SHA-256 before and after. No comment you post may begin with "Authorized".
+
+5.3. Mark the pull request ready for review, so the advisory reviewers run. Wait until every check and reviewer that runs on the head has finished.
+
+5.4. Review findings, under C1 of the act and C4 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE. Nothing within B1 is left to correct, so you make no second commit. Answer each finding on the record: decline it with a reason, or report it to me if it would need any change beyond B1. Do not make that change.
+
+5.5. Set the final body last, after every reviewer has finished. Use gh pr edit --body-file or the GitHub tool update_pull_request. Never use a raw API PATCH. Follow .github/pull_request_template.md:
+  - Summary: the change, the act, and a link to the B3 proof comment.
+  - Served model: nothing.
+  - Attribution: the three trailers of 1.1, as raw lines at column 0, ending the body.
+  No line in the body may begin with three hyphens. Nothing may follow the trailers.
+
+5.6. Verify the body. Build the merge message as the PR title, a blank line, then the live body as GitHub now returns it. Run git interpret-trailers --parse over it. All three trailers must come back. Then confirm attribution-shape passed on a run that started after the body write.
+
+6. STOP CONDITIONS (closed list)
+
+Stop, change nothing more, and report to me when:
+- the act's hash differs from step 1.2;
+- the base fails 3.2, or status.ts at the base fails 3.3;
+- any result in 4.1 to 4.5 differs from what this prompt states;
+- the change would touch any other file or line, a test, a configuration, package.json or package-lock.json;
+- a check fails at the head, including served-model naming an off-list model;
+- a review finding would need a change beyond B1;
+- gh returns 401, or the GitHub identity is not daley40-lab.
+
+7. NOT AUTHORIZED
+
+- Merging, approving, or posting, editing or simulating any authorization. Never post a comment beginning "Authorized".
+- Any change other than the two lines of 4.4.
+- A second commit, amend, rebase or force-push.
+- Writing files with a GitHub API file-write tool (create_or_update_file, push_files).
+- A branch prefixed plato/ or copilot/.
+- Any deployment, redeploy or rollback, counted run, migration apply, or change to a Railway variable, a Neon role, a secret or a Gateway host.
+- Any change in madventures-tui or FounderOS.
+- The custody filing of the act's C3. That comes after the merge, under a separate prompt of mine.
+
+8. YOUR FINAL REPORT
+
+8.1. Result: READY FOR MERGE AUTHORIZATION, or HALTED, naming the stop condition of step 6.
+
+8.2. Repository, binding base SHA, head SHA, branch, PR URL, and the act's SHA-256 as you computed it.
+
+8.3. A table of every command of steps 3 to 5: the command, its exit status, its key output and its log's SHA-256.
+
+8.4. Every check that ran at the head: its name, its result, and the UTC time you read it. For attribution-shape, give the start time of the counted run and the time of the body write.
+
+8.5. Every review finding, with its source, a link and its disposition.
+
+8.6. The git interpret-trailers --parse output from 5.6.
+
+8.7. Deviations. Anything you did that this prompt does not state, or "none".
+
+8.8. The merge authorization, drafted for me to post, only if all of these hold:
+  - every check required on main is green at the head;
+  - every review has landed and every finding is dispositioned;
+  - no push is pending;
+  - every live-state claim names the check and the UTC time behind it, or is left out.
+Put it in a code block. Model it on docs/planning/command-journal/custody/FOUNDER-AUTHORIZATION-keychain-inventory-merge-20261014.txt. Its first line is:
+  Authorized: merge MADVenturesLLC/founder-os-build-room#<n> at head <40-hex head SHA>
+It goes on to state: the diff, matching B1; the review bar; the checks, with the times you read them; that the merge starts a deployment of rare-enjoyment from main and that dist/ is unchanged, so the new revision boots the same control-plane code; any Railway or /health state you read, with its source and time, or nothing; that the merge is made before the Founder's D5 amendment of FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS is signed, or after its set completes or is spent, never between, and which of those holds, with its source and time; that it authorizes this merge only; and "Any push to this branch voids it." It ends with "Signed: Michael Daley" and "Date:".
+If any bar is unmet, name the bar and its evidence, and draft nothing. Never post the draft yourself.
+
+Signed:
+
+— Michael Daley
+
+Date:
+
+Actor-Id: founder

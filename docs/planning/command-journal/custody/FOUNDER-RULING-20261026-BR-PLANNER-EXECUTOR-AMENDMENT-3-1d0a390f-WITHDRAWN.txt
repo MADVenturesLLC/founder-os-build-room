@@ -1,0 +1,41 @@
+FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR Amendment 3: the command line agy accepts, the planner user's own agy, no plugins, and how a run's processes end
+Amends: FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR (SHA-256 d2868a5978c6dd54e55b9959511ea7586b44b9760c439f3306d79fdcae0da008), its Amendment 1 (SHA-256 b17be4549f2e860da8f56696b18c7ffc99109bf16f8dc1f62ff303e87b0af67d) and its Amendment 2 (SHA-256 cfd7255855be166ec1167cfe82d9c10d36a761e7c26a44d4e68b1fa5cdd177b5), each signed in the builder's session on 2026-10-26. None of them is edited; where this amendment replaces a clause, it says so.
+I, Michael Daley, Founder of MAD Ventures, rule as follows. This amendment takes effect when I sign it in the builder's session.
+
+Part A: Basis
+A1. What agy showed on the PC. My readings of 2026-10-26, 22:54Z to 23:36Z, filed verbatim in Build Room pull request 131 as docs/planning/phase4-planner-loop/agy-readings-pc-20261026.txt: agy updated itself from 1.3.6 to 1.4.7 that day; --print must carry a value, so a bare --print is refused and a --print followed by a flag takes the flag as its prompt; with --input-format stream-json, standard input starts print mode without --print; the init event naming gemini-4-argon-high was written about 12 seconds before any input was sent, while agy waited for it; the only input line agy accepted is {"event":"user","message":{"role":"user","content":...}}; agy offers no argument that limits a run to read-only tools, and --disable-slash-commands disables slash commands and skill expansion in print mode; my own agy has plugins enabled, among them gdrive, gdocs and data-agent-kit with 11 MCP servers.
+A2. Where my agy lives. On the PC it is ~/.local/bin/agy, owned by me, in a home directory of mode 0750. The planner user cannot run it unless my home is opened to it, which C1 of Amendment 1 forbids, and it changes whenever agy updates itself.
+A3. Why processes outlive a run. Amendment 2 C1 requires every process of the planner user to end with the run, but the Gateway's user can signal only the agy process it started, through sudo; what agy spawns is the planner user's and out of its reach.
+A4. The journal. B2 of Amendment 1 requires the init event's model and conversation id to be journaled with the command. The planner wire protocol carries neither.
+
+Part B: The command line (replaces the argument list of Amendment 1 C3)
+B1. The privilege rule's fixed arguments are, in this order: --input-format stream-json, --output-format stream-json, --model gemini-4-argon-high, --effort high, --mode plan, --sandbox, --disable-slash-commands, --print-timeout 900s. --print is not among them. Everything else in C3 stands: the exact binary (now the copy of Part C), the work on standard input, no shell, no other command, argument or user.
+B2. The work is one input line, {"event":"user","message":{"role":"user","content":<the work>}}, after which the executor closes agy's input, so each run is one turn.
+
+Part C: The planner user's own agy
+C1. The privilege rule names a copy of agy in a directory owned by root, which the planner user and the Gateway's user can read and run and neither can write. My PC act makes the copy from my agy, at 1.4.7 or the version that act names, and records its version and SHA-256.
+C2. The copy changes only by my later act, which copies it again from my agy, records the new version and SHA-256, and repeats, with the new copy, the readings of Part F before any counted run uses it. Nothing updates the copy on its own.
+C3. Before every run, the executor reads the copy's SHA-256. If it is not the one my latest act recorded, nothing starts and the round fails closed. Each run's evidence record carries the hash it read.
+
+Part D: No plugins, no MCP servers
+D1. The planner user has no agy plugin installed or enabled and no MCP server configured. If agy cannot run that way, no counted run proceeds.
+
+Part E: How a run's processes end (adds to Amendment 1 C3 and Amendment 2 C1)
+E1. A second privilege rule, and no other: the Gateway's user may run, as the planner user and as no other user, exactly /usr/bin/pkill -KILL -u <the planner user>, with no other argument. It permits no shell, no other command and no other argument. Amendment 1 C3's one privilege rule is read as these two.
+E2. After every run, however it ended, the executor runs that rule and then checks that no process of the planner user remains. If one does, no further run starts until the check passes.
+
+Part F: Proof before a counted run (adds to Amendment 1 C7 and Amendment 2 Part E)
+F1. My PC act's readings, filed before any counted run, add: the copy's path, owner, mode, version and SHA-256; both privilege rules as the system lists them; agy plugin list and agy mcp list, as the planner user, showing none; the init-timing reading of Part A, repeated with the copy, as the planner user, with the command line of Part B; and that no process of the planner user remains after a test run ends.
+
+Part G: The journal (clarifies Amendment 1 B2)
+G1. The executor's evidence record for each command, kept in the Gateway's directory with the init model, the conversation id, the times, the copy's hash and how the run ended, is the record B2 requires. The custody filing of each counted run files it beside the command's journal rows. The planner wire protocol does not change.
+
+Part H: Not changed
+- The ruling and Amendments 1 and 2 stand as signed, read with this amendment.
+- This amendment authorizes no counted run, no Railway variable, no change on the MacBook, no other provider, adapter, lane or Gateway, and no change on the PC: the copy, the two privilege rules, the planner user's empty plugin and MCP state and the readings belong to the PC act.
+- It is recorded with the ruling and Amendments 1 and 2, verbatim, in a FounderOS pull request, and filed in custody under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE.
+
+Part I: Signature
+Signed: Michael Daley
+Date: 2026-10-27 (UTC)
+Actor-Id: founder

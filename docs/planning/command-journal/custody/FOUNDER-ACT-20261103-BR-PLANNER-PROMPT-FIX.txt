@@ -1,0 +1,53 @@
+FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX: the Planner's prompt forbids commands, and the executor records how a run without a plan ended
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+origin/main when drafted: 03cd29f95fbd93f854cc236f61d93fcf85da8848
+Under: FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR and its Amendments 1 to 5 (Amendment 4 E1, the evidence record); FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE C1 and C4; FOUNDER-ACT-20261028-VELOCITY B1 to B4
+The builder read, before drafting: packages/gateway-daemon/src/agy-planner-executor.ts at 03cd29f; the run record, journal and export of Phase4-CR1 on my Mac; the executor's evidence record and agy's transcript of conversation 6ff39888-eb58-4f85-b42a-848fb6e863f6 on the PC, which I read on 2026-11-03 under sudo with a check that printed nothing if the transcript held credential-like text.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. What happened. Phase4-CR1 of FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS was interrupted on 2026-11-03 and the set is spent. Its one planner command, cmd_planner_aeac012967b496da88a142b3a86a54b3, was dispatched on gemini-4-argon and failed planner_reported_failure. The executor's evidence record says agy exited 0 at 02:28:55Z with outcome unparseable_plan. agy's transcript has four steps: my prompt; a read_file of README.md; its content; then a run_command of "git log -n 15 --oneline && find packages docs -maxdepth 3 -type f | sort". Nothing follows it: no command result, no refusal and no answer. agy ended the turn and reported SUCCESS without a plan.
+A2. Why. The prompt says "do not run any command that changes anything", which permits, by its wording, a command that only reads. agy runs headless in plan mode with its sandbox, where a command cannot be approved, and the turn ends when one is requested. The prompt was not tested against agy before the set. The builder wrote it.
+A3. What the evidence record could not say. It records the outcome as unparseable_plan and nothing of how the turn ended. The cause was found only by reading agy's own files on the PC under sudo.
+A4. What this act does not do. agy's arguments, which the PC's sudo rule fixes character for character (Amendment 3 B1(a) of the ruling), are not changed, so the command tool cannot be switched off here. The prompt is the lever this act uses. A prompt steers the model and does not bind it, which is why Part D names a rehearsal before any counted set.
+
+Part B: The change
+B1. In plannerPrompt in packages/gateway-daemon/src/agy-planner-executor.ts, the second line,
+  "Write an Implementation Plan for the goal below. Plan only: do not modify, create or delete any file, do not run any command that changes anything, and do not contact any service."
+becomes
+  "Write an Implementation Plan for the goal below. Plan only. You may read files in your working directory with your file-reading tool. You may not run any command or program of any kind, even one that only reads: a request to run one ends your turn with no plan. Do not modify, create or delete any file, and do not contact any service. Give your whole answer in this one turn."
+No other line of the prompt changes.
+B2. The evidence record of Amendment 4 E1 gains three fields, written with the run's closing record, and only for a run that started agy:
+  1. streamEvents: the value of the event key of each line agy wrote after init, in order, each only if it matches ^[a-z_]{1,32}$ and otherwise as "other", at most 64 entries, then "truncated" if more;
+  2. resultStatus: the status of agy's result event if it is a string matching ^[A-Z_]{1,32}$, otherwise null;
+  3. responseBytes: the UTF-8 byte length of the result's response if it is a string, otherwise null.
+No text that agy or the model wrote is recorded, and no record's other field changes meaning. A record written before this change, without the three fields, stays readable, and boot's closing of stale records is unchanged.
+B3. Paths: packages/gateway-daemon/src/agy-planner-executor.ts, and tests under test/. Nothing in the planner wire protocol, packages/control-plane, packages/journal, packages/gateway-protocol, the migrations, PINNED_AGY_ARGUMENTS, BANNED_AGY_ARGUMENTS, the sudo rule or anything on the PC. If the change needs any other path, the builder stops and asks me.
+B4. Tests: the prompt carries B1's sentence and no longer says "changes anything"; a fake agy that writes a tool-call line and then a SUCCESS result with no JSON leaves a record with outcome unparseable_plan, streamEvents naming each line's event, resultStatus SUCCESS and its responseBytes; an event value outside the pattern is recorded as "other"; a 65th line yields "truncated"; and a record without the new fields is closed at boot as before. Each test fails when the change it covers is reverted, and the builder shows that, as for pull request 141.
+
+Part C: Review, merge and filing
+C1. Review: Codex Tier-2 of the exact final head under FOUNDER-ACT-20261028-VELOCITY B1 to B4. Advisory reviews are dispositioned under C4 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE.
+C2. Merge: my separate SHA-named authorization. Merging deploys the control plane (rare-enjoyment), whose code this does not change; under B3 of FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY that authorization also authorizes the deploy, and the builder verifies it reached SUCCESS and that its boot.start names the merge commit.
+C3. Order with FOUNDER-ACT-20261103-BR-ROOM-STATUS-OPTIONAL-TYPES: the two pull requests touch different files and may land in either order; each needs its own authorization.
+C4. Filing: under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, after the merge, with this act verbatim, its review, the merge verification and the deploy reading.
+
+Part D: What comes after, named and not authorized
+D1. The PC's Gateway runs from ~/buildroom-gateway-2a56dab and does not change when Build Room main does. The fix reaches the planner only through my separate act that updates the PC's checkout to the merge commit and restarts the service, with readings before and after.
+D2. One uncounted rehearsal round, under my separate act, before any new counted set, to show the prompt holds against agy on the PC.
+D3. A new counted-run act for a fresh set, after D2 passes.
+D4. The custody filing of FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS under its F2, now due because the set is spent, under its own authorization.
+
+Part E: Not authorized
+- Any change beyond Part B; any change to agy's arguments, the sudo rule, the PC, a Railway variable, a Neon role, a secret or a Gateway host.
+- Any run, counted or not; the PC checkout update; the rehearsal; a new counted set.
+- Any merge without my separate authorization.
+
+Signed:
+
+— Michael Daley
+
+Date:
+
+Actor-Id: founder
