@@ -1,0 +1,629 @@
+FOUNDER-ACT-20261112-BR-PHASE4-COUNTED-RUNS: the builder's audit record under F2, from the act's drafting through the F3 draft, its transfers and the rulings on it. It is the builder's session log, verbatim from the entry that opens this act; names and addresses were masked when written; times are UTC
+
+=== Counted-run act for a third set: drafted at the Founder's line ===
+16:3xZ    Founder line, verbatim: "draft the counted run act".
+          Reads:
+          - Build Room origin/main 6b80c22 (16:36:56Z); one open PR, 151 (test-only, last updated 11-09).
+          - FounderOS main e7484ce (973717d is its ancestor). In its 973717d..e7484ce diff, no changed
+            registry line names antigravity, gemini, claude-code, codex, builder or architect.
+          - The runner checks only the FounderOS checkout's commit and cleanliness (entry.ts:85).
+          - counted-run.ts reads the registry vendored at FounderOS 8146435.
+          - In phase4/, only run-unit.ts changed since 3a1409a (REASK B8).
+          - PHASE4_COUNTED_RUN_TOKEN: S6 of BEARER-SHAPE Amendment 5 was a check (CONFORMS 11-05), not a rotation.
+          Built /tmp/reaskmut at 6b80c22 (clean tree): tsc --build --force, 16:39:49Z.
+          Terms set3/phase4-counted-run3-terms.json:
+          - 1927 B, SHA-256 5a031647b2a96849080795ce3c1d72eed3202d8b5e33ca4a956ccbdcb47231d2.
+          - Differs from R11's terms (221b94c9) only in setId (FOUNDER-ACT-20261112-BR-PHASE4-COUNTED-RUNS)
+            and the rooms:
+            CR1 e006e499-58a4-4392-a624-e6170a393e36
+            CR2 9bdb8cd9-8937-4058-9365-d27439e6142d
+            CR3 eb4ccc7a-e014-48a8-a019-986f8fe7babe
+          - Room ids are random v4 and found in no scratchpad record.
+          - validatePhase4RunSet ok.
+          - Value set3/phase4-counted-run3-value.txt: 207 B, SHA-256 0fddbd2f...7d69; parseCountedRunConfig
+            accepts it, with actId = setId.
+          - All 3 scope paths exist at 6b80c22.
+          Draft set3/FOUNDER-ACT-20261112-BR-PHASE4-COUNTED-RUNS-draft.txt:
+          - 151 lines, 26390 B, SHA-256 1a1827903f58ccccd319a5a2bf46d23b5bef9dfc48909c84bf8616e7182335c9.
+          - The embedded terms and value match their files byte for byte.
+          - New against set 2's act (6ccac4bd), each to be put to the Founder:
+            - B2(5) as REASK B8;
+            - D3 8h-before-apt;
+            - D5 reboot-required, uptime and apt readings;
+            - D6 stale terms (PR 151);
+            - E3 builder plan check and recommendation (standing Amendment 2 D2);
+            - E5 window: 60-min gap ends the set; bound min(apt, 14h); builder backstop as
+              standing Amendment 1 Part B; checks as Amendment 1 C1;
+            - F1 re-ask evidence (REASK E2/E3).
+          Not signed. Nothing set in Railway.
+2026-11-12T17:54:12Z Founder in session, verbatim: "I sign FOUNDER-ACT-20261112-BR-PHASE4-COUNTED-RUNS (1a182790…35c9) as delivered".
+          Signed copy: set3/FOUNDER-ACT-20261112-BR-PHASE4-COUNTED-RUNS-signed.txt, SHA-256
+          1a1827903f58ccccd319a5a2bf46d23b5bef9dfc48909c84bf8616e7182335c9 (= the draft delivered).
+          The act is in effect. Terms 5a031647…31d2. Next, per D3's own order: D4 (Mac), then the Founder's
+          PC readings as D5 lists them, then D3 (set and deploy). Nothing set in Railway yet.
+2026-11-12T17:54:50Z Set 3: sent D4 Mac steps (checkout ~/phase4-set3/br at 6b80c22; terms ~/phase4-set3/phase4-counted-run3-terms.json expected 5a031647…31d2, 1927 B; fos 973717d clean) and the PC readings block (R11's, unchanged). D3 held until both verified, D6 re-checked and the 8h-before-apt condition read.
+2026-11-12T18:09Z Set 3 readings (Founder paste; user name, host name and home paths masked as <user>/<host>/<home>):
+          [Scrollback, R11 evidence] R11 CR3 approval: POST plan-decision on room 20813999 returned HTTP 201.
+            planHash 1fae4b7c…e25e; eventId evt_84e3bc71-e9a0-4ba9-85dc-e9f07fc3c4d3; seq 6;
+            plannerCommandId cmd_planner_202fcad1fbc4b5dfa9276c120d932505; journal seq 178,
+            chainHash 181ee1b57e31a1db80c57c4df635745094f5985e2efec17642e9f18a7979d4c2; state BUILDING.
+          D4 Mac: home /Users/<user>; node v22.23.4; ~/phase4-set3/br HEAD 6b80c22, dirty 0;
+            npm ci 196 packages (11 audit advisories, not acted on, as before); evidence entries 0.
+          D4 terms: ~/phase4-set3/phase4-counted-run3-terms.json SHA-256 5a031647…31d2, 1927 bytes;
+            fos HEAD 973717d, dirty 0. D4 PASS.
+          PC readings, as D5 lists them:
+            - service active; WorkingDirectory <home>/buildroom-gateway-6b80c22;
+              ActiveEnterTimestamp Wed 2026-11-11 22:00:47 EST (03:00:47Z);
+            - halt exit 1; pgrep exit 1; agy 4341b80b…94ed4;
+            - uptime -s 2026-11-07 13:43:31; reboot-required exit 1;
+            - apt-daily-upgrade next Fri 2026-11-13 06:09:35 EST (11:09:35Z), 17h left.
+            PASS.
+          Builder at 18:08:55Z:
+            - origin/main 6b80c22 (D6: terms not stale);
+            - newest deployment a0b7bde3 SUCCESS (no value); staged null; /version 6b80c22,
+              startedAt 16:24:18.327Z; /health 200.
+          D3 condition: 17h00m (>= 8h) before the apt run. MET.
+          Window bound after D3 = min(11:09:35Z Fri, D3 deployment + 14h); the 14h term binds if
+          D3 is before 21:09:35Z.
+          PC readings must be retaken within 15 min before CR1.
+2026-11-12T18:17Z SET 3 D3 VERIFIED. The window opens and E4's freeze begins.
+          Founder: "deploy is up".
+          Deployment 568e87dd-4b0d-4970-93c7-dc9209ba8ef4, created 18:12:13.849Z by the Founder,
+            SUCCESS (updated 18:15:40.427Z), commit 6b80c22. Staged null before and after.
+          Deploy log:
+            - boot.start 18:15:36.667Z, commit 6b80c22, production;
+            - boot.preflight br_app_runtime, migrationsPresent 10, privilegeAudit enforced,
+              forbidden [] / [];
+            - boot.listening 18:15:36.771Z :8080;
+            - no boot refusal;
+            - gateway.leadership.serving 18:16:16.810Z, generation 157.
+          /version 18:15:47Z: 6b80c22, startedAt 18:15:36.667Z (new). /health 200.
+          a0b7bde3 REMOVED 18:15:45.523Z.
+          Gateway (source masked): heartbeat 503 at 18:15:42, 18:15:52 and 18:16:12; 409 at 18:16:42Z;
+            session-challenge 200 and session-start 200 at 18:16:52Z; planner/poll 200 from 18:16:52Z;
+            heartbeats 200 every 10 s from 18:17:02Z.
+          Window bound (E5(b)): min(apt 11:09:35Z Fri, 18:12:13.849Z + 14h) = 2026-11-13T08:12:13Z.
+            E5(c)(2) backstop at 07:42:13Z.
+          E5(d) checks armed:
+            - trig_01SkUHgBVTJ1m1Cp9KTcyZxe, 07:12Z (60 min before the bound);
+            - trig_01W4KgMYhXqErXpe7uZX9ExU, 07:42Z (30 min; backstop).
+          Decision checks: armed at each settle from the HTTP log.
+18:17:15Z Builder D5 readings for CR1 (window to 18:32:15Z):
+          origin/main 6b80c22 exactly; /health 200; /version 6b80c22 (568e87dd);
+          568e87dd SUCCESS serving; nothing building; staged null;
+          Gateway heartbeats and polls 200 every 10 s. PASS.
+2026-11-12T19:1xZ SET 3 Phase4-CR1 STARTED. Founder paste: "Phase4-CR1: entry passed at 2026-11-12T19:07:22.919Z;
+            room e006e499-58a4-4392-a624-e6170a393e3[6]" (last character cut in the paste).
+          D5 DEVIATION:
+            - The builder's D5 readings were taken at 18:17:15Z, valid to 18:32:15Z. The run started
+              19:07:22.919Z, 50 min after them.
+            - The Founder's Step 4 PC readings were not received before the start.
+            - The builder had said: if starting after 18:32Z, paste the PC readings and wait for a
+              re-read. That did not happen.
+            - The act's D5 says what happens when a reading fails, not when one is missing.
+            - Put to the Founder for a ruling.
+          Builder reconstruction of the 15 min before entry, read at 19:11:15Z:
+            - list-deployments: newest 568e87dd SUCCESS, none newer;
+            - /version 6b80c22, startedAt 18:15:36.667Z (unchanged since D3), so no deploy;
+            - origin/main 6b80c22, last commit 2026-11-11T21:19:18-05:00;
+            - staged null (18:17Z and 19:11Z); /health 200.
+            - HTTP log 18:54:13Z-19:08:29Z: Gateway heartbeat 200 x85 and planner/poll 200 x90,
+              every 10 s; no non-200 from any client.
+            - Runner entry calls: /version 200, /control-plane/enrollments 200, /rooms 201,
+              /rooms/e006e499.../events 201, planner-round 202 then 200 (polling);
+              Gateway planner/report 200 x5 by 19:08:29Z.
+          The runner's own entry check (entry.ts) passed: the control plane serves the act's commit;
+            FounderOS clean at 973717d; Gateway named, enrolled and online with a planner executor;
+            T2 surface registered; seat lanes valid.
+2026-11-12T19:14:14Z FOUNDER RULING (builder's session), verbatim: "1". On the D5 deviation of Phase4-CR1, option 1:
+          CR1 stands, with the deviation on record.
+          - The builder's log reconstruction stands in for the builder's D5 readings.
+          - The Founder's PC readings close the PC side: Step 4 output owed. If taken now, pgrep exit 0
+            is expected during the run.
+          - The deviation and this ruling go into the F3 filing.
+          For CR2/CR3: Founder pastes PC readings -> builder re-reads -> builder says "go" -> start.
+2026-11-12T19:15Z Set 3 Founder PC readings, taken about 19:14Z, after agy exited (masked):
+          - service active; WorkingDirectory <home>/buildroom-gateway-6b80c22;
+            ActiveEnterTimestamp Wed 22:00:47 EST, unchanged, so no restart;
+          - halt exit 1; pgrep exit 1 (round 1's agy had finished: final Gateway report 19:14:14Z);
+          - agy 4341b80b…94ed4; uptime -s 2026-11-07 13:43:31; reboot-required exit 1;
+          - apt next Fri 06:09:35 EST (15h).
+          The PC side of D5 is closed per the Founder's ruling "1".
+          SET 3 CR1 ROUND 1 SETTLED at plan_review (HTTP log of 568e87dd, sources masked):
+          - Gateway planner/report every 20 s from about 19:07:3xZ, the last at 19:14:14.074Z;
+          - runner: planner-round 19:14:15.527Z; GET journal 19:14:15.657Z (live check);
+            GET plan 19:14:15.770Z; then GET /rooms/e006e499... every 5 s (awaiting decision).
+          - Round time about 6.8 min. No re-ask seen: no second dispatch and no failed report.
+            To confirm from the runner's lines.
+          Decision deadline about 23:14:14Z (settle + 4h). E5(d) checks armed:
+          - trig at 22:13Z (60 min), 22:58Z (15 min) and 23:13Z (end).
+          - The 19:30Z settle check trig_017b5FnkAbBNHQZuukjdcZhU deleted as moot.
+2026-11-12T19:1xZ Set 3 CR1 runner lines (Founder paste; user name in path masked):
+          - entry passed 19:07:22.919Z, room e006e499-58a4-4392-a624-e6170a393e36;
+          - round 1 settled (plan_review) 19:14:15.544Z;
+          - LIVE CHECK 19:14:15.725Z: command cmd_planner_4d8dafcc80c49df73e1be3e5e99360e1,
+            init_model gemini-4-argon-high,
+            provider_conversation_id cd90200b-c9fe-48eb-ad03-891fed3ba0b8 -> PASSED;
+            "the run continues and counts" (E2).
+          - PLAN file evidence/plan-c421cf1e857b92b8e16a8df958886e041cd26ee87f60f76cb800437ad51968f3.json,
+            planHash c421cf1e…68f3, command cmd_planner_4d8dafcc…
+          One attempt in round 1: no re-ask. Decision deadline 23:14:15.544Z.
+          Plan text requested for the E3 check.
+2026-11-12T19:5xZ Set 3 CR1 round 1 PLAN CHECK (E3).
+          Plan saved as set3/plan-cr1-round1-c421cf1e.json. planHash recomputed c421cf1e…68f3 (= the
+            runner's); judgePlanDoc ok; 28,133 characters.
+          Checked against /tmp/reaskmut at 6b80c22 (clean): 11 subjects of false statements.
+          (Founder scrollback in the same paste: Step 4 PC block run in a Mac terminal, read-only,
+            harmless.)
+          1. Three act ids appear nowhere in the repo: FOUNDER-ACT-20261031-PHASE4-STEPS-3-6,
+             -20261103-AGY-PLANNER and -20261108-PHASE4-CR1 (git grep: 0 files each).
+          2. madbridge-consumed adapter-v1.ts exports only interfaces; planner-loop imports only the
+             type ExecutionIdentity. DISPATCH_POLICY and retryBudgetTransition are from
+             seat-registry/dispatch-policy.ts; authorizeRoute is a PlannerLoop dep;
+             ROUTE_MISMATCH_ERROR does not exist.
+          3. verify-check.sh reads neither README nor ci.yml; it runs declared checks (path-audit,
+             attribution-selftest, typecheck).
+          4. No founderGoal: T1 carries goal; prepareFounderGoal (lines 50-73) checks the goal string
+             only (non-empty, <= 20,000, no credential text), then adds founder_goal evidence.
+          5. The plan-decision body key is decision (not eventType); attribution is required;
+             eventId is allowed.
+          6. T5 -> BUILDING and T22 -> CLOSED_ABANDONED; no APPROVED or CANCELLED states.
+          7. No code rejects a non-read tool; the restraint is the prompt plus --mode plan --sandbox.
+          8. The plan_refused log line is {level, at, ts, roomId, commandId, classification, reason};
+             it has no event key and no attempt.
+          9. PlannerRuntime does not exist (it is PlannerPort); the worker calls executor.start.
+          10. Line references: GOVERNED_PATH_EVENTS is at lines 27-33; agy-planner-executor.ts has
+              2003 lines (the plan says 1-800); README side-track is at lines 34-47 (the plan says
+              38-50).
+          11. phase4:counted-run requires 6 env vars (cli.ts:93); the plan says 2.
+          Checked true:
+          - README structure and line numbers (311; Verifying 145-236; Takes-an-argument 217-235;
+            Phase 2 gate 237-279; Ownership 280-285); banner 7-11; tsconfig:32; package.json:31;
+            controlling input hashes (both match).
+          - PlanStore (build_room_plans, 0010_plan_store, append-only trigger, xmin, re-judge on read).
+          - plan-read routes and errors; FEEDBACK_MAX_LENGTH; authorizationRef; cancel binding;
+            recovery; routes 16kb/256kb; MAX_PLANNER_PAYLOAD_BYTES; record path; factory; AGY lane;
+            counted-run routes and 503s; MAX_ROUND_ATTEMPTS 3; G2 facts; revision fields;
+            init -> unresolved.
+          - agy: hash check, sudo line, pinned --mode plan --sandbox, pkill reap, halt file.
+          Recommendation (Amendment 2 D2): REVISE.
+          Feedback set3/revision-feedback-cr1-round1.txt: 3341 B, 14 lines,
+            SHA-256 be0945d477f095b0d284b165c9f0389867248b557d6c99b96235fe948e9929b9.
+            validatePlanDecisionBody ok; containsCredentialMaterial false.
+2026-11-12T21:16Z Set 3 CR1 round 1 DECISION: the Founder sent plan.revision_requested on c421cf1e…68f3,
+            feedback be0945d4…29b9 (Founder: "HTTP 201").
+          HTTP log: POST /control-plane/rooms/e006e499.../plan-decision 201 at 21:14:41.971Z (curl).
+            That is 2h00m26s after round 1's plan_review (19:14:15.544Z): within B5's 4 h.
+          Round 2 opened: runner POST planner-round 202 at 21:14:43.773Z; Gateway planner/report from
+            21:14:47Z every ~20 s.
+          Round 1 reminders deleted as moot:
+            trig_01FwMCV7c5xwqzKqwasXWeDb, trig_01XyoP9XkL8oHeV6jRt1gx5D, trig_01S3KjS8X2fh5NgMtSVoVXJE.
+          Round 2 settle check armed at 21:38Z.
+2026-11-12T21:22Z Set 3 CR1 ROUND 2 SETTLED at plan_review.
+          Runner PLAN line: evidence/plan-c4ff00adfc73ffb01311478f2d3d06b8d41a1319fe164c0b7ace7c664a9eb493.json,
+            planHash c4ff00ad…b493, command cmd_planner_828393372669582053adfdbe43c02d20.
+          HTTP log: Gateway planner/report 21:14:47Z-21:18:07.414Z (the last); runner GET plan 200 at
+            21:18:12.259Z. The Planner's turn took about 3.3 min.
+          Deploy log since 19:00Z: no planner.plan_refused line, so no plan_invalid re-ask. The record will
+            confirm the attempt count.
+          Decision deadline about 01:18:07Z. E5(d) checks:
+            - trig_012iHbx2tT6Kzax6kdU49edb at 00:17Z;
+            - trig_01ScqfaavXxbEddFbnQHuAPp at 01:02Z;
+            - trig_01LH62atgwUE568xzbxiz9a9 at 01:17Z.
+          The 21:38Z settle check trig_01AXAyjU1j4thT9uYREwTUTL was deleted as moot.
+2026-11-12T21:4xZ Set 3 CR1 round 2 PLAN CHECK (E3). Plan saved as set3/plan-cr1-round2-c4ff00ad.json.
+          planHash recomputed c4ff00ad…b493 (= the runner's); judgePlanDoc ok; 29,027 characters
+            (round 1: 28,133).
+          14 fields changed. All 11 corrections taken as written:
+          - 3 fake act ids replaced by FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR (13 repo files; cited
+            in agy-planner-executor.ts:3) and FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS (cited by cli.ts,
+            attempt-store, live-check);
+          - madbridge text corrected; verify-check claims and risk removed; goal; decision body; states;
+            the non-read-tool claim removed; log line; PlannerPort/executor.start; line refs; six env vars.
+          New claims verified:
+          - attest returns ExecutionIdentity (PlannerPort, planner-loop.ts:298);
+          - authorizeRoute is a dependency (planner-loop.ts:371, 753);
+          - founder_feedback and founder_goal digests are in evidence (plan-decision.ts:362,
+            founder-goal.ts:71).
+          Re-verified from round 1: agy is root-owned (agy-planner-executor.ts:29, 212); detached checkout
+            (line 1934); the adjudication token is used only by plan-decision.
+          False statements found: 0. Uncorrected statements dropped: none. Statements made false: none.
+          Judgment call put to the Founder: "counted-run wiring under FOUNDER-ACT-20261102..." The routes
+            were added 2026-10-16 (ba47280); the runner was added 2026-11-02 under that act's D2
+            (1931ad4). Read as the runner, it is true.
+          E2 measures, CR1: round 1 11 false, 28,133 chars; round 2 0 false, 29,027 chars.
+          Recommendation (Amendment 2 D2 as E3 adopts it): APPROVE c4ff00ad…b493.
+2026-11-12T21:45Z Set 3 CR1 round 2 DECISION: the Founder approved c4ff00ad…b493 ("HTTP 201").
+          HTTP log: POST plan-decision 201 at 21:44:19.137Z. That is about 26 min after round 2 settled
+            (21:18:12Z): within B5.
+          Runner closing reads: GET /rooms/e006e499.../export 200 at 21:44:20.959Z; GET journal 200 at
+            21:44:21.051Z; GET planner-round 200 at 21:44:21.091Z. Runner exit about 21:44:21Z.
+          Outcome line not yet received.
+          Round 2 reminders deleted as moot:
+            trig_012iHbx2tT6Kzax6kdU49edb, trig_01ScqfaavXxbEddFbnQHuAPp, trig_01LH62atgwUE568xzbxiz9a9.
+          E5(a): CR2 must start by about 22:44:21Z. Checks armed:
+            - trig_01BzKKXAKp4aBTKEPhhmVTyk at 22:29Z;
+            - trig_018P7kbxcbZXDXeCjhUxJgkp at 22:45Z.
+2026-11-12T21:47:17Z SET 3 Phase4-CR1 PASSED (Founder paste of the runner): "Phase4-CR1: passed at 2026-11-12T21:44:21.116Z;
+            record SHA-256 83757a5c1a22e1314c3a6e5d0f88ca1d58d01277d6f0927f1d08c39431b5c09c"; "Next label: Phase4-CR2."
+          This is the first counted pass of set 3 (C1). Two rounds, one attempt each by the log; no re-ask
+            (to confirm from the record).
+          Plans: c421cf1e (11 false) -> c4ff00ad (0 false, approved).
+          D5 deviation at CR1's start: ruled "1" by the Founder; on record for F3.
+          E5(a): CR2 must start by 22:44:21Z. Awaiting the Founder's PC readings, then the builder's go.
+2026-11-12T21:48:41Z Set 3 D5 readings for CR2:
+          Founder PC readings (paste about 21:48Z; masked):
+            - active; WorkingDirectory <home>/buildroom-gateway-6b80c22; ActiveEnterTimestamp unchanged
+              (Wed 22:00:47 EST);
+            - halt exit 1; pgrep exit 1; agy 4341b80b…94ed4; uptime -s 2026-11-07 13:43:31;
+              reboot-required exit 1;
+            - apt next Fri 06:09:35 EST (13h).
+            PASS.
+          Builder at 21:48:41Z:
+            - origin/main 6b80c22 exactly; /version 6b80c22, startedAt 18:15:36.667Z (568e87dd still
+              serving, no deploy); /health 200; staged null;
+            - Gateway heartbeats 200 every 10 s through 21:48:37Z.
+            PASS.
+          Builder GO given at about 21:49Z. Start window: until 22:03Z (15 min) and within E5(a) by
+            22:44:21Z.
+2026-11-12T21:5xZ SET 3 Phase4-CR2 STARTED (Founder paste): "entry passed at 2026-11-12T21:51:00.595Z;
+            room 9bdb8cd9-8937-4058-9365-d27439e6142d".
+          - Within D5's 15 min of the readings (21:48Z): yes.
+          - Within E5(a) (CR1 exit 21:44:21Z + 60 min): yes, 6.7 min after.
+          E5(a) checks deleted as moot: trig_01BzKKXAKp4aBTKEPhhmVTyk, trig_018P7kbxcbZXDXeCjhUxJgkp.
+          Round 1 settle check armed at 22:08Z.
+2026-11-12T22:0xZ Set 3 CR2 ROUND 1 SETTLED (Founder paste): "round 1 settled (plan_review) at 2026-11-12T22:00:00.740Z".
+          PLAN evidence/plan-00eee4cdae20823aab046fcf016c9ea116951d075dd845757311dee526366bcc.json,
+            command cmd_planner_7fff6b3bd5a83e0c7d0452553f7c8ad0.
+          Decision deadline 02:00:00.740Z. E5(d) checks armed at 00:59Z, 01:44Z and 01:59Z.
+          The 22:08Z settle check was deleted as moot. Plan text requested.
+2026-11-12T22:3xZ Set 3 CR2 round 1 PLAN CHECK (E3). Plan saved as set3/plan-cr2-round1-00eee4cd.json.
+          planHash recomputed 00eee4cd…6bcc (= the runner's); judgePlanDoc ok; 28,834 characters.
+          Controlling inputs (3) match; contract structure, title, §1-§12 and Changelog line numbers
+            true. All 33 term definitions checked against their cited lines in §1.2, §1.4, §2 (table
+            138-148, 153-218), §3, §4.1, §5.1-5.5, §6.1-6.2, §7.1, §8.2 and §12: true.
+          External citation lines: 34 of 38 true.
+          contract-integrity-scan 53-119, path-audit 48-85 and regex at line 82: true.
+          False statements: 5 subjects.
+          1. recorded_state and BRJ:a:1/b:1/d:1 do not appear in the contract (they live under
+             packages/journal).
+          2. Lines 13-25 hold only DEC-20260827-01; the others are in §11 (614-653).
+          3. Wrong citation lines: decision-row spec 31->32 and 65->66; planner-loop 15->14; 170 is blank.
+          4. "Only automation reading the contract" omits test/phase4-stop-gate-map.test.ts (line 28;
+             asserts 15 §10 rows at lines 32 and 95-97). No functional risk from a Glossary after §12.
+          5. ROOOTS -> ROOTS (path-audit.sh:55).
+          Recommendation: REVISE.
+          Feedback set3/revision-feedback-cr2-round1.txt (hash and size below);
+            validatePlanDecisionBody ok; no credential material.
+          Feedback: 1878 B, SHA-256 91c05e93e1fee07d0fcd288b5a4bb691c71f08efd10cc9378ca85fa3efb5b96e.
+2026-11-12T22:2xZ Set 3 CR2 round 1 DECISION: plan.revision_requested on 00eee4cd…6bcc with feedback 91c05e93…b96e
+            (Founder: "HTTP 201").
+          HTTP log: POST plan-decision 201 at 22:20:05.749Z (20 min after settle; within B5).
+          Round 2 opened: POST planner-round 202 at 22:20:08.694Z.
+          Mac source address changed since 21:44Z (masked; runner unaffected).
+          Round 1 reminders deleted as moot:
+            trig_01RNSTh5hpvkYQz4Lt2vkamT, trig_014K6Z6dxtS1fF83QecExjzd, trig_01A2Cjbam9kDasbczf9rZp3M.
+          Round 2 settle check armed at 22:38Z.
+2026-11-12T22:2xZ Set 3 CR2 ROUND 2 SETTLED (Founder paste): "round 2 settled (plan_review) at 2026-11-12T22:22:39.246Z".
+          PLAN 7b17f532a3e381e1210b89ca614e530dee0834ef620ee36e704b53096a5fa1fd,
+            command cmd_planner_6d626bf5465a5855c27d8997504cfe97.
+          The round took about 2.5 min. Decision deadline 02:22:39.246Z.
+          E5(d) checks armed at 01:22Z, 02:07Z and 02:22Z. The 22:38Z settle check was deleted.
+
+2026-11-12T22:33:42Z CR2 round 2 plan received (Founder paste, second tab). Saved set3/plan-cr2-round2-7b17f532.json.
+          planHash recomputed 7b17f532a3e381e1210b89ca614e530dee0834ef620ee36e704b53096a5fa1fd (= the runner's); judgePlanDoc ok;
+          29,554 characters; no credential material. Fields changed from round 1: work_id, current_state,
+          constraints, components_and_boundaries, known_risks only (exactly the fields the feedback named).
+          All five round-1 corrections applied as written and verified at 6b80c22 (contract lines 159/169/829,
+          472, 510-517; s11 614-653 holds all nine DECs; d-row spec 32/66; planner-loop 14; stop-gate test
+          28/32/42-53/95-97; path-audit.sh ROOTS line 55).
+          Full re-check of every unchanged statement (contract ss1-8, 12; README 24/119; journal index.ts; specs a-d;
+          journal-serialization.test.ts; path-audit 48-85/82; integrity-scan 53-119; custody digests; npm scripts;
+          verify-check CHECKS): all true except one.
+          FALSE (present since round 1; builder missed it in the round-1 check): components_and_boundaries says the only
+          repository automation reading the contract is path-audit, secret-scan, contract-integrity-scan and the
+          stop-gate test. .github/workflows/claude-code-review.yml (lines 5, 160) and
+          .github/workflows/advisory-reviewers.yml (lines 5-6, 22-25) also read it.
+          Recommendation under E3: revise (round 3, the last). Feedback set3/revision-feedback-cr2-round2.txt,
+          1,165 B, SHA-256 c1853f92dc9e35dad59ddc4e8831ce54f5c9b4befa36e95ce82a312a9ef4c703;
+          validatePlanDecisionBody ok; no credential material. Decision due by 02:22:39Z.
+
+2026-11-12T22:35Z CR2 round 2 decision: Founder reported HTTP 201. HTTP log (deployment 568e87dd): POST plan-decision
+          201 at 22:34:35.592Z (51 ms), 11 min 56 s after settle; within B5. plan.revision_requested on 7b17f532...a1fd
+          with feedback c1853f92...c703. Round 3 (last) begins. Round-2 decision triggers deleted
+          (trig_01LHUveNr3pqcxTSQtEkzWQS, trig_01FxK3Z9qGH8d8GgdqcZfRqq, trig_01D9zdesLSFdm6iGkiTSank7).
+          No re-ask observed so far (no plan_refused). Round-3 settle check armed for 22:55Z.
+
+2026-11-12T22:37:00.853Z CR2 round 3 (last) settled plan_review (Founder paste): planHash
+          a7e0dcdbb11e80537c28a77c7813622d157a5a4058eab82ba93b51537c79c01d, command cmd_planner_ee2f100355f72c28b6c3212591dc089b,
+          plan file ~/phase4-set3/evidence/plan-a7e0dcdb...c01d.json. 2 min 25 s after the revision.
+          Decision due by 02:37:00.853Z. Settle check trig_012Q5jJZhuvVuPAcTGPDueFH deleted; decision reminders armed
+          01:37Z, 02:22Z, 02:37Z.
+
+2026-11-12T22:45Z CR2 round 3 plan received (Founder paste). Saved set3/plan-cr2-round3-a7e0dcdb.json, rebuilt as round 2 with
+          only work_id and components_and_boundaries replaced by the pasted text; planHash recomputes to
+          a7e0dcdbb11e80537c28a77c7813622d157a5a4058eab82ba93b51537c79c01d (= the runner's), which proves no other field
+          changed. judgePlanDoc ok; 30,047 characters; no credential material.
+          The correction is applied verbatim from the feedback (claude-code-review.yml lines 5/160; advisory-reviewers.yml
+          lines 5-6, 22-25; all verified at 6b80c22). Completeness of the "only automation" list re-checked: every
+          workflow run step, every test that walks directories (journal-sole-writer walks packages/ only; others .ts only),
+          custody-pin-check (no receipt table names the contract; selftest uses a temp fixture), eslint (.ts only).
+          No other reader. All other statements unchanged from round 2 and verified then.
+          Recommendation under E3: approve. Approve body validated (validatePlanDecisionBody ok). Due by 02:37:00.853Z.
+
+2026-11-12T22:51Z CR2 round 3 decision: Founder reported HTTP 201. HTTP log (deployment 568e87dd): POST plan-decision 201 at
+          22:50:36.556Z (49 ms), 13 min 36 s after settle; plan.approved on a7e0dcdb...c01d. Runner closing reads:
+          GET room 22:50:38.169Z, export 22:50:38.756Z, journal 22:50:39.422Z, planner-round 22:50:39.817Z.
+          CR2 outcome line from the runner not yet received (asked). Round-3 decision triggers deleted
+          (trig_01MHQ1QhudU9VJjNQ3wcLtEj, trig_01HzbHvTgdSoqpg6viY1pv3W, trig_01MjaqWdsG9cXh4aPEV6dHvZ).
+          E5(a): CR3 must enter within 60 min of CR2's exit (~22:50:40Z -> ~23:50:40Z). Checks armed 23:35Z, 23:48Z.
+          Re-ask count for CR2 so far: none observed (no plan_refused); to confirm from the record.
+
+2026-11-12T22:52Z Phase4-CR2 PASSED (Founder paste of runner line): passed at 2026-11-12T22:50:39.848Z; record SHA-256
+          3ae583b1ee5114bca0078391fc974d919c9f4ad93498a46e994b84ac6be47d81; Next label: Phase4-CR3.
+          Rounds: 3 (revision 22:20:05.749Z, revision 22:34:35.592Z, approval 22:50:36.556Z). Builder round-1 miss
+          (advisory workflows) caught at round 2 and disclosed; F3 note.
+          E5(a): CR3 must enter by 23:50:39.848Z. Bound E5(b) 08:12:13Z unaffected.
+
+2026-11-12T22:52:40Z Set 3 D5 readings for CR3:
+          Founder PC readings (paste about 22:52Z; masked): active; WorkingDirectory <home>/buildroom-gateway-6b80c22;
+            ActiveEnterTimestamp unchanged (Wed 22:00:47 EST); halt exit 1; pgrep exit 1; agy 4341b80b...94ed4;
+            uptime -s 2026-11-07 13:43:31 (unchanged); reboot-required exit 1; next apt-daily-upgrade
+            Fri 06:09:35 EST (11:09:35Z), unchanged. PASS.
+          Builder readings at 22:52:23Z: origin/main 6b80c22 exactly; /health 200; /version 6b80c22 startedAt
+            18:15:36.667Z (568e87dd); 568e87dd SUCCESS, latest, nothing building; staged null; Gateway heartbeats
+            200 every 10 s (22:51:39Z to 22:52:19Z). PASS.
+          Builder "go" given. D5 window to about 23:07Z; E5(a) deadline 23:50:39.848Z.
+
+2026-11-12T22:54:00Z SET 3 Phase4-CR3 STARTED (Founder paste: "Phase4-CR3: entry passed"; no time in the paste).
+          HTTP log (deployment 568e87dd): runner's entry reads 22:53:22.8Z to 22:53:23.8Z (prior rooms' export,
+            journal, planner-round; /version; enrollments); POST /rooms 201 at 22:53:23.883Z (room eb4ccc7a);
+            POST events 201 at 22:53:24.468Z; POST planner-round 202 at 22:53:24.539Z; round polling every ~5 s.
+          - Within D5 (readings 22:52:23Z, to 23:07:23Z): yes.
+          - Within E5(a) (CR2 exit 22:50:39.848Z + 60 min = 23:50:39.848Z): yes, about 2 min 44 s after.
+          E5(a) triggers deleted (trig_01ChsQ7pXRvdKa5NkEA5uZdm, trig_013ASr8RywRJzSFB6Kq99NMP). Round-1 settle check
+          armed 23:13Z.
+
+2026-11-12T23:07:21Z CR3 round 1 settled plan_review at 2026-11-12T23:03:12.637Z (Founder paste): planHash
+          b45e69830d9073c51b4880f3af20782aca7028935273fe1edd50962ba98a8176, command cmd_planner_4cab80d3befa573a14da8c43f7e51e5a,
+          plan file ~/phase4-set3/evidence/plan-b45e6983...8176.json. 9 min 48 s after the round opened.
+          Decision due by 03:03:12.637Z. Settle check trig_014WTXv6XGYpu2ZaF5G3jQrF deleted; reminders armed 02:03Z, 02:48Z,
+          03:03Z. Note: E5(b) bound 08:12:13Z (backstop 07:42:13Z) caps any later round's 4 h decision time.
+
+2026-11-12T23:14:45Z CR3 round 1 plan received (Founder paste). Saved set3/plan-cr3-round1-b45e6983.json; planHash recomputed
+          b45e69830d9073c51b4880f3af20782aca7028935273fe1edd50962ba98a8176 (= the runner's); judgePlanDoc ok; 37,558 characters;
+          no credential material. Controlling inputs' SHA-256 match the files at 6b80c22.
+          Checked at 6b80c22: runbook (159 lines), the two custody inputs and the receipt's Findings 4/7, store.ts, routes.ts,
+          server.ts, enroll.ts, doctor.ts, commands.ts, bin.ts, staging-lock.ts, lanes.ts and disposition.ts, path-audit,
+          secret-scan, integrity scan, package.json, AGENTS.md. Eight statements FALSE:
+            1 runbook "six sections" (it has seven); 2 AGENTS.md line 40 (blank; rule at 35); 3 staging_lock_busy
+            (not in the repo; StagingLockBusy.code is staging_busy_or_recovery_required); 4 doctor "stopCondition: true"
+            and field names (doctor prints renderDoctor text only, bin.ts 147); 5 refusals table written "whenever"
+            refused (only 409s on Founder routes; redeem 400/409); 6 founder_act log line (no code emits it; runbook
+            line 23 only); 7 known_risks ":line" example (outside path-audit's regex, skipped); 8 deny row attributed
+            to B5 (runbook 41-42).
+          Recommendation under E3: revise. Feedback set3/revision-feedback-cr3-round1.txt, 3,201 B, SHA-256
+          f86222b26016e8eccb2121804941d6054e87007335ef5520debc28da9f515faf; validatePlanDecisionBody ok; no credential
+          material. Decision due by 03:03:12.637Z.
+
+2026-11-12T23:18:29Z CR3 round 1 decision: Founder reported HTTP 201. HTTP log (deployment 568e87dd): POST plan-decision 201 at
+          23:18:04.448Z (69 ms), 14 min 52 s after settle; within B5. plan.revision_requested on b45e6983...8176 with feedback
+          f86222b2...5faf. Round 2 begins. Round-1 decision triggers deleted (trig_0157BjxeTj6SPYjdtfNGLdAp,
+          trig_01RVBVr8NQ56yJAJnDF9THzb, trig_01WyhNM8zg1pjxYCGwUMSm8G). Round-2 settle check armed 23:38Z.
+
+2026-11-12T23:35:33Z CR3 round 2 settled plan_review at 2026-11-12T23:22:15.360Z (Founder paste): planHash
+          427217b4c338b838d6b9649fa4211b42babff3c69e2cdc27806e3288b9ced0d0, command cmd_planner_3232ea81e79e24d0b0cabde7cfc3f796,
+          plan file ~/phase4-set3/evidence/plan-427217b4...d0d0.json. 4 min 11 s after the revision.
+          Decision due by 03:22:15.360Z. Settle check trig_01RFDntfmkRQWbQhwWKGJV3w deleted; reminders armed 02:22Z, 03:07Z, 03:22Z.
+
+2026-11-12T23:43:02Z CR3 round 2 plan received (Founder paste). Saved set3/plan-cr3-round2-427217b4.json; planHash recomputed
+          427217b4c338b838d6b9649fa4211b42babff3c69e2cdc27806e3288b9ced0d0 (= the runner's); judgePlanDoc ok; 40,271 characters;
+          no credential material. Diff from round 1: work_id plus only the fields the eight corrections touch; all eight
+          applied as written; every new line number verified at 6b80c22 (staging-lock.ts 50; enroll.ts 68-79; bin.ts 147;
+          doctor.ts 121-125, 136-138, 145-156; store refusal sites; routes 112-123; runbook 41-42; AGENTS.md 35;
+          path-audit 82). Founder-route non-2xx set confirmed complete (no app- or router-wide middleware before
+          founderRouter; server.ts 333-334; routes.ts has no router.use).
+          Judgment call, disclosed to the Founder: error_and_failure_behavior "Both 400 and 409 on POST /gateway/enroll
+          are recorded in gateway_enrollment_refusals" - read in its bullet (which lists the validation 400s, citing
+          routes.ts 112-129) it is true; read alone it misses a malformed-JSON 400 from the body parser (server.ts
+          437-439), which buildroom enroll cannot produce (it sends JSON.stringify). Same scope as round 1's accepted
+          interfaces statement. Builder reads it as true in context.
+          Recommendation under E3: approve. Approve body validated. Decision due by 03:22:15.360Z.
+
+2026-11-12T23:52:39Z CR3 round 2 decision: Founder reported HTTP 201. HTTP log (deployment 568e87dd): POST plan-decision 201 at
+          23:51:34.859Z (49 ms), 29 min 19 s after settle; within B5. plan.approved on 427217b4...d0d0. Runner closing reads:
+          export 23:51:39.451Z, journal 23:51:39.552Z, planner-round 23:51:39.598Z. Note (masked): the decision and the
+          closing reads came from a different network than the runner's earlier polls (same curl/8.7.1 client as every
+          earlier decision; the runner's GET /rooms polls at ~5 s intervals continued across the change), consistent with
+          the Mac changing networks mid-run; no effect on the record. CR3 outcome line not yet received (asked).
+          Round-2 decision triggers deleted (trig_01P7LqPPgbUGC1NKrvjJCMD9, trig_01QrVV85tzahSWRmSnRA8QMd,
+          trig_01BGxSeSjJK5gff46EbMkA19). Set ends at CR3's exit (~23:51:40Z): E7 owed; E5(c)(1) backstop ~00:21:40Z.
+          E7 check armed 00:15Z; backstop check armed 00:22Z. 07:12Z and 07:42Z triggers to be deleted after E7 verifies.
+
+2026-11-12T23:53:45Z Phase4-CR3 PASSED (Founder paste of runner line): passed at 2026-11-12T23:51:39.630Z; record SHA-256
+          e1517700cb02a32c884634a699e756f80294bea77123034de8ba438d7d7898c2. Runner: "The set is complete: three consecutive passes."
+          SET 3 (FOUNDER-ACT-20261112-BR-PHASE4-COUNTED-RUNS) COMPLETE:
+            CR1 passed 21:44:21.116Z, record 83757a5c1a22e1314c3a6e5d0f88ca1d58d01277d6f0927f1d08c39431b5c09c (2 rounds)
+            CR2 passed 22:50:39.848Z, record 3ae583b1ee5114bca0078391fc974d919c9f4ad93498a46e994b84ac6be47d81 (3 rounds)
+            CR3 passed 23:51:39.630Z, record e1517700cb02a32c884634a699e756f80294bea77123034de8ba438d7d7898c2 (2 rounds)
+          Set ended 23:51:39.630Z. E5(c)(1) backstop due 00:21:39.630Z. E7 owed (Founder removes the value and deploys).
+          F1/F3 notes: CR1 D5 deviation (ruled "1"); builder's CR2 round-1 miss (advisory workflows) disclosed at round 2;
+          CR3 round-2 judgment call (redeem 400 recording, read in context) disclosed before approval.
+
+2026-11-13T00:00:39Z E7 (Founder: "deploy is up"). Railway: deployment 20960723-ff82-4e74-91a8-ea76962d3d3a created 00:00:23.551Z,
+          BUILDING, commit 6b80c22, by the Founder; staged null. At 00:00:39Z /health 200 and /version still 568e87dd
+          (startedAt 18:15:36.667Z); origin/main 6b80c22. Removal deploy started 8 min 44 s after the set ended, inside
+          E5(c)(1)'s 30 min. Waiting for SUCCESS and the new start before verifying.
+
+2026-11-13T00:06:25Z E7 VERIFIED. Deployment 20960723-ff82-4e74-91a8-ea76962d3d3a (Founder, created 00:00:23.551Z): SUCCESS 00:03:37.639Z
+          on 6b80c22; boot.start 00:03:34.191Z, preflight br_app_runtime, migrationsPresent 10, privilegeAudit enforced,
+          listening 00:03:34.262Z; /version 6b80c22 startedAt 00:03:34.191Z; /health 200 (00:03:43Z, 00:05:21Z);
+          568e87dd REMOVED 00:03:41.680Z; staged null. Leadership serving generation 158 at 00:04:14.290Z. Gateway: heartbeats
+          503 at 00:03:41Z, 00:03:51Z, 00:04:11Z (before leadership), 409 at 00:04:41Z (old session), then session-challenge
+          200 and session-start 200 at 00:04:51Z, planner/poll 200, heartbeats 200 every 10 s from 00:05:01Z.
+          PHASE4_COUNTED_RUN removed by the Founder's deploy, 8 min 44 s after the set ended; no builder backstop used.
+          Counted-run routes inert again. E4 freeze ends with this verification.
+          Triggers deleted: trig_01SkUHgBVTJ1m1Cp9KTcyZxe (07:12Z), trig_01W4KgMYhXqErXpe7uZX9ExU (07:42Z),
+          trig_01N7FUoxtT7vzdBhmsuVWYrs (00:15Z), trig_01MFzxF3rwYN7UXnSAwzZtwu (00:22Z). No set-3 triggers remain.
+          Owed: F1 evidence (Founder reads journal/export and PC executor evidence), re-ask count from records, F3 filing
+          (separate authorization). Phase 4 close / item 13 is the Founder's separate stop-gate ruling (Part G).
+
+2026-11-13T00:30:30Z F1 collection, first pass (Founder paste; masked).
+          Mac: room exports saved for e006e499, 9bdb8cd9, eb4ccc7a (GET /rooms/:id/export 200 with the API token).
+            Journal reads 401 x3: BUILDER ERROR in the command - GET /control-plane/rooms/:id/journal is a counted-run route
+            (counted-run.ts lines 14-20, 266-270: counted-run token only, then 503 counted_run_not_configured while
+            PHASE4_COUNTED_RUN is unset); the builder's command sent the API token. Since E7 the route is inert, so a fresh read
+            is not possible without setting the value again, which the act does not authorize (Part G). The journal rows
+            the runner read at each run's close are inside each run record ("commands", "decisions", journalVerified;
+            http-driver.ts collectRecord, lines 247-266) and are covered by the record's digest.
+            zsh NOMATCH on the f1-journal-*.json glob aborted the rest of the pasted block, so the file listing did not run.
+          PC: 7 executor evidence records since 13:00 local, all outcome "plan": commandIds 4d8dafcc, 82839337, 7fff6b3b,
+            6d626bf5, ee2f1003, 4cab80d3, 3232ea81 - exactly the work_ids of the seven saved plan files, one per round.
+            No other planner command reached the Gateway, so no re-ask was dispatched.
+          Next: Mac read of the three record files (digest via phase4RecordDigest at 6b80c22, command counts, retry-of /
+          plan-refusal / planner-failure counts) and the evidence-dir listing without globs.
+
+2026-11-13T00:31:31Z F1 records read (Founder's Mac, phase4RecordDigest from ~/phase4-set3/br at 6b80c22; no plan text printed):
+            Phase4-CR1 digest 83757a5c...c09c BUILDING verified true; commands 2 (4d8dafcc, 82839337); decisions
+              revision_requested, approved; retry-of 0; plan-refusal/planner-failure 0.
+            Phase4-CR2 digest 3ae583b1...7d81 BUILDING verified true; commands 3 (7fff6b3b, 6d626bf5, ee2f1003); decisions
+              revision_requested x2, approved; retry-of 0; refusal/failure 0.
+            Phase4-CR3 digest e1517700...98c2 BUILDING verified true; commands 2 (4cab80d3, 3232ea81); decisions
+              revision_requested, approved; retry-of 0; refusal/failure 0.
+          Recomputed digests = the runner's lines = the .record.sha256 files. RE-ASKS IN THE SET: ZERO (records and the PC's
+          seven executor records agree: seven commands, one per round, all outcome plan).
+          Evidence dir (16 files): attempts.json 0371fdf8...631d (1589 B); 3 records, 3 .record.sha256, 3 room exports
+          (9bdb8cd9 22648409...780f 16550 B; e006e499 5b09dcdc...4d0d 13251 B; eb4ccc7a 6e3ca1b1...0fec6 13471 B);
+          7 plan files. The builder's saved plan copies (set3/plan-cr*.json) are byte-identical to all seven
+          (SHA-256 and size match: 129b722b, 0d0e90d6, f876a7cf, 4b191eb5, 24db6de6, 8c1fb91f, 1d531880).
+          F1 inventory complete. Contents of records, attempts, exports and PC executor records remain with the Founder
+          until the F3 filing, which needs the Founder's separate authorization (transfer method to be agreed then).
+          Open reading for F3: the journal rows inside each record stand for F1's journal rows (the route is inert after E7).
+
+2026-11-13T00:40:09Z F3 DRAFT (Founder line, verbatim: "draft the F3 filing"). Local branch claude/handoff-evolve-pack-lanes-6twx8h,
+          restarted from origin/main 6b80c22 (its PR 153 merged); nothing committed or pushed. 16 new files under
+          docs/planning/command-journal/custody/ (about 380 KB): the act verbatim (1a182790...35c9), the terms (5a031647...31d2),
+          the seven plans (byte-identical to the Mac's), the four revision feedbacks (their sent hashes), the Founder's
+          readings (39 messages, masked, plan pastes replaced by the plan file each recomputes to, R11's approval cut and marked),
+          the builder's audit from the act's opening entry, and CUSTODY-RECEIPT-phase4-counted-set3-20261112.md (eleven findings).
+          Gates on the draft: custody-pin-check PASS (451 pins; 391 on main, so 60 new; a mutated byte count fails it);
+          path-audit PASS; secret-scan (gitleaks 8.30.1) PASS over a throwaway local commit in a temporary worktree, both
+          removed; masking scan clean. Not yet filed: the Founder's 17 files (records, .record.sha256, attempts, exports, PC
+          executor records). Open for the Founder: the record-held journal rows reading; the service account name left as in
+          earlier filings; whether the owed R1-R11 filings share the pull request; and the pull request's authorization.
+
+2026-11-13T01:29:54Z F3 transfer batch 1 (Founder paste from the Mac): attempts.json and the three .record.sha256 files, written by the
+          builder from the paste; SHA-256 and size equal the Founder's 00:31Z listing (0371fdf8 1589 B; 421c1e34, 8305e666,
+          4bc3508f, 138 B each). Nothing to mask. Filed in the draft as PHASE4-SET3-attempts.json and
+          PHASE4-SET3-<label>-<room>.record.sha256. attempts.json gives CR3's start as 22:53:23.817Z (the receipt's timeline
+          used the room's creation, 22:53:23.883Z; to be corrected).
+
+2026-11-13T01:32:18Z F3 transfer batch 2 (Founder paste): Phase4-CR1 record. File SHA-256 158f492b...8878, 11233 B (= the Founder's
+          listing); phase4RecordDigest 83757a5c...c09c (= the runner's line). Nothing to mask. Cross-check: the journaled
+          founder_feedback digest of CR1 round 1's revision, d8d29adf...eef7, is the SHA-256 of the filed feedback file without its
+          trailing newline (the decision command strips it), so the filed feedback is the text the control plane journaled.
+          Filed in the draft as PHASE4-SET3-Phase4-CR1-<room>.record.json.
+
+2026-11-13T01:34:37Z Founder rulings on the F3 draft, verbatim: "1. Yes / 2. account name / 3. a separate PR" (to the builder's three
+          questions: the record-held journal rows stand for F1's; the Planner's service account name is an account name under F3;
+          the R1-R11 filings owed since 2026-11-02 go in a separate pull request).
+          Applied: buildroom-planner masked as <planner account> in the act (1 occurrence, D5) and in the Founder's readings
+          (16 occurrences), since F3 names "this act" among what is filed masked. The masked act no longer hashes to the signed
+          1a182790...35c9; restoring the one name reproduces it byte for byte (checked: cmp identical; the signed text holds no
+          "<planner account>", so the reversal is unambiguous). New act SHA-256 95fe32aa0d35245e..., readings 868aa2be9ec494ab...
+          F3 transfer batch 3 (Founder paste): Phase4-CR2 record. SHA-256 eeb2555e...8fa9, 16112 B (= listing); phase4RecordDigest
+          3ae583b1...7d81 (= runner). Journaled founder_feedback digests 5e37eec0 (round 1) and 3c4fd57c (round 2) equal the SHA-256 of
+          the filed CR2 feedback files without their trailing newline. Nothing to mask. Filed in the draft.
+
+2026-11-13T01:44:13Z F3 transfer batch 4 (Founder paste): Phase4-CR3 record. SHA-256 b9d786ab...29cf, 11233 B (= listing);
+          phase4RecordDigest e1517700...98c2 (= runner). Journaled founder_feedback digest 9b1c2062 equals the SHA-256 of the filed CR3
+          feedback without its trailing newline. Nothing to mask. Filed. All three records, attempts and the .record.sha256 files
+          are now in the draft; remaining: three room exports (Mac) and seven executor records (PC).
+
+2026-11-13T01:52:09Z F3 transfer batch 5 (Founder paste): CR1 room export (GET /rooms/e006e499.../export at 00:28:27.365Z). SHA-256
+          5b09dcdc...4d0d, 13251 B, no trailing newline (= listing; with an LF added it would be 19d0de0e). The revision feedback in
+          the export's T4 payload hashes to d8d29adf, the journaled founder_feedback digest. Nothing to mask. Filed as
+          PHASE4-SET3-export-e006e499-....json.
+
+2026-11-13T02:05:37Z F3 transfer batch 6 (Founder paste): CR2 room export (GET /rooms/9bdb8cd9.../export at 00:28:27.652Z). SHA-256
+          22648409...780f, 16550 B, no trailing newline (= listing). The two revision feedbacks in the export's T4 payloads hash to
+          5e37eec0 (round 1) and 3c4fd57c (round 2), the journaled founder_feedback digests. Nothing to mask. Filed as
+          PHASE4-SET3-export-9bdb8cd9-8937-4058-9365-d27439e6142d.json.
+
+2026-11-13T02:15:17Z F3 transfer batch 7 (Founder paste): CR3 room export (GET /rooms/eb4ccc7a.../export at 00:28:28.008Z). The builder's
+          first copy of the paste was 12761 B and did not parse: in transcribing it, the builder skipped event 6's span from its
+          first evidence array to its payload's evidence array (710 B: overlays, round, occurred_at, and the payload's actor,
+          event, facts, scope, eventId and evidence). The paste itself was complete. The builder restored the span as pasted;
+          the file then hashes to 6e3ca1b1...fec6, 13471 B, no trailing newline (= the Founder's listing), parses, and holds 6
+          events (= logLength). The revision feedback in its T4 payload hashes to 9b1c2062, the journaled founder_feedback
+          digest and the SHA-256 of the filed CR3 feedback without its trailing newline. Nothing to mask. Filed as
+          PHASE4-SET3-export-eb4ccc7a-e014-48a8-a019-986f8fe7babe.json.
+          All three room exports are now in the draft; remaining: the PC's seven executor records.
+
+2026-11-13T02:30:44Z F3 transfer, PC executor records, attempt 1 (Founder paste; user and host masked): not read. The command ran first on the
+          Mac (zsh; find reported /Users/<user>/Library/Application Support/founder-os/gateway/planner-evidence missing, then END),
+          and the Mac's screen - prompt, command and that output - was then pasted into the PC's bash. There: "~" ran as a
+          command ("/home/<user>: Is a directory"), so D was never set; find "" failed; the Mac's output lines ran as commands
+          ("find:" and "END" not found). Every command that ran was read-only or failed; nothing changed on either machine.
+          Remedy: the same read, wrapped so it runs only where uname -s is Linux and otherwise prints WRONG MACHINE.
+
+2026-11-13T02:33:09Z F3 transfer batch 8 (Founder paste from the PC, attempt 2, guarded to Linux): the seven Planner executor records in
+          planner-evidence/, each printed with its file name, SHA-256, size and last byte (0a). The builder rebuilt each one
+          from the pasted fields (compact JSON, the pasted key order, 64 step_update + truncated, trailing LF) rather than
+          copying it by hand; all seven hash and size exactly as listed at 00:29Z and as printed with the paste (4d8dafcc
+          7804053d 1410, 82839337 ef7cd0ec 1418, 7fff6b3b 2d6ca9cd 1410, 6d626bf5 7a4ea79b 1418, ee2f1003 53a45f5e 1418,
+          4cab80d3 641fb27a 1410, 3232ea81 6614b602 1410). Each file's name is the SHA-256 of its commandId (the executor's
+          evidence path rule). Each record's executionId, conversationId and initModel appear in the Mac record of the same
+          run, so the PC's evidence and the control plane's journal agree on every command. Nothing to mask (no user, host
+          or account name, no path). Filed as PHASE4-SET3-planner-evidence-CR<n>-round<k>-<file name>.json.
+          Observation: all seven outcome plan, resultStatus SUCCESS, checkoutRemoved true; four exited 0, three (82839337,
+          6d626bf5, ee2f1003: CR1 round 2, CR2 rounds 2 and 3) ended by SIGKILL with exitCode null. By the code at 6b80c22
+          (agy-planner-executor.ts endRun/stopNow, lines 970-982 and 1718-1737), after a plan the executor sends SIGTERM through
+          sudo and SIGKILLs sudo when it has not exited 4 s later (STOP_GRACE_MS); an exit seen in time is "confirmed" and does
+          not halt. So the three are the executor's own escalation, not a failure; why agy outlived SIGTERM on those rounds is
+          not in the evidence. The F1 evidence is now complete in the draft.
+
+2026-11-13T02:39:41Z Correction to the 01:34:37Z entry: the act holds the Planner's account name twice, both on line 112 (D5), not once;
+          "1 occurrence" was a count of lines (grep -c), not of occurrences. Both are masked in the filed act; restoring both
+          reproduces the signed 1a182790...35c9 byte for byte (re-checked in the receipt generator, which asserts it).
+
+2026-11-13T02:41:13Z F3 draft rewritten (nothing committed or pushed). Receipt regenerated by script, every pin computed from the files: 32
+          Path tables, one per set-3 file (17 received files now filed in tables; the "held by the Founder" list removed);
+          the four rulings (CR1's "1"; on the filing "1. Yes / 2. account name / 3. a separate PR", with the three questions
+          of 00:40:26Z verbatim, account name masked); thirteen findings (4 now ruled; 9 the masked act and that the name is
+          already on main 260 times in 13 files of a repository the Planner fetches without a credential; 12 transport,
+          including the builder's CR3 export copying error; 13 the three SIGKILL ends); CR3 start corrected to 22:53:23.817Z
+          (attempts.json); R1-R11 filings to a separate PR. Readings file regenerated with the ten F3-era messages (each
+          pasted file replaced by the name and SHA-256 of the filed file it equals byte for byte; 14 such, all equal). Audit
+          file regenerated through the F3 transfers, account name masked.
+          Checks before the final regeneration: custody-pin-check PASS, 519 pins (391 on main + 128 new = 32 tables x 4);
+          mutation (CR1 round-2 executor record's Bytes 1418 -> 1419) FAIL naming it, restored PASS; path-audit PASS;
+          secret-scan (gitleaks 8.30.1) PASS on a throwaway commit of all 33 files in a temporary worktree, worktree removed,
+          nothing pushed; no user, host or account name, email, tailnet name, node key, token or IPv4 address in any set-3
+          file (one pattern hit, "Bearer Token & Pairing Code Secrecy" in two CR3 plans, is a heading, not a token).
+
+2026-11-13T02:56:39Z Founder ruling (received 02:56:04.874Z), verbatim: "Unmask the account name in the act, readings and audit (my
+          recommendation). I’d regenerate and re-run every check, and finding 9 would record your reversal." It is option 2 of
+          the two the builder put at 02:41:47Z (1: keep the act masked, as drafted; 2: unmask the account name in the act,
+          readings and audit), quoted by its text, and reverses the masking of ruling 2 (01:32:39Z) for the Planner's service
+          account name. Before it, the builder had reported: the name is on main 260 times in 13 files of a repository the
+          Planner fetches without a credential, and masking it cost the filed act its match to the signature. The stop hook's
+          request to commit (02:4xZ) was declined again: CLAUDE.md, F3's separate authorization, and this open decision.
+          Applying: the signed act restored to custody; the readings and audit regenerated without the account-name mask;
+          the receipt regenerated with the reversal as a fifth ruling and finding 9 rewritten; every check re-run.
+
+2026-11-13T02:58:22Z Reversal applied (nothing committed or pushed). Act restored from the builder's signed copy: SHA-256 1a182790...35c9,
+          the account name twice in D5, as signed. Readings regenerated with the account name unmasked (16 occurrences) and
+          the 02:56:04Z ruling added (50 messages; 14 pasted files, each byte-identical to its filed copy). Audit regenerated
+          without the account-name mask (two historical entries describing the masking keep the token as written). Receipt
+          regenerated: masking note, instrument (filed as signed), a fifth ruling with the 02:41:47Z options and the answer
+          verbatim, finding 9 rewritten (ruled masked, reported public, reversed), the follow-up on masking removed.
+          Checks: custody-pin-check PASS 519; mutation (act Bytes 26390 -> 26391) FAIL naming it, restored PASS; path-audit
+          PASS; secret-scan PASS on a throwaway commit of all 33 files in a temporary worktree, removed, nothing pushed; no
+          user or host name, email, tailnet name, node key, token or IPv4 address in any set-3 file; no MD018 line.
+
+2026-11-13T03:00:31Z Founder line (received 02:59:42.642Z), verbatim: "file it". The authorization F3 requires for this filing's pull
+          request, given after the builder's two declines of the stop hook's request to commit. Filing: the readings, audit
+          and receipt regenerated through this entry; then one commit of the 33 files on claude/handoff-evolve-pack-lanes-6twx8h
+          (from main 6b80c22), pushed; the pull request opened with a placeholder body, the real body with the Attribution
+          trailers set last, after the review bots finish. Not authorized: merge, which is the Founder's separate SHA-named act.

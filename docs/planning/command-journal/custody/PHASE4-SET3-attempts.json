@@ -1,0 +1,46 @@
+{
+  "setId": "FOUNDER-ACT-20261112-BR-PHASE4-COUNTED-RUNS",
+  "termsSha256": "5a031647b2a96849080795ce3c1d72eed3202d8b5e33ca4a956ccbdcb47231d2",
+  "attempts": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "e006e499-58a4-4392-a624-e6170a393e36",
+      "outcome": "passed",
+      "pending": false,
+      "startedAt": "2026-11-12T19:07:22.919Z",
+      "endedAt": "2026-11-12T21:44:21.116Z",
+      "entryFailures": [],
+      "failures": [],
+      "recordDigest": "83757a5c1a22e1314c3a6e5d0f88ca1d58d01277d6f0927f1d08c39431b5c09c",
+      "liveCheck": {
+        "passed": true,
+        "commandId": "cmd_planner_4d8dafcc80c49df73e1be3e5e99360e1",
+        "initModel": "gemini-4-argon-high",
+        "providerConversationId": "cd90200b-c9fe-48eb-ad03-891fed3ba0b8",
+        "readAt": "2026-11-12T19:14:15.725Z"
+      }
+    },
+    {
+      "label": "Phase4-CR2",
+      "roomId": "9bdb8cd9-8937-4058-9365-d27439e6142d",
+      "outcome": "passed",
+      "pending": false,
+      "startedAt": "2026-11-12T21:51:00.595Z",
+      "endedAt": "2026-11-12T22:50:39.848Z",
+      "entryFailures": [],
+      "failures": [],
+      "recordDigest": "3ae583b1ee5114bca0078391fc974d919c9f4ad93498a46e994b84ac6be47d81"
+    },
+    {
+      "label": "Phase4-CR3",
+      "roomId": "eb4ccc7a-e014-48a8-a019-986f8fe7babe",
+      "outcome": "passed",
+      "pending": false,
+      "startedAt": "2026-11-12T22:53:23.817Z",
+      "endedAt": "2026-11-12T23:51:39.630Z",
+      "entryFailures": [],
+      "failures": [],
+      "recordDigest": "e1517700cb02a32c884634a699e756f80294bea77123034de8ba438d7d7898c2"
+    }
+  ]
+}
