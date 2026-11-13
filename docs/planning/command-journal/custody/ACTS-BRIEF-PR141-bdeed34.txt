@@ -1,0 +1,32 @@
+TIER-2 CONFIRMATION BRIEF: MADVenturesLLC/founder-os-build-room pull request 141, head bdeed34c7666e2935de195fff887bb63c86f7741, base main 29327785fa845fb7fd826905cba38d24509746be
+
+You are the independent Tier-2 reviewer on the codex surface, confirming the correction of your review at 0a7a81c0f0d27a86a8491e2367e7a99519cd59cb (REQUEST-CHANGES, two P2). Under FOUNDER-ACT-20261028-VELOCITY B2 this run reviews only the correction diff and the blocking findings it answers. The author is claude-code (builder, Anthropic).
+
+Read-only:
+- Read ./repo at that head, and the two acts beside this brief, as before: FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS (SHA-256 c65afbc1afedefdf19a3705f3d0a8fda45ec2f89643c862c70485cf370d15053) and FOUNDER-ACT-20261029-BR-PLANNER-READINESS (SHA-256 0c8efcd9ea746966437a997595253b7f8d89360fb0128cc962570ec9ed381f65). Nothing else: no host instructions, no memory, nothing outside this directory.
+- Run nothing that writes outside a temporary directory, and contact no service.
+- The correction is git diff 0a7a81c..HEAD inside ./repo: one commit, bdeed34, in attempt-store.ts, cli.ts and the CLI test.
+
+Your findings, and what this head does:
+1. P2, malformed attempts could advance the set (attempt-store.ts attemptDefect).
+   - Every optional field is checked when present: endedAt a time, recordDigest a SHA-256, error text, and liveCheck an object of exactly a reading's fields (passed, commandId, initModel, providerConversationId, readAt, optional reason) with typed values (liveCheckDefect).
+   - Contradictions are refused: a live check on any label but Phase4-CR1; an end, record or reading on a pending attempt; a record, reading or failure on a not_started attempt; entry failures on a run that started; a pass with an error; a Phase4-CR1 pass without a live check that passed with commandId, initModel and providerConversationId non-empty; a passing reading with a reason, or a failed one without.
+   - A pass is trusted only with its record file beside the log (phase4RecordFileName), whose roomId matches and which hashes to the attempt's recordDigest (loadPhase4Attempts).
+   Tests: the malformed-attempt test now carries your three cases (liveCheck: 7, a pass whose live check failed, a pass with entry failures) among nineteen malformed cases; "refuses a pass whose record is missing or does not hash to its digest".
+2. P2, JSON escaping hid a token from the record guard (cli.ts). The guard now walks the record's decoded strings and keys (holdsSecret) before serializing it; a record holding either token is not written, and the attempt stays pending. Test: "finds a token in the record however JSON would escape it", with a token holding a backslash and a quote, end to end through the command.
+Your test advisory: "writes a record that hashes to the digest it keeps" and "makes the live check for Phase4-CR1 only" now cover the wrong-digest and repeated-check mutations. Removed file syncs stay uncovered and are a tracked follow-up.
+The builder's mutations against this commit, each reverted alone: the old JSON-text guard; a Phase4-CR1 pass without a passing check; the record digest unverified; entry failures on a started run; the live check's shape unchecked; the live check on every label; a wrong saved digest. 7 of 7 failed tests. Locally: 100 of 100 Phase 4 tests, lint and typecheck clean.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line):
+1. Finding 1. Can any stored log the command did not write, or wrote and was then edited, still advance the set, complete it, or let a Phase4-CR1 pass stand without a passing live check? Can a valid log the command writes now be refused?
+2. Finding 2. Can either token reach the evidence directory or the terminal through the record, in any encoding JSON produces?
+3. Regressions. Does the correction break anything your review passed (the live check's placement, stopped runs, the lock, exclusive evidence, token routing, scope)?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2): a finding blocks only if it is P1, or concerns checks 1 to 3 in the correction itself. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: bdeed34c7666e2935de195fff887bb63c86f7741
+Tier2-Verdict: <same as Final Verdict>

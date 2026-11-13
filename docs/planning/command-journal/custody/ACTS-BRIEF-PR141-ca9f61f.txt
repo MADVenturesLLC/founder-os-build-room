@@ -1,0 +1,28 @@
+TIER-2 REVIEW UNDER THE FOUNDER'S RULING: MADVenturesLLC/founder-os-build-room pull request 141, head ca9f61fdc0f9871e96f4b53e902ced2c7b247d69, base main 29327785fa845fb7fd826905cba38d24509746be
+
+You are the independent Tier-2 reviewer on the codex surface. Your third review at 1d87a6a0500157be4f3cddfaca96cc9e85974e4d (REQUEST-CHANGES, two P2) used the review budget of FOUNDER-ACT-20261028-VELOCITY B2. The Founder then ruled, in the builder's session on 2026-11-02, choosing the option "Fix 2, accept 1, one review": the builder fixes finding 2 and the misleading "complete" message; finding 1's residual is accepted and tracked; one more review of that small fix only, then merge. This is that review. The author is claude-code (builder, Anthropic).
+
+Read-only:
+- Read ./repo at that head, and the two acts beside this brief, as before (SHA-256 c65afbc1afedefdf19a3705f3d0a8fda45ec2f89643c862c70485cf370d15053 and 0c8efcd9ea746966437a997595253b7f8d89360fb0128cc962570ec9ed381f65). Nothing else.
+- Run nothing that writes outside a temporary directory, and contact no service.
+- The fix is git diff 1d87a6a..HEAD inside ./repo: one commit, ca9f61f, in cli.ts and the CLI test. (It replaces 349190d, force-pushed with the Founder's approval only to change two test values the secret scanner read as keys; packages/ is byte-identical to 349190d.)
+
+What this head does:
+- Finding 2. Before anything runs, cli.ts refuses CONTROL_PLANE_TOKEN or PHASE4_COUNTED_RUN_TOKEN when JSON.stringify(token) is not exactly the token in quotes: a token holding a quote, a backslash or a control character. With every token written the same in JSON text as decoded, and at any depth of re-encoding, the existing searches (holdsSecret over decoded values, leaksSecret over JSON text, scrub over printed lines) find it in any spelling. The refusal names the variable and never the value. The act's D3 token is hex. Test: "finds a token in decoded values however JSON would escape it, and refuses such tokens outright" (three such tokens, each variable, no request made, value never printed).
+- Finding 1's second point. The set's status (next label, complete or spent) is read only after every pass on record has been checked against its record and the control plane, so a forged complete log is refused as forged, not called complete. The act check now probes the first run's room. Test: "checks every pass before calling the set complete".
+- Not changed, by the ruling: a hand edit of the local attempt log that marks an interrupted run as passed, where the record and the control plane hold an approval that came after a decision timeout or a failed live read. The log cannot be made tamper-proof on the machine that holds it; the custody filing re-judges every run from the control plane's journal, and moving set progress onto the control plane is a tracked follow-up under a new act. Do not count it as a finding.
+The builder's mutations, each reverted alone: escapable tokens accepted; complete reported before checking. 2 of 2 failed tests. Locally: 107 of 107 Phase 4 tests, lint and typecheck clean.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line):
+1. Finding 2. With the refusal in place, can either token reach the terminal or the evidence directory in any spelling, through the record, the attempt log, the live check or an error?
+2. The status order. Can a log the command did not write now be reported complete or advance the set by any path the ruling did not accept?
+3. Regressions. Does the fix break anything your reviews passed, or refuse a token the act's D3 produces?
+
+What blocks: a finding blocks only if it is P1, or concerns checks 1 to 3 in this fix itself. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: ca9f61fdc0f9871e96f4b53e902ced2c7b247d69
+Tier2-Verdict: <same as Final Verdict>

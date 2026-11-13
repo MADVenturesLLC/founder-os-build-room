@@ -1,0 +1,32 @@
+PASS-WITH-ADVISORIES — no blocking findings at 522ca43.
+
+Verified the exact head, Node v22.23.4, all four act hashes, and a clean original checkout. bb4be99..HEAD changes only imports and restores index.ts; checks 1–5 carry forward as the brief permits, supplemented by current probes.
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. Re-ask classes | PASS | Only B1’s three refusal kinds and five failure reasons qualify. Other failures remain excluded. See reaskFor (repo/packages/control-plane/src/planner-loop.ts:901) and Gateway reporting (repo/packages/gateway-daemon/src/planner-worker.ts:585). |
+| 2. One re-ask, same call | PASS | The second execution returns directly; opening requires the latest matching failure, no earlier re-ask, and remaining attempt capacity. Revision context is reread before journaling. See runRound (repo/packages/control-plane/src/planner-loop.ts:478) and openNextAttempt (repo/packages/control-plane/src/planner-loop.ts:595). |
+| 3. Wire and size | PASS | Closed shapes, violation/path bounds, and document byte bounds hold. Probes passed with both documents exactly 204,800 UTF-8 bytes, including Unicode and escaped text; one additional byte was rejected. Poll responses reached 1,056,615 bytes successfully. At the base, isWork permits only optional revision; the worker returns null for invalid requests, confirming C3. See validation (repo/packages/gateway-protocol/src/planner.ts:295) and probe output (/tmp/tier2-153b-review-aI1ZjH/review-probes.log). |
+| 4. Prompt text | PASS | B5/B6 wording, placement, and JSON round trips match. First-round and revision prompts without re-ask matched the base byte for byte. See prompt implementation (repo/packages/gateway-daemon/src/agy-planner-executor.ts:334) and probe output above. |
+| 5. Run unit | PASS | Classification comes from exactly one matching evidence reference; the next attempt must belong to the same round and carry the exact retry references. Attempts after its re-ask fail. See checkCommands (repo/packages/run-harness/src/phase4/run-unit.ts:233). |
+| 6. Scope | PASS | Exactly the 12 authorized paths changed. index.ts is byte-identical to the base. Gateway differences are exactly D1’s three files. Protected paths, executor operations, and existing-test changes comply with B10 and the supplied Founder rulings. See scope verification (/tmp/tier2-153b-review-aI1ZjH/review-scope.log). |
+| 7. Tests | INCONCLUSIVE — database execution only | Typecheck passed. Corrected offline npm test exited 0: 2,436 passed, 3 skipped, zero failures or cancellations, in 331.7 seconds. Focused/restored unit runs passed 94/94. PostgreSQL suites were assessed from source because server binaries were unavailable. See full-suite output (/tmp/tier2-153b-review-aI1ZjH/npm-test-fixed.log). |
+
+The builder’s readings:
+
+- (a) Agree: a refused document the wire cannot carry earns no re-ask.
+- (b) Agree: the run unit checks the record’s own classifications, attempt identities, and single retry references.
+- (c) Agree: the work travels in the poll response; stdin carries the prompt as one JSON line. Real agy acceptance of that line remains outside the repository claim.
+- (d) Agree: probes confirmed duplicate and unknown commands can pass at both heads. The journal route (repo/packages/control-plane/src/counted-run.ts:281) constructs only ordered, derived attempt IDs. This pre-existing limitation is outside B8 and does not establish a P1 on the supported runner path.
+
+All 61 mutation replacements applied exactly once. Replay reproduced 47 intended unit kills and one typecheck kill, without timeouts. The supplied nine storage kills match their assertions on source review, but remain UNPROVEN by execution here.
+
+I agree the four survivors are individually equivalent under current invariants: C1/C2 still fail wire validation; C4 cannot bypass the three-attempt bound; C10 remains blocked by the earlier-re-ask guard. All mutated sources were restored byte for byte; the restored build and 94 unit tests passed.
+
+Next: rerun the three named storage suites in the builder’s existing PostgreSQL 16 harness. Database behavior and those nine mutation kills remain the execution advisory.
+
+Final Verdict: PASS-WITH-ADVISORIES
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: MODEL (Codex CLI /status, reported by the operator)
+Tier2-Head-Sha: 522ca437661294a7432c420ef1f030d653d2ed5a
+Tier2-Verdict: PASS-WITH-ADVISORIES

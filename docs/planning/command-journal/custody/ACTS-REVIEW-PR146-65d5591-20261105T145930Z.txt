@@ -1,0 +1,36 @@
+REQUEST-CHANGES — two verified failures remain in check 2.
+Step 5 of 5 complete. The head and all four artifact hashes match. The original checkout remains clean. Execution used the operator-approved Node v22.23.4 and repository-local dependencies.
+R1 — P2: earlier redaction prevents whole-token redaction.
+
+```
+const token = 'q7R'.repeat(3) + '!sk-' + 'Zq7'.repeat(7) + '!tail';
+
+```
+
+`loadConfig` accepts this 39-character, whitespace-free token. `provider_api_key` replaces its internal component before the bearer rule runs, shortening the value below 32 characters. The result is:
+
+```
+Bearer q7Rq7Rq7R![REDACTED]!tail
+
+```
+
+The post-redaction guard returns `false`, and `normalizeForJournal` accepts that envelope. Main already leaked `!tail`; this head additionally preserves the leading token fragment. See redact.ts:81 (repo/packages/journal/src/redact.ts:81), sequential replacement:170 (repo/packages/journal/src/redact.ts:170), and dispatch.ts:125 (repo/packages/journal/src/dispatch.ts:125).
+R2 — P2: marker removal introduces a detection regression.
+
+```
+const token = 'q7R'.repeat(3) + '[REDACTED]' + '!'.repeat(13);
+
+```
+
+`loadConfig` accepts this 32-character, whitespace-free token. For `Bearer ${token}`, detection returns true on main and false at this head: marker removal reduces the inspected value to 22 characters, with a leading alphabet run of nine. `prepareFounderGoal` consequently accepts it. Redaction itself removes this token completely. See redact.ts:213 (repo/packages/journal/src/redact.ts:213), detection:234 (repo/packages/journal/src/redact.ts:234), and founder-goal.ts:66 (repo/packages/control-plane/src/founder-goal.ts:66).
+These are constructed adversarial values, but both satisfy the actual configuration checks. Neither falls within the limits accepted by FOUNDER-ACT-20261105-BR-BEARER-SHAPE, Amendment 1 M3, Amendment 2 N3, or Amendment 3 P3. Recorded comparison results (/tmp/tier2-146c-review-8slepk9d/regressions.json).
+
+1. PASS — Pattern and literal compliance. redact.ts:98–114 (repo/packages/journal/src/redact.ts:98) implements Amendment 3 P2 exactly, preserving case-insensitivity and the left boundary. Replacing the authorized comment/pattern block with main’s original line reproduces main byte-for-byte. Its promised coverage nevertheless fails as described above.
+2. FAIL — Detection and complete redaction. R1 and R2 defeat the universal guarantee for accepted, whitespace-free tokens. The unchanged shapes and preprocessing matter here; isolated regex coverage is insufficient. Ordinary punctuation probes passed 2,910 cases.
+3. FAIL — Otherwise unchanged guard behavior. Ordinary prose passes, including nested plan strings; the documented false positives remain. Caller source is unchanged, but R2 changes raw guard behavior outside the accepted limits. The same detector protects plan storage:206 (repo/packages/control-plane/src/plan-store.ts:206), plan decisions:296 (repo/packages/control-plane/src/plan-decision.ts:296), goals and journal rows.
+4. PASS — Scope. The base-to-head diff contains only `packages/journal/src/redact.ts`, `test/journal-bearer-shape.test.ts`, and `test/plan-store.storage.test.ts`. Since `984518d`, only the first two changed. No prohibited path changed.
+5. PASS — Required executable tests. All amended required cases exist. The bearer suite passes 11/11; all 11 mutations fail tests, collectively reaching every test; restoration returns 11/11. Existing journal redaction, parity and secrets tests pass. `npm run typecheck` exits 0. Corrected `npm test` exits 0: 2,340 passed, 0 failed, 3 skipped. The initial run’s six failures came from my copy omitting `.git` and PATH omitting `lsof`; both setup errors were corrected. Full test log (/tmp/tier2-146c-review-8slepk9d/npm-test-corrected.log), mutation evidence (/tmp/tier2-146c-review-8slepk9d/mutations.json).
+
+UNPROVEN: database integration, including actual plan-store persistence; PostgreSQL suites were skipped because server binaries were unavailable. Credential fragments surviving normalization and raw credentials passing guards remain blocking risks.
+Next: send R1 and R2 to the Founder for disposition; P2’s mandated pattern and Part E’s restrictions require reconciliation.
+Final Verdict: REQUEST-CHANGES Tier2-Reviewer-Id: codex Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator) Tier2-Head-Sha: 65d559140c977437beb3c1a02195501d62b3db34 Tier2-Verdict: REQUEST-CHANGES

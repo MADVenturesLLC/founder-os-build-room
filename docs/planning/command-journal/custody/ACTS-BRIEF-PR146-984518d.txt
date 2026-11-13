@@ -1,0 +1,32 @@
+TIER-2 BRIEF: MADVenturesLLC/founder-os-build-room pull request 146, head 984518da1b1e3375b2c103bbcb650b0904f6fc17, base main 3a1409a91ea692e83c55d2f0831efa4e8bfc31f5
+
+You are the independent Tier-2 reviewer on the codex surface. The author is claude-code (builder, Anthropic). This is the pull request's one Tier-2 review under FOUNDER-ACT-20261028-VELOCITY B2, as Part C1 of the Founder's act requires.
+
+Read-only:
+- Read ./repo at that head, and the one file beside this brief: FOUNDER-ACT-20261105-BR-BEARER-SHAPE (SHA-256 b90b0ce7d14462cfd4fcb0374e7f3d6c0658a73ebcfb9fe4ea2a0f25b2dce34e; signed by the Founder in the builder's session on 2026-11-05; Parts B and E govern this change). Nothing else: no host instructions, no memory, nothing outside this directory.
+- The operator ran npm ci in ./repo under Node 22 before starting you, so ./repo/node_modules is the dependency tree. Use it, and no package outside ./repo; if it is absent, or a package resolves from outside ./repo, stop with INCONCLUSIVE and say which. The approved Node 22 is the one the operator names, if your default is another.
+- Build and test where your sandbox allows writing, for example a copy of ./repo, node_modules included, in a temporary directory. Contact no service.
+- The change is git diff 3a1409a..HEAD inside ./repo: one commit, 984518d, in packages/journal/src/redact.ts, test/journal-bearer-shape.test.ts (new) and test/plan-store.storage.test.ts. Before you start, check that git rev-parse HEAD in ./repo prints the head above. If it does not, stop with INCONCLUSIVE.
+
+Why it exists. The first counted run of the set of 2026-11-04 returned a valid plan whose prose said "bearer" before an ordinary word (for example "bearer credentials"). The journal's credential guard, containsCredentialMaterial in packages/journal/src/redact.ts, whose shape bearer_token matched "Bearer", case-insensitively, followed by any eight characters of [A-Za-z0-9._~+/=-], judged the plan credential material, the plan store refused it (plan-store.ts, recordPlan), the command failed plan_refused and the set was spent. The same guard refuses journal rows, goals and plan feedback, and the same pattern redacts in normalization.
+
+What the change does:
+- B1: bearer_token's value quantifier goes from {8,} to {20,}, with a comment saying why. Nothing else in redact.ts changes.
+- B2, the stated limit: a Bearer value of 8 to 19 characters is no longer detected or redacted by this shape; the entropy shape reaches only runs of 40 or more. The act's A5 basis: the control plane refuses to boot with any of its three tokens shorter than 32 characters (packages/control-plane/src/config.ts), the values it mints for the Gateway are 64 hexadecimal characters and its pairing codes 43, and packages/redaction's registry has no bearer shape, so the parity condition of the Founder's ruling of 2026-10-03 does not reach this change.
+- Tests: test/journal-bearer-shape.test.ts (prose of the refused plan's kind is not credential material, alone and in a plan document's strings, with the document judging; a 20-character value and a 64-hex value in either case are detected and redacted; a 19-character value is not); and one storage case in test/plan-store.storage.test.ts, which keeps a plan with such prose (it needs PostgreSQL, and runs in CI's storage-integration). The builder made four mutations, each reverted alone, and each failed the new tests: {8,}, {21,}, {19,}, and the case-insensitive flag removed. The full suite passes 2,338, with migrate-cli needing a database, as on main.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line or command output):
+1. B1. Is the change exactly the quantifier of bearer_token and its comment? Does it keep the shape case-insensitive and its left boundary unchanged?
+2. Detection and redaction. Does every credential this system accepts or mints, as A5 states them, still match bearer_token when written after "Bearer"? Is there a credential form the guard caught before this change that it now misses, beyond B2's stated limit? Look in particular at the other shapes and SECRET_ENV_KEYS for any that relied on bearer_token.
+3. The false positive. Does English prose of the form "bearer" plus an ordinary word, alone and inside a plan document, no longer count as credential material, and do the plan store and the plan-decision, goal and journal guards that call containsCredentialMaterial behave otherwise as before?
+4. Scope. Does the diff stay inside the act's B3 paths, with nothing in packages/control-plane, packages/redaction, packages/run-harness or packages/gateway-daemon?
+5. Tests. Do the new tests fail on the defects they claim to cover, and do the existing journal redaction, parity and secrets tests pass? Do npm run typecheck and npm test complete, with any failure's cause named?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2; the Founder's rule of 2026-10-28): a finding blocks only if it is P1, or concerns checks 1 to 4. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 984518da1b1e3375b2c103bbcb650b0904f6fc17
+Tier2-Verdict: <same as Final Verdict>

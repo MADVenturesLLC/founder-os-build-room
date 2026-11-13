@@ -1,0 +1,8 @@
+Open the review record (/tmp/tier2-142-09b387d-MsxvPp/review.md). Step 3 of 3 complete: both scoped fixes pass; one pre-existing P3 advisory remains.
+
+1. FAIL — literal “for every input” equivalence, advisory only. CR/LF behavior passed 167,962 chunk partitions and 5,000 Unicode probes. Malformed UTF-8 chunks `C2`, `E2`, EOF produce two replacement characters; readline produces one. This also occurs at the parent commit, so it falls outside these fixes. Source:1241 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1241).
+2. PASS — exact limit and memory bound. Exactly 1,048,576 bytes is accepted; one byte more is reported immediately. Executor probes ended `malformed_output` in 16–17 ms with no terminator, LF, CR, or CRLF. Retained line bytes remain bounded. Source:1211 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1211).
+3. PASS — regressions. All 157 planner + 22 daemon-lock tests passed on Node 22.23.4, exit 0. Diagnostic privacy and legacy boot behavior remain covered. Tests:700 (repo/test/agy-planner-executor.test.ts:700), Tests:1254 (repo/test/agy-planner-executor.test.ts:1254).
+
+Head, parent, scope, and both authority hashes verified; checkout remains clean. All writes stayed in the temporary directory. Full TypeScript typechecking and the builder’s six mutation runs were not replayed; no live service was contacted.
+Final Verdict: PASS-WITH-ADVISORIES Tier2-Reviewer-Id: codex Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator) Tier2-Head-Sha: 09b387d9895ee29652f88f63eea9053c1f960689 Tier2-Verdict: PASS-WITH-ADVISORIES

@@ -1,0 +1,27 @@
+TIER-2 THIRD REVIEW BRIEF: MADVenturesLLC/founder-os-build-room pull request 141, head 1d87a6a0500157be4f3cddfaca96cc9e85974e4d, base main 29327785fa845fb7fd826905cba38d24509746be
+
+You are the independent Tier-2 reviewer on the codex surface. Your confirmation at bdeed34c7666e2935de195fff887bb63c86f7741 found two blocking defects in the correction itself, so FOUNDER-ACT-20261028-VELOCITY B2 allows this one third review. It is the last review the rules allow without the Founder's ruling. The author is claude-code (builder, Anthropic).
+
+Read-only:
+- Read ./repo at that head, and the two acts beside this brief, as before: FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS (SHA-256 c65afbc1afedefdf19a3705f3d0a8fda45ec2f89643c862c70485cf370d15053) and FOUNDER-ACT-20261029-BR-PLANNER-READINESS (SHA-256 0c8efcd9ea746966437a997595253b7f8d89360fb0128cc962570ec9ed381f65). Nothing else: no host instructions, no memory, nothing outside this directory.
+- Run nothing that writes outside a temporary directory, and contact no service.
+- The fix is git diff bdeed34..HEAD inside ./repo: one commit, 1d87a6a, in cli.ts and the CLI test.
+
+Your findings at bdeed34, and what this head does:
+1. P2, a hand-edited attempts.json could claim a pass its record did not support. Before the next label runs, after the act check and before anything is written, cli.ts priorPassDefect checks every pass on record: its record (whose digest the loader already checks) must judge as passed under evaluatePhase4Run with the terms' run; for Phase4-CR1, evaluatePhase4LiveCheck over the record's commands must pass and equal the log's reading (command, init model, conversation id); and the control plane must still hold the same record (HttpPhase4Driver.collectRecord, compared by canonical digest with deploymentIdAtEnd set aside). Any failure refuses with exit 2; a read that fails is not_started. Tests: "refuses a pass the log claims but its record does not support" (your scenario: CR1 stopped, only attempts.json edited), "refuses a pass whose live check the record does not carry", "refuses a pass whose record the control plane does not hold", and "advances past a pass the record and the control plane both support".
+2. P2, a token could be spelled out of a JSON escape. leaksSecret checks decoded strings and keys (holdsSecret) and the JSON text, and the JSON text of that text, for either token. It guards the record before writing (not written, attempt stays pending), the live check's values (withheld, check fails), and every attempt before it is saved (free text that would leak is withheld whole; anything still leaking is not written). Tests: "finds a token that JSON would spell out of an escape" (your newline case, end to end) and "withholds an error whose JSON would spell out a token".
+The builder's mutations against this commit, each reverted alone: the serialized check removed; the record's verdict unchecked; the log's reading not compared; the server record not compared; attempt free text not withheld. 5 of 5 failed tests. One more survives by design: dropping "the record's live check passed" is subsumed by the comparison, since a failed reading has null values and a stored pass must carry non-empty ones. Locally: 106 of 106 Phase 4 tests, lint and typecheck clean.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line):
+1. Finding 1. Can a pass on record that the command did not write, or wrote and was then edited, still advance or complete the set, with the control plane's record as the reference? Can a pass the command wrote now be refused?
+2. Finding 2. Can either token reach the evidence directory or the terminal in any encoding JSON produces, through the record, the attempt log or the live check?
+3. Regressions. Does the fix break anything your reviews passed?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2): a finding blocks only if it is P1, or concerns checks 1 to 3 in this fix itself. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 1d87a6a0500157be4f3cddfaca96cc9e85974e4d
+Tier2-Verdict: <same as Final Verdict>

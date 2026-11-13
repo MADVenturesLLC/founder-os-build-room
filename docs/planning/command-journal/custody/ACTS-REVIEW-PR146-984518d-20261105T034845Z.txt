@@ -1,0 +1,30 @@
+REQUEST-CHANGES: return the accepted-token gap to the builder for Founder disposition. Review complete; original checkout unchanged. Head and act SHA-256 match the brief.
+Blocking finding — check 2: minimum credential length does not guarantee 20 consecutive characters from the bearer pattern’s alphabet.
+This synthetic value is 32 characters:
+
+```
+'q7R'.repeat(5) + 'X!' + 'm8S'.repeat(5)
+
+```
+
+All three token settings accept it, and the exact production authentication middleware accepts it after `Bearer`. Configuration checks length without restricting the alphabet (config.ts:290 (repo/packages/control-plane/src/config.ts:290)); authentication compares the presented value (server.ts:487 (repo/packages/control-plane/src/server.ts:487)).
+Independent probes verified:
+
+```
+Baseline detection: true
+Head detection: false
+Head redaction: entire value unchanged
+Goal, plan, and feedback credential guards: passed
+
+```
+
+`!` ends the initial allowed run at 16 characters. Consequently, redact.ts:102 (repo/packages/journal/src/redact.ts:102) now misses a full-length accepted credential. Other shapes and `SECRET_ENV_KEYS` do not catch this bare header. This exceeds FOUNDER-ACT-20261105-BR-BEARER-SHAPE B2, which accepts values only 8–19 characters long, and blocks under the brief’s check-2 rule.
+
+1. PASS — B1. Only the bearer quantifier and its comment change in `redact.ts`. `/i` and `(?<![A-Za-z0-9])` remain unchanged. Other shapes, entropy handling, and secret keys are unchanged.
+2. FAIL — detection and redaction. Standard-alphabet values of lengths 20, 32, 43, and 64 pass detection/redaction probes. Minted pairing codes and Gateway values remain covered (store.ts:145 (repo/packages/control-plane/src/gateway/store.ts:145), session.ts:161 (repo/packages/control-plane/src/gateway/session.ts:161)). The accepted punctuation-bearing credential above regresses. Registry parity remains intact; its shape list has no bearer pattern (registry.ts:102 (repo/packages/redaction/src/registry.ts:102)).
+3. FAIL overall; prose fix verified. Ordinary prose passes alone, inside judged plan documents, and through the real plan/feedback guards using database stubs. Call sites remain unchanged. Their protection nevertheless regresses for the accepted credential above (plan-store.ts:206 (repo/packages/control-plane/src/plan-store.ts:206), founder-goal.ts:66 (repo/packages/control-plane/src/founder-goal.ts:66), plan-decision.ts:296 (repo/packages/control-plane/src/plan-decision.ts:296), journal-store.ts:924 (repo/packages/control-plane/src/journal-store.ts:924)).
+4. PASS — scope. One commit, parent exactly the pinned base, and exactly the three declared paths. No changes in the four prohibited packages. `git diff --check` exits 0.
+5. INCONCLUSIVE overall — storage case unexecuted. Under approved Node v22.23.4, typecheck exits 0; final `npm test` exits 0: 2,333 passed, 0 failed, 3 skipped, in 331 seconds (output (/tmp/tier2-146-review-p7TYHE/npm-test-complete.tap:18325)). All 70 focused tests pass. Each mutation—`{8,}`, `{21,}`, `{19,}`, removal of `/i`—fails the new tests; restoration passes 70/70. PostgreSQL server binaries were unavailable, so the new storage case and migrate-cli suites did not run.
+
+Not verified: PostgreSQL persistence and gated integration proofs. Risk: accepted punctuation-bearing credentials can survive normalization and persistence guards.
+Final Verdict: REQUEST-CHANGES Tier2-Reviewer-Id: codex Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator) Tier2-Head-Sha: 984518da1b1e3375b2c103bbcb650b0904f6fc17 Tier2-Verdict: REQUEST-CHANGES

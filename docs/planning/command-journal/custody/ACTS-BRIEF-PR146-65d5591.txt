@@ -1,0 +1,38 @@
+TIER-2 CONFIRMATION: MADVenturesLLC/founder-os-build-room pull request 146, head 65d559140c977437beb3c1a02195501d62b3db34, base main 3a1409a91ea692e83c55d2f0831efa4e8bfc31f5
+
+You are the independent Tier-2 reviewer on the codex surface. Your review at 984518da1b1e3375b2c103bbcb650b0904f6fc17 returned REQUEST-CHANGES on one finding: the control plane checks its three tokens for length, at least 32 characters, and not for their characters, so a 32-character token with punctuation in it had a run of bearer_token's alphabet shorter than 20 and was neither detected nor redacted. You found every other check sound. The Founder ruled on that finding in three amendments to the act. This is the pull request's one confirmation of the correction under FOUNDER-ACT-20261028-VELOCITY B2 (Amendment 1 M5, Amendment 3 P5), and it is of this exact head; your review of 984518d does not carry to it. The author is claude-code (builder, Anthropic).
+
+Read-only, as before:
+- Read ./repo at that head, and the four files beside this brief, and nothing else: no host instructions, no memory, nothing outside this directory.
+  146c-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-b90b0ce7.txt: the act (SHA-256 b90b0ce7d14462cfd4fcb0374e7f3d6c0658a73ebcfb9fe4ea2a0f25b2dce34e)
+  146c-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-1-954155f9.txt: Amendment 1 (954155f9f6a4de501abf86df589c2a337c267428c078b04dfb85890bb0ecb925)
+  146c-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-2-a824e438.txt: Amendment 2 (a824e4388257bbe81c19799a906eee94a6a753df6bdfb4d806e761a338731f91)
+  146c-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-3-40ac3fc0.txt: Amendment 3 (40ac3fc01095d1320eef86cdd8ff6e2a8e9d8654e49f52e10567feebbfbdb688)
+  All four were signed by the Founder in the builder's session on 2026-11-05. Parts B and E of the act, as amended, govern this change.
+- The operator ran npm ci in ./repo under Node 22 before starting you, so ./repo/node_modules is the dependency tree, installed from ./repo/package-lock.json. Use it, and no package outside ./repo. If it is absent, or a package resolves from outside ./repo, stop with INCONCLUSIVE and say which. The approved Node 22 is the one the operator names, if your default is another.
+- Build and test where your sandbox allows writing, for example a copy of ./repo, node_modules included, in a temporary directory. Contact no service.
+- Before you start, check that git rev-parse HEAD in ./repo prints the head above. If it does not, stop with INCONCLUSIVE.
+
+What changed since 984518d: three commits. git diff 984518d..HEAD touches packages/journal/src/redact.ts and test/journal-bearer-shape.test.ts only; test/plan-store.storage.test.ts is as you reviewed it.
+- 13ab905: the comment above bearer_token only, after Copilot noted that it claimed more than it showed.
+- 2f39b95: Amendment 1 M2, and M4 as corrected by Amendment 2 N2: bearer_token gains a second alternative, 32 or more characters that are not whitespace, and the tests M4 names.
+- 65d5591: Amendment 3 P2 and P4: the two alternatives swap order. A match ends where the alternative that matched ends, and JavaScript takes the first alternative that matches, so with the alphabet branch first a value whose leading run was 20 or more was redacted only up to its first punctuation; the rest stayed in the row, and containsCredentialMaterial, which removes the markers and checks what survives, no longer saw a "Bearer" before it. The builder found this at 2f39b95, before this review. Two tests.
+The pattern at this head (packages/journal/src/redact.ts:114): /(?<![A-Za-z0-9])Bearer\s+(?:\S{32,}|[A-Za-z0-9._~+/=-]{20,})/i
+
+The builder's runs at this head: npm run typecheck exit 0; npm test 2,345 passing of 2,360, with migrate-cli failing only because it needs a database this environment lacks, as on main; the 11 tests of test/journal-bearer-shape.test.ts pass. Eleven mutations of the pattern, each applied alone, each failed at least one of those tests: the order of 2f39b95; the pattern of 3a1409a; {20,} to {21,}; {20,} to {19,}; the case-insensitive flag removed; the \S{32,} alternative removed; \S{32,} to \S{33,}, to \S{31,}, to \S{26,} and to \S{20,}; and the underscore removed from the alphabet. On 200,000 generated strings, no string matched one order of the alternatives and not the other, and on none did this head's order leave more of the string unredacted.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line or command output):
+1. The pattern. Is bearer_token exactly Amendment 3 P2's pattern, with its comment, and is every other line of redact.ts identical to 3a1409a? Is the shape still case-insensitive, with its left boundary unchanged? Does the comment state the act's limits, as amended, without claiming more?
+2. Your finding, and redaction. Is every token the control plane accepts (at least 32 characters, of any characters, packages/control-plane/src/config.ts), written after "Bearer" with no whitespace in it, both detected and redacted with no part of it surviving, wherever punctuation falls in it? Is there a credential form that 3a1409a detected or redacted and this head misses, beyond the stated limits of B2 as replaced by M3 and added to by N3 and P3? Look at the other shapes, the entropy shape and SECRET_ENV_KEYS for any that relied on bearer_token, and at what containsCredentialMaterial sees after redaction.
+3. The false positive, and the callers. Is prose of the form "bearer" plus an ordinary word, alone and inside a plan document, still not credential material? Are the accepted false positives (M3: 32 or more non-whitespace characters after "bearer", such as a long URL; N3: a bare name of 20 or more characters of the alphabet) the only new ones? Do the plan store and the plan-decision, goal and journal guards that call containsCredentialMaterial behave otherwise as before?
+4. Scope. Does the diff stay inside B3's paths, packages/journal/src/redact.ts and tests under test/, with nothing in packages/control-plane, packages/redaction, packages/run-harness, packages/gateway-daemon or the migrations?
+5. Tests. Does every test B4 names, as amended by M4, N2 and P4, exist, and does each fail on the defect or limit it claims? Do the existing journal redaction, parity and secrets tests pass? Do npm run typecheck and npm test complete, with any failure's cause named?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2; the Founder's rule of 2026-10-28): a finding blocks only if it is P1, or concerns checks 1 to 4. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 65d559140c977437beb3c1a02195501d62b3db34
+Tier2-Verdict: <same as Final Verdict>

@@ -1,0 +1,30 @@
+TIER-2 CONFIRMATION: MADVenturesLLC/founder-os-build-room pull request 142, head ac1097f11bbf03f2c5581f12612c3a77db8f14f4, base main 03cd29f95fbd93f854cc236f61d93fcf85da8848
+
+You are the independent Tier-2 reviewer on the codex surface. Your review at efaa1c9a6bff2663a61848ea414adf2a7c12fa4d returned REQUEST-CHANGES with two P2 findings. This is the one confirmation of FOUNDER-ACT-20261028-VELOCITY B2, of the one correction commit that answers them. The author is claude-code (builder, Anthropic).
+
+Read-only:
+- Read ./repo at that head, and the same two files beside this brief as before: FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX (SHA-256 b0e0af94328460819eadc8d42797d99cd5387f999b8ae835645176f38b2a5024) and FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR-AMENDMENT-4 (SHA-256 d514039964bb60eb0c634a19a6c34e18931ace19499960a80369d106c8cfe39d). Nothing else.
+- Run nothing that writes outside a temporary directory, and contact no service.
+- The correction is git diff efaa1c9..HEAD inside ./repo: one commit, ac1097f, in the same three files.
+
+On issuance, which you marked unproven: the act file is the draft text the Founder signed by reference to its SHA-256, without editing it, which is how acts are signed in this repository's builder sessions. The builder recorded the signature at 2026-11-03T03:00:18Z, verbatim: "I sign the fix act as delivered". It will be filed under the act's C4. Treat the act as issued.
+
+What the correction does:
+- Finding 1. A blank output line is named "other" and counts toward the cap of 64. Anything recorded before init, which can only be blank lines, is dropped when init arrives.
+- Finding 2, under the Founder's ruling in the builder's session on 2026-11-03, verbatim: "authorize bounding the buffer in this correction". This extends the act's Part B to AgyRun's handling of agy's stream, in the same file. AgyRun keeps no list of events. Each line is judged when it arrives: the first JSON event is kept for start(). The first later line that decides the run (another model named at any depth, the first result, or a line that is not a bounded JSON object) sets the outcome, and later lines decide nothing. The first result's status and response size are kept for the closing record. result() waits for that outcome, for close, or for its timeout. Two behaviours follow, both stricter than before: a malformed line before the result now always ends the run malformed_output, where before it depended on how lines were read; and the first deciding line always wins.
+- Tests: blank lines, 70 blank lines, a blank line before init, a malformed line before the result, a model switch and a result in one write, and a 5,000-line stream of 1 KiB lines. The builder made eight mutations, each reverted alone, and each failed the suite. 150 of 150 pass locally.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line):
+1. Finding 1. Is every line after init, blank ones included, named as the act's B2 says, with the cap and "truncated" correct?
+2. Finding 2. Is the memory AgyRun holds now bounded by one line, whatever agy writes and however long? Is nothing agy wrote kept beyond the first event, the outcome (a plan document, at most one line) and the summary?
+3. Regressions. Does every outcome your review passed still come out the same: plan, fenced plan, agy_error, unparseable_plan, model_switched (deep too), malformed_output, no_result, timed_out, and each init refusal? Do the two stricter behaviours above change any outcome the Founder's rulings rely on?
+4. Scope. Does the correction stay inside the act's B3 paths and the Founder's ruling, with agy's arguments, the wire protocol, the control plane and the PC untouched?
+
+What blocks: a finding blocks only if it is P1, or concerns checks 1 to 4 in this correction itself. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: ac1097f11bbf03f2c5581f12612c3a77db8f14f4
+Tier2-Verdict: <same as Final Verdict>

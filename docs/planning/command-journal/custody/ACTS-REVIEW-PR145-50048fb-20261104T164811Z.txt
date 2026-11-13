@@ -1,0 +1,27 @@
+INCONCLUSIVE — check 4 remains unverified. No blocking code defect was reproduced.
+
+VERIFIED: required head and base, clean worktree, and both supplied artifact hashes.
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. B1 export reading | PASS | Only committed_at supplies the field. Nonstring/unparseable values leave it absent; existing refusals remain unchanged. export-reader.ts:54 (repo/packages/run-harness/src/phase4/export-reader.ts:54), export-reader.ts:69 (repo/packages/run-harness/src/phase4/export-reader.ts:69). |
+| 2. B2 timing | PASS | Searches preceding events in reverse record order, recognizes the amended review boundary, and uses strict > with parsed milliseconds and NaN guards. Exact-limit, +1 ms, per-round and UTC-offset probes passed. run-unit.ts:114 (repo/packages/run-harness/src/phase4/run-unit.ts:114), run-unit.ts:209 (repo/packages/run-harness/src/phase4/run-unit.ts:209). |
+| 3. Unrecorded/untimed decisions | PASS | Only a cancel without a plan under review bypasses timing. Missing/unreadable timestamps and orphan revisions/approvals add decision_time_unrecorded once. run-unit.ts:119 (repo/packages/run-harness/src/phase4/run-unit.ts:119). |
+| 4. Regressions | INCONCLUSIVE | Runner flags and outcome precedence are unchanged; relevant isolated tests pass. Normal build and complete regression verification remain unavailable because dependencies are missing. run-unit.ts:56 (repo/packages/run-harness/src/phase4/run-unit.ts:56), run-unit.ts:157 (repo/packages/run-harness/src/phase4/run-unit.ts:157), build.log:1 (/tmp/tier2-145-review-E4ZpSa/build.log:1). |
+| 5. Scope | PASS | The exact-base diff contains only the three named implementation files and two tests. It meets FOUNDER-ACT-20261104-BR-PHASE4-DECISION-TIME B3 (FOUNDER-ACT-20261104-BR-PHASE4-DECISION-TIME-4963eef0.txt:19). |
+| 6. Test sensitivity | PASS, isolated | All six new tests pass and detect corresponding defects. Eleven independent mutations caused assertion failures and were individually restored. phase4-run-harness.test.ts:408 (repo/test/phase4-run-harness.test.ts:408), phase4-run-harness.test.ts:663 (repo/test/phase4-run-harness.test.ts:663). |
+
+I agree with the builder’s outcome interpretation under Amendment 1 M2: a cancel at plan_review with an unreadable time remains rejected, carrying decision_time_unrecorded; a late cancel becomes interrupted. This preserves the existing outcome order. The transaction-start timestamp limit is accepted under M1/M4.
+
+On Node v26.5.1, the two changed suites passed 108 tests, plus 5 stop-gate checks and 7 additional probes: 120/120, exit 0, including after restoration. This used an express stand-in that throws if called; it was never called. All writes stayed in temporary storage, and no service was contacted.
+
+One compiler attempt resolved an ancestor express package outside the permitted directory. That attempt cannot establish compliance with the directory-only boundary.
+
+Next: provide an offline dependency tree inside this review directory.
+Not verified: clean typecheck, normal full-suite execution, or the reported 141/2,216 totals; check 4 remains open.
+
+Final Verdict: INCONCLUSIVE
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator)
+Tier2-Head-Sha: 50048fbe1e5fa1817c8e92908fcc3ec411cd9a26
+Tier2-Verdict: INCONCLUSIVE

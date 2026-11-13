@@ -1,0 +1,34 @@
+TIER-2 BRIEF: MADVenturesLLC/founder-os-build-room pull request 141, head 0a7a81c0f0d27a86a8491e2367e7a99519cd59cb, base main 29327785fa845fb7fd826905cba38d24509746be
+
+You are the independent Tier-2 reviewer on the codex surface. The author is claude-code (builder, Anthropic). This is the pull request's one Tier-2 review under FOUNDER-ACT-20261028-VELOCITY B2.
+
+Read-only:
+- Read ./repo at that head, and the two acts beside this brief: FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS (SHA-256 c65afbc1afedefdf19a3705f3d0a8fda45ec2f89643c862c70485cf370d15053; parts D2 and E govern this change) and FOUNDER-ACT-20261029-BR-PLANNER-READINESS (SHA-256 0c8efcd9ea746966437a997595253b7f8d89360fb0128cc962570ec9ed381f65; Part B). Nothing else: no host instructions, no memory, nothing outside this directory.
+- Run nothing that writes outside a temporary directory, and contact no service.
+- The change is git diff 29327785..HEAD inside ./repo: four commits, the runner (1931ad4) and the answers to Copilot's three reviews (22616f4, 4276ce3, 0a7a81c).
+
+Why it exists. The Founder's act authorizes the three counted Phase 4 runs and, in D2, directs one command to run them: nothing in Build Room could. The Founder runs it himself, one label per invocation, holding the API token and the counted-run token; he decides every plan himself at the control plane with a separate token the command never holds.
+
+What the change does:
+- packages/run-harness/src/phase4/cli.ts: npm run phase4:counted-run. Reads the terms file and checks its SHA-256; tokens from the environment, scrubbed from every printed line and stored error; takes run.lock in the evidence directory; reads the attempt log; refuses unless the control plane is configured for this act; runs the next label through Phase4Runner and HttpPhase4Driver; records the attempt as pending before the room is created, writes the record and its digest (never a record holding a token), and only then stores the outcome; exit 0 only on a pass. For Phase4-CR1 it reads the live check after the first round settles, before waiting on the Founder, and stops the run if it fails.
+- runner.ts: hooks onEntryPassed (before createRoom) and afterRound; a run stopped by afterRound never counts (stopped_after_round).
+- attempt-store.ts: the log, bound to one set and terms hash, attempts checked as a closed shape; the lock; evidence hard-linked into place, never replaced.
+- live-check.ts: the readiness act's Part B as a pure function; cli.ts withholds and fails a reading whose values hold credential material. http-driver.ts: a journal read and the configured act's id. model.ts: one failure name.
+- test/phase4-counted-run-cli.test.ts (new) and one test in test/phase4-run-harness.test.ts.
+Known and not a finding here: the existing driver's captureScope requires the repository's live head to equal the run's base commit, so Build Room main cannot move during the set; the act's D6 wording allows a later commit, and the Founder's D5 amendment corrects the act.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line):
+1. Correctness against the act. Does a run count only as the act's B and C allow? Can a spent or complete set run again, can one label run twice, can two invocations race, can a crash leave the set looking unspent? Is the live check made only for Phase4-CR1's first command, after its first round, before the wait on the Founder, and does a failed check always stop the run and never count?
+2. Credentials. Is either token ever printed, logged, written to the evidence directory or sent to a route it does not open? Can the command reach the plan-decision route or hold the adjudication token?
+3. Evidence. Can the attempt log or a record be torn, overwritten, or accepted when malformed? Does the record's digest match what is written?
+4. Scope. Does the diff stay inside packages/run-harness/src/phase4/, one line of package.json, and test/? Does it change behaviour for any other caller of the runner or the driver?
+5. Tests. Do the new tests fail on the defects they claim to cover, and pass for the right reason on the platform you run?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2; the Founder's rule of 2026-10-28): a finding blocks only if it is P1, or concerns checks 1 to 4. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 0a7a81c0f0d27a86a8491e2367e7a99519cd59cb
+Tier2-Verdict: <same as Final Verdict>

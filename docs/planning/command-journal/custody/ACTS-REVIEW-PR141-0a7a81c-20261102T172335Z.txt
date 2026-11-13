@@ -1,0 +1,26 @@
+Return PR 141 for correction: two P2 blockers. Step 3 of 3 complete.
+
+VERIFIED: exact head, four-commit diff, and both supplied act hashes. The checkout remains clean.
+
+1. P2 — Malformed attempts can advance the set. attempt-store.ts:198 (repo/packages/run-harness/src/phase4/attempt-store.ts:198) accepts unchecked optional fields and contradictory passes, including liveCheck: 7, a failed live check, or nonempty entryFailures. The CLI trusts that progress (repo/packages/run-harness/src/phase4/cli.ts:147). A temporary log claiming CR1 passed while recording liveCheck.passed: false reached CR2’s room-creation call. This bypasses FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS C2/E2 and FOUNDER-ACT-20261029-BR-PLANNER-READINESS B3. Validate optional fields and reject contradictory outcomes before deriving progress.
+2. P2 — JSON escaping bypasses the token guard. cli.ts:261 (repo/packages/run-harness/src/phase4/cli.ts:261) serializes the record before searching for raw token strings. A token containing a backslash becomes escaped JSON, so the comparison misses it. Reproduced with a fake API token echoed in providerConversationId: the live check withheld it, but the record reached disk and recovered the complete token when parsed. Such tokens are accepted by the server configuration (repo/packages/control-plane/src/config.ts:290). This violates the counted-run act’s D2. Inspect decoded record strings before serialization, or compare consistently encoded values.
+
+| Required check | Result | Evidence |
+|---|---|---|
+| 1. Correctness against act | FAIL | Malformed-log bypass in finding 1. Normal execution correctly limits the live check and prevents stopped runs from passing: runner.ts:142 (repo/packages/run-harness/src/phase4/runner.ts:142). |
+| 2. Credentials | FAIL | Finding 2 writes credential material. Route-token mapping otherwise passed; the driver exposes no plan-decision operation: http-driver.ts:120 (repo/packages/run-harness/src/phase4/http-driver.ts:120). |
+| 3. Evidence | FAIL | Finding 1 accepts malformed evidence. Atomic log replacement and exclusive evidence links are present: attempt-store.ts:108 (repo/packages/run-harness/src/phase4/attempt-store.ts:108). Saved digests matched independently recomputed canonical JSON. |
+| 4. Scope | PASS | All ten changed files stay within the permitted paths. Existing runner callers retain their behavior when hooks are omitted: runner.ts:129 (repo/packages/run-harness/src/phase4/runner.ts:129). |
+| 5. Tests | FAIL — advisory | Seven mutations caused failures. Three survived all 91 tests: wrong saved digest, repeated CR2 live check, and removed file syncs. The CLI test checks only the digest’s type: phase4-counted-run-cli.test.ts:378 (repo/test/phase4-counted-run-cli.test.ts:378). |
+
+After restoring every mutation, 91/91 targeted tests passed. Five additional probes reproduced the findings and verified three successful CLI labels, one live check, matching canonical digests, and refusal of a fourth invocation. Mutation evidence (/tmp/tier2-141-ZVvLqw/mutation-summary.json).
+
+Next: send findings 1–2 to the builder for correction.
+
+Not checked: the stock build, Node 22, or live integrations. Tests used Node 24’s TypeScript transformation and a throwing Express stub; no service was contacted, and all writes stayed under /tmp.
+
+Final Verdict: REQUEST-CHANGES
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: GPT-6.1-Sol (reasoning xhigh, summaries auto) (Codex CLI /status, reported by the operator)
+Tier2-Head-Sha: 0a7a81c0f0d27a86a8491e2367e7a99519cd59cb
+Tier2-Verdict: REQUEST-CHANGES

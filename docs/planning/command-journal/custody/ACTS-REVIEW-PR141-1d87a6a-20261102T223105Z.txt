@@ -1,0 +1,15 @@
+Refer PR #141 to the Founder for a ruling: REQUEST-CHANGES. Third review complete; two P2 blockers remain.
+
+1. Finding 1 — FAIL, P2: editing the log can revive an interrupted run.
+cli.ts:340 (repo/packages/run-harness/src/phase4/cli.ts:340) rejudges the record with timeout flags forced false; the original live-check outcome is also reconstructed from later journal data.
+VERIFIED offline: CR1 wrote `interrupted` after either a decision timeout or a failed live read followed by concurrent approval. Editing only `attempts.json` allowed CR2 to start. The record remained unchanged and matched the fake server. This defeats `FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS` C2/E2 and `FOUNDER-ACT-20261029-BR-PLANNER-READINESS` B3.
+Also, cli.ts:151 (repo/packages/run-harness/src/phase4/cli.ts:151) reports a forged three-pass log as complete before server validation. It still exits 2.
+2. Finding 2 — FAIL, P2: an already JSON-escaped token bypasses protection.
+cli.ts:324 (repo/packages/run-harness/src/phase4/cli.ts:324) searches for the raw token; cli.ts:400 (repo/packages/run-harness/src/phase4/cli.ts:400) likewise scrubs literal matches.
+VERIFIED offline: an upstream error containing `JSON.stringify(token)`, using a token with quotes/backslashes, reached both terminal output and the saved attempt error. JSON parsing recovered the original token. This violates the counted-runs act D2.
+3. Regressions — PASS within tested scope.
+All 106 existing tests passed. An additional test confirmed that an unchanged pass actually written by the command resumes correctly. Four added safeguard tests failed, reproducing the defects above: failure evidence (/private/tmp/tier2-141-third-nZPLxd/contract.tap:137).
+
+Head, base, parent, and both act hashes matched. The checkout remained clean. Tests used a temporary Node 24 transpilation; the fail-closed Express shim recorded zero calls. No service was contacted.
+Skipped: lint/typecheck because dependencies were absent; live behavior remains unverified. Risk: interrupted-set revival and recoverable credential leakage.
+Final Verdict: REQUEST-CHANGES Tier2-Reviewer-Id: codex Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator) Tier2-Head-Sha: 1d87a6a0500157be4f3cddfaca96cc9e85974e4d Tier2-Verdict: REQUEST-CHANGES

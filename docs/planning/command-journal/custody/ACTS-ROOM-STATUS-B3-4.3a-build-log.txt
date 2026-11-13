@@ -1,0 +1,4 @@
+
+> founder-os-build-room@0.0.0 build
+> tsc --build tsconfig.json
+

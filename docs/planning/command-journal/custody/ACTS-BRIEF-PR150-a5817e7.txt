@@ -1,0 +1,39 @@
+TIER-2 REVIEW: MADVenturesLLC/founder-os-build-room pull request 150, head a5817e75795c9cf995ee07abd987f6549e966a99, base main 0a7f2a7a21da745f0cee16fff76dc36c13d01c39
+
+You are the independent Tier-2 reviewer on the codex surface: one review of this exact head (FOUNDER-ACT-20261028-VELOCITY B2). The author is claude-code (builder, Anthropic).
+
+Why it exists. In rehearsal R4 on 2026-11-08 the Planner (agy, gemini-4-argon-high) returned three plans for a README change. The builder checked each against the checkout: round 1 named files, functions, scripts and seven test files that do not exist (15 groups of false statements); round 2 took every correction and added 15 new groups, two of them things round 1 had right; round 3 named about 70 things that all exist but required npm run lint to pass, which fails at the base commit, and a Planner that may not run commands cannot know that. A revision round carries only the Founder's feedback and the earlier plan's hash, and agy starts afresh each round, so the Planner never sees its earlier plan. The Founder signed FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING; this pull request is its Part B.
+
+Read-only:
+- Read ./repo at that head, and the two files beside this brief, and nothing else: no host instructions, no memory, no history, no files from any earlier review, nothing outside this directory except the temporary copy you make to build and test.
+  150-FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING-39e02e5d.txt: the act (SHA-256 39e02e5ddbd5b4bd0b61076f6ebc10f3b8dbc2cb76ed58e02b7f2519338ce684). Part B is the change: B1 to B3 give the exact lines, B4 keeps every earlier line, B5 the paths, B6 the tests.
+  150-FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS-a8fb3b2a.txt: the standing act (SHA-256 a8fb3b2a91aa32388960af1741a7af0b9cb3196716c2c8876fac76da7d65a955), for context: its B3(e) puts the prompt outside the fix track, which is why this change has its own act.
+- The operator ran npm ci in ./repo under Node 22, so ./repo/node_modules is the dependency tree. Use it and no package outside ./repo; if it is absent, stop with INCONCLUSIVE. The approved Node 22 is the one the operator names.
+- Build and test where your sandbox allows writing, for example a copy of ./repo, its .git and node_modules included, in a temporary directory. Contact no service.
+- First check that git rev-parse HEAD in ./repo prints the head above; if not, stop with INCONCLUSIVE.
+
+The change, git diff 0a7f2a7..HEAD: two files, +197 -0, in one commit, a5817e7.
+- packages/gateway-daemon/src/agy-planner-executor.ts, plannerPrompt (line 317), 19 lines added and none removed: a doc comment (lines 310 to 315); B2's note pushed right after the revision lines, inside the revision branch (line 331); B1's block, a blank line, the heading HOW TO WRITE THE PLAN and six rules, pushed after the scope paths and any revision lines and before the existing blank line and ANSWER (lines 333 to 342); B3's line as the last line of the ANSWER push (line 350).
+- test/agy-plan-prompt-grounding.test.ts (new, 9 tests). The expected lines are written out from the act's text, not read from the source; promptBeforeTheAct is a copy of plannerPrompt at 0a7f2a7, against which the B4 tests compare.
+
+The automated reviews so far, at a5817e7:
+- Copilot: no open issues. Its overview notes that the tests check the prompt text only and cannot show the model follows the rules; the act says the same (A4) and leaves that to a rehearsal (Part E).
+- Cursor Security Agent: neutral.
+- CI at a5817e7: build-and-test, build-and-test-macos, storage-integration, hygiene, path-audit, custody-pin-check, served-model and CodeQL green. attribution-shape is red on the placeholder description, and founder-authorization is red until the Founder authorizes; neither is a code result.
+
+The builder's runs at this head: npm run typecheck exit 0; eslint of both changed files clean (eslint of the whole repository reports 30 errors, all in files this change does not touch, as on main); gate:secret-scan and gate:path-audit PASS; the new tests 9 of 9, test/agy-planner-executor.test.ts and test/plandoc-item-limit.test.ts unchanged and passing; the full default suite 2,406 passing of 2,421, the one failure and twelve cancellations all in migrate-cli, which needs a database the builder's environment lacked, as on main. A script compared each added line in the source and in the test with the act's B1 to B3 text: all equal. Twenty mutations of the source, each applied alone, all fail at least one new test: removing, rewording or duplicating any rule; removing the heading or the blank line before it; moving the block after ANSWER; removing the note, putting it before the feedback, adding it to a first round, or rewording it; removing the last line, moving it before the terminal_status line, or rewording it; changing the existing line ANSWER. Say whether you agree.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line or command output):
+1. The text. Are B1's eight lines (blank, heading, six rules), B2's line and B3's line in the prompt exactly as the act writes them, character for character? Is B1's block after the scope paths and after any revision lines and immediately before the blank line and ANSWER? Is B2's line present only in a revision round, right after the feedback, including feedback that runs over several lines? Is B3's line the prompt's last line in both kinds of round? Is every line the prompt produced at 0a7f2a7 still produced, word for word and in order (act B4)?
+2. Safety and the boundary. In agy-planner-executor.ts, does anything change outside plannerPrompt: agy's command line, PINNED_AGY_ARGUMENTS or BANNED_AGY_ARGUMENTS, the user it runs as, its sudo use, the reap, its timeouts, its lane, the evidence record or the parser? Does the prompt take any new input beyond the work it already used? Is everything in it still public-class (the goal, scope and schema, plus fixed text), with nothing from the environment, a file or a secret?
+3. Scope (act B5). Are the changed paths only the two above, with no existing test changed, and nothing in packages/gateway-protocol, packages/control-plane, packages/journal, packages/seat-output-schema, packages/run-harness, the migrations or anything outside packages/gateway-daemon and test/?
+4. Tests (act B6). Does each new test fail on the defect it claims? Do npm run typecheck and npm test complete, with any failure's cause named?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2; the Founder's rule of 2026-10-28): a finding blocks only if it is P1, or concerns checks 1 to 3. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: a5817e75795c9cf995ee07abd987f6549e966a99
+Tier2-Verdict: <same as Final Verdict>

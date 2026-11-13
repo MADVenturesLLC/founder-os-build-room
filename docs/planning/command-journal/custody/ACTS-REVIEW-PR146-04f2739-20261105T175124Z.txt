@@ -1,0 +1,20 @@
+Verified outputs:
+
+```
+3a1409a: ["[REDACTED]","[REDACTED]"]
+04f2739: ["[REDACTED] bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+
+```
+
+The greedy branch consumes the first token plus `","Bearer`; global replacement resumes after the second scheme. The remaining token passes `containsCredentialMaterial`, and `normalizeForJournal` returns successfully. Evidence: pattern (repo/packages/journal/src/redact.ts:103), replacement loop (repo/packages/journal/src/redact.ts:170), reproduced outputs (/tmp/tier2-146d-review-2eVz6u/repo/.tier2-confirmation/probes.json:70).
+This exceeds the accepted limits. Amendment 3 P3 accepts consuming attached suffix characters; it does not accept leaving a second credential intact. Amendment 4 Q3’s glued-prefix exception requires another credential to reach its minimum length only through the glued word. The first token already independently has 32 characters. See P3 (146d-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-3-40ac3fc0.txt:12) and Q3 (146d-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-4-bbc7ba63.txt:12).
+
+1. PASS — Change. Removing the bearer block from both versions leaves identical files versus `65d5591`. P2’s pattern is unchanged; other shapes, their relative order, entropy, environment keys and both functions are unchanged. The production comment records Q3’s limits.
+2. FAIL — R1 and redaction. R1 and the embedded AWS case now redact whole. R2 and the glued-prefix case behave as authorized. However, the serialized-header reproduction disproves whole redaction and demonstrates a regression versus base outside the stated limits.
+3. PASS — Detection and callers. The unchanged detector evaluates the same non-global patterns as a Boolean OR, so their permutation preserves its result for every valid string-array input. Independent generated comparisons found zero differences across 200,000 strings. Prose and plan-document cases pass; callers are unchanged. The normalization leak is reported under check 2. Detector (repo/packages/journal/src/redact.ts:238).
+4. PASS — Scope. Base-to-head diff contains exactly `packages/journal/src/redact.ts`, `test/journal-bearer-shape.test.ts` and `test/plan-store.storage.test.ts`. No prohibited production paths changed.
+5. PASS — Tests, with execution limits. All mandated cases exist. All 14 bearer tests fail under at least one of 12 independently applied mutations; the 80 focused bearer, secrets, parity and redaction tests pass afterward. Typecheck exits 0. `npm test` exits 0: 2,343 passed, zero failed, three counted skips. Database suites, including migrate-cli and the added storage regression, were gated off because PostgreSQL binaries were unavailable on the sanitized PATH. Prerequisite C suites also lacked their required runtime dependencies. Mutation evidence (/tmp/tier2-146d-review-2eVz6u/repo/.tier2-confirmation/summary.json:112), suite output (/tmp/tier2-146d-review-2eVz6u/npm-test-rerun.log:18385).
+
+Advisory: the test header (repo/test/journal-bearer-shape.test.ts:9) still omits Q3’s marker-text exception.
+Not exercised: gated database and Prerequisite C proofs. The original checkout remains unchanged; the confirmed risk is a complete credential surviving journal normalization.
+Final Verdict: REQUEST-CHANGES Tier2-Reviewer-Id: codex Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator) Tier2-Head-Sha: 04f273969efe4f49f219fc63c81d447eb37976cc Tier2-Verdict: REQUEST-CHANGES

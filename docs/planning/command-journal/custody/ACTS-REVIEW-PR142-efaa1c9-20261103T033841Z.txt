@@ -1,0 +1,28 @@
+Return this head to the builder: REQUEST-CHANGES. Review 5/5 complete.
+
+Head/base, both supplied document hashes, and the clean checkout are VERIFIED.
+
+1. P2 — Blank output lines disappear from the evidence. agy-planner-executor.ts:1205 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1205) skips whitespace before recording its event kind. Under FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX B2, a line without a matching event must become "other". Two blank lines followed by a result record only ["result"]; 65 blank lines also fail to produce "truncated". Both end-to-end regression tests (/tmp/tier2-142-review-ZNVL2k/blank-line-regression.tap) fail at the evidence assertion, exit 1. Record "other" before skipping a blank line.
+2. P2 — Total stream memory remains unbounded. agy-planner-executor.ts:1209 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1209) retains every parsed payload; diagnostics at line 1241 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1241) scans that history. The probe retained 5,002 events, including 5,120,000 bytes of text, despite diagnostics containing only 65 entries. This retention predates the PR, but fails the brief’s explicit check-2 memory question. Bound pending events and release consumed payloads.
+
+Both findings concern check 2 and therefore block under the brief’s stated rule.
+
+| Required check | Result | Evidence |
+|---|---|---|
+| 1. B1 prompt | PASS | Second line matches the act verbatim; every other prompt line is unchanged. Source:314 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:314). |
+| 2. B2 evidence | FAIL | Closing-only placement, both regex filters, UTF-8 byte counts, payload omission, and nonblank-event cap pass. Blank-line accounting and total memory fail as above. Closing write:696 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:696), filters:1247 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1247). |
+| 3. Compatibility | PASS | Legacy records remain readable, rewritten and closed without inventing diagnostic fields. Other consumers and planner wire behavior are unchanged. Validator:381 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:381), boot closure:819 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:819). This preserves Amendment 4 E1. |
+| 4. Scope | PASS | Diff contains exactly the three B3 paths. Pinned/banned arguments, control plane, journal, gateway protocol and migrations are unchanged. Arguments:115 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:115). |
+| 5. Tests | PASS | Added tests fail for their claimed defects. Prompt, event filtering/cap, closing metadata and legacy-boot mutations failed their targeted assertions. Tests:425 (repo/test/agy-planner-executor.test.ts:425), tests:612 (repo/test/agy-planner-executor.test.ts:612), boot test:1092 (repo/test/agy-planner-executor.test.ts:1092). |
+
+Validation: 146/146 tests passed on macOS arm64, Node v26.5.1; five additional lifecycle checks passed. Eight isolated mutations each exited 1 at the intended assertion. After restoration, 146/146 passed again, exit 0. Mutation evidence (/tmp/tier2-142-review-ZNVL2k/mutations.json), final restored run (/tmp/tier2-142-review-ZNVL2k/final-restored.tap).
+
+Next: send findings 1–2 to the builder. Repository unchanged; generated evidence stays in /tmp/tier2-142-review-ZNVL2k; no service contacted.
+
+Not checked: full typecheck, Node 22/Linux, or real agy. Issuance remains UNPROVEN from the supplied artifact, which retains its draft banner (FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX-b0e0af94.txt:2) and blank date; the brief’s acknowledged command-tool limit remains.
+
+Final Verdict: REQUEST-CHANGES
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator)
+Tier2-Head-Sha: efaa1c9a6bff2663a61848ea414adf2a7c12fa4d
+Tier2-Verdict: REQUEST-CHANGES

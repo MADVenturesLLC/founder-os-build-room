@@ -1,0 +1,34 @@
+TIER-2 REVIEW: MADVenturesLLC/founder-os-build-room pull request 147, head ea7bc9d197ae61f081227aecacf2fa8746fc143b, base main c440a470046ef2cfe1408ccfff849e3586b1626b
+
+You are the independent Tier-2 reviewer on the codex surface: one review of this exact head (FOUNDER-ACT-20261028-VELOCITY B2). The author is claude-code (builder, Anthropic).
+
+Why it exists. In rehearsal R1 on 2026-11-06, the Planner (agy, gemini-4-argon-high) answered a revision round with 46,961 characters of one-line JSON holding one backslash that JSON does not allow, at character 38,890. The Gateway's strict parse threw the whole plan away and the round failed as unparseable_plan. The Founder ordered this fix under the standing act beside this brief, Part B (the fix track).
+
+Read-only:
+- Read ./repo at that head, and the one file beside this brief, and nothing else: no host instructions, no memory, nothing outside this directory.
+  147-FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS-a8fb3b2a.txt: the standing act (SHA-256 a8fb3b2a91aa32388960af1741a7af0b9cb3196716c2c8876fac76da7d65a955), signed by the Founder on 2026-11-06. Its Part B governs this change; B3 lists what the fix track may not touch.
+- The operator ran npm ci in ./repo under Node 22, so ./repo/node_modules is the dependency tree. Use it and no package outside ./repo; if it is absent, stop with INCONCLUSIVE. The approved Node 22 is the one the operator names.
+- Build and test where your sandbox allows writing, for example a copy of ./repo, its .git and node_modules included, in a temporary directory. Contact no service.
+- First check that git rev-parse HEAD in ./repo prints the head above; if not, stop with INCONCLUSIVE.
+
+The change, git diff c440a47..HEAD: three files, +254 -4.
+- packages/gateway-daemon/src/agy-planner-executor.ts: parsePlanResponse and repairInvalidEscapes (around line 348); planDocumentFrom now returns parsePlanResponse(...).document; AgyRun.judge uses parsePlanResponse and keeps the repair count; diagnostics() adds invalidEscapesRepaired only when it is above 0; EvidenceRecord gains that optional field.
+- packages/gateway-daemon/src/index.ts: two exports.
+- test/agy-plan-parse.test.ts (new, 10 tests).
+
+The builder's runs at this head: typecheck exit 0; eslint of the changed files clean; test/agy-plan-parse.test.ts 10 of 10; test/agy-planner-executor.test.ts 157 of 157, unchanged; npm test 2,356 passing of 2,371, the one failure and twelve cancellations all in migrate-cli, which needs a database this environment lacks, as on main. Four mutations, each applied alone, each fail at least one new test: the repair removed; an escaped backslash treated as invalid; the field always recorded; \uXXXX not recognized.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line or command output):
+1. The parser. Is the strict parse always tried first, and the repair used only when it fails? Does the repair copy every escape JSON allows (\" \\ \/ \b \f \n \r \t and \u with four hex digits) whole, and change only backslashes that begin none, each into an escaped backslash? Is the text parsed once more, and does any other failure still throw? Is the fenced-block handling as at c440a47? Is a document that parses strictly returned exactly as before?
+2. Safety. Can the repair make text parse into a structure, keys or string boundaries other than the ones the text has, or make text that is not JSON outside its strings parse? Does every character the model wrote survive in the document? Does the closing evidence record keep no text agy or the model wrote? Does the control plane still judge the repaired document as any other (plan-doc judge, scope check, credential guard), with nothing in this diff bypassing them?
+3. Scope and track (standing act B3, B4). Is every changed path outside B3? In agy-planner-executor.ts, is anything of B3(e) changed: agy's command line or arguments, the user it runs as, its sudo use, the reap, its timeouts, its lane or its prompt? Does any existing test change (B3(h))? Does anything else in the Gateway's behaviour change?
+4. Tests. Does each new test exist and fail on the defect it claims? Do the existing executor tests pass unchanged? Do npm run typecheck and npm test complete, with any failure's cause named?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2; the Founder's rule of 2026-10-28): a finding blocks only if it is P1, or concerns checks 1 to 3. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: ea7bc9d197ae61f081227aecacf2fa8746fc143b
+Tier2-Verdict: <same as Final Verdict>

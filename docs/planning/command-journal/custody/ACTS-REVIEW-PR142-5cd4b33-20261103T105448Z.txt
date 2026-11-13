@@ -1,0 +1,22 @@
+REQUEST-CHANGES — step 3 of 3 complete. Two P2 findings in the fix.
+
+1. CR separators change previously accepted outcomes. The splitter searches only for LF and strips a trailing CR. readline({ crlfDelay: Infinity }) also treats bare CR as a separator. Identical step_update\rresult\n output produces plan at ac1097f, but malformed_output at this head. Repeated CRs also change blank-line counts. Preserve CR separator handling across chunks. Evidence: executor:1194 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1194), comparison results (/tmp/tier2-142-third-5cd4b33-REtthw/comparison.json).
+2. Exactly one excess non-CR byte escapes immediate rejection. The condition permits MAX_LINE_BYTES + 1 bytes regardless of the last byte. After valid init, writing 1,048,577 x bytes without a newline, followed by silence, yields timed_out; 1,048,578 bytes yields malformed_output immediately. Reserve the extra byte only when it is CR. Evidence: executor:1199 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1199), probe results (/tmp/tier2-142-third-5cd4b33-REtthw/probes.json).
+
+| Required check | Result | Evidence |
+|---|---|---|
+| 1. Memory bound | PASS | Assembly retains at most 1,048,577 bytes; oversized tails are dropped and diagnostics are capped. executor:1199 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1199), executor:1338 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1338). |
+| 2. Line semantics and closure | FAIL | Finding 1. LF/CRLF, split UTF-8, blanks and final unterminated lines passed. Both stdout end and close finish the run. executor:1288 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1288). |
+| 3. Regressions | FAIL | The CR-separated stream changes from plan to malformed_output. Existing tests remain green. executor:1306 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:1306). |
+| 4. Scope | PASS | One commit, exactly the three named files, within FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX B3 and the brief’s bounding correction. Act:27 (FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX-b0e0af94.txt:27). |
+
+Verified: head and both authority hashes match; 154/154 tests pass, exit 0, using temporary Node 24 source transformation. Another 275 LF/CRLF partition comparisons passed. Checkout unchanged; writes stayed in the temporary directory; no service contacted.
+
+Not checked: Node 22 or the TypeScript build; dependencies are absent. The two defects remain.
+Next: present this third-review result to the Founder for the B2 ruling.
+
+Final Verdict: REQUEST-CHANGES
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator)
+Tier2-Head-Sha: 5cd4b33b8bcdafa3a108bc91140a841dd5124920
+Tier2-Verdict: REQUEST-CHANGES

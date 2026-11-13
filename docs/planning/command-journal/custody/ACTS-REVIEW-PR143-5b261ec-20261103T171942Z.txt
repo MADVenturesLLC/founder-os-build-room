@@ -1,0 +1,26 @@
+Return PR #143 to the builder: REQUEST-CHANGES.
+
+Review complete. VERIFIED: exact head, matching act SHA-256, clean checkout, and seven changed files within scope.
+
+Two P2 findings block under FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES B1 and the brief’s checks 1–6 rule:
+
+1. The retry window permits a late success. A request starts before the elapsed-time check, and a successful response returns without checking the deadline. The probe started another GET at 600,000 ms and accepted success at 601,000 ms. Check the remaining budget before dispatch and bound the request by it. Evidence: http-driver.ts:296 (repo/packages/run-harness/src/phase4/http-driver.ts:296), http-driver.ts:305 (repo/packages/run-harness/src/phase4/http-driver.ts:305).
+2. A stalled 503 body causes a prohibited retry. The timeout becomes Phase4TransportError even after HTTP headers arrive. The probe received 503, stalled its body, waited five seconds, and issued another GET. Preserve the received status when classifying body timeout failures. Evidence: http-driver.ts:333 (repo/packages/run-harness/src/phase4/http-driver.ts:333), http-driver.ts:349 (repo/packages/run-harness/src/phase4/http-driver.ts:349).
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. GET retries | FAIL. Finding 1 exceeds the window and introduces a final 45-second interval. Ordinary retries wait; no production spin found. | http-driver.ts:309 (repo/packages/run-harness/src/phase4/http-driver.ts:309) |
+| 2. Writes, statuses, timeout | FAIL. POSTs remain single-attempt and requests have a timeout covering body consumption, but finding 2 retries an answered 503. | http-driver.ts:290 (repo/packages/run-harness/src/phase4/http-driver.ts:290), http-driver.ts:353 (repo/packages/run-harness/src/phase4/http-driver.ts:353) |
+| 3. Tokens | PASS for the two configured tokens on the CLI path. Output is scrubbed; plan documents and evidence are checked before writing. | cli.ts:83 (repo/packages/run-harness/src/phase4/cli.ts:83), cli.ts:183 (repo/packages/run-harness/src/phase4/cli.ts:183), cli.ts:333 (repo/packages/run-harness/src/phase4/cli.ts:333) |
+| 4. Plan route | PASS by source review. API guard, latest T3 lookup, store rejudgment, status handling, and supersession check are present. No write path or decision/counting behavior change found. | plan-read.ts:36 (repo/packages/control-plane/src/plan-read.ts:36), plan-read.ts:54 (repo/packages/control-plane/src/plan-read.ts:54), plan-store.ts:291 (repo/packages/control-plane/src/plan-store.ts:291) |
+| 5. Runner | PASS by source review. Matching lowercase 64-hex hash required; exclusive evidence writer retained; save failures caught; live check runs first; Founder decision remains external. | cli.ts:179 (repo/packages/run-harness/src/phase4/cli.ts:179), cli.ts:231 (repo/packages/run-harness/src/phase4/cli.ts:231), attempt-store.ts:133 (repo/packages/run-harness/src/phase4/attempt-store.ts:133), runner.ts:158 (repo/packages/run-harness/src/phase4/runner.ts:158) |
+| 6. Scope | PASS. Exact diff contains only the seven named files; prohibited paths are unchanged. | Act B3:18 (FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES-af53b493.txt:18) |
+| 7. Tests | FAIL on coverage; full execution INCONCLUSIVE. Eight extracted B1 tests pass despite both defects. Changing the default timeout to 300 seconds also preserves all eight passes. Retrying 503s or POSTs each correctly fails one test. | phase4-rehearsal-fixes.test.ts:126 (repo/test/phase4-rehearsal-fixes.test.ts:126), phase4-rehearsal-fixes.test.ts:143 (repo/test/phase4-rehearsal-fixes.test.ts:143), phase4-rehearsal-fixes.test.ts:168 (repo/test/phase4-rehearsal-fixes.test.ts:168) |
+
+Not checked: complete suites and typecheck; execution stopped at missing pg. Probes used Node v26.5.1 with in-memory transpilation; Node v22 behavior and the builder’s 17 mutations remain UNPROVEN.
+
+Final Verdict: REQUEST-CHANGES
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator)
+Tier2-Head-Sha: 5b261ecf3702dce671b8b54c6ae9155a9ba6e972
+Tier2-Verdict: REQUEST-CHANGES

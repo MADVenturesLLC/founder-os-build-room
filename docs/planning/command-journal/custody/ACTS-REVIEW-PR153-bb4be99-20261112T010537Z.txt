@@ -1,0 +1,38 @@
+REQUEST-CHANGES — one blocking scope finding in check 6.
+
+VERIFIED: HEAD matches bb4be99e431d7b59ca06bc6ec2069df5d23c9afc; all four act hashes match; the original checkout remains clean.
+
+Blocking finding — P2: authorization for the protocol export file is missing.
+
+packages/gateway-protocol/src/index.ts:171 (repo/packages/gateway-protocol/src/index.ts:171) adds 12 exports. FOUNDER-ACT-20261111-BR-PLANNER-REASK B10 names only packages/gateway-protocol/src/planner.ts in that package, and D1 also closes its differing-file list. The brief names the export change (153-BRIEF-153-review-bb4be99.txt:18), but its three recorded Founder exceptions (153-BRIEF-153-review-bb4be99.txt:24) do not cover index.ts. Authorization for this additional path is UNPROVEN. See B10 (153-FOUNDER-ACT-20261111-BR-PLANNER-REASK-cd4cf88e.txt:51) and D1 (153-FOUNDER-ACT-20261111-BR-PLANNER-REASK-cd4cf88e.txt:66).
+
+Remove that file’s diff, using direct imports within authorized files, or obtain an explicit Founder scope ruling.
+
+| Check | Result | Evidence and disposition |
+|---|---|---|
+| 1. Eligible failures and reporting | PASS | Exactly B1’s refusal kinds and five failure reasons earn a re-ask, subject to wire representability. Other classifications return without offering one. Executor outcomes retain their reason; unrelated failures carry none; oversized reports become oversize. planner-loop.ts:741 (repo/packages/control-plane/src/planner-loop.ts:741), reaskFor:901 (repo/packages/control-plane/src/planner-loop.ts:901), planner-worker.ts:404 (repo/packages/gateway-daemon/src/planner-worker.ts:404), reason reporting:585 (repo/packages/gateway-daemon/src/planner-worker.ts:585). Reading (a): agree. |
+| 2. One re-ask, within the failed call | PASS | runRound performs one additional execution without recursion. The room lock checks the latest failure, prior re-asks and attempt cap. Journal insertion precedes contact and carries both retry references. Re-asks bypass retryBudgetTransition; revision work rereads and verifies the earlier plan. runRound:478 (repo/packages/control-plane/src/planner-loop.ts:478), openNextAttempt:595 (repo/packages/control-plane/src/planner-loop.ts:595), earlierPlanOf:1313 (repo/packages/control-plane/src/planner-loop.ts:1313). A later Q8 not_sent transport retry remains possible; the run unit rejects an attempt after the re-ask. |
+| 3. Wire, size and old Gateway | PASS | Shared validators enforce the closed shapes, violation codes, 20 retained violations, 1,024-character paths and UTF-8 document bounds. Existing work and reasonless failures remain valid. planner.ts:283 (repo/packages/gateway-protocol/src/planner.ts:283), isPlannerReask:324 (repo/packages/gateway-protocol/src/planner.ts:324), isWork:344 (repo/packages/gateway-protocol/src/planner.ts:344). Reading (c): agree. Independent size and compatibility results appear below. |
+| 4. Prompt text | PASS | B5/B6 wording and placement match the act. The refused answer is one JSON line. Source comparison preserves every other line; three independent first/revision cases produced byte-identical no-reask prompts against 8a62e2c. plannerPrompt:334 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:334), reaskReasonLines:397 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:397), probe output (/tmp/tier2-153-review-FiKXaC/probe.log:1). |
+| 5. Run judgment | PASS | The failed row must name one eligible reason. Its successor must be the same round’s next derived attempt, with exactly one matching retry-of/ and retry-reason/. Later attempts and unresolved/resolved rows fail judgment. Reading (b): agree. onlyRef:197 (repo/packages/run-harness/src/phase4/run-unit.ts:197), checkCommands:233 (repo/packages/run-harness/src/phase4/run-unit.ts:233). |
+| 6. Authorized scope | FAIL | The export-file change above lacks the required exception. The remaining changes match the stated scope and recorded rulings. The executor’s command line, user, sudo, reap, timeouts and lane remain unchanged; the named protected files, packages and migrations have no diff. git diff --stat 8a62e2c..HEAD: 13 files, +1688 −60. |
+| 7. Tests and mutation evidence | FAIL — advisory | Typecheck passed. The three relevant storage suites passed 43/43 on owned PostgreSQL 18.6. After restoring every mutation, the new suites passed 37/37. The full default suite stalled in an unchanged acceptance fixture, detailed below. Mutation sampling demonstrated meaningful detection; the builder’s exact original 57/61 aggregate remains UNPROVEN without its individual mutation inputs. |
+
+Reading (d): agree that it is outside this act; no P1 finding. Independent records containing duplicate or unmapped completed commands passed on both base and head. The journal route constructs each round’s derived IDs once, in order, so the demonstrated malformed records are not produced by that route. counted-run.ts:281 (repo/packages/control-plane/src/counted-run.ts:281), record probe (/tmp/tier2-153-review-FiKXaC/record-probe.log:1). Retain this as an advisory follow-up.
+
+The size probe carried 204,800 bytes in each document through the channel, client and worker: a 410,399-byte poll response passed; adding one byte to either document failed validation. A 417,415-byte prompt input also traversed a local stdin pipe. The base validator rejected re-ask work; at 8a62e2c, planner-worker.ts:455–459 returns null for that rejection, leaving it unanswered. This confirms C3’s compatibility warning. Probe output (/tmp/tier2-153-review-FiKXaC/probe.log:2).
+
+I agree with the four survivor explanations under the current invariants: shared validation defeats the first two broadenings; the three-attempt cap defeats the second-re-ask sequence; and the remaining journal paths cannot supersede the failed command before its re-ask. Independently, 22 defect mutations failed tests, an additional timed_out mutation failed typechecking, and the four equivalents survived. Every modified module was restored. Mutation results (/tmp/tier2-153-review-FiKXaC/mutations.log), type mutation (/tmp/tier2-153-review-FiKXaC/type-mutation.log), restored tests (/tmp/tier2-153-review-FiKXaC/restored-reask.log).
+
+Advisory A1 — default-suite stall: corrected-environment npm test exited 1 after terminating its stuck acceptance-test child: 2,437 passed, 1 failed, 3 skipped. The complete acceptance file independently timed out after 30 seconds on both base and head, with 26 tests passing before the stall; H1 passed alone on both. The precise interaction remains unproven. Full-suite output (/tmp/tier2-153-review-FiKXaC/npm-test-corrected-env.log), head timeout (/tmp/tier2-153-review-FiKXaC/acceptance-bounded.log), base timeout (/tmp/tier2-153-review-FiKXaC/base-acceptance.log).
+
+Review-boundary deviation: npm’s update notifier made one registry metadata GET during the first typecheck. Subsequent npm commands used offline mode with the notifier disabled. Recorded request (/tmp/tier2-153-review-FiKXaC/npm-cache/_logs/2026-11-12T00_54_22_139Z-debug-0.log:13).
+
+Next: record the Founder’s disposition of the index.ts scope exception.
+Not checked: live agy acceptance or deployment; large-line acceptance by agy remains outside this repository’s proof.
+
+Final Verdict: REQUEST-CHANGES
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: MODEL (Codex CLI /status, reported by the operator)
+Tier2-Head-Sha: bb4be99e431d7b59ca06bc6ec2069df5d23c9afc
+Tier2-Verdict: REQUEST-CHANGES
