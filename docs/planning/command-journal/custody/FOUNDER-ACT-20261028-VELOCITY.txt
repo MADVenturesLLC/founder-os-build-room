@@ -1,0 +1,56 @@
+FOUNDER-ACT-20261028-VELOCITY: fewer steps per pull request, the same gates
+Drafted by the builder (claude-code) to my answers of 2026-10-28 in its session. It takes effect when I sign it there.
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows.
+
+Part A: Basis
+A1. Build Room pull request 131, one executor, took ten Tier-2 rounds. Most findings were failures that need a second, independent I/O failure, and they stopped blocking only when I ruled so at the tenth round. Every round also cost:
+  - a data authorization that I posted and the builder byte-checked;
+  - a bundle of 7,000 to 10,000 lines that the builder built;
+  - a pull request body of up to 800 lines;
+  - for the executor, a ruling and five amendments.
+A2. The gates that make the record trustworthy cost little: the SHA-named merge authorization, the attribution trailers, the production and data-boundary gates, and independent review. The steps around them cost most of the time. This act removes steps, not gates.
+
+Part B: Rulings
+B1. Standing data authorization for codex Tier-2 review.
+  - I have checked the data controls of the OpenAI account on which Codex runs my reviews: content sent through it is not used to train models.
+  - On that basis I record its retention posture as verified for data-boundary-policy §5 item 4.
+  - Internal-class material of a pull request in MADVenturesLLC/founder-os-build-room or MADVenturesLLC/FounderOS may be sent to the codex surface, on a model of the codex:openai Tier-2 allowlist of DEC-20261020-01, for a Tier-2 review of that pull request, without a per-invocation authorization.
+  - This covers no confidential, restricted or local-only material, no other surface or provider, and no other repository.
+  - If the account's data controls change, I revoke this clause before the next review.
+B2. Review budget.
+  - Each pull request takes one Tier-2 review at a stated head. FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE C4 gives the builder one bounded correction round, and then one confirmation run follows.
+  - The confirmation run reviews only the correction diff and the blocking findings it answers.
+  - The blocking rule I ruled on 2026-10-28 is the only test of whether a finding blocks. Every other finding is a tracked follow-up, carried in the pull request body and batched into a later pull request.
+  - A third review takes place only when the confirmation run finds a blocking finding in the correction itself.
+B3. Review input.
+  - The reviewer reads a read-only checkout of the repository at the exact head under review, with Codex in its read-only sandbox, and a brief of at most one page from the builder.
+  - The builder builds no bundle. Earlier reviews are cited by their comment or file on the pull request and are not re-carried.
+  - The builder names the governing acts by path and SHA-256, and the reviewer reads them from the checkout or from FounderOS main.
+B4. Pull request bodies. A body is at most about 80 lines, in these sections: summary, what changed, tests, out of scope, served model, attribution. The rest lives in the commit messages and the code. The rule that the body is set last, and the attribution checks, stand.
+B5. Acts only where they decide something. Inside the scope a governing act names, the builder decides and records in the pull request body, with no new act, each of these:
+  - corrections to review findings;
+  - added tests;
+  - internal design choices;
+  - documentation corrections.
+
+  A new act of mine is needed for each of these:
+  - a change of scope;
+  - production, deployment, migration apply, Railway or Neon changes;
+  - credentials, spend, providers, lanes;
+  - doctrine;
+  - anything the agent-rules approval gates list.
+B6. Filing. This act, and each later act that says so, takes effect on my signature in the builder's session. It is filed verbatim with the next custody filing under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, not in a pull request of its own.
+
+Part C: Not changed
+- My SHA-named merge authorization (DEC-20260718-04) and the drafting bars of DEC-20260801-02.
+- The attribution rules (DEC-20260718-05, DEC-20260721-01) and the served-model record (DEC-20261020-01).
+- The data-boundary policy for every class, surface and provider B1 does not name.
+- The Phase 4 stop gate. Amendment 5 B2, whose journal change still needs its own act. FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS is that act, drafted separately.
+- Build Room pull request 133 is reviewed under the bundle and the data authorization already posted for it, comment 6475180998. B2 and B3 apply from its correction round, if it has one.
+- This act authorizes no merge, no counted run, no deployment and no new builder lane.
+
+Part D: Signature
+Signed: Michael Daley
+Date: 2026-10-28 (UTC)
+Actor-Id: founder

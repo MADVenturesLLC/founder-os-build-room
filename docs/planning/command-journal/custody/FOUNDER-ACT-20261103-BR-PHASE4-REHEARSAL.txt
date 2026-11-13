@@ -1,0 +1,110 @@
+FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL: one uncounted rehearsal of a Phase 4 run, through the counted-run runner, before a new counted set
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Under: FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX (SHA-256 b0e0af94328460819eadc8d42797d99cd5387f999b8ae835645176f38b2a5024) D2; FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS (c65afbc1afedefdf19a3705f3d0a8fda45ec2f89643c862c70485cf370d15053) and its Amendments 1 (0361c2ce9fd4848addbc0321cc2810e81f67bc60c42135b600960dc264720fd1) and 2 (d9f59ee33f47ad1f21f7d06de5b3fa718c32bd41be80ba9a965146d8e5f7b50e), for its run unit and its runner only; FOUNDER-ACT-20261030-BR-PC-PLANNER and its Amendments 1 to 4 (Amendment 4: f73de9374c3847e8ea8d0ec52c5e956f80f68040be0d0e0bc387808bb04b757b); FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY (f6057c260f1d3faa6ad261b80e1b0dbb35b01bfd93c74ab529b3d5b49eed2268).
+The builder read, before drafting: Build Room main at 44dcb1c63e5a383203331e259c43700a6a5e873e (packages/control-plane/src/counted-run.ts and counted-run-config.ts; packages/run-harness/src/phase4/cli.ts, run-set.ts, entry.ts and http-driver.ts); FounderOS main at 973717daaff9a89538fab8def71d199428e3629d; and the control plane's /version at 2026-11-03T12:56Z. It checked the terms file of B2 with the runner's own validatePhase4RunSet, and C1's variable with the control plane's own parseCountedRunConfig, both at 44dcb1c; both accepted them.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. What is in place. The Planner prompt fix merged as 44dcb1c63e5a383203331e259c43700a6a5e873e, and the control plane serves it (deployment e7c59c4b, boot.start 2026-11-03T11:42:51.576Z). The Gateway on the PC runs from that commit since 2026-11-03T12:55:33Z under Amendment 4 of the PC act, with agy's command line unchanged. PHASE4_COUNTED_RUN was removed under E6 of the counted-run act at 02:37Z; PHASE4_COUNTED_RUN_TOKEN is still set.
+A2. Why a rehearsal. A prompt steers the model and does not bind it (fix act A4). Phase4-CR1 also never reached plan_review, so the plan's arrival, my plan decision, the approval and the room's BUILDING state have never run in production. A rehearsal that fails spends no counted set.
+A3. How. A planner round reaches the Gateway only through the counted-run routes, which are inert unless PHASE4_COUNTED_RUN names an act. Nothing in the control plane or the runner names a particular act. The rehearsal uses both unchanged, under this act's identifier, so its room and journal rows carry this act's identifier and never a counted set's. The runner runs a set of three labelled runs and runs its live check only under the label Phase4-CR1; so the terms file has three runs, and only the first is authorized.
+
+Part B: The rehearsal
+B1. One run: the label Phase4-CR1 of B2's terms file, room 87dd8cbf-926a-4fe8-abec-3a480d7e9281, repository MADVenturesLLC/founder-os-build-room at base 44dcb1c63e5a383203331e259c43700a6a5e873e, scope path README.md, and the goal on which the spent set's Phase4-CR1 failed: "Plan a section for README.md that describes the Phase 4 planner loop as it is built." The repository is public and the goal names no secret (ruling B5).
+B2. The terms file is phase4-rehearsal-terms.json, 1,924 bytes, SHA-256 062b6cdaa53b2958198c8d5a0a35948e83177b3949cc0b19261046f9883ccc50. It differs from the spent set's terms file (dcf26438b66a9b0e23ae5d9af8ac3fbba353e04e531442a9127c77d6e9e109f8) in the set identifier, the Build Room commit, the three base commits and the three room identifiers only. Rooms 2e312158-1b50-4b4c-85ec-e4e6f76de69e and 9418adc4-b9e1-4360-a3fb-d068b3984cdc are never created. Its text is exactly the following, with one final newline:
+
+{
+  "setId": "FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL",
+  "founderOsSha": "973717daaff9a89538fab8def71d199428e3629d",
+  "buildRoomSha": "44dcb1c63e5a383203331e259c43700a6a5e873e",
+  "controlPlaneOrigin": "https://rare-enjoyment-production-0869.up.railway.app",
+  "gatewayId": "1880c12d-d98d-4a91-b25a-23320aa7f58a",
+  "planner": {
+    "provider": "google",
+    "model": "gemini-4-argon"
+  },
+  "seats": {
+    "builder": "claude-code:anthropic",
+    "reviewer": "codex:openai"
+  },
+  "founderRelay": {
+    "actualModel": "n/a (deterministic run-harness relay of the act's text)",
+    "executionSurface": "build-room-run-harness"
+  },
+  "decisionTimeoutMs": 14400000,
+  "runs": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "87dd8cbf-926a-4fe8-abec-3a480d7e9281",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "44dcb1c63e5a383203331e259c43700a6a5e873e",
+        "scopePaths": [
+          "README.md"
+        ],
+        "goal": "Plan a section for README.md that describes the Phase 4 planner loop as it is built."
+      }
+    },
+    {
+      "label": "Phase4-CR2",
+      "roomId": "2e312158-1b50-4b4c-85ec-e4e6f76de69e",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "44dcb1c63e5a383203331e259c43700a6a5e873e",
+        "scopePaths": [
+          "docs/command-journal-contract.md"
+        ],
+        "goal": "Plan a glossary for docs/command-journal-contract.md."
+      }
+    },
+    {
+      "label": "Phase4-CR3",
+      "roomId": "9418adc4-b9e1-4360-a3fb-d068b3984cdc",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "44dcb1c63e5a383203331e259c43700a6a5e873e",
+        "scopePaths": [
+          "docs/gateway-ops-actions-log-runbook.md"
+        ],
+        "goal": "Plan a troubleshooting section for docs/gateway-ops-actions-log-runbook.md."
+      }
+    }
+  ]
+}
+
+B3. The judgment. The run is judged as B1 to B5 of the counted-run act judge a run, by packages/run-harness/src/phase4/run-unit.ts on the run's own record, with this act's identifier in place of that act's. The rehearsal passes only if the runner reports passed. Whatever its outcome, it counts for nothing under Section 7 item 13 of the Phase 4 authorization, and it is not part of any counted set.
+B4. My decision. When the round reaches plan_review I read the plan from the room's record and decide at POST /control-plane/rooms/87dd8cbf-926a-4fe8-abec-3a480d7e9281/plan-decision with the adjudication token and the plan's exact hash, as E3 of the counted-run act: approve, request a revision with feedback within the round bound of three, or cancel, within 4 hours of plan_review. The builder gives me the commands and never holds the token.
+B5. What follows. If the rehearsal passes, the builder drafts the new counted-run act. If it does not, the builder reads the run's record and the executor's evidence records (streamEvents, resultStatus and responseBytes) and reports to me before anything else is drafted. If agy asked to run a command again, the next step is restricting agy's command tool on the PC (the sudo rule and agy's arguments) under my separate act.
+
+Part C: Before the run, in this order
+C1. Railway. I set PHASE4_COUNTED_RUN to exactly {"actId":"FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL","gatewayId":"1880c12d-d98d-4a91-b25a-23320aa7f58a","planner":"antigravity:google","seats":{"builder":"claude-code:anthropic","reviewer":"codex:openai"}}, leave PHASE4_COUNTED_RUN_TOKEN as it is, and deploy. The builder verifies that the deployment reached SUCCESS, that its boot.start, or failing that /version, names 44dcb1c63e5a383203331e259c43700a6a5e873e, and that no boot refusal follows it.
+C2. The freeze. From C1's deployment until E1's deployment is verified: no merge to Build Room main, no other Railway variable, setting, deploy, redeploy or restart, and no change on the PC. The runner requires GitHub's head of Build Room main to equal the base of B1 when it captures scope, after it has created the room, and the run is interrupted if the control plane's deployment changes. If Build Room main moves before C1, B2's terms are stale and the builder drafts an amendment for me to sign before anything else.
+C3. My Mac. An empty evidence directory, ~/phase4-rehearsal/evidence, apart from the spent set's; a new Build Room checkout at 44dcb1c63e5a383203331e259c43700a6a5e873e, ~/phase4-rehearsal/br, with no local change; B2's terms file in ~/phase4-rehearsal, with its SHA-256 as B2 names it; and my FounderOS checkout ~/phase4-set/fos at 973717daaff9a89538fab8def71d199428e3629d with no local change, read only.
+C4. Readings within 15 minutes before the run, as D6 of the counted-run act reads them. The builder: Build Room main at 44dcb1c63e5a383203331e259c43700a6a5e873e; /health 200; /version naming that commit; C1's deployment serving, SUCCESS, with nothing building; Gateway 1880c12d-d98d-4a91-b25a-23320aa7f58a heartbeating. Me, on the PC: the service active (running) from ~/buildroom-gateway-44dcb1c; no planner-halted.json in the Gateway's directory; /usr/bin/pgrep -u buildroom-planner printing exit 1; sha256sum /opt/buildroom-planner/bin/agy printing 4341b80b43fc3b4437ff65041673f0f71c950e49d69a6256e3b6f212c4694ed4. If any fails, the run does not start.
+
+Part D: Running
+D1. I run the rehearsal once, myself, on my Mac, from ~/phase4-rehearsal/br with npm run phase4:counted-run, with PHASE4_TERMS_FILE and PHASE4_TERMS_SHA256 naming B2's file, PHASE4_EVIDENCE_DIR naming C3's directory, FOUNDEROS_PATH naming my FounderOS checkout, and the API token and the counted-run token in my environment, under caffeinate -i. I hold the adjudication token separately. If the runner reports not_started, nothing was written, and I may run it again once the cause is fixed without any change this act does not authorize. Any other outcome ends this act's runs.
+D2. The live check. The runner reads it under the label Phase4-CR1 after the first round settles, as E2 of the counted-run act: if the dispatched row lacks init_model or provider_conversation_id, the run stops there. I give the builder the printed reading.
+D3. During the run: as E4 of the counted-run act, and C2's freeze.
+D4. Stops: as E5 of the counted-run act. If the executor halts, the halt stays.
+
+Part E: After
+E1. Whatever the outcome, once the run has settled or stopped, I remove PHASE4_COUNTED_RUN from Railway and deploy. The builder verifies that the deployment reached SUCCESS and that /version names the commit it serves. The counted-run routes are then inert again.
+E2. The evidence, which I give the builder: the run's record and its SHA-256 as the runner wrote them; attempts.json; the room's journal rows from the journal route; the executor's evidence record for each planner command, from the Gateway's directory on the PC; C4's readings; D2's printed reading; and my plan decisions as the record shows them.
+
+Part F: Filing
+F1. The builder files this act, B2's terms file, any ruling under this act and E2's evidence, with every user name, host name, address, tailnet name, node key and account name masked, and no token, under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE. It may share one pull request with the filings of the counted-run act's F2, the fix act's C4 and Amendment 4 F1 of the PC act. The pull request needs my separate authorization.
+
+Part G: Not authorized
+- The labels Phase4-CR2 and Phase4-CR3 of B2's terms file; any second run except after not_started under D1.
+- Counting the rehearsal under Section 7 item 13, closing Phase 4, or a new counted-run act or any of its runs.
+- Dispatching a builder or a reviewer, building any approved plan, or any change to a target repository.
+- Any Railway variable or setting other than C1 and E1; any rollback; any SQL; any migration.
+- Any change on the PC, including the sudo rule, agy's arguments and the agy copy; any change on my Mac beyond C3, D1 and E2.
+- Any merge to Build Room main during C2's freeze.
+
+Part H: Signature
+Signed: Michael Daley
+Date: 2026-11-03 (UTC)
+Actor-Id: founder

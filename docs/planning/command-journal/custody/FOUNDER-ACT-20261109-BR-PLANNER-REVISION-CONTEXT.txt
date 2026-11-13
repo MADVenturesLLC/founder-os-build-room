@@ -1,0 +1,74 @@
+FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT: a revision round gives the Planner its earlier plan
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+origin/main when drafted: f90506b34ba2abd4fd6318e58a6aacb03a602333
+Under: DEC-20260815-17, Founder Authorization - Phase 4 (Planner Loop) (2026-08-31), Section 7; DEC-20260718-04; DEC-20260718-05 clause 12; FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE C1 and C4; FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR B5; FOUNDER-ACT-20261028-VELOCITY (SHA-256 83b1ffd5753f48b191ec7e62c8d724ccd4d13f6c024bbe5cc9fc4020f4cbc27a) B1 to B4; FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY (f6057c260f1d3faa6ad261b80e1b0dbb35b01bfd93c74ab529b3d5b49eed2268) B3; FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS (a8fb3b2a91aa32388960af1741a7af0b9cb3196716c2c8876fac76da7d65a955) B3, Part C and Part D; FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING (39e02e5ddbd5b4bd0b61076f6ebc10f3b8dbc2cb76ed58e02b7f2519338ce684) B2, E2 and F1.
+The builder read, before drafting, at f90506b: PlannerWorkWire and its validation in packages/gateway-protocol/src/planner.ts, and MAX_PLANNER_PAYLOAD_BYTES in packages/gateway-protocol/src/constants.ts; in packages/control-plane/src/planner-loop.ts, runRound, openNextAttempt, the planner request it journals, and roundInputs, which builds a revision from the revision request's feedback and its plandoc evidence; dispatch in packages/control-plane/src/gateway/planner-channel.ts; planForEvent and inTransaction in packages/control-plane/src/plan-store.ts; the gateway body limits in packages/control-plane/src/gateway/routes.ts and the poll handling in packages/gateway-daemon/src/client.ts; plannerPrompt and BANNED_AGY_ARGUMENTS in packages/gateway-daemon/src/agy-planner-executor.ts; the counted-run route's gating in packages/control-plane/src/counted-run.ts; and the tests that build or compare a revision: test/agy-plan-prompt-grounding.test.ts, test/gateway-planner-protocol.test.ts, test/planner-loop.storage.test.ts and test/phase4-lifecycle.storage.test.ts.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. Rehearsal R5 ran at f90506b under E1 of FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING, with that act's prompt rules on the PC's Gateway. The builder checked every plan against the checkout. Round 1 (plan 416ba63ac2305f67ae326248ac99d98d54a5b8ec422794b664a2c1d1a6233769, 27,547 characters) held 10 groups of false statements, against R4's 15; every file and line range it cited was right. Round 2 (b68d320309519a846cadf5b5f85470104f8391d6834380382fa323fd0f051857, 42,818 characters) took all ten corrections and added about 18 new groups, six of them things round 1 had right: agy's arguments, the executor's environment variables, the worker's name, the failure classifications, the recovery method and the evidence path. Round 3 (command cmd_planner_c89d81adf1c183e8d066ac96b1c845f3) returned a plan the control plane refused as plan_invalid at 03:02:47Z, its first two implementation_sequence items not strings. CR1 was interrupted, record fb34880d768e348bcb1cebd2cfe0f9a8e18e3a69ef06bce37614811f5859588d, and the window closed with deployment f600a5cb (SUCCESS 03:10:07Z).
+A2. In R4 and R5 alike, each revision round dropped or changed statements of the earlier plan that were true and that my feedback had not touched. That is the condition F1 of FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING names.
+A3. Why, as far as the code shows. A revision round's work carries my feedback and the earlier plan's hash only (PlannerWorkWire.revision). Each round starts agy afresh, with --continue, -c and --conversation banned. So the Planner writes each round's plan anew from the goal and my feedback, and cannot keep what it had right. The control plane holds the earlier plan: its plan store keeps every plan the control plane accepted, append-only, and on each read judges the document again and recomputes its hash.
+A4. What this act does not do. It does not continue agy's conversation: agy still starts afresh, and the earlier plan reaches it as data in the work, from the control plane's own store. It changes no argument of agy, the sudo rule, the lane, the plan schema, the judge, the plan store, the decision route or the size of my feedback. The earlier plan is the Planner's own answer, which I could already read through the plan route; nothing new leaves the control plane. A prompt steers the model and does not bind it: my check of every plan stays the control.
+
+Part B: The change
+B1. The wire. In packages/gateway-protocol/src/planner.ts, the revision member of PlannerWorkWire gains a third member, earlierPlan: the document of the plan the revision request revises. A revision without it is refused, as is one whose earlierPlan is not a plain JSON object or whose JSON text exceeds MAX_PLANNER_PAYLOAD_BYTES in UTF-8, and one with any other member. Both sides validate with this one implementation, as now. A work without a revision is unchanged.
+B2. The control plane. When it opens a revision round, under the same room lock as the round's other inputs, the control plane reads the earlier plan through the plan store: the plan stored under the room's latest plan.submitted event before the revision request. It uses that document as earlierPlan only if the hash the plan store recomputes equals the plan hash the revision request recorded. If there is no such plan, the plan store cannot return it, or the hashes differ, the round is not opened: nothing is journaled and nothing is sent, as when any other input of a round is missing today. The planner channel carries earlierPlan to the Gateway unchanged. Recovery and the judging of a round's plan do not change.
+B3. The prompt. In plannerPrompt in packages/gateway-daemon/src/agy-planner-executor.ts, in a revision round, the line that B2 of FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING added ("You do not have the earlier plan, only this feedback on it. ...") is removed, and in its place, right after the line carrying my feedback, these lines are added, each a line of its own:
+  Your earlier plan follows, exactly as the control plane stored it. Revise that plan; do not write a new one. Make each correction and change the feedback asks for, and treat each correction as true. Keep every other statement of the earlier plan as it is, unless the feedback asks you to change it, you find in the checkout that it is false, or you must remove it to keep within rule 6 below. Add nothing the feedback does not ask for. Take repository, base_sha and work_id from the ANSWER section, not from the earlier plan.
+  Rules 1, 2 and 5 below apply to what you add or change in this round. A statement you keep unchanged from the earlier plan needs no new reading.
+  (blank line)
+  EARLIER PLAN
+  the earlier plan as one line of JSON (JSON.stringify of earlierPlan)
+B4. Every other line of the prompt stays word for word and in its order. A first-round prompt is unchanged, byte for byte, from f90506b.
+B5. Paths: packages/gateway-protocol/src/planner.ts; packages/control-plane/src/planner-loop.ts and packages/control-plane/src/gateway/planner-channel.ts; plannerPrompt and its doc comment in packages/gateway-daemon/src/agy-planner-executor.ts; new tests under test/. Existing tests change only as follows: in test/agy-plan-prompt-grounding.test.ts, the expectations for B2 of FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING give way to this act's B3, and nothing else of that file changes; in test/gateway-planner-protocol.test.ts, test/planner-loop.storage.test.ts and test/phase4-lifecycle.storage.test.ts, a revision they build or expect gains earlierPlan, and nothing else changes. Nothing else: not agy's command line, the user it runs as, its sudo use, the reap, its timeouts or its lane; nothing in packages/journal, packages/ledger, packages/seat-output-schema or packages/run-harness; not plan-store.ts, plan-doc.ts, plan-decision.ts, counted-run.ts, journal-store.ts or planner-recovery.ts in packages/control-plane/src; not the migrations or the PC. If the change needs anything else, the builder stops and asks me.
+B6. Tests.
+  (a) The wire: a revision with earlierPlan passes both sides' validation; one without it, with an array, null or a string in its place, with any other member, or with an earlierPlan over the byte bound, is refused; a first-round work is unchanged.
+  (b) The control plane, against a real database as the existing planner-loop storage tests run: a revision round's work carries as earlierPlan the document the plan store returns for the revised plan, and planHash of it equals revisingPlanHash; with a plan store that returns no plan, or a plan whose hash differs, the round is refused before any journal row and before any contact with the Planner.
+  (c) The prompt: a revision prompt is the f90506b revision prompt with B2's line of the earlier act replaced by B3's lines, line for line; the EARLIER PLAN line parses back to a document equal to earlierPlan; each of B3's lines appears once; B2's line of the earlier act appears nowhere; a first-round prompt equals the f90506b prompt.
+  (d) Each new test fails when what it covers is removed or changed, and the builder shows that by mutation, as for pull requests 149 and 150.
+
+Part C: Review, merge and deploy
+C1. Review: Codex Tier-2 of the exact final head under FOUNDER-ACT-20261028-VELOCITY B1 to B4. The brief asks the reviewer to check B2's binding of earlierPlan to the recorded plan hash, B4 and B5. Advisory reviews are dispositioned under C4 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE.
+C2. Merge: my separate SHA-named authorization. Merging deploys the control plane, whose code this changes; under B3 of FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY that authorization also authorizes the deploy, and the builder verifies it reached SUCCESS and that /version and boot.start name the merge commit.
+C3. Order. Between the deploy and the Gateway move of Part D, the control plane would send revision work that the PC's Gateway, still at f90506b, does not validate and leaves unanswered, which the control plane records as unresolved. Only the counted-run route opens a planner round, and it answers 503 while PHASE4_COUNTED_RUN is unset. So the merge is made only when no rehearsal window is open, and no rehearsal starts until Part D's move is complete. The builder states both at the merge and at my line of E1.
+
+Part D: The Gateway move
+D1. The change reaches the Planner only when the PC's Gateway runs the merge commit. That move is made under Part C of FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS, on my line "Move the Gateway to <commit>", with one change to its C2, for this move only: "nothing of B3(e) changes" reads "nothing of B3(e) changes except B3 of FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT". The builder's list of differing files must hold packages/gateway-daemon/src/agy-planner-executor.ts, changed in plannerPrompt and its doc comment only, and packages/gateway-protocol/src/planner.ts, and nothing else.
+D2. Every other condition of that Part C applies, C4 among them.
+
+Part E: The rehearsal that measures it
+E1. After the move, one rehearsal under Part D of FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS, unchanged, on my line.
+E2. Feedback. The revision feedback the builder drafts for me in it names what to correct, briefly, and does not repeat earlier corrections, which the earlier plan now carries.
+E3. The builder checks every plan of it against the checkout, as for R4 and R5, and reports for each round: the false statements found, with R4's and R5's beside them (R4: 15, 15, and 1 unachievable criterion with 1 overstatement; R5: 10, about 18, and no plan); the plan's length; and for each revision round, how many statements of the earlier plan that the feedback did not correct it dropped or changed.
+E4. Whatever the result, it is evidence for my next decision and nothing else follows from it.
+
+Part F: Named, and not authorized
+F1. Giving the Planner every earlier plan and all my earlier feedback, not only the last plan.
+F2. A check in the Gateway that earlierPlan hashes to revisingPlanHash before the prompt is written.
+F3. Another attempt within a round after a plan_invalid answer.
+F4. Enforcing a plan size in the judge (F2 of FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING).
+F5. Any change to agy's arguments or the sudo rule.
+F6. A counted-run act.
+
+Part G: Records and filing
+G1. The builder records each line of mine, each reading and each result in its audit record, stamped from the clock.
+G2. This act, its review, the merge and deploy verification, the move's readings and the rehearsal's evidence are filed with the next custody filing under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, which needs my separate authorization.
+
+Part H: Not authorized
+- Any change beyond Part B.
+- Any change to agy's arguments, the sudo rule, the planner user, the PC beyond the move of Part D, a Railway variable or setting beyond Part D of the standing act, a Neon role, a secret or a Gateway host.
+- Any run, counted or not, beyond Part E; any counted-run act.
+- Any merge without my separate authorization.
+- Any repository other than MADVenturesLLC/founder-os-build-room.
+
+Part I: Signature
+Signed:
+
+— Michael Daley
+
+Date:
+
+Actor-Id: founder

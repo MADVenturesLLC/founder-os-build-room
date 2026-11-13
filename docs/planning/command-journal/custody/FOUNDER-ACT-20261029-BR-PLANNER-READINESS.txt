@@ -1,0 +1,40 @@
+FOUNDER-ACT-20261029-BR-PLANNER-READINESS: the live check in the first counted run, and the Gateway daemon's fixes before the PC act
+Under: FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR (SHA-256 d2868a5978c6dd54e55b9959511ea7586b44b9760c439f3306d79fdcae0da008) and its Amendments 1 to 5; FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS (SHA-256 d7c81dd37a6f4b30707b45d2eee81d85016395b00ea60bf04be540a61a55917e) and its Amendments 1 (SHA-256 85585e9ed8712a88c6c46918174331ab9af37f05c0629400382091b4b80504c8) and 2 (SHA-256 46bace66a116c7a514d351524eb08f1eaa91ebdcd7eca5490812136e9d54241a); FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY (SHA-256 f6057c260f1d3faa6ad261b80e1b0dbb35b01bfd93c74ab529b3d5b49eed2268); FOUNDER-ACT-20261028-VELOCITY (SHA-256 83b1ffd5753f48b191ec7e62c8d724ccd4d13f6c024bbe5cc9fc4020f4cbc27a).
+Drafted by the builder (claude-code) to my answers of 2026-10-29 in its session, after it read the code each part names at Build Room main af92290684089abc993f4b6b37e394b2c8bb1389. It takes effect when I sign it there.
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows.
+
+Part A: Basis
+A1. A loop. B1 of the executor ruling binds agy only to planner commands of a counted run my counted-run act authorizes, and B4 registers headless agy only for those. Amendment 1 B6 of the journal act says no counted run proceeds until the canonical journal is shown carrying both init fields for a command. Only an agy dispatch produces those fields, and only a counted run may dispatch to agy, so as written the live check can never be made. The builder drafted both clauses and did not catch it.
+A2. Where the live check can be read. While a counted run is configured, GET /control-plane/rooms/<roomId>/journal (packages/control-plane/src/counted-run.ts) returns each planner command's decoded journal rows, a dispatched row's init_model and provider_conversation_id included, and the chain's verification.
+A3. Three gaps pull request 131 left to me, each named in its body under Residuals.
+  - A daemon that does not select the executor at boot (planner-executor-factory.ts refuses when, for example, the identity it holds is not 1880c12d's) runs no reap, so a planner-user process a previous daemon left waits for a daemon that selects the executor.
+  - Nothing stops a second daemon on the same Gateway directory. IpcServer.start() (ipc.ts) removes the socket file and binds its own, so a second daemon takes the socket over, and its boot would reap the planner user and rewrite the live daemon's records.
+  - GatewayStateStore.write() (state.ts) syncs the state file but not its directory after the rename, so a crash just after it can lose the state it wrote.
+A4. The tracked follow-ups of pull request 133: R1, two starts rewriting a pending halt marker at once can lose the pending state if a second I/O failure lands between them; R2 with C2, three coverage gaps (the closing-loop test counts writes and does not observe reads, the FIFO worker test fails at the store's open rather than its readers, and no test makes the evidence directory's readdir fail); and the Gateway directory is created by IpcServer.start(), after the Planner boots, rather than first in GatewayDaemon.bootNow(). R3 was closed in pull request 135.
+A5. The staging lock (staging-lock.ts) fails closed on a crash: the lock it leaves stops every later staging operation until I remove it by hand, and nothing deletes another process's lock. That suits enrolment. A daemon that systemd restarts on failure needs the opposite: a lock that a crash cannot leave behind, or one crash keeps the Gateway down until I intervene.
+A6. My answers, given in session on 2026-10-29: the live check is the first counted run's first command; yes to the reap; yes to the lock.
+
+Part B: The live check (replaces Amendment 1 B6 of the journal act)
+B1. No counted run counts until the canonical journal is shown carrying both fields for a command. That showing is part of the first counted run: its first planner command is the live check.
+B2. Once that command's dispatched row is journaled, the room's journal route of A2 is read, by whoever my counted-run act names, and the reading is recorded with its time. If the dispatched row carries init_model and provider_conversation_id, each non-empty, the run continues and counts.
+B3. If no dispatched row is journaled for that command, or the row lacks either field, the run stops there and does not count, and nothing more is dispatched on this binding without my new act.
+B4. The executor binding is unchanged: the check happens only inside a counted run that my counted-run act authorizes, and that act restates this part. B4 of FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY is read with this part.
+
+Part C: The Gateway daemon's fixes (one Build Room pull request)
+C1. The reap when the executor is not selected. When BUILDROOM_PLANNER_EXECUTOR is agy and BUILDROOM_PLANNER_USER is set, but the daemon does not select the executor, it still runs, at boot, the second privilege rule of Amendment 3 E1 and the check that no process of the planner user remains. It starts no Planner work either way, and it logs the result, a failed reap or check as an error.
+C2. One daemon per Gateway directory. Before boot reads the lanes, reaps, or touches the socket, the daemon takes an exclusive lock on its Gateway directory. A daemon that finds the lock held exits non-zero, having changed nothing, with a log line that says why. The lock is released by the operating system when its holder ends, however it ends, so neither a crash nor a restart needs anyone to remove it, and no code deletes a lock another live process holds. The pull request proposes the mechanism for Linux and for macOS and shows by test that a second daemon is refused and that a holder's death frees the lock.
+C3. The state file's directory. GatewayStateStore.write() syncs the Gateway directory after the rename.
+C4. Pull request 133's follow-ups: persistPendingHalt() is serialized (R1); the three tests of R2 and C2 are written; GatewayDaemon.bootNow() creates the Gateway directory first.
+C5. Paths. packages/gateway-daemon/src/, one new file there for the lock, and their tests under test/, including test/support/. Nothing in packages/control-plane, packages/gateway-protocol, packages/gateway-cli, packages/journal or the migrations. If meeting C1 to C4 needs any other path, the builder stops and asks me.
+C6. Review and merge. Codex Tier-2 under FOUNDER-ACT-20261028-VELOCITY B1 to B4, and my SHA-named merge authorization. Under B3 of FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY the merge deploys the control plane; this pull request changes no control-plane file, so the deploy serves the same control plane, and the builder's post-merge verification shows it. The PC's daemon changes only under my PC act.
+
+Part D: Not changed and not authorized
+- The executor ruling and its amendments, and the journal act and its amendments, stand in every part this act does not replace.
+- This act authorizes no counted run, no change on the PC or the MacBook, no Railway setting or variable, no SQL, and no rollback. The PC act, which installs the planner user, the privilege rules, the agy copy, the allowlist and the sign-in, and pins a Build Room commit that carries Part C, is drafted next and needs my separate signature.
+- It takes effect on my signature and is filed in custody with the journal act under FOUNDER-ACT-20261028-VELOCITY B6.
+
+Part E: Signature
+Signed: Michael Daley
+Date: 2026-10-29 (UTC)
+Actor-Id: founder

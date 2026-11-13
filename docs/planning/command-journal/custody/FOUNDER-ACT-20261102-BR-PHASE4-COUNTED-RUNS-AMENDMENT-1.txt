@@ -1,0 +1,94 @@
+FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS-AMENDMENT-1: my amendment of D5, naming the commits, the base, the T1 relay and the terms file
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Under: FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS (SHA-256 c65afbc1afedefdf19a3705f3d0a8fda45ec2f89643c862c70485cf370d15053), D5.
+The builder read, before drafting: Build Room main at 03cd29f95fbd93f854cc236f61d93fcf85da8848; FounderOS main at 973717daaff9a89538fab8def71d199428e3629d; Railway's deployments of rare-enjoyment; the control plane's /version and /health at 2026-11-03T02:03:10Z.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. D2 is done. Build Room pull request 141 merged as 03cd29f95fbd93f854cc236f61d93fcf85da8848 on 2026-11-02 under my authorization (comment 6590584333), after Codex's ruled review passed at its head.
+A2. D3 and D4 are done. I generated the counted-run token on my machine and set it as PHASE4_COUNTED_RUN_TOKEN, and set PHASE4_COUNTED_RUN to D4's exact text. They were deployed in two deployments, not one as D4 says: b6037726, with the token only, created 2026-11-03T01:57:09Z and removed at 02:02:18Z; then 09b2be1c, with both, which reached SUCCESS at 02:02:13Z. The counted-run routes are inert without PHASE4_COUNTED_RUN, and no run was in progress. The builder verified 09b2be1c: its boot.start names 03cd29f; its preflight is enforced with no forbidden attribute or membership; it listens with no boot refusal; at 02:03:10Z /version named 03cd29f, started at 02:02:09.682Z, and /health answered 200; a counted-run route asked without a token answered 401, as it does only when the token is configured. Whether PHASE4_COUNTED_RUN names this act cannot be read without the counted-run token; the runner's entry reads it before it creates any room (D2).
+A3. The T1 relay. C3 had the D2 pull request propose the relay's execution surface and model. It did not. The builder proposes them here. No surface in the counted run's registry copy (FounderOS 8146435) describes the runner relaying my text from my terminal, and the control plane does not check T1's surface against that registry. The relay is the runner's own deterministic copy of this act's text, so it is named for the runner, and its model is n/a in the form B2 item 3 already uses for the control plane.
+
+Part B: What D5 names
+B1. The Build Room commit the control plane must serve: 03cd29f95fbd93f854cc236f61d93fcf85da8848.
+B2. The FounderOS commit: 973717daaff9a89538fab8def71d199428e3629d. The runner refuses unless the FounderOS checkout I give it is at that commit with no local change. That commit contains 8146435, the registry copy C3 names.
+B3. The runs' base commit (C4), the same for all three: 03cd29f95fbd93f854cc236f61d93fcf85da8848.
+B4. The T1 relay: execution surface build-room-run-harness; model "n/a (deterministic run-harness relay of the act's text)".
+B5. C3's terms file is phase4-counted-run-terms.json, 1,927 bytes, SHA-256 dcf26438b66a9b0e23ae5d9af8ac3fbba353e04e531442a9127c77d6e9e109f8, whose text is exactly the following, with one final newline:
+
+{
+  "setId": "FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS",
+  "founderOsSha": "973717daaff9a89538fab8def71d199428e3629d",
+  "buildRoomSha": "03cd29f95fbd93f854cc236f61d93fcf85da8848",
+  "controlPlaneOrigin": "https://rare-enjoyment-production-0869.up.railway.app",
+  "gatewayId": "1880c12d-d98d-4a91-b25a-23320aa7f58a",
+  "planner": {
+    "provider": "google",
+    "model": "gemini-4-argon"
+  },
+  "seats": {
+    "builder": "claude-code:anthropic",
+    "reviewer": "codex:openai"
+  },
+  "founderRelay": {
+    "actualModel": "n/a (deterministic run-harness relay of the act's text)",
+    "executionSurface": "build-room-run-harness"
+  },
+  "decisionTimeoutMs": 14400000,
+  "runs": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "1086e073-e181-49a9-a275-cd1e35541f7c",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "03cd29f95fbd93f854cc236f61d93fcf85da8848",
+        "scopePaths": [
+          "README.md"
+        ],
+        "goal": "Plan a section for README.md that describes the Phase 4 planner loop as it is built."
+      }
+    },
+    {
+      "label": "Phase4-CR2",
+      "roomId": "c7d6bd4f-607b-4753-9430-9a16fc46356e",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "03cd29f95fbd93f854cc236f61d93fcf85da8848",
+        "scopePaths": [
+          "docs/command-journal-contract.md"
+        ],
+        "goal": "Plan a glossary for docs/command-journal-contract.md."
+      }
+    },
+    {
+      "label": "Phase4-CR3",
+      "roomId": "c5442130-2afd-4c0f-a294-62beddeef06e",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "03cd29f95fbd93f854cc236f61d93fcf85da8848",
+        "scopePaths": [
+          "docs/gateway-ops-actions-log-runbook.md"
+        ],
+        "goal": "Plan a troubleshooting section for docs/gateway-ops-actions-log-runbook.md."
+      }
+    }
+  ]
+}
+
+B6. What the builder checked, which is not a run: the file passes the runner's own validatePhase4RunSet at 03cd29f; with an observation in which the control plane serves 03cd29f, the FounderOS checkout is clean at 973717d, Gateway 1880c12d is enrolled and live with its executor, and the dispatcher's surface is registered, the runner's entry check reports no failure, so the Planner lane and both seats are on approved lanes; and each scope path exists at 03cd29f. Nothing was sent to the control plane.
+
+Part C: What this does not change
+C1. Nothing in the act changes by this amendment (D5). My amendment of D6's base wording is a separate instrument, AMENDMENT-2.
+C2. It authorizes no run. Each run starts only after D6's readings and as Part E says.
+
+Part D: Filing
+D1. Filed with the act under F2.
+
+Signed:
+
+— Michael Daley
+
+Date:
+
+Actor-Id: founder

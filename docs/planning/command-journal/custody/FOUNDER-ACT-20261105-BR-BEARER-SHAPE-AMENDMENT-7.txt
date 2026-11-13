@@ -1,0 +1,93 @@
+FOUNDER-ACT-20261105-BR-BEARER-SHAPE, Amendment 7: the uncounted rehearsal of Part D1, at the merge commit c440a47
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+Amends: FOUNDER-ACT-20261105-BR-BEARER-SHAPE (SHA-256 b90b0ce7d14462cfd4fcb0374e7f3d6c0658a73ebcfb9fe4ea2a0f25b2dce34e) as amended by its Amendments 1 (954155f9f6a4de501abf86df589c2a337c267428c078b04dfb85890bb0ecb925), 2 (a824e4388257bbe81c19799a906eee94a6a753df6bdfb4d806e761a338731f91), 3 (40ac3fc01095d1320eef86cdd8ff6e2a8e9d8654e49f52e10567feebbfbdb688), 4 (bbc7ba63222072948718c33bb50bc8c7ee9887624c3ba27dcf3ec36752ba7dff), 5 (73dc3cad4b68ee502de87a890398e3d46c270f962c2cda46c591af9d41122d58) and 6 (4607c85c3d7cc677a46eeb548d543e7939a6eeff70a43b8587dcec3e1035262a)
+Under: DEC-20260815-17, Founder Authorization - Phase 4 (Planner Loop) (2026-08-31), Section 7 item 13; FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS (6ccac4bdb9c687f0ac35e47b53e87a68249b6d73fa9ad38d8dd6dc48fc1e8339), whose Parts B, D and E govern the run as V3 reads them; FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES (af53b4933b1b4abd7aabd7ebacb578f1729f8862db002cc7499f5bb618555f94) D2 and its Amendment 1 (847caeb7a002407297c58b77d0e15b25480ea812d56ad9b964726c85b1a6f815), whose form this follows.
+The builder read, before drafting: Build Room main at c440a470046ef2cfe1408ccfff849e3586b1626b, tree f9e9c5da4b09c1fea1003a077ffd1b5c109c5843; the diff of packages/gateway-cli, packages/gateway-daemon, packages/gateway-protocol and packages/gateway-registry from 44dcb1c63e5a383203331e259c43700a6a5e873e to c440a47, which is empty; the diff of packages/run-harness from 3a1409a91ea692e83c55d2f0831efa4e8bfc31f5 to c440a47, which is empty; FounderOS main, still 973717daaff9a89538fab8def71d199428e3629d; Railway's deployment e266426b of rare-enjoyment, with nothing staged, and the control plane's /version and /health at 2026-11-06T00:35Z. It checked V2(e)'s terms file with the runner's own validatePhase4RunSet and V2(f)'s value with the control plane's own parseCountedRunConfig, both at c440a47's tree; both accepted them. Each scope path exists at c440a47, and the three room identifiers are new.
+
+I, Michael Daley, Founder of MAD Ventures, amend the act as follows. Every part not named here stands as signed and amended.
+
+V1. Basis. Part D1 is reached. Pull request 146 merged as c440a470046ef2cfe1408ccfff849e3586b1626b on 2026-11-06 under my authorization (comment 6673003215). The builder verified the merge commit (its tree is the one I authorized, and its attribution trailers are present and pass the check) and its deployment, e266426b: SUCCESS at 00:18:45Z; /version naming c440a47 at 00:18:50Z; /health 200 through the change; the new boot check passing with the three tokens as set; boot.start not returned by the log API. Phase4-CR1 of the set of FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS returned a valid plan that the plan store refused because its prose said "bearer" before an ordinary word. This rehearsal tests the change with the real Planner before any new counted set. Part E's exclusion of any run is lifted by V3 for this one run only.
+V2. What this amendment names.
+(a) The base commit of the run: c440a470046ef2cfe1408ccfff849e3586b1626b.
+(b) The Build Room commit the control plane must serve: c440a470046ef2cfe1408ccfff849e3586b1626b.
+(c) The FounderOS commit: 973717daaff9a89538fab8def71d199428e3629d, as in that set.
+(d) The three rooms: 9c39c6eb-307a-4eb5-a455-e29afcc6754c for the one authorized run, labelled Phase4-CR1; 8802dc1a-3a50-4c03-be71-3d9b25bc5497 and 0c1a3a51-3f38-457b-a6fb-d2a830729767, which are never created.
+(e) The terms file is phase4-bearer-rehearsal-terms.json, 1,920 bytes, SHA-256 57feb3e779f03a6185c79ed251f24ca04c2d18945be223a894d73b2dc8a26172. It differs from that set's terms file (786f3ea2b422d35c1d8c7aae919315a032e2fc82f264ba93c5003f9ce1ef0630) in the set identifier, the Build Room commit, the three base commits and the three room identifiers only. Its text is exactly the following, with one final newline:
+
+{
+  "setId": "FOUNDER-ACT-20261105-BR-BEARER-SHAPE",
+  "founderOsSha": "973717daaff9a89538fab8def71d199428e3629d",
+  "buildRoomSha": "c440a470046ef2cfe1408ccfff849e3586b1626b",
+  "controlPlaneOrigin": "https://rare-enjoyment-production-0869.up.railway.app",
+  "gatewayId": "1880c12d-d98d-4a91-b25a-23320aa7f58a",
+  "planner": {
+    "provider": "google",
+    "model": "gemini-4-argon"
+  },
+  "seats": {
+    "builder": "claude-code:anthropic",
+    "reviewer": "codex:openai"
+  },
+  "founderRelay": {
+    "actualModel": "n/a (deterministic run-harness relay of the act's text)",
+    "executionSurface": "build-room-run-harness"
+  },
+  "decisionTimeoutMs": 14400000,
+  "runs": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "9c39c6eb-307a-4eb5-a455-e29afcc6754c",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "c440a470046ef2cfe1408ccfff849e3586b1626b",
+        "scopePaths": [
+          "README.md"
+        ],
+        "goal": "Plan a section for README.md that describes the Phase 4 planner loop as it is built."
+      }
+    },
+    {
+      "label": "Phase4-CR2",
+      "roomId": "8802dc1a-3a50-4c03-be71-3d9b25bc5497",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "c440a470046ef2cfe1408ccfff849e3586b1626b",
+        "scopePaths": [
+          "docs/command-journal-contract.md"
+        ],
+        "goal": "Plan a glossary for docs/command-journal-contract.md."
+      }
+    },
+    {
+      "label": "Phase4-CR3",
+      "roomId": "0c1a3a51-3f38-457b-a6fb-d2a830729767",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "c440a470046ef2cfe1408ccfff849e3586b1626b",
+        "scopePaths": [
+          "docs/gateway-ops-actions-log-runbook.md"
+        ],
+        "goal": "Plan a troubleshooting section for docs/gateway-ops-actions-log-runbook.md."
+      }
+    }
+  ]
+}
+
+(f) The value of PHASE4_COUNTED_RUN is exactly {"actId":"FOUNDER-ACT-20261105-BR-BEARER-SHAPE","gatewayId":"1880c12d-d98d-4a91-b25a-23320aa7f58a","planner":"antigravity:google","seats":{"builder":"claude-code:anthropic","reviewer":"codex:openai"}}.
+(g) My Mac: a new Build Room checkout at ~/phase4-bearer-rehearsal/br, detached at V2(a)'s commit, clean, with npm ci done under Node 22; a new empty evidence directory ~/phase4-bearer-rehearsal/evidence; V2(e)'s terms file in ~/phase4-bearer-rehearsal, its SHA-256 matching; my FounderOS checkout ~/phase4-set/fos at V2(c)'s commit with no local change. The PC: the service running from ~/buildroom-gateway-44dcb1c. The builder gives me the commands.
+V3. The run. One uncounted run: Phase4-CR1 of V2(e)'s terms, in V2(d)'s first room, governed as Parts B, D and E of FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS govern that act's Phase4-CR1, read with this act's identifier in place of that act's and with V2's commits, rooms, terms file, value and paths in place of that act's own, and with these differences:
+(a) It counts for nothing under Section 7 item 13, spends no set, and no other run is made under this amendment.
+(b) If E2's live check fails, this rehearsal ends there, and nothing more is dispatched on that binding without my new act.
+(c) Before the run, node --version on my Mac prints v22, and the runner's terminal is used for nothing else until the runner exits.
+(d) I read each plan from the plan file the runner saves, or from the plan route, and decide on it; agy's transcript on the PC is not read for the plan.
+(e) E4's freeze runs from the deployment that sets V2(f)'s value until the deployment of E6 that removes it is verified. The custody filings and the act of Amendment 6 U5 wait until then.
+(f) If a plan is refused, the builder finds the cause from the run's record and the executor's evidence, printing no matched value, and includes it in the report of V4.
+V4. Outcome. The rehearsal passes only if the runner prints passed and writes its record and the record's SHA-256. If it passes, the builder drafts my new counted-run act. If it does not, the builder reports to me before anything else is drafted, as Part D1 says.
+V5. Stale terms. If Build Room main moves before the deployment that sets V2(f)'s value, V2's terms are stale, and the builder drafts a further amendment for me to sign before anything else.
+V6. Evidence and filing. The evidence of F1 of that act is kept for this run and filed with this act under its Part C3, with every user name, host name, address, tailnet name, node key and account name masked, and no token. That filing may share one pull request with the filings of 2026-11-02 to 2026-11-06, which needs my separate authorization.
+V7. Not authorized: closing Phase 4 or certifying item 13; any counted run, or my new counted-run act before V4 calls for its draft; dispatching a builder or a reviewer, building any approved plan, or any change to a target repository; any provider, adapter, lane, model, seat or Gateway other than V2(e)'s; any change to agy's arguments, the sudo rule, the PC or the Mac beyond V2(g), D5 and F1 of that act; any Railway variable or setting other than setting V2(f)'s value and removing it under E6; any rollback, SQL or migration; any merge or push to Build Room main during the freeze.
+
+Signed: Michael Daley
+Date: 2026-11-06 (UTC)
+Actor-Id: founder

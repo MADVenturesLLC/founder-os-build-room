@@ -1,0 +1,19 @@
+FOUNDER-ACT-20261105-BR-BEARER-SHAPE, Amendment 1: every token the control plane accepts stays caught, whatever its characters
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+Amends: FOUNDER-ACT-20261105-BR-BEARER-SHAPE (SHA-256 b90b0ce7d14462cfd4fcb0374e7f3d6c0658a73ebcfb9fe4ea2a0f25b2dce34e)
+Pull request: MADVenturesLLC/founder-os-build-room#146, head when drafted 13ab9054692ccac35a0f22917c44ea05ce307606
+Basis: the codex Tier-2 review of pull request 146, model GPT-6.1-Sol (Codex CLI /status, reported by me), Tier2-Head-Sha 984518da1b1e3375b2c103bbcb650b0904f6fc17, verdict REQUEST-CHANGES; and my ruling on it in the builder's session on 2026-11-05, "Add a 32+ non-space rule".
+
+I, Michael Daley, Founder of MAD Ventures, amend the act as follows. Every part not named here stands as signed.
+
+M1. What the review found. The control plane's config checks each of its three tokens for length, at least 32 characters, and not for which characters it holds (packages/control-plane/src/config.ts), and its authentication compares whatever value follows "Bearer" (server.ts). bearer_token counts only an unbroken run of the characters [A-Za-z0-9._~+/=-]. So a 32-character token with punctuation in it, such as 'q7R' five times, 'X!', then 'm8S' five times, has a run of 16: the shape of 3a1409a, needing 8, caught it; the shape of B1, needing 20, does not, and the value is then neither detected nor redacted. That is wider than B2's stated limit. A5's statement that the floor of 20 still catches every credential the control plane accepts was wrong for such tokens. The review found every other check sound: the change of B1 is exactly the quantifier and its comment, the prose fix holds, and the scope is the act's.
+M2. B1 is replaced by: "B1. In packages/journal/src/redact.ts, bearer_token becomes /(?<![A-Za-z0-9])Bearer\s+(?:[A-Za-z0-9._~+/=-]{20,}|\S{32,})/i: after 'Bearer', either 20 or more characters of its alphabet, or 32 or more characters that are not whitespace, of any kind. The comment above it says why. Nothing else in redact.ts changes. Every other shape, the entropy shape and SECRET_ENV_KEYS stay as they are."
+M3. B2 is replaced by: "B2. Stated limits. A Bearer value shorter than 32 characters whose leading run of [A-Za-z0-9._~+/=-] is shorter than 20, and a value that holds whitespace, are not detected or redacted by this shape; the entropy shape reaches only runs of 40 or more. Every token the control plane accepts is at least 32 characters, so it is caught unless it holds whitespace. A string of 32 or more characters without whitespace written right after the word 'bearer', such as a long URL, is detected and redacted although it is not a credential. I accept both."
+M4. B4 gains: "the punctuated 32-character value of M1, in either case of 'Bearer', and 32 characters of punctuation alone, are detected and redacted, with no part of the value surviving redaction; a punctuated value of 31 characters whose leading run is under 20 is not detected, pinning M3; a URL of 32 or more characters after 'bearer' is detected, pinning M3's false positive; the names of the control plane's token variables written after 'Bearer', with or without a leading $ and closing backtick, are not detected."
+M5. Review. The change under M2 and M4 is the pull request's one correction under FOUNDER-ACT-20261028-VELOCITY B2. Its confirmation is a codex review of the exact final head, with a brief naming that head; the review of 984518d does not carry to it.
+M6. Part E stands.
+
+Signed: Michael Daley
+Date: 2026-11-05 (UTC)
+Actor-Id: founder

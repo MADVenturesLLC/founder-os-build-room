@@ -1,0 +1,40 @@
+FOUNDER-ACT-20261105-BR-BEARER-SHAPE: the journal's bearer shape stops matching English prose
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+Build Room main when drafted: 3a1409a91ea692e83c55d2f0831efa4e8bfc31f5
+Under: FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS (SHA-256 6ccac4bdb9c687f0ac35e47b53e87a68249b6d73fa9ad38d8dd6dc48fc1e8339) C2 and E5; FOUNDER-RULING journal-redaction C3 and FD-3 of 2026-10-03 (docs/planning/command-journal/custody/FOUNDER-RULING-journal-redaction-C3-FD3-20261003.txt, SHA-256 a49055516ad3cd2eb99c6caddbcb6b7c58f493ed1196d1f139716481b80512a0); FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE C1 and C4; FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY (f6057c260f1d3faa6ad261b80e1b0dbb35b01bfd93c74ab529b3d5b49eed2268) B3; FOUNDER-ACT-20261028-VELOCITY (83b1ffd5753f48b191ec7e62c8d724ccd4d13f6c024bbe5cc9fc4020f4cbc27a) B1 to B4.
+The builder read, before drafting, at 3a1409a: packages/control-plane/src/planner-loop.ts (executeRound, judgeRoundPlan, submitRoundPlan), plan-store.ts (recordPlan), config.ts (the three tokens' length checks), packages/journal/src/redact.ts, packages/redaction/src/registry.ts, and the ruling of 2026-10-03.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. What happened. Phase4-CR1 of FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS ended interrupted on 2026-11-04 at 23:57:11.929Z (record SHA-256 d67bc9a440b037e900a9dfccb7c196c562f4ce064d5446eacf98e7637e396c5a), with lifecycle_incomplete and command_not_clean, and the set is spent. The live check passed. The run's record shows its one planner command failed plan_refused at 23:57:08.816Z.
+A2. What the Planner did. The executor's evidence record on the PC shows outcome plan, exit code 0, result SUCCESS and a 31,158-byte response. agy's transcript shows 72 steps whose only tool was read_file (54 calls) and a final answer that parses as a plan of 31,155 characters. The Planner did what the act asked.
+A3. What refused it. The control plane's checks of the plan's document and scope passed (planner-loop.ts, judgeRoundPlan), so the plan was then refused when the plan store recorded it with T3, and the only refusal open at that point is credential_material (plan-store.ts, recordPlan), from the journal's guard containsCredentialMaterial (packages/journal/src/redact.ts). A scan of the plan on the PC, with the guard's own patterns and printing no matched value, found three matches and nothing else, all of the shape bearer_token: the word "bearer" followed by an ordinary lowercase word of 8 to 11 letters, in the plan's trust and security section, the third step of its sequence and its second known risk. The builder confirmed, with the guard at 3a1409a, that "bearer credentials" and "the counted-run route takes a bearer credential." are each judged credential material. They are English, not credentials.
+A4. The shape. bearer_token is /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+/=-]{8,}/i: case-insensitive, and any eight letters after "bearer" match. The same pattern both detects (the guard refuses a journal row, a goal, plan feedback or a plan that holds it) and redacts (normalization replaces it).
+A5. What a longer floor still catches. The control plane refuses to boot with CONTROL_PLANE_TOKEN, PHASE3_ADJUDICATION_TOKEN or PHASE4_COUNTED_RUN_TOKEN shorter than 32 characters (config.ts). The values it mints for the Gateway are 64 hexadecimal characters, and its pairing codes 43. The guard's test bearer token is 24 characters. packages/redaction's registry has no bearer shape, so the parity condition of C3 of the ruling of 2026-10-03 does not reach this change.
+A6. My ruling. On 2026-11-05 I chose, from the options the builder presented, "Tighten the bearer shape".
+
+Part B: The change
+B1. In packages/journal/src/redact.ts, bearer_token's value becomes 20 or more characters: {8,} becomes {20,}, and the comment above it says why. Nothing else in redact.ts changes. Every other shape, the entropy shape and SECRET_ENV_KEYS stay as they are.
+B2. Stated limit. A Bearer value of 8 to 19 characters is no longer detected or redacted by this shape, and the entropy shape reaches only runs of 40 or more. Under A5 no credential this system accepts or mints is that short. I accept it.
+B3. Paths: packages/journal/src/redact.ts and tests under test/. Nothing in packages/control-plane, packages/redaction, packages/run-harness, packages/gateway-daemon, the migrations or the PC. If the change needs any other path, the builder stops and asks me.
+B4. Tests: "bearer" followed by a lowercase word of 8 to 11 letters, as the plan held it, including "bearer credentials" and a sentence ending in such a word, is not credential material, in a string and inside a plan document's strings; Bearer with a 20-character value and with a 64-hexadecimal value is detected and redacted; Bearer with a 19-character value is not detected, pinning B2; every existing journal redaction, parity and secrets test still passes. Each new test fails when the change it covers is reverted, and the builder shows that.
+
+Part C: Review, merge and filing
+C1. Review: Codex Tier-2 of the exact final head under FOUNDER-ACT-20261028-VELOCITY B1 to B4. Advisory reviews are dispositioned under C4 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE.
+C2. Merge: my separate SHA-named authorization, and not before E6 of FOUNDER-ACT-20261104-BR-PHASE4-COUNTED-RUNS is verified, which ends that act's freeze. Merging deploys the control plane, whose code this changes; under B3 of FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY the authorization also authorizes that deploy, and the builder verifies that it reached SUCCESS and that /version names the merge commit, with its boot.start if the log returns it.
+C3. Filing: under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, after the merge, with this act verbatim, its review, the merge verification and the deploy reading. It may share one pull request with the filings of 2026-11-02 to 2026-11-05.
+
+Part D: What follows
+D1. After the merge and its deploy, the builder drafts my amendment for one uncounted rehearsal of Phase4-CR1's terms at the merge commit, in fresh rooms, as Amendment 1 of FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES did. If it passes, the builder drafts my new counted-run act. If it does not, the builder reports to me before anything else is drafted.
+
+Part E: Not authorized
+- Any change beyond Part B, including to any other credential shape, the entropy shape, SECRET_ENV_KEYS, packages/redaction or the plan store's checks.
+- Any run, counted or not, and my counted-run act.
+- Any change to agy's arguments, the sudo rule, the PC, a Railway variable other than E6 of the spent act, a Neon role, a secret or a Gateway host.
+- Any merge without my separate authorization.
+
+Signed: Michael Daley
+Date: 2026-11-05 (UTC)
+Actor-Id: founder

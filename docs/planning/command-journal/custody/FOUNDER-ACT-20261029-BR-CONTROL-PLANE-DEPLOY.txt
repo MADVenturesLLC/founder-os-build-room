@@ -1,0 +1,30 @@
+FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY: the control plane carrying pull request 135 is in production, and a Build Room merge is a deploy
+Under: FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS (SHA-256 d7c81dd37a6f4b30707b45d2eee81d85016395b00ea60bf04be540a61a55917e) and its Amendments 1 (SHA-256 85585e9ed8712a88c6c46918174331ab9af37f05c0629400382091b4b80504c8) and 2 (SHA-256 46bace66a116c7a514d351524eb08f1eaa91ebdcd7eca5490812136e9d54241a); FOUNDER-ACT-20261028-VELOCITY (SHA-256 83b1ffd5753f48b191ec7e62c8d724ccd4d13f6c024bbe5cc9fc4020f4cbc27a).
+Drafted by the builder (claude-code) to my answers of 2026-10-29 in its session, after it read the Railway service and its deployments. It takes effect when I sign it there.
+
+I, Michael Daley, Founder of MAD Ventures, rule as follows.
+
+Part A: What the builder found (read-only, on 2026-10-29 between 02:35Z and 02:40Z; no variable value was read)
+A1. Service. Railway project compassionate-happiness, environment production, service rare-enjoyment deploys from MADVenturesLLC/founder-os-build-room, branch main, with "wait for CI" (checkSuites) off. So every push to main deploys the control plane to production without waiting for CI. Its variable names (names only) are CONTROL_PLANE_TOKEN, DATABASE_URL, PHASE3_ADJUDICATION_TOKEN and PHASE4_COUNTED_RUN_TOKEN; PHASE4_COUNTED_RUN is not among them, so the counted-run routes are inert as of that read.
+A2. The deployment. Merging pull request 135 at 02:33Z created deployment 7216717f-41ba-4705-9562-b26c465ff2b3 for af92290684089abc993f4b6b37e394b2c8bb1389 (created 02:33:50Z, status SUCCESS). Its log shows boot.start naming af92290 at 02:35:28Z; boot.preflight as br_app_runtime, privilege audit enforced, 10 migrations present, no forbidden attribute or membership; listening on 8080; and gateway leadership serving, generation 102, at 02:36:09Z. Each of the eight pushes to main listed, from bbed869 (2026-10-24) to af92290, has its own deployment of this kind.
+A3. Amendment 1 B5 says deploying the control plane that carries pull request 2 is a production act that a later act of mine directs. No separate deploy step exists: the merge was the deploy. The builder drafted B5 without checking how the service deploys.
+A4. Rollback. From af92290 the control plane writes every command row as BRJ:c:2, and its verifier refuses a BRJ:c:1 command row after a BRJ:c:2 one. Every earlier commit writes BRJ:c:1. A control plane rolled back to an earlier commit would, once any BRJ:c:2 row exists, append rows that make the chain fail verification when af92290 or later reads it. Whether any BRJ:c:2 row exists now has not been checked.
+
+Part B: Rulings
+B1. Ratification. Deployment 7216717f-41ba-4705-9562-b26c465ff2b3 of af92290 to production is the deploy Amendment 1 B5 calls for, in effect from its boot at 2026-10-29T02:35:28Z. Amendment 1 B5 is satisfied by it.
+B2. No rollback. No one rolls back or redeploys the production control plane to a commit that precedes af92290 on main without a new act of mine.
+B3. A merge is a deploy. For the Build Room, merging to main deploys the control plane to production (service rare-enjoyment), and my SHA-named merge authorization is also my authorization of that deploy. From this act on:
+  - an act that directs Build Room work says so, and does not promise a separate deploy step;
+  - the merge authorization the builder drafts names the production deploy;
+  - the builder's post-merge verification adds the deploy: the deployment for the merge commit reached SUCCESS, and its boot.start log line names the merge commit, recorded with their times.
+B4. The live check. Amendment 1 B6 stands: no counted run proceeds until the canonical journal is shown carrying both fields for a command, by a named live check with its time recorded. This act authorizes neither that check nor the dispatch it needs.
+
+Part C: Not changed and not authorized
+- This act changes no Railway setting or variable, including "wait for CI". It authorizes no rollback, no SQL, no counted run, and no change on the PC or the MacBook.
+- The journal act and its Amendments 1 and 2 stand in every part B1 does not satisfy.
+- It takes effect on my signature and is filed in custody with the journal act under FOUNDER-ACT-20261028-VELOCITY B6.
+
+Part D: Signature
+Signed: Michael Daley
+Date: 2026-10-29 (UTC)
+Actor-Id: founder

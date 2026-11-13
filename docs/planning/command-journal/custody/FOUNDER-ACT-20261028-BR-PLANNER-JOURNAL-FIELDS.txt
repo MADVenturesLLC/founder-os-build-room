@@ -1,0 +1,42 @@
+FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS: the Build Room pull requests that carry the init model and conversation id into the canonical command journal
+Under: FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR Amendment 5 (SHA-256 f2aa86a251cb6a2399c92b42f66606309cba807f5a416a6ff4e76622b192fdee, recorded on FounderOS main 46ee2c1), Part B2.
+Drafted by the builder (claude-code) to my answers of 2026-10-28 in its session. It takes effect when I sign it there.
+
+I, Michael Daley, Founder of MAD Ventures, direct as follows.
+
+Part A: What this act is for
+A1. Amendment 5 B2 says the change B1 needs is made in a Build Room pull request that a later act of mine directs. This is that act. It directs the work in two pull requests, in the order Part D sets.
+A2. Contract §6.2 (docs/command-journal-contract.md, v0.17) requires each hashed serialization to be specified, versioned with golden vectors, and ratified before the hashing code that implements it. Adding fields to the command row changes the byte grammar of BRJ:c:1, and that spec says such a change takes a new spec version with a new identifier. So the spec is written and ratified first, and the code follows.
+
+Part B: Rulings on reading Amendment 5 B1
+B1. Which event carries the fields. Both fields are carried on the command's `dispatched` event, the event the control plane journals when the Gateway answers that the work was accepted. They are not carried on the outcome event (`completed`, `failed` or `resolved`).
+    Reason: B1 covers "every command whose work the executor sent". A command that was sent and whose daemon then stopped mid-run is answered as lost, and no outcome event carrying the Gateway's report is ever journaled for it. Carrying the fields only "with the command's outcome", read literally, would leave exactly those commands without them. The executor has read the init event before it answers accepted, so both fields are known when `dispatched` is journaled. This act reads "with the command's outcome" in B1 as "with the command's journaled events" to that end. Amendment 5 is not otherwise changed.
+B2. Field names and presence. The two journal fields are `init_model` and `provider_conversation_id`. On the wire, the Gateway's accepted answer carries `initModel` and `conversationId`. On `dispatched` they are present exactly when the accepted answer carries them. For the agy lane (`antigravity:google`, Gateway 1880c12d), the control plane rejects an accepted answer that lacks either field, or carries an empty or overlong one, and journals the command `unresolved`: the work may have been sent, and the record of what served it is missing. They are absent from every other event type.
+B3. Classification. The conversation id is an opaque provider identifier, not credential material, under contract §6.1, and is journaled as read.
+
+Part C: Scope
+C1. Paths the two pull requests may change:
+    - packages/journal/ (the row type, the validator, the BRJ:c:2 spec and its golden vectors, and chain verification across the cutover)
+    - docs/command-journal-contract.md (v0.18: §2 gains the two fields; §6.2 names BRJ:c:2)
+    - packages/control-plane/src/planner-loop.ts, journal-store.ts, migrations.ts (a new migration adding two nullable columns)
+    - packages/gateway-protocol/src/planner.ts (the accepted answer gains the two fields)
+    - packages/gateway-daemon/src/planner-worker.ts and agy-planner-executor.ts (carrying the fields from the executor's start to the accepted answer)
+    - the tests for each
+C2. Mixed chain. Rows journaled before the cutover stay BRJ:c:1 and verify under BRJ:c:1. Rows from the cutover are BRJ:c:2. The verifier selects the spec for each row by a marker recorded with the row, never by guessing; rows carry no such marker today (one spec id, BRJ:c:1, is a constant), so pull request 1 defines it, and a chain that switches back from BRJ:c:2 to BRJ:c:1 fails verification. Existing rows are never rewritten.
+C3. Not in scope: any other journal field, any other event type, any other lane, provider or Gateway, and anything Amendment 5 Part C excludes.
+
+Part D: Order and gates
+D1. Pull request 1, documents only: BRJ:c:2 with golden vectors, and contract v0.18. It goes through Tier-2 review as usual. Its merge is my ratification of BRJ:c:2 under §6.2, and needs my SHA-named merge authorization.
+D2. Pull request 2, code: begun only after pull request 1 has merged. It implements BRJ:c:2 exactly as ratified, with the golden vectors as tests, and ships the migration file. It goes through Tier-2 review and needs my SHA-named merge authorization.
+D3. Applying the migration to any database is a production act that a later act of mine directs. Neither pull request applies it, and no builder runs it.
+D4. Amendment 5 B2 stands: no counted run proceeds until pull request 2 has merged, the migration has been applied under D3, and the canonical journal is shown carrying both fields for a command. Showing that is a live check, with its name and time recorded.
+
+Part E: Not changed
+- The ruling and its Amendments 1 to 5 stand as signed, with B1 above as this act's reading of Amendment 5 B1.
+- This act authorizes no counted run, no Railway variable, no SQL, no deployment, and no change on the PC or the MacBook.
+- It is filed in custody with the ruling and its amendments under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE.
+
+Part F: Signature
+Signed: Michael Daley
+Date: 2026-10-28 (UTC)
+Actor-Id: founder
