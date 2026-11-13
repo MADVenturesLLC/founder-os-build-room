@@ -1,0 +1,575 @@
+FOUNDER-ACT-20261112-BR-PHASE4-COUNTED-RUNS: the Founder's lines, readings and outputs, as he gave them in session.
+Masked: the user name as <user> and the PC's host name as <pc-host>. Each plan JSON he pasted is replaced by the name of the filed plan file it reproduces (its plan hash recomputed from the paste).
+One paste (18:08:34Z) opened with R11's approval; that part is left for R11's filing and marked. Times are UTC, when the session received each message.
+After "draft the F3 filing" come his rulings on the draft and the files he sent for it; each file's content, where it matches a filed file byte for byte, is replaced by that file's name and SHA-256.
+
+=== received 2026-11-12T16:35:32.154Z ===
+draft the counted run act
+
+=== received 2026-11-12T17:53:54.300Z ===
+I sign FOUNDER-ACT-20261112-BR-PHASE4-COUNTED-RUNS (1a182790…35c9) as delivered
+
+=== received 2026-11-12T18:08:34.506Z ===
+[The paste opened with the R11 approval command and its HTTP 201 (R11 room 20813999-489e-40ee-83e6-742fb174d2af, plan 1fae4b7c3bf721e7afb0700e54125bae7e42c9468ea8855dcf56b2bb16c5e25e). That part belongs to R11 and is left for R11's filing.]
+…/br on  HEAD ➜  export PATH="$HOME/.nvm/versions/node/v22.23.4/bin:$PATH" && echo "home $HOME" && node --version && mkdir -p ~/phase4-set3 && cd ~/phase4-set3 && git clone https://github.com/MADVenturesLLC/founder-os-build-room.git br && git -C br checkout --detach 6b80c2259558e93d4f12dca474cc1d491930bd5d && (cd br && npm ci) && mkdir evidence && echo "HEAD $(git -C br rev-parse HEAD)" && echo "dirty files: $(git -C br status --short | wc -l)" && echo "evidence entries: $(ls -A evidence | wc -l)" && echo END
+home /Users/<user>
+v22.23.4
+Cloning into 'br'...
+remote: Enumerating objects: 5846, done.
+remote: Counting objects: 100% (1553/1553), done.
+remote: Compressing objects: 100% (263/263), done.
+remote: Total 5846 (delta 1423), reused 1322 (delta 1290), pack-reused 4293 (from 1)
+Receiving objects: 100% (5846/5846), 5.15 MiB | 12.22 MiB/s, done.
+Resolving deltas: 100% (3887/3887), done.
+HEAD is now at 6b80c22 planner: one corrective re-ask for a malformed or missing answer (#153)
+
+added 196 packages, and audited 208 packages in 2s
+
+56 packages are looking for funding
+  run `npm fund` for details
+
+11 vulnerabilities (10 moderate, 1 high)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+HEAD 6b80c2259558e93d4f12dca474cc1d491930bd5d
+dirty files:        0
+evidence entries:        0
+END
+~/phase4-set3 ➜  >....
+  },
+  "founderRelay": {
+    "actualModel": "n/a (deterministic run-harness relay of the act's text)",
+    "executionSurface": "build-room-run-harness"
+  },
+  "decisionTimeoutMs": 14400000,
+  "runs": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "e006e499-58a4-4392-a624-e6170a393e36",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "6b80c2259558e93d4f12dca474cc1d491930bd5d",
+        "scopePaths": [
+          "README.md"
+        ],
+        "goal": "Plan a section for README.md that describes the Phase 4 planner loop as it is built."
+      }
+    },
+    {
+      "label": "Phase4-CR2",
+      "roomId": "9bdb8cd9-8937-4058-9365-d27439e6142d",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "6b80c2259558e93d4f12dca474cc1d491930bd5d",
+        "scopePaths": [
+          "docs/command-journal-contract.md"
+        ],
+        "goal": "Plan a glossary for docs/command-journal-contract.md."
+      }
+    },
+    {
+      "label": "Phase4-CR3",
+      "roomId": "eb4ccc7a-e014-48a8-a019-986f8fe7babe",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "6b80c2259558e93d4f12dca474cc1d491930bd5d",
+        "scopePaths": [
+          "docs/gateway-ops-actions-log-runbook.md"
+        ],
+        "goal": "Plan a troubleshooting section for docs/gateway-ops-actions-log-runbook.md."
+      }
+    }
+  ]
+}
+EOF
+shasum -a 256 ~/phase4-set3/phase4-counted-run3-terms.json; wc -c < ~/phase4-set3/phase4-counted-run3-terms.json; echo "fos HEAD $(git -C ~/phase4-set/fos rev-parse HEAD)"; echo "fos dirty: $(git -C ~/phase4-set/fos status --short | wc -l)"; echo END
+5a031647b2a96849080795ce3c1d72eed3202d8b5e33ca4a956ccbdcb47231d2  /Users/<user>/phase4-set3/phase4-counted-run3-terms.json
+    1927
+fos HEAD 973717daaff9a89538fab8def71d199428e3629d
+fos dirty:        0
+END
+~/phase4-set3 ➜
+
+pc:
+<user>@<pc-host>:~/buildroom-gateway-6b80c22$ echo "home $HOME"
+systemctl --user is-active buildroom-gateway.service
+systemctl --user show buildroom-gateway.service -p WorkingDirectory -p ActiveEnterTimestamp
+test -e "$HOME/Library/Application Support/founder-os/gateway/planner-halted.json"; echo "halt exit $?"
+/usr/bin/pgrep -u buildroom-planner; echo "pgrep exit $?"
+sha256sum /opt/buildroom-planner/bin/agy
+uptime -s
+test -e /var/run/reboot-required; echo "reboot-required exit $?"
+systemctl list-timers apt-daily-upgrade.timer --no-pager | head -2
+echo END
+home /home/<user>
+active
+ActiveEnterTimestamp=Wed 2026-11-11 22:00:47 EST
+WorkingDirectory=/home/<user>/buildroom-gateway-6b80c22
+halt exit 1
+pgrep exit 1
+4341b80b43fc3b4437ff65041673f0f71c950e49d69a6256e3b6f212c4694ed4  /opt/buildroom-planner/bin/agy
+2026-11-07 13:43:31
+reboot-required exit 1
+NEXT                        LEFT LAST                        PASSED UNIT                    ACTIVATES
+Fri 2026-11-13 06:09:35 EST  17h Thu 2026-11-12 06:22:52 EST 6h ago apt-daily-upgrade.timer apt-daily-upgrade.service
+END
+
+=== received 2026-11-12T18:13:16.550Z ===
+deploy is up
+
+=== received 2026-11-12T19:10:43.255Z ===
+Phase4-CR1: entry passed at 2026-11-12T19:07:22.919Z; room e006e499-58a4-4392-a624-e6170a393e3
+
+=== received 2026-11-12T19:14:05.943Z ===
+1
+
+=== received 2026-11-12T19:14:48.411Z ===
+<user>@<pc-host>:~/buildroom-gateway-6b80c22$ echo "home $HOME"
+systemctl --user is-active buildroom-gateway.service
+systemctl --user show buildroom-gateway.service -p WorkingDirectory -p ActiveEnterTimestamp
+test -e "$HOME/Library/Application Support/founder-os/gateway/planner-halted.json"; echo "halt exit $?"
+/usr/bin/pgrep -u buildroom-planner; echo "pgrep exit $?"
+sha256sum /opt/buildroom-planner/bin/agy
+uptime -s
+test -e /var/run/reboot-required; echo "reboot-required exit $?"
+systemctl list-timers apt-daily-upgrade.timer --no-pager | head -2
+echo END
+home /home/<user>
+active
+ActiveEnterTimestamp=Wed 2026-11-11 22:00:47 EST
+WorkingDirectory=/home/<user>/buildroom-gateway-6b80c22
+halt exit 1
+pgrep exit 1
+4341b80b43fc3b4437ff65041673f0f71c950e49d69a6256e3b6f212c4694ed4  /opt/buildroom-planner/bin/agy
+2026-11-07 13:43:31
+reboot-required exit 1
+NEXT                        LEFT LAST                        PASSED UNIT                    ACTIVATES
+Fri 2026-11-13 06:09:35 EST  15h Thu 2026-11-12 06:22:52 EST 7h ago apt-daily-upgrade.timer apt-daily-upgrade.service
+END
+
+=== received 2026-11-12T19:15:42.596Z ===
+Phase4-CR1: entry passed at 2026-11-12T19:07:22.919Z; room e006e499-58a4-4392-a624-e6170a393e36
+Phase4-CR1: round 1 settled (plan_review) at 2026-11-12T19:14:15.544Z
+LIVE CHECK at 2026-11-12T19:14:15.725Z: command cmd_planner_4d8dafcc80c49df73e1be3e5e99360e1; init_model gemini-4-argon-high; provider_conversation_id cd90200b-c9fe-48eb-ad03-891fed3ba0b8
+LIVE CHECK PASSED: the run continues and counts.
+PLAN for your decision: /Users/<user>/phase4-set3/evidence/plan-c421cf1e857b92b8e16a8df958886e041cd26ee87f60f76cb800437ad51968f3.json (plan hash c421cf1e857b92b8e16a8df958886e041cd26ee87f60f76cb800437ad51968f3, command cmd_planner_4d8dafcc80c49df73e1be3e5e99360e1)
+
+=== received 2026-11-12T19:16:22.612Z ===
+~/phase4-set3 ➜  >....
+  },
+  "founderRelay": {
+    "actualModel": "n/a (deterministic run-harness relay of the act's text)",
+    "executionSurface": "build-room-run-harness"
+  },
+  "decisionTimeoutMs": 14400000,
+  "runs": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "e006e499-58a4-4392-a624-e6170a393e36",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "6b80c2259558e93d4f12dca474cc1d491930bd5d",
+        "scopePaths": [
+          "README.md"
+        ],
+        "goal": "Plan a section for README.md that describes the Phase 4 planner loop as it is built."
+      }
+    },
+    {
+      "label": "Phase4-CR2",
+      "roomId": "9bdb8cd9-8937-4058-9365-d27439e6142d",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "6b80c2259558e93d4f12dca474cc1d491930bd5d",
+        "scopePaths": [
+          "docs/command-journal-contract.md"
+        ],
+        "goal": "Plan a glossary for docs/command-journal-contract.md."
+      }
+    },
+    {
+      "label": "Phase4-CR3",
+      "roomId": "eb4ccc7a-e014-48a8-a019-986f8fe7babe",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "6b80c2259558e93d4f12dca474cc1d491930bd5d",
+        "scopePaths": [
+          "docs/gateway-ops-actions-log-runbook.md"
+        ],
+        "goal": "Plan a troubleshooting section for docs/gateway-ops-actions-log-runbook.md."
+      }
+    }
+  ]
+}
+EOF
+shasum -a 256 ~/phase4-set3/phase4-counted-run3-terms.json; wc -c < ~/phase4-set3/phase4-counted-run3-terms.json; echo "fos HEAD $(git -C ~/phase4-set/fos rev-parse HEAD)"; echo "fos dirty: $(git -C ~/phase4-set/fos status --short | wc -l)"; echo END
+5a031647b2a96849080795ce3c1d72eed3202d8b5e33ca4a956ccbdcb47231d2  /Users/<user>/phase4-set3/phase4-counted-run3-terms.json
+    1927
+fos HEAD 973717daaff9a89538fab8def71d199428e3629d
+fos dirty:        0
+END
+~/phase4-set3 ➜  echo "home $HOME"
+systemctl --user is-active buildroom-gateway.service
+systemctl --user show buildroom-gateway.service -p WorkingDirectory -p ActiveEnterTimestamp
+test -e "$HOME/Library/Application Support/founder-os/gateway/planner-halted.json"; echo "halt exit $?"
+/usr/bin/pgrep -u buildroom-planner; echo "pgrep exit $?"
+sha256sum /opt/buildroom-planner/bin/agy
+uptime -s
+test -e /var/run/reboot-required; echo "reboot-required exit $?"
+systemctl list-timers apt-daily-upgrade.timer --no-pager | head -2
+echo END
+home /Users/<user>
+zsh: command not found: systemctl
+zsh: command not found: systemctl
+halt exit 1
+pgrep: Unknown user `buildroom-planner'
+pgrep exit 2
+sha256sum: /opt/buildroom-planner/bin/agy: No such file or directory
+uptime: illegal option -- s
+usage: uptime
+reboot-required exit 1
+zsh: command not found: systemctl
+END
+~/phase4-set3 ➜  cat ~/phase4-set3/evidence/plan-c421cf1e857b92b8e16a8df958886e041cd26ee87f60f76cb800437ad51968f3.json; echo; echo END
+[plan JSON as pasted: its plan hash recomputes to c421cf1e857b92b8e16a8df958886e041cd26ee87f60f76cb800437ad51968f3; filed as PHASE4-SET3-plan-c421cf1e857b92b8e16a8df958886e041cd26ee87f60f76cb800437ad51968f3.json]
+
+END
+
+=== received 2026-11-12T21:15:31.657Z ===
+HTTP 201
+
+=== received 2026-11-12T21:22:01.810Z ===
+PLAN for your decision: /Users/<user>/phase4-set3/evidence/plan-c4ff00adfc73ffb01311478f2d3d06b8d41a1319fe164c0b7ace7c664a9eb493.json (plan hash c4ff00adfc73ffb01311478f2d3d06b8d41a1319fe164c0b7ace7c664a9eb493, command cmd_planner_828393372669582053adfdbe43c02d20)
+
+=== received 2026-11-12T21:32:07.774Z ===
+~/phase4-set3 ➜  cat ~/phase4-set3/evidence/plan-c4ff00adfc73ffb01311478f2d3d06b8d41a1319fe164c0b7ace7c664a9eb493.json; echo; echo END
+[plan JSON as pasted: its plan hash recomputes to c4ff00adfc73ffb01311478f2d3d06b8d41a1319fe164c0b7ace7c664a9eb493; filed as PHASE4-SET3-plan-c4ff00adfc73ffb01311478f2d3d06b8d41a1319fe164c0b7ace7c664a9eb493.json]
+
+END
+
+=== received 2026-11-12T21:44:29.379Z ===
+HTTP 201
+
+=== received 2026-11-12T21:47:11.897Z ===
+Phase4-CR1: passed at 2026-11-12T21:44:21.116Z; record SHA-256 83757a5c1a22e1314c3a6e5d0f88ca1d58d01277d6f0927f1d08c39431b5c09c
+Next label: Phase4-CR2.
+
+=== received 2026-11-12T21:47:54.329Z ===
+give me cmds
+
+=== received 2026-11-12T21:48:34.798Z ===
+<user>@<pc-host>:~/buildroom-gateway-6b80c22$ echo "home $HOME"
+systemctl --user is-active buildroom-gateway.service
+systemctl --user show buildroom-gateway.service -p WorkingDirectory -p ActiveEnterTimestamp
+test -e "$HOME/Library/Application Support/founder-os/gateway/planner-halted.json"; echo "halt exit $?"
+/usr/bin/pgrep -u buildroom-planner; echo "pgrep exit $?"
+sha256sum /opt/buildroom-planner/bin/agy
+uptime -s
+test -e /var/run/reboot-required; echo "reboot-required exit $?"
+systemctl list-timers apt-daily-upgrade.timer --no-pager | head -2
+echo END
+home /home/<user>
+active
+ActiveEnterTimestamp=Wed 2026-11-11 22:00:47 EST
+WorkingDirectory=/home/<user>/buildroom-gateway-6b80c22
+halt exit 1
+pgrep exit 1
+4341b80b43fc3b4437ff65041673f0f71c950e49d69a6256e3b6f212c4694ed4  /opt/buildroom-planner/bin/agy
+2026-11-07 13:43:31
+reboot-required exit 1
+NEXT                        LEFT LAST                         PASSED UNIT                    ACTIVATES
+Fri 2026-11-13 06:09:35 EST  13h Thu 2026-11-12 06:22:52 EST 10h ago apt-daily-upgrade.timer apt-daily-upgrade.service
+END
+
+=== received 2026-11-12T21:51:12.390Z ===
+Phase4-CR2: entry passed at 2026-11-12T21:51:00.595Z; room 9bdb8cd9-8937-4058-9365-d27439e6142d
+
+=== received 2026-11-12T22:04:13.891Z ===
+Phase4-CR2: round 1 settled (plan_review) at 2026-11-12T22:00:00.740Z
+PLAN for your decision: /Users/<user>/phase4-set3/evidence/plan-00eee4cdae20823aab046fcf016c9ea116951d075dd845757311dee526366bcc.json (plan hash 00eee4cdae20823aab046fcf016c9ea116951d075dd845757311dee526366bcc, command cmd_planner_7fff6b3bd5a83e0c7d0452553f7c8ad0)
+
+=== received 2026-11-12T22:10:23.730Z ===
+…/MADVenturesOPs on  main ➜  cat ~/phase4-set3/evidence/plan-00eee4cdae20823aab046fcf016c9ea116951d075dd845757311dee526366bcc.json; echo; echo END
+[plan JSON as pasted: its plan hash recomputes to 00eee4cdae20823aab046fcf016c9ea116951d075dd845757311dee526366bcc; filed as PHASE4-SET3-plan-00eee4cdae20823aab046fcf016c9ea116951d075dd845757311dee526366bcc.json]
+
+END
+
+=== received 2026-11-12T22:20:11.035Z ===
+HTTP 201
+
+=== received 2026-11-12T22:25:30.181Z ===
+Phase4-CR2: round 2 settled (plan_review) at 2026-11-12T22:22:39.246Z
+PLAN for your decision: /Users/<user>/phase4-set3/evidence/plan-7b17f532a3e381e1210b89ca614e530dee0834ef620ee36e704b53096a5fa1fd.json (plan hash 7b17f532a3e381e1210b89ca614e530dee0834ef620ee36e704b53096a5fa1fd, command cmd_planner_6d626bf5465a5855c27d8997504cfe97)
+
+=== received 2026-11-12T22:26:20.353Z ===
+~/phase4-set3 ➜  cat ~/phase4-set3/evidence/plan-7b17f532a3e381e1210b89ca614e530dee0834ef620ee36e704b53096a5fa1fd.json; echo; echo END
+[plan JSON as pasted: its plan hash recomputes to 7b17f532a3e381e1210b89ca614e530dee0834ef620ee36e704b53096a5fa1fd; filed as PHASE4-SET3-plan-7b17f532a3e381e1210b89ca614e530dee0834ef620ee36e704b53096a5fa1fd.json]
+
+END
+
+=== received 2026-11-12T22:34:40.699Z ===
+HTTP 201
+
+=== received 2026-11-12T22:43:16.340Z ===
+Phase4-CR2: round 3 settled (plan_review) at 2026-11-12T22:37:00.853Z
+PLAN for your decision: /Users/<user>/phase4-set3/evidence/plan-a7e0dcdbb11e80537c28a77c7813622d157a5a4058eab82ba93b51537c79c01d.json (plan hash a7e0dcdbb11e80537c28a77c7813622d157a5a4058eab82ba93b51537c79c01d, command cmd_planner_ee2f100355f72c28b6c3212591dc089b)
+
+=== received 2026-11-12T22:44:15.427Z ===
+…/MADVenturesOPs on  main ? ➜  cat ~/phase4-set3/evidence/plan-a7e0dcdbb11e80537c28a77c7813622d157a5a4058eab82ba93b51537c79c01d.json; echo; echo END
+[plan JSON as pasted: its plan hash recomputes to a7e0dcdbb11e80537c28a77c7813622d157a5a4058eab82ba93b51537c79c01d; filed as PHASE4-SET3-plan-a7e0dcdbb11e80537c28a77c7813622d157a5a4058eab82ba93b51537c79c01d.json]
+
+END
+
+=== received 2026-11-12T22:50:47.151Z ===
+HTTP 201
+
+=== received 2026-11-12T22:52:06.135Z ===
+<user>@<pc-host>:~/buildroom-gateway-6b80c22$ echo "home $HOME"
+systemctl --user is-active buildroom-gateway.service
+systemctl --user show buildroom-gateway.service -p WorkingDirectory -p ActiveEnterTimestamp
+test -e "$HOME/Library/Application Support/founder-os/gateway/planner-halted.json"; echo "halt exit $?"
+/usr/bin/pgrep -u buildroom-planner; echo "pgrep exit $?"
+sha256sum /opt/buildroom-planner/bin/agy
+uptime -s
+test -e /var/run/reboot-required; echo "reboot-required exit $?"
+systemctl list-timers apt-daily-upgrade.timer --no-pager | head -2
+echo END
+home /home/<user>
+active
+ActiveEnterTimestamp=Wed 2026-11-11 22:00:47 EST
+WorkingDirectory=/home/<user>/buildroom-gateway-6b80c22
+halt exit 1
+pgrep exit 1
+4341b80b43fc3b4437ff65041673f0f71c950e49d69a6256e3b6f212c4694ed4  /opt/buildroom-planner/bin/agy
+2026-11-07 13:43:31
+reboot-required exit 1
+NEXT                        LEFT LAST                         PASSED UNIT                    ACTIVATES
+Fri 2026-11-13 06:09:35 EST  12h Thu 2026-11-12 06:22:52 EST 11h ago apt-daily-upgrade.timer apt-daily-upgrade.service
+END
+
+=== received 2026-11-12T22:53:39.878Z ===
+Phase4-CR3: entry passed
+
+=== received 2026-11-12T23:07:04.192Z ===
+hase4-CR3: round 1 settled (plan_review) at 2026-11-12T23:03:12.637Z
+PLAN for your decision: /Users/<user>/phase4-set3/evidence/plan-b45e69830d9073c51b4880f3af20782aca7028935273fe1edd50962ba98a8176.json (plan hash b45e69830d9073c51b4880f3af20782aca7028935273fe1edd50962ba98a8176, command cmd_planner_4cab80d3befa573a14da8c43f7e51e5a)
+
+=== received 2026-11-12T23:08:12.629Z ===
+…/br on  HEAD ➜  cat ~/phase4-set3/evidence/plan-b45e69830d9073c51b4880f3af20782aca7028935273fe1edd50962ba98a8176.json; echo; echo END
+[plan JSON as pasted: its plan hash recomputes to b45e69830d9073c51b4880f3af20782aca7028935273fe1edd50962ba98a8176; filed as PHASE4-SET3-plan-b45e69830d9073c51b4880f3af20782aca7028935273fe1edd50962ba98a8176.json]
+
+END
+
+=== received 2026-11-12T23:18:10.189Z ===
+HTTP 201
+
+=== received 2026-11-12T23:35:19.036Z ===
+Phase4-CR3: round 2 settled (plan_review) at 2026-11-12T23:22:15.360Z
+PLAN for your decision: /Users/<user>/phase4-set3/evidence/plan-427217b4c338b838d6b9649fa4211b42babff3c69e2cdc27806e3288b9ced0d0.json (plan hash 427217b4c338b838d6b9649fa4211b42babff3c69e2cdc27806e3288b9ced0d0, command cmd_planner_3232ea81e79e24d0b0cabde7cfc3f796)
+
+=== received 2026-11-12T23:39:41.986Z ===
+…/br on  HEAD ➜  cat ~/phase4-set3/evidence/plan-427217b4c338b838d6b9649fa4211b42babff3c69e2cdc27806e3288b9ced0d0.json; echo; echo END
+[plan JSON as pasted: its plan hash recomputes to 427217b4c338b838d6b9649fa4211b42babff3c69e2cdc27806e3288b9ced0d0; filed as PHASE4-SET3-plan-427217b4c338b838d6b9649fa4211b42babff3c69e2cdc27806e3288b9ced0d0.json]
+
+END
+
+=== received 2026-11-12T23:51:43.966Z ===
+HTTP 201
+
+=== received 2026-11-12T23:53:37.977Z ===
+Phase4-CR3: passed at 2026-11-12T23:51:39.630Z; record SHA-256 e1517700cb02a32c884634a699e756f80294bea77123034de8ba438d7d7898c2
+The set is complete: three consecutive passes.
+
+=== received 2026-11-13T00:00:31.333Z ===
+deploy is up
+
+=== received 2026-11-13T00:29:01.969Z ===
+…/br on  HEAD ➜  export PATH="$HOME/.nvm/versions/node/v22.23.4/bin:$PATH"
+cd ~/phase4-set3/evidence
+read -rs "CONTROL_PLANE_TOKEN?Control plane API token: "; echo
+CP=https://rare-enjoyment-production-0869.up.railway.app
+for R in e006e499-58a4-4392-a624-e6170a393e36 9bdb8cd9-8937-4058-9365-d27439e6142d eb4ccc7a-e014-48a8-a019-986f8fe7babe; do
+curl -sS -f -H "Authorization: Bearer $CONTROL_PLANE_TOKEN" "$CP/rooms/$R/export" -o "f1-export-$R.json" && echo "export $R saved"
+curl -sS -f -H "Authorization: Bearer $CONTROL_PLANE_TOKEN" "$CP/control-plane/rooms/$R/journal" -o "f1-journal-$R.json" && echo "journal $R saved"
+done
+unset CONTROL_PLANE_TOKEN
+for f in f1-journal-*.json; do echo "$f retry-of $(grep -o 'retry-of/' "$f" | wc -l | tr -d ' ') refusal-or-failure $(grep -oE 'plan-refusal/|planner-failure/' "$f" | wc -l | tr -d ' ')"; done
+find . -type f | sort | while read -r f; do echo "$(shasum -a 256 "$f" | cut -d' ' -f1) $(wc -c < "$f" | tr -d ' ') $f"; done
+echo END
+Control plane API token:
+export e006e499-58a4-4392-a624-e6170a393e36 saved
+curl: (56) The requested URL returned error: 401
+export 9bdb8cd9-8937-4058-9365-d27439e6142d saved
+curl: (56) The requested URL returned error: 401
+export eb4ccc7a-e014-48a8-a019-986f8fe7babe saved
+curl: (56) The requested URL returned error: 401
+zsh: no matches found: f1-journal-*.json
+<user>@<pc-host>:~/buildroom-gateway-6b80c22$ D="$HOME/Library/Application Support/founder-os/gateway/planner-evidence"
+find "$D" -type f -name '*.json' -newermt '2026-11-12 13:00' | sort | while read -r f; do echo "$(sha256sum "$f" | cut -d' ' -f1) $(stat -c %s "$f") $(grep -oE '"commandId": *"[^"]*"' "$f" | head -1) $(grep -oE '"outcome": *"[^"]*"' "$f" | head -1)"; done
+echo END
+7804053da3102c965e1fab0306d41dabe7db51644024e92bf62d589d374ca41d 1410 "commandId":"cmd_planner_4d8dafcc80c49df73e1be3e5e99360e1" "outcome":"plan"
+53a45f5e3d196d14b2d4439e4fe02fc78ba9b909a0b5234d4d1603327afa92b1 1418 "commandId":"cmd_planner_ee2f100355f72c28b6c3212591dc089b" "outcome":"plan"
+6614b602f336a4cf77883afcbc5cb48807de3302d64ec38277606dc18a3855d8 1410 "commandId":"cmd_planner_3232ea81e79e24d0b0cabde7cfc3f796" "outcome":"plan"
+641fb27a4d0c06fc697d9933c8dbe1a6e1edd2756838965c994021cf1f79fec2 1410 "commandId":"cmd_planner_4cab80d3befa573a14da8c43f7e51e5a" "outcome":"plan"
+7a4ea79b233b20a7a824396b5771b37a0f41ac25c4b9063d743ce3aa06005f7f 1418 "commandId":"cmd_planner_6d626bf5465a5855c27d8997504cfe97" "outcome":"plan"
+2d6ca9cd3b480edf9429a1173e8146c653daf2414ea20894dad03093be016919 1410 "commandId":"cmd_planner_7fff6b3bd5a83e0c7d0452553f7c8ad0" "outcome":"plan"
+ef7cd0ec24c2b6f5b4801181dede65d4521bea31410b773db80812129e836d30 1418 "commandId":"cmd_planner_828393372669582053adfdbe43c02d20" "outcome":"plan"
+END
+
+=== received 2026-11-13T00:31:06.081Z ===
+~/phase4-set3/evidence ➜  export PATH="$HOME/.nvm/versions/node/v22.23.4/bin:$PATH"
+cd ~/phase4-set3/br
+node --input-type=module -e '
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+const { phase4RecordDigest } = await import(join(process.cwd(), "dist/packages/run-harness/src/phase4/runner.js"));
+const dir = process.argv[1];
+for (const name of readdirSync(dir).filter((n) => n.endsWith(".record.json")).sort()) {
+  const raw = readFileSync(join(dir, name), "utf8");
+  const r = JSON.parse(raw);
+  const refs = (re) => (raw.match(re) ?? []).length;
+  console.log(name.split("-").slice(0, 2).join("-"), "digest", phase4RecordDigest(r), "final", r.finalState, "verified", r.journalVerified, "commands", r.commands.length, r.commands.map((c) => c.commandId.slice(12, 20)).join(","), "decisions", r.decisions.map((d) => d.decision).join(","), "retry-of", refs(/retry-of\//g), "refusal-or-failure", refs(/plan-refusal\/|planner-failure\//g));
+}
+' "$HOME/phase4-set3/evidence"
+find "$HOME/phase4-set3/evidence" -type f -name '*.record.sha256' -exec cat {} +
+find "$HOME/phase4-set3/evidence" -type f | sort | while read -r f; do echo "$(shasum -a 256 "$f" | cut -d' ' -f1) $(wc -c < "$f" | tr -d ' ') $(basename "$f")"; done
+echo END
+Phase4-CR1 digest 83757a5c1a22e1314c3a6e5d0f88ca1d58d01277d6f0927f1d08c39431b5c09c final BUILDING verified true commands 2 4d8dafcc,82839337 decisions plan.revision_requested,plan.approved retry-of 0 refusal-or-failure 0
+Phase4-CR2 digest 3ae583b1ee5114bca0078391fc974d919c9f4ad93498a46e994b84ac6be47d81 final BUILDING verified true commands 3 7fff6b3b,6d626bf5,ee2f1003 decisions plan.revision_requested,plan.revision_requested,plan.approved retry-of 0 refusal-or-failure 0
+Phase4-CR3 digest e1517700cb02a32c884634a699e756f80294bea77123034de8ba438d7d7898c2 final BUILDING verified true commands 2 4cab80d3,3232ea81 decisions plan.revision_requested,plan.approved retry-of 0 refusal-or-failure 0
+e1517700cb02a32c884634a699e756f80294bea77123034de8ba438d7d7898c2  Phase4-CR3-eb4ccc7a-e014-48a8-a019-986f8fe7babe.record (canonical JSON)
+83757a5c1a22e1314c3a6e5d0f88ca1d58d01277d6f0927f1d08c39431b5c09c  Phase4-CR1-e006e499-58a4-4392-a624-e6170a393e36.record (canonical JSON)
+3ae583b1ee5114bca0078391fc974d919c9f4ad93498a46e994b84ac6be47d81  Phase4-CR2-9bdb8cd9-8937-4058-9365-d27439e6142d.record (canonical JSON)
+0371fdf82344ba68272ae1d8eeb27811f8d699f7a6511e6bb3d8d8d41900631d 1589 attempts.json
+226484092fd85c2d243c192ded3a142ecb24ce51935fda73f0fc2b1bf43f780f 16550 f1-export-9bdb8cd9-8937-4058-9365-d27439e6142d.json
+5b09dcdcffd66d33fed9080b0199ef8852c046478bc4641f82b5c0f88d244d0d 13251 f1-export-e006e499-58a4-4392-a624-e6170a393e36.json
+6e3ca1b1c5905c9a7bef29548cb2e0f1d6041ee3a2150a60ff29ceb3a001fec6 13471 f1-export-eb4ccc7a-e014-48a8-a019-986f8fe7babe.json
+158f492bd4453fcd770020feb053e60dd44824d65a84a8bc214a2cc7b50f8878 11233 Phase4-CR1-e006e499-58a4-4392-a624-e6170a393e36.record.json
+421c1e34248c5d92b1a0bbccd9b87ec6be009881aade6d296181d4e0bbcb0e06 138 Phase4-CR1-e006e499-58a4-4392-a624-e6170a393e36.record.sha256
+eeb2555e97e80900be59ec1e68356251b155f5eb83a2f9fce969b312ccb58fa9 16112 Phase4-CR2-9bdb8cd9-8937-4058-9365-d27439e6142d.record.json
+8305e666eaabe0d884c0721c30ae539138e951da566b4a0d0fd6d3f0e8903971 138 Phase4-CR2-9bdb8cd9-8937-4058-9365-d27439e6142d.record.sha256
+b9d786abe7dca42e75dc69838c9c3572a7c3762b1e9b1ba10d92e6919eda29cf 11233 Phase4-CR3-eb4ccc7a-e014-48a8-a019-986f8fe7babe.record.json
+4bc3508f21f85627c0ee79f1b43146304388b836eb799b434ab103076217129f 138 Phase4-CR3-eb4ccc7a-e014-48a8-a019-986f8fe7babe.record.sha256
+f876a7cf45342f09d22f02edca067e36fb8ac5a92690c3beac2d2f7bba2baaf2 29297 plan-00eee4cdae20823aab046fcf016c9ea116951d075dd845757311dee526366bcc.json
+1d5318803dfa6141f75c3984d28dac3c4eb59751bccd4bfc6b8cf8ae003b2401 40291 plan-427217b4c338b838d6b9649fa4211b42babff3c69e2cdc27806e3288b9ced0d0.json
+4b191eb5b7d8af92f1e8233d7d9fd70ce15e5ed9cc9149a461ed30252c6bea4a 29706 plan-7b17f532a3e381e1210b89ca614e530dee0834ef620ee36e704b53096a5fa1fd.json
+24db6de6d6611b7804e835b2610992576434a4e8d9b19572d01646b91079098d 30199 plan-a7e0dcdbb11e80537c28a77c7813622d157a5a4058eab82ba93b51537c79c01d.json
+8c1fb91f060d18eb14840dcc2b46f74e4b9e383b93fe6a1f4520616f35864659 37578 plan-b45e69830d9073c51b4880f3af20782aca7028935273fe1edd50962ba98a8176.json
+129b722b54967475a01ec203603cb947dffeeada9ca76be78766c4b1696c68be 28440 plan-c421cf1e857b92b8e16a8df958886e041cd26ee87f60f76cb800437ad51968f3.json
+0d0e90d60d0c32c4efa62c435fecd5415ef38cbd80f16eeee33155852621eab3 29329 plan-c4ff00adfc73ffb01311478f2d3d06b8d41a1319fe164c0b7ace7c664a9eb493.json
+END
+
+=== received 2026-11-13T00:32:06.049Z ===
+draft the F3 filing
+
+=== F3: the Founder's rulings on the draft and the files he sent for it ===
+
+=== received 2026-11-13T01:29:22.105Z ===
+…/br on  HEAD ➜  cd ~/phase4-set3/evidence
+for f in attempts.json Phase4-CR1-e006e499-58a4-4392-a624-e6170a393e36.record.sha256 Phase4-CR2-9bdb8cd9-8937-4058-9365-d27439e6142d.record.sha256 Phase4-CR3-eb4ccc7a-e014-48a8-a019-986f8fe7babe.record.sha256; do echo "=== $f"; cat "$f"; done
+echo END
+=== attempts.json
+[file content as pasted: byte-identical to the filed PHASE4-SET3-attempts.json, SHA-256 0371fdf82344ba68272ae1d8eeb27811f8d699f7a6511e6bb3d8d8d41900631d, 1589 bytes]
+=== Phase4-CR1-e006e499-58a4-4392-a624-e6170a393e36.record.sha256
+83757a5c1a22e1314c3a6e5d0f88ca1d58d01277d6f0927f1d08c39431b5c09c  Phase4-CR1-e006e499-58a4-4392-a624-e6170a393e36.record (canonical JSON)
+=== Phase4-CR2-9bdb8cd9-8937-4058-9365-d27439e6142d.record.sha256
+3ae583b1ee5114bca0078391fc974d919c9f4ad93498a46e994b84ac6be47d81  Phase4-CR2-9bdb8cd9-8937-4058-9365-d27439e6142d.record (canonical JSON)
+=== Phase4-CR3-eb4ccc7a-e014-48a8-a019-986f8fe7babe.record.sha256
+e1517700cb02a32c884634a699e756f80294bea77123034de8ba438d7d7898c2  Phase4-CR3-eb4ccc7a-e014-48a8-a019-986f8fe7babe.record (canonical JSON)
+END
+~/phase4-set3/evidence ➜
+
+=== received 2026-11-13T01:31:25.909Z ===
+~/phase4-set3/evidence ➜  cat ~/phase4-set3/evidence/Phase4-CR1-e006e499-58a4-4392-a624-e6170a393e36.record.json; echo END
+[file content as pasted: byte-identical to the filed PHASE4-SET3-Phase4-CR1-e006e499-58a4-4392-a624-e6170a393e36.record.json, SHA-256 158f492bd4453fcd770020feb053e60dd44824d65a84a8bc214a2cc7b50f8878, 11233 bytes]
+END
+
+=== received 2026-11-13T01:32:39.377Z ===
+1. Yes 
+2. account name
+3. a separate PR
+
+=== received 2026-11-13T01:33:05.694Z ===
+~/phase4-set3/evidence ➜  cat ~/phase4-set3/evidence/Phase4-CR2-9bdb8cd9-8937-4058-9365-d27439e6142d.record.json; echo END
+[file content as pasted: byte-identical to the filed PHASE4-SET3-Phase4-CR2-9bdb8cd9-8937-4058-9365-d27439e6142d.record.json, SHA-256 eeb2555e97e80900be59ec1e68356251b155f5eb83a2f9fce969b312ccb58fa9, 16112 bytes]
+END
+
+=== received 2026-11-13T01:43:23.013Z ===
+…/MADVenturesOPs on  main ? ➜  cat ~/phase4-set3/evidence/Phase4-CR3-eb4ccc7a-e014-48a8-a019-986f8fe7babe.record.json; echo END
+[file content as pasted: byte-identical to the filed PHASE4-SET3-Phase4-CR3-eb4ccc7a-e014-48a8-a019-986f8fe7babe.record.json, SHA-256 b9d786abe7dca42e75dc69838c9c3572a7c3762b1e9b1ba10d92e6919eda29cf, 11233 bytes]
+END
+
+=== received 2026-11-13T01:50:59.561Z ===
+…/MADVenturesOPs on  main ? ➜  cat ~/phase4-set3/evidence/f1-export-e006e499-58a4-4392-a624-e6170a393e36.json; echo; echo END
+[file content as pasted: byte-identical to the filed PHASE4-SET3-export-e006e499-58a4-4392-a624-e6170a393e36.json, SHA-256 5b09dcdcffd66d33fed9080b0199ef8852c046478bc4641f82b5c0f88d244d0d, 13251 bytes]
+END
+
+=== received 2026-11-13T02:02:42.895Z ===
+…/MADVenturesOPs on  main ? ➜  cat ~/phase4-set3/evidence/f1-export-9bdb8cd9-8937-4058-9365-d27439e6142d.json; echo; echo END
+[file content as pasted: byte-identical to the filed PHASE4-SET3-export-9bdb8cd9-8937-4058-9365-d27439e6142d.json, SHA-256 226484092fd85c2d243c192ded3a142ecb24ce51935fda73f0fc2b1bf43f780f, 16550 bytes]
+END
+
+=== received 2026-11-13T02:13:44.826Z ===
+…/MADVenturesOPs on  main ? ➜  cat ~/phase4-set3/evidence/f1-export-eb4ccc7a-e014-48a8-a019-986f8fe7babe.json; echo; echo END
+[file content as pasted: byte-identical to the filed PHASE4-SET3-export-eb4ccc7a-e014-48a8-a019-986f8fe7babe.json, SHA-256 6e3ca1b1c5905c9a7bef29548cb2e0f1d6041ee3a2150a60ff29ceb3a001fec6, 13471 bytes]
+END
+
+=== received 2026-11-13T02:30:17.135Z ===
+<user>@<pc-host>:~$ ~ ➜  D="$HOME/Library/Application Support/founder-os/gateway/planner-evidence"
+find "$D" -type f -name '*.json' -newermt '2026-11-12 13:00' | sort | while read -r f; do echo "=== $(basename "$f") $(sha256sum "$f" | cut -d' ' -f1) $(stat -c %s "$f") last=$(tail -c1 "$f" | od -An -tx1 | tr -d ' ')"; cat "$f"; echo; done
+echo END
+find: /Users/<user>/Library/Application Support/founder-os/gateway/planner-evidence: No such file or directory
+END
+-bash: /home/<user>: Is a directory
+find: ‘’: No such file or directory
+END
+Command 'find:' not found, did you mean:
+  command 'findg' from deb ncl-ncarg (6.6.2.dfsg.1-12)
+  command 'findv' from deb polylib-utils (5.22.5-4.2+dfsgbuild2)
+  command 'find' from deb findutils (4.10.0-3build2)
+Try: sudo apt install <deb name>
+END: command not found
+<user>@<pc-host>:~$
+
+=== received 2026-11-13T02:31:42.937Z ===
+<user>@<pc-host>:~$ if [ "$(uname -s)" = Linux ]; then
+D="$HOME/Library/Application Support/founder-os/gateway/planner-evidence"
+find "$D" -type f -name '*.json' -newermt '2026-11-12 13:00' | sort | while read -r f; do echo "=== $(basename "$f") $(sha256sum "$f" | cut -d' ' -f1) $(stat -c %s "$f") last=$(tail -c1 "$f" | od -An -tx1 | tr -d ' ')"; cat "$f"; echo; done
+else
+echo "WRONG MACHINE: run this on the PC"
+fi
+echo END
+=== 09413b802221ca14b1d826813ca052261b55707188682b53da7671ccb919827a.json 7804053da3102c965e1fab0306d41dabe7db51644024e92bf62d589d374ca41d 1410 last=0a
+[file content as pasted: byte-identical to the filed PHASE4-SET3-planner-evidence-CR1-round1-09413b802221ca14b1d826813ca052261b55707188682b53da7671ccb919827a.json, SHA-256 7804053da3102c965e1fab0306d41dabe7db51644024e92bf62d589d374ca41d, 1410 bytes]
+
+=== 2a70b246538609b28a8ba461d6df7cad9543d98ea41da9669afe0875d50a3bae.json 53a45f5e3d196d14b2d4439e4fe02fc78ba9b909a0b5234d4d1603327afa92b1 1418 last=0a
+[file content as pasted: byte-identical to the filed PHASE4-SET3-planner-evidence-CR2-round3-2a70b246538609b28a8ba461d6df7cad9543d98ea41da9669afe0875d50a3bae.json, SHA-256 53a45f5e3d196d14b2d4439e4fe02fc78ba9b909a0b5234d4d1603327afa92b1, 1418 bytes]
+
+=== 8bf0c410d9e1f77f70628ae5d1df047c26205dd855d79693bd3c1eac261bbecf.json 6614b602f336a4cf77883afcbc5cb48807de3302d64ec38277606dc18a3855d8 1410 last=0a
+[file content as pasted: byte-identical to the filed PHASE4-SET3-planner-evidence-CR3-round2-8bf0c410d9e1f77f70628ae5d1df047c26205dd855d79693bd3c1eac261bbecf.json, SHA-256 6614b602f336a4cf77883afcbc5cb48807de3302d64ec38277606dc18a3855d8, 1410 bytes]
+
+=== a811c554aa429b02e51c444b664b4168bb31f967bd91f50928b3b32e5365e9ac.json 641fb27a4d0c06fc697d9933c8dbe1a6e1edd2756838965c994021cf1f79fec2 1410 last=0a
+[file content as pasted: byte-identical to the filed PHASE4-SET3-planner-evidence-CR3-round1-a811c554aa429b02e51c444b664b4168bb31f967bd91f50928b3b32e5365e9ac.json, SHA-256 641fb27a4d0c06fc697d9933c8dbe1a6e1edd2756838965c994021cf1f79fec2, 1410 bytes]
+
+=== b312bd54d65c9e966c961db9e50f329577436c3dff09e44dd746305fcfe90832.json 7a4ea79b233b20a7a824396b5771b37a0f41ac25c4b9063d743ce3aa06005f7f 1418 last=0a
+[file content as pasted: byte-identical to the filed PHASE4-SET3-planner-evidence-CR2-round2-b312bd54d65c9e966c961db9e50f329577436c3dff09e44dd746305fcfe90832.json, SHA-256 7a4ea79b233b20a7a824396b5771b37a0f41ac25c4b9063d743ce3aa06005f7f, 1418 bytes]
+
+=== e04fa13233a6fcea27ecc1148c2b84d586aad04daadefe2d51d3e44a3b7f2300.json 2d6ca9cd3b480edf9429a1173e8146c653daf2414ea20894dad03093be016919 1410 last=0a
+[file content as pasted: byte-identical to the filed PHASE4-SET3-planner-evidence-CR2-round1-e04fa13233a6fcea27ecc1148c2b84d586aad04daadefe2d51d3e44a3b7f2300.json, SHA-256 2d6ca9cd3b480edf9429a1173e8146c653daf2414ea20894dad03093be016919, 1410 bytes]
+
+=== ea50a07b38290fbe33cf307613f5d4c26231c4d92068f1a06e089c56c330ff33.json ef7cd0ec24c2b6f5b4801181dede65d4521bea31410b773db80812129e836d30 1418 last=0a
+[file content as pasted: byte-identical to the filed PHASE4-SET3-planner-evidence-CR1-round2-ea50a07b38290fbe33cf307613f5d4c26231c4d92068f1a06e089c56c330ff33.json, SHA-256 ef7cd0ec24c2b6f5b4801181dede65d4521bea31410b773db80812129e836d30, 1418 bytes]
+
+END
+
+=== received 2026-11-13T02:56:04.874Z ===
+Unmask the account name in the act, readings and audit (my recommendation). I’d regenerate and re-run every check, and finding 9 would record your reversal.
+
+=== received 2026-11-13T02:59:42.642Z ===
+file it
