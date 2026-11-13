@@ -1,0 +1,119 @@
+{
+  "roomId": "06147929-1d35-4102-b1e6-37ac5e80c32e",
+  "deploymentIdAtStart": "87ea91a3-45b9-4349-aa2b-c05bac5ee0dc",
+  "deploymentIdAtEnd": "87ea91a3-45b9-4349-aa2b-c05bac5ee0dc",
+  "finalState": "PLANNING",
+  "events": [
+    {
+      "eventId": "evt_t1_06147929-1d35-4102-b1e6-37ac5e80c32e",
+      "event": "scope.captured",
+      "actor": "founder",
+      "attribution": {
+        "roleId": null,
+        "actorId": "founder",
+        "actualModel": "n/a (deterministic run-harness relay of the act's text)",
+        "executionSurface": "build-room-run-harness"
+      },
+      "evidence": [
+        {
+          "kind": "founder_goal",
+          "ref": "evt_t1_06147929-1d35-4102-b1e6-37ac5e80c32e",
+          "digest": "7e7c27d41330b6f966e41dc6658022096cba6c6493edd2b0c664bd0e155c082d"
+        }
+      ],
+      "committedAt": "2026-11-11T18:52:56.659Z"
+    },
+    {
+      "eventId": "evt_f668efe0-a907-466e-9fb8-200e23ece938",
+      "event": "task.dispatched.planner",
+      "actor": "system",
+      "attribution": {
+        "roleId": "builder",
+        "actorId": "control-plane:87ea91a3-45b9-4349-aa2b-c05bac5ee0dc",
+        "actualModel": "n/a (deterministic control-plane act)",
+        "executionSurface": "build-room-control-plane"
+      },
+      "evidence": [
+        {
+          "kind": "planner_command",
+          "ref": "cmd_planner_6c89b66c6c79c6f6b2b9c93b17f633b9",
+          "digest": "6924a01d5de2362568ad06a2500f29cce59d9cacdb2b8551ac0f1ce2f64f7999"
+        }
+      ],
+      "committedAt": "2026-11-11T18:52:56.738Z"
+    }
+  ],
+  "commands": [
+    {
+      "commandId": "cmd_planner_6c89b66c6c79c6f6b2b9c93b17f633b9",
+      "rows": [
+        {
+          "seq": "146",
+          "eventType": "journaled",
+          "commandId": "cmd_planner_6c89b66c6c79c6f6b2b9c93b17f633b9",
+          "roomId": "06147929-1d35-4102-b1e6-37ac5e80c32e",
+          "actorId": "gateway:1880c12d-d98d-4a91-b25a-23320aa7f58a",
+          "roleId": "architect",
+          "repository": "MADVenturesLLC/founder-os-build-room",
+          "scopeRef": "room-scope/06147929-1d35-4102-b1e6-37ac5e80c32e/evt_t1_06147929-1d35-4102-b1e6-37ac5e80c32e",
+          "commandEnvelope": {
+            "envelopeVersion": "1",
+            "commandKind": "planner.invoke",
+            "argv": [
+              "--room",
+              "06147929-1d35-4102-b1e6-37ac5e80c32e",
+              "--opened-by",
+              "evt_f668efe0-a907-466e-9fb8-200e23ece938"
+            ],
+            "targetRepository": "MADVenturesLLC/founder-os-build-room",
+            "scopeRef": "room-scope/06147929-1d35-4102-b1e6-37ac5e80c32e/evt_t1_06147929-1d35-4102-b1e6-37ac5e80c32e"
+          },
+          "envelopeDigest": "6924a01d5de2362568ad06a2500f29cce59d9cacdb2b8551ac0f1ce2f64f7999",
+          "authorizationRef": "FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS-R9",
+          "intendedProvider": "google",
+          "intendedModel": "gemini-4-argon",
+          "intendedSurface": "antigravity",
+          "lifecycleEventRef": {
+            "roomId": "06147929-1d35-4102-b1e6-37ac5e80c32e",
+            "eventId": "evt_f668efe0-a907-466e-9fb8-200e23ece938"
+          },
+          "evidenceRefs": [
+            "scope.captured/evt_t1_06147929-1d35-4102-b1e6-37ac5e80c32e",
+            "founder-goal/7e7c27d41330b6f966e41dc6658022096cba6c6493edd2b0c664bd0e155c082d"
+          ],
+          "recordedAt": "2026-11-11T18:52:56.757000Z"
+        },
+        {
+          "seq": "147",
+          "eventType": "identity_bound",
+          "commandId": "cmd_planner_6c89b66c6c79c6f6b2b9c93b17f633b9",
+          "executionId": "591e35b0-fb4d-4370-86cc-8ce3b15c1d25",
+          "evidenceRefs": [],
+          "recordedAt": "2026-11-11T18:53:02.929000Z"
+        },
+        {
+          "seq": "148",
+          "eventType": "dispatched",
+          "commandId": "cmd_planner_6c89b66c6c79c6f6b2b9c93b17f633b9",
+          "provider": "google",
+          "model": "gemini-4-argon",
+          "executionSurface": "antigravity",
+          "evidenceRefs": [],
+          "recordedAt": "2026-11-11T18:53:16.483000Z",
+          "initModel": "gemini-4-argon-high",
+          "providerConversationId": "d79e6199-cb3f-4241-9555-ffbd72c8a630"
+        },
+        {
+          "seq": "149",
+          "eventType": "failed",
+          "commandId": "cmd_planner_6c89b66c6c79c6f6b2b9c93b17f633b9",
+          "failureClassification": "planner_reported_failure",
+          "evidenceRefs": [],
+          "recordedAt": "2026-11-11T18:59:53.056000Z"
+        }
+      ]
+    }
+  ],
+  "decisions": [],
+  "journalVerified": true
+}

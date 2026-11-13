@@ -1,0 +1,170 @@
+{
+  "roomId": "8fb5d32b-5ee5-4580-bd4f-c4a549c61759",
+  "deploymentIdAtStart": "60057454-c22d-4640-aebc-f60425954485",
+  "deploymentIdAtEnd": "60057454-c22d-4640-aebc-f60425954485",
+  "finalState": "BUILDING",
+  "events": [
+    {
+      "eventId": "evt_t1_8fb5d32b-5ee5-4580-bd4f-c4a549c61759",
+      "event": "scope.captured",
+      "actor": "founder",
+      "attribution": {
+        "roleId": null,
+        "actorId": "founder",
+        "actualModel": "n/a (deterministic run-harness relay of the act's text)",
+        "executionSurface": "build-room-run-harness"
+      },
+      "evidence": [
+        {
+          "kind": "founder_goal",
+          "ref": "evt_t1_8fb5d32b-5ee5-4580-bd4f-c4a549c61759",
+          "digest": "e1fa8bae163bf031aac842e1a57f0377910648c3bbf2252d6e06ee5050146e67"
+        }
+      ],
+      "committedAt": "2026-11-12T12:35:28.585Z"
+    },
+    {
+      "eventId": "evt_5ff58a0f-dd0c-43b7-9a69-6acde0b80ad1",
+      "event": "task.dispatched.planner",
+      "actor": "system",
+      "attribution": {
+        "roleId": "builder",
+        "actorId": "control-plane:60057454-c22d-4640-aebc-f60425954485",
+        "actualModel": "n/a (deterministic control-plane act)",
+        "executionSurface": "build-room-control-plane"
+      },
+      "evidence": [
+        {
+          "kind": "planner_command",
+          "ref": "cmd_planner_b4a10b285db231693bd22bd2a5917c4f",
+          "digest": "5097c83bfa9172af33fdef5b96862ba0ecd3e21dd08814ad7aeeff94a5ea0c5a"
+        }
+      ],
+      "committedAt": "2026-11-12T12:35:28.668Z"
+    },
+    {
+      "eventId": "evt_0a1d4f2c-ecd2-4a8a-936b-aa6b08853e63",
+      "event": "plan.submitted",
+      "actor": "agent.planner",
+      "attribution": {
+        "roleId": "architect",
+        "actorId": "gateway:1880c12d-d98d-4a91-b25a-23320aa7f58a",
+        "actualModel": "gemini-4-argon",
+        "executionSurface": "antigravity"
+      },
+      "evidence": [
+        {
+          "kind": "plandoc",
+          "ref": "cmd_planner_b4a10b285db231693bd22bd2a5917c4f",
+          "digest": "821b7cf08c817a018d72128c9cac15c65f6158ac0073bc6c7091a21e237a42ec"
+        }
+      ],
+      "planHash": "821b7cf08c817a018d72128c9cac15c65f6158ac0073bc6c7091a21e237a42ec",
+      "committedAt": "2026-11-12T12:45:43.585Z"
+    },
+    {
+      "eventId": "evt_6e2fa0d8-8c64-448e-a859-8b590b480afa",
+      "event": "plan.approved",
+      "actor": "founder",
+      "attribution": {
+        "roleId": null,
+        "actorId": "founder",
+        "actualModel": "n/a (human Founder decision)",
+        "executionSurface": "founder-terminal"
+      },
+      "evidence": [
+        {
+          "kind": "plandoc",
+          "ref": "cmd_planner_b4a10b285db231693bd22bd2a5917c4f",
+          "digest": "821b7cf08c817a018d72128c9cac15c65f6158ac0073bc6c7091a21e237a42ec"
+        }
+      ],
+      "planHash": "821b7cf08c817a018d72128c9cac15c65f6158ac0073bc6c7091a21e237a42ec",
+      "committedAt": "2026-11-12T13:00:19.037Z"
+    }
+  ],
+  "commands": [
+    {
+      "commandId": "cmd_planner_b4a10b285db231693bd22bd2a5917c4f",
+      "rows": [
+        {
+          "seq": "164",
+          "eventType": "journaled",
+          "commandId": "cmd_planner_b4a10b285db231693bd22bd2a5917c4f",
+          "roomId": "8fb5d32b-5ee5-4580-bd4f-c4a549c61759",
+          "actorId": "gateway:1880c12d-d98d-4a91-b25a-23320aa7f58a",
+          "roleId": "architect",
+          "repository": "MADVenturesLLC/founder-os-build-room",
+          "scopeRef": "room-scope/8fb5d32b-5ee5-4580-bd4f-c4a549c61759/evt_t1_8fb5d32b-5ee5-4580-bd4f-c4a549c61759",
+          "commandEnvelope": {
+            "envelopeVersion": "1",
+            "commandKind": "planner.invoke",
+            "argv": [
+              "--room",
+              "8fb5d32b-5ee5-4580-bd4f-c4a549c61759",
+              "--opened-by",
+              "evt_5ff58a0f-dd0c-43b7-9a69-6acde0b80ad1"
+            ],
+            "targetRepository": "MADVenturesLLC/founder-os-build-room",
+            "scopeRef": "room-scope/8fb5d32b-5ee5-4580-bd4f-c4a549c61759/evt_t1_8fb5d32b-5ee5-4580-bd4f-c4a549c61759"
+          },
+          "envelopeDigest": "5097c83bfa9172af33fdef5b96862ba0ecd3e21dd08814ad7aeeff94a5ea0c5a",
+          "authorizationRef": "FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS-R11",
+          "intendedProvider": "google",
+          "intendedModel": "gemini-4-argon",
+          "intendedSurface": "antigravity",
+          "lifecycleEventRef": {
+            "roomId": "8fb5d32b-5ee5-4580-bd4f-c4a549c61759",
+            "eventId": "evt_5ff58a0f-dd0c-43b7-9a69-6acde0b80ad1"
+          },
+          "evidenceRefs": [
+            "scope.captured/evt_t1_8fb5d32b-5ee5-4580-bd4f-c4a549c61759",
+            "founder-goal/e1fa8bae163bf031aac842e1a57f0377910648c3bbf2252d6e06ee5050146e67"
+          ],
+          "recordedAt": "2026-11-12T12:35:28.686000Z"
+        },
+        {
+          "seq": "165",
+          "eventType": "identity_bound",
+          "commandId": "cmd_planner_b4a10b285db231693bd22bd2a5917c4f",
+          "executionId": "ddf88f54-001a-4e21-b89c-becd1b255e32",
+          "evidenceRefs": [],
+          "recordedAt": "2026-11-12T12:35:33.365000Z"
+        },
+        {
+          "seq": "166",
+          "eventType": "dispatched",
+          "commandId": "cmd_planner_b4a10b285db231693bd22bd2a5917c4f",
+          "provider": "google",
+          "model": "gemini-4-argon",
+          "executionSurface": "antigravity",
+          "evidenceRefs": [],
+          "recordedAt": "2026-11-12T12:35:46.095000Z",
+          "initModel": "gemini-4-argon-high",
+          "providerConversationId": "854685e3-aeec-4f16-91e6-5084b79a59d4"
+        },
+        {
+          "seq": "167",
+          "eventType": "completed",
+          "commandId": "cmd_planner_b4a10b285db231693bd22bd2a5917c4f",
+          "lifecycleEventRef": {
+            "roomId": "8fb5d32b-5ee5-4580-bd4f-c4a549c61759",
+            "eventId": "evt_0a1d4f2c-ecd2-4a8a-936b-aa6b08853e63"
+          },
+          "evidenceRefs": [
+            "plandoc/821b7cf08c817a018d72128c9cac15c65f6158ac0073bc6c7091a21e237a42ec"
+          ],
+          "recordedAt": "2026-11-12T12:45:43.622000Z"
+        }
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "commandId": "cmd_planner_b4a10b285db231693bd22bd2a5917c4f",
+      "decision": "plan.approved",
+      "planHash": "821b7cf08c817a018d72128c9cac15c65f6158ac0073bc6c7091a21e237a42ec"
+    }
+  ],
+  "journalVerified": true
+}

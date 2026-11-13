@@ -1,0 +1,38 @@
+{
+  "setId": "FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS-R7",
+  "termsSha256": "145cfb6192bb7e03a0840913a724a83fe90691c5e75661603900608da72d537c",
+  "attempts": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "c6a7e1f3-e1f7-421d-90f2-1c0118e5c9d4",
+      "outcome": "passed",
+      "pending": false,
+      "startedAt": "2026-11-10T21:23:36.804Z",
+      "endedAt": "2026-11-10T22:56:46.438Z",
+      "entryFailures": [],
+      "failures": [],
+      "recordDigest": "69c042c5918f4dfa795f8591c0210307b79e31ddc41eb5b99409b689b6df6002",
+      "liveCheck": {
+        "passed": true,
+        "commandId": "cmd_planner_f4c32df68e476302726f4114a3d8e337",
+        "initModel": "gemini-4-argon-high",
+        "providerConversationId": "7325108a-e448-471c-9892-f03fb20b832c",
+        "readAt": "2026-11-10T21:31:44.502Z"
+      }
+    },
+    {
+      "label": "Phase4-CR2",
+      "roomId": "4088903e-bfc2-4a31-bfea-be1b61ba3778",
+      "outcome": "interrupted",
+      "pending": false,
+      "startedAt": "2026-11-11T03:08:32.760Z",
+      "endedAt": "2026-11-11T07:17:24.136Z",
+      "entryFailures": [],
+      "failures": [
+        "founder_decision_timeout",
+        "lifecycle_incomplete"
+      ],
+      "recordDigest": "24d69b8fa057378c475da590f163a07d21786139055deb8d146d9c0fb699c3a7"
+    }
+  ]
+}

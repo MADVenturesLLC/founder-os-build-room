@@ -1,0 +1,18 @@
+Revise. Much of this plan is accurate, but the statements below are false at 41e008194f1cbb92b9c986df74feb7810f33aa23. Correct each one from the checkout, not from memory, and keep everything that is accurate.
+1. README.md has no heading for the Phase 4 authorization and none for Journal persistence (PR 2b): both are bold paragraphs under ## Status. README.md never mentions PlanStore, PlannerLoop or 0010_plan_store, and ## Verifying lists no migrations. Anchor every edit to text that is there, quoted exactly.
+2. PrimaryLane.exchangePlanner is in packages/gateway-daemon/src/lanes.ts, not daemon.ts.
+3. judgeRoundPlan and isWithinScope are in packages/control-plane/src/planner-loop.ts, not plan-doc.ts, which holds judgePlanDoc.
+4. The journal chain is chainHash(prior, row bytes) from GENESIS_CHAIN_HASH (packages/journal/src/chain.ts). prevRowHash, rowHash and GENESIS_PREV_HASH do not exist.
+5. attest(commandId), dispatch(work), awaitPlan(commandId) and reconcile(commandId) are the PlannerPort interface in packages/control-plane/src/planner-loop.ts. AdapterV1 (packages/madbridge-consumed/src/adapter/adapter-v1.ts) has attest() with no argument, prepareConfigPreview, launch, notifyInbox, pause and terminate. Do not call madbridge-consumed the planner dispatch contract.
+6. The counted-run runner has no command-line flags. npm run phase4:counted-run takes no arguments and reads PHASE4_TERMS_FILE, PHASE4_TERMS_SHA256, PHASE4_EVIDENCE_DIR, CONTROL_PLANE_TOKEN and the rest from the environment (packages/run-harness/src/phase4/cli.ts).
+7. Nothing outside planner-recovery.ts constructs PlannerRecovery or calls recoverRoom. POST /control-plane/rooms/:roomId/planner-round calls PlannerLoop.runRound directly (packages/control-plane/src/counted-run.ts). Do not say recovery runs before a round.
+8. AgyPlannerExecutor.attest answers from the lane alone: no process starts and nothing is hashed. The planner-user process check and the agy hash happen when the work starts. The executor returns the parsed plan document, not raw text.
+9. The executor does not detect or reject tool calls: run_command, write_file and edit_file appear nowhere in it. Do not describe a tool-call guard.
+10. judgeRoundPlan does not check credentials. The plan store refuses a plan that holds credential-shaped strings and the round fails as plan_refused. Nothing is redacted.
+11. T5 moves PLAN_REVIEW to BUILDING and T22 moves the room to CLOSED_ABANDONED (packages/contracts/src/transitions.ts). There are no APPROVED or CANCELLED states.
+12. Lifecycle events are in build_room_events; there is no room_events table. The room lock L3 is a row lock on build_room_rooms; there is no room_state.
+13. Migration 0010_plan_store makes build_room_plans append-only with a foreign key to build_room_events and has no xmin check: the xmin = pg_current_xact_id()::xid check is in packages/control-plane/src/plan-store.ts. The runtime grant on command_journal_append is in 0006, not 0007 to 0009.
+14. GET /control-plane/rooms/:roomId/planner-round returns roomId, actId, deploymentId, gateway, dispatcherSurfaceRegistered and round. It has no latestT2, latestT3, latestT4, terminalEvent, commands or unresolvedCount.
+15. The Gateway evidence has no stdoutTail, stderrTail or postKillSurvivors fields.
+16. The revision reaches the Planner as revision with feedback and revisingPlanHash (PlannerWork in planner-loop.ts), not revisionFeedback.
+Before returning the plan, check every file, function, field, table, state and command it names against the checkout.

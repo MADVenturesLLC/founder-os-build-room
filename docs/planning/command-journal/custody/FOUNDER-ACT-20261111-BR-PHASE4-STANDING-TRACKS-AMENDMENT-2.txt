@@ -1,0 +1,53 @@
+FOUNDER-ACT-20261111-BR-PHASE4-STANDING-TRACKS-AMENDMENT-2: rehearsing Phase4-CR2 and Phase4-CR3
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+origin/main when drafted: 8a62e2cea084eb38c486aebc73e1f7feacc41e39
+Under: FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS (SHA-256 a8fb3b2a91aa32388960af1741a7af0b9cb3196716c2c8876fac76da7d65a955) Parts D, E and G; FOUNDER-ACT-20261110-BR-PHASE4-STANDING-TRACKS-AMENDMENT-1 (754f8dc1d563a7ec6dbeb360458491d3785e246d88490c9e224c28974ccd3ab2) Parts B to D; FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT (70607860c38ab919b0cd40af19277575012dc9bc0bd8419608861feab126c0af) Part E.
+The builder read, before drafting, at 8a62e2c: packages/run-harness/src/phase4/run-sequence.ts, by which a set's runs go in label order, Phase4-CR1 then Phase4-CR2 then Phase4-CR3, each invocation runs only the label the set's progress names, and any outcome other than a pass or an entry refusal spends the set; runner.ts, cli.ts, attempt-store.ts and run-unit.ts, which judge each label's run on its own, with no bound on the time between labels; and R7's record, read by me on my Mac on 2026-11-11.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. R7 ran Phase4-CR1 of the set FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS-R7 (terms SHA-256 145cfb6192bb7e03a0840913a724a83fe90691c5e75661603900608da72d537c) at 8a62e2c and passed: record 69c042c5918f4dfa795f8591c0210307b79e31ddc41eb5b99409b689b6df6002, final state BUILDING, journal verified, three rounds, the third plan approved after the builder checked every statement of it. The runner named Phase4-CR2 as the set's next label.
+A2. D3 of the standing act allows a rehearsal to run Phase4-CR1 only. No rehearsal has run Phase4-CR2's goal (a glossary for docs/command-journal-contract.md) or Phase4-CR3's (a troubleshooting section for docs/gateway-ops-actions-log-runbook.md). A counted set that does not pass a label is spent, so without this act the first run of those goals would be a counted one.
+
+Part B: Runs a rehearsal may make
+B1. Continuing a set. My line "Continue R<n> with Phase4-CR2 and Phase4-CR3 at <commit>, terms <SHA-256>" starts one rehearsal that runs the remaining labels of the set of R<n>, in order: Phase4-CR2, and Phase4-CR3 only if Phase4-CR2 passes. It uses that set's terms, rooms, Mac checkout and evidence directory unchanged. I give it only if the set's progress names Phase4-CR2, the commit is the terms' and Build Room main is at it, and the terms' hash is the one in my line.
+B2. A full set. My line under D1 of the standing act may instead say "Rehearse R<n> through Phase4-CR3 at <commit>, terms <SHA-256>". That rehearsal runs Phase4-CR1, then Phase4-CR2 if Phase4-CR1 passes, then Phase4-CR3 if Phase4-CR2 passes.
+B3. Each label is its own invocation of the runner, started only after the earlier one has exited and passed. A label that does not pass ends the rehearsal; the set is then spent, and nothing more runs on that line.
+B4. Everything else in D3 of the standing act applies to each invocation, read with these labels and their rooms in place of Phase4-CR1 and D2's first room.
+
+Part C: The window and its readings
+C1. One window per line, as D5 of the standing act says, holding every invocation the line allows. The next invocation starts within 60 minutes of the earlier one's exit; if it has not, the rehearsal ends there.
+C2. The PC readings of D4 of the standing act are taken before each invocation, within 15 minutes of starting it, and each must pass.
+C3. Part B of Amendment 1, read for this act: the runner's exit in its B1(a) is the exit of the last invocation the line allows, of an invocation whose label did not pass, or 60 minutes after an exit with no next invocation started. The builder's checks under its Part C also cover the 60 minutes of C1.
+C4. I give a line under Part B only when at least eight hours remain before the PC's next apt-daily-upgrade.
+
+Part D: Feedback and measure
+D1. E2 and E3 of FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT apply to each label's rounds, as Part D of Amendment 1 applies them to R7. The builder checks every plan against the checkout and, for each label, reports its rounds' false statements, lengths, and the uncorrected statements of each earlier plan dropped and those changed or made false, beside R7's Phase4-CR1.
+D2. The builder recommends approving a label's plan only if every statement of it is true; at a label's third round, it recommends cancelling otherwise.
+
+Part E: Outcome
+E1. As D7 of the standing act says, each label's run counts for nothing under Section 7 item 13, passed or not. Three passes of one rehearsal set are not a counted set and satisfy nothing; they are evidence I may cite in a counted-run act, and nothing else follows from them.
+
+Part F: Records and term
+F1. The builder records each line, reading, check, notification and result in its audit record, stamped from the clock, and the record of each label as Part E of the standing act allows me to read it.
+F2. This act and its rehearsals' evidence are filed with the next custody filing under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, which needs my separate authorization.
+F3. This act takes effect on my signature and lapses with the standing act. I revoke it, whole or in part, by one line in the builder's session.
+
+Part G: Not authorized
+- Any counted run or counted-run act.
+- Any goal, scope path, room, seat, Planner, Gateway or decision time other than the terms'; any change to a set's terms or attempts file.
+- Dispatching a builder or a reviewer, or building any approved plan.
+- Running a label out of order, or again after it passed or failed in the same set.
+- Any change to code, the PC, agy's arguments, the sudo rule, a Railway variable or setting beyond the standing act's Part D and Amendment 1's Part B, a Neon role or a secret.
+- Any repository other than MADVenturesLLC/founder-os-build-room.
+
+Part H: Signature
+Signed:
+
+— Michael Daley
+
+Date:
+
+Actor-Id: founder

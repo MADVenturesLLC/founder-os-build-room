@@ -1,0 +1,4 @@
+Revise. Nearly every statement checks out at 6b80c2259558e93d4f12dca474cc1d491930bd5d; this one is false. Correct it and keep the rest as it is.
+1. current_state says docs/gateway-ops-actions-log-runbook.md currently has six sections and then lists seven. It has seven, with headings at lines 12, 31, 48, 69, 100, 141 and 149. Say seven.
+Change nothing the feedback does not name; copy every hash and path from the earlier plan exactly.
+Before returning the plan, check every name, line number and claim about behaviour against the files you read, and remove any you did not see.

@@ -1,0 +1,27 @@
+{
+  "setId": "FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS-R3",
+  "termsSha256": "bdf6b7de7d7cc56109753925bfa82010aedd3351f2ba9b5d64838a26e718dd99",
+  "attempts": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "bc16d439-d638-49fa-a570-ce2e2c9b96d7",
+      "outcome": "interrupted",
+      "pending": false,
+      "startedAt": "2026-11-08T03:56:06.438Z",
+      "endedAt": "2026-11-08T04:49:04.481Z",
+      "entryFailures": [],
+      "failures": [
+        "lifecycle_incomplete",
+        "command_not_clean"
+      ],
+      "recordDigest": "77250231823890e2fbe440036d12a1798d932a6f4f942d66316ee6ddfee6ae27",
+      "liveCheck": {
+        "passed": true,
+        "commandId": "cmd_planner_ee7d2505b7ddccb4bea30dff15f4a0f3",
+        "initModel": "gemini-4-argon-high",
+        "providerConversationId": "f05c28ef-a5df-441c-a71f-d2a46d6966b8",
+        "readAt": "2026-11-08T04:02:54.539Z"
+      }
+    }
+  ]
+}

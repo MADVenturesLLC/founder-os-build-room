@@ -1,0 +1,21 @@
+Revise. The file paths you cite and the four controlling-input hashes check out, but the statements below are false at 8a62e2cea084eb38c486aebc73e1f7feacc41e39. Correct each one and keep the rest as it is. The plan is 41,003 characters; bring it under 25,000 (rule 6) by removing names and line numbers the README section does not need, not by rewording what you keep.
+1. packages/seat-registry has no resolvePlannerSeat, authorizeRoute or PLANNER_HANDOFF, and DISPATCH_POLICY has no timeout_ms. Its resolveSeat refuses every request in V1. The route check is a PlannerLoop dependency that counted-run.ts supplies. seat-registry/src/fixtures.ts lists the doctrine fixtures.
+2. JournalStore has no journalCommand or appendDecisionRecord: the journaled row is written by appendJournaled, a decision row by JournalTransaction.appendDecision. Line 236 of journal-store.ts is not about br_app_runtime.
+3. Migration 0010 names no owner; do not say neondb_owner. build_room_plans has command_id, room_id, lifecycle_event_id, plan_hash, schema_version, document and recorded_at; there is no terminal_status or plan_json. The trigger is build_room_plans_append_only, which runs build_room_plans_immutable.
+4. The plan-decision body holds only decision, planHash, feedback, eventId and attribution. There is no eventType or actor.type.
+5. GET plan answers 404 plan_not_found, not no_submitted_plan. There is no 403 gateway_not_planner.
+6. 503 counted_run_not_configured means PHASE4_COUNTED_RUN is unset. A missing deployment id answers 503 deployment_id_unknown and an unregistered dispatcher 503 dispatcher_surface_unregistered, both on POST planner-round only; a round in flight answers 409 round_in_flight.
+7. npm run phase4:counted-run takes no flags and reads neither CONTROL_PLANE_URL nor PHASE3_ADJUDICATION_TOKEN.
+8. Phase4Runner does not need an existing attempts.json; without one it starts an empty log. The outcomes are not_started, passed, failed, interrupted and rejected; FAILED_COUNTED and INVALID do not exist.
+9. judgeRoundPlan does not check work_id.
+10. A route mismatch and a refused plan are recorded failed (route_mismatch, plan_invalid, plan_outside_captured_scope), not unresolved. init_missing and plan_rejected do not exist; an agy-lane acceptance without the init fields is recorded unresolved.
+11. The T3 evidence kind is plandoc, not plan_bundle. No journal row carries result_digest, and an unresolved row carries no reason. A decision row's decision is the event name (plan.approved, plan.revision_requested, founder.cancel), not approved, revision_requested or cancelled.
+12. public.command_journal_Events_or_Decision, scanRecordForCredentials and revisionFeedback do not exist. The revision carries feedback.
+13. The planner.plan_refused line carries roomId, commandId, classification and reason. The reason has a kind and, for a schema failure, violationCount and violations with code and path. There is no attempt, detail, errors, keyword or message.
+14. PlannerRecordStore writes no accepted record. Its phases are attested, starting, not_sent, running, finished and lost; accepted is the answer to execute. not_sent and never_received are answered only when the executor's own sent record says false; there is no executor.status.
+15. The checkout is the whole repository at baseSha, read-only. The scope paths go only into the prompt.
+16. The executor evidence file is planner-evidence/<sha256(commandId)>.json, not agy-evidence. No code names run_command, write_file or edit_file.
+17. No production code calls PlannerRecovery; only tests do. Do not say it runs before new dispatch.
+18. scripts/path-audit.sh does not look for /Users/, /home/ or file:// paths.
+19. These line ranges are wrong: server.ts 456-481 and 460-476 (the requireLeader mounts are at 362 and 394), planner-loop.ts 651-677 and 868-899 (not the retry budget), planner-executor-factory.ts 25-31 (the variables are read at 113-128).
+Before returning the plan, check every name, line number and claim about behaviour against the files you read, and remove any you did not see.
