@@ -146,7 +146,7 @@ describe('journal redaction · every match of every shape (FOUNDER-ACT-20261113-
     assert.deepEqual(redactArgv(plannerArgv), plannerArgv);
   });
 
-  it('B9(f): overlapping ranges take one marker, touching ranges one each, and the guard loop runs more than once when it must', () => {
+  it('B9(f): overlapping ranges take one marker, touching ranges one each, and a value whose credentials appear only once its markers are removed becomes one marker', () => {
     // Overlap: a provider key inside a bearer value, and R1's bearer value and labelled secret.
     assert.equal(redactOne(`${scheme} abc_${PROVIDER}${'Zq7'.repeat(9)}`), REDACTED);
     assert.equal(redactOne(r1('sec' + 'ret')), REDACTED);
@@ -156,14 +156,28 @@ describe('journal redaction · every match of every shape (FOUNDER-ACT-20261113-
     assert.equal(redactOne(`${GITHUB}${'A'.repeat(20)}${pem}`), `${REDACTED}${REDACTED}`);
 
     // Two credentials that exist only once the markers inside them are removed:
-    // no shape matches the value as written, and the guard finds one, then the other.
+    // no shape matches the value as written, the guard would find them, so the whole value goes (Amendment 1 V1).
     const split = `${GITHUB}${REDACTED}${'A'.repeat(20)} ${PROVIDER}${REDACTED}${'B'.repeat(16)}`;
     assert.equal(containsCredentialMaterial([split]), true);
-    assert.equal(redactOne(split), `${REDACTED} ${REDACTED}`);
+    assert.equal(redactOne(split), REDACTED);
 
     // Text on both sides of a marker that joins into a bearer value.
     const joined = `${scheme} ${REDACTED}evt_2193d484-d29f-4569-85c2-afe364a062eb`;
     assert.equal(containsCredentialMaterial([joined]), true);
     assert.equal(redactOne(joined), REDACTED);
+  });
+
+  it('B9(f): the input of Amendment 1\'s basis, 1,872 marker-split GitHub tokens, is redacted in one step', () => {
+    const unit = `${GITHUB}${REDACTED}${'A'.repeat(20)} `;
+    const input = unit.repeat(1872);
+    assert.equal(input.length, 65_520);
+    const started = performance.now();
+    const out = redactOne(input);
+    const elapsed = performance.now() - started;
+    assert.equal(out, REDACTED);
+    // The act's first B2 took about two seconds here. B6's own bound, twice the
+    // base plus 25 ms, is measured by the benchmark the act names, not by CI;
+    // this ceiling only catches a return of the quadratic loop.
+    assert.ok(elapsed < 500, `took ${elapsed.toFixed(1)} ms`);
   });
 });

@@ -227,51 +227,33 @@ function replaceRanges(value: string, ranges: Array<[number, number]>): string {
 }
 
 /**
- * The first credential shape that `containsCredentialMaterial` would still
- * find in `value`, as a range of `value` itself, or null. The guard reads
- * `value` with every marker removed, so text on either side of a marker can
- * join into a shape; the match is found in that view, as the guard finds
- * it, and mapped back, taking in any marker that lies inside it.
+ * True when `containsCredentialMaterial` would still find a credential shape
+ * in `value`. The guard reads `value` with every marker removed, so text on
+ * either side of a marker can join into a shape.
  */
-function firstSurvivingMatch(value: string): [number, number] | null {
-  const positions: number[] = [];
-  let view = '';
-  for (let i = 0; i < value.length; ) {
-    if (value.startsWith(REDACTED, i)) {
-      i += REDACTED.length;
-      continue;
-    }
-    positions.push(i);
-    view += value.charAt(i);
-    i += 1;
-  }
-  for (const shape of CREDENTIAL_SHAPES) {
-    const match = shape.pattern.exec(view);
-    if (match !== null && match[0].length > 0) {
-      return [positions[match.index]!, positions[match.index + match[0].length - 1]! + 1];
-    }
-  }
-  return null;
+function guardStillFinds(value: string): boolean {
+  const surviving = withoutMarkers(value);
+  return CREDENTIAL_SHAPES.some((shape) => shape.pattern.test(surviving));
 }
 
 /**
- * Redact every match of every shape in the value as it was written (B1),
- * then, while the guard would still find a credential shape in what is left,
- * redact that match too (B2), so the result always passes the guard's shape
- * test. Each pass of B2 replaces at least one character that is not part of
- * a marker, so it ends.
+ * Redact every match of every shape in the value as it was written (B1).
+ * If the guard would still find a credential shape in what is left, the
+ * whole value is redacted (B2, as Amendment 1 of the act sets it), so the
+ * result always passes the guard's shape test. That is one pass of B1 and
+ * one read of the guard's view, whatever the value holds: the act's first
+ * B2, which redacted one surviving match per pass, took time that grew with
+ * the square of the value's length on values of many marker-split
+ * credentials.
  *
- * Stated limit (B5): on some inputs this keeps a character that replacing
- * shape after shape removed, such as the "!" of "token:Bearer <value>!".
- * B2 means no such character is left where the guard finds a credential
- * shape.
+ * Stated limits: on some inputs this keeps a character that replacing shape
+ * after shape removed, such as the "!" of "token:Bearer <value>!" (B5); and
+ * a value on which B1 leaves text where the guard still finds a credential
+ * shape loses all of its text, not only the credential (Amendment 1 V3).
  */
 function redactString(value: string): string {
-  let out = replaceRanges(value, matchedRanges(value));
-  for (let range = firstSurvivingMatch(out); range !== null; range = firstSurvivingMatch(out)) {
-    out = out.slice(0, range[0]) + REDACTED + out.slice(range[1]);
-  }
-  return out;
+  const out = replaceRanges(value, matchedRanges(value));
+  return guardStillFinds(out) ? REDACTED : out;
 }
 
 /**
