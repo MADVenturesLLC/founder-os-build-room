@@ -1,0 +1,43 @@
+TIER-2 REVIEW: MADVenturesLLC/founder-os-build-room pull request 148, head 1dde9a14144e33833966bb1a8ff48bbe116eab85, base main 3bc3c5211cef798cf54ff0d248d056a48b32a682
+
+You are the independent Tier-2 reviewer on the codex surface: one review of this exact head (FOUNDER-ACT-20261028-VELOCITY B2). The author is claude-code (builder, Anthropic).
+
+Why it exists. In rehearsal R2 on 2026-11-07, the Planner (agy, gemini-4-argon-high) answered a revision round with a complete plan whose second implementation step was 4,808 characters. PlanDoc v1 allowed 4,000 per list item, so the control plane refused the whole plan as plan_invalid and recorded no reason. The Founder signed the act beside this brief, which widens the list-item bound and makes a refused plan's reason visible in the control plane's log without any text the plan wrote.
+
+Read-only:
+- Read ./repo at that head, and the two files beside this brief, and nothing else: no host instructions, no memory, no history, no files from any earlier review, nothing outside this directory except the temporary copy you make to build and test.
+  148-FOUNDER-ACT-20261107-BR-PLANDOC-ITEM-LIMIT-906a492f.txt: the act this change implements (SHA-256 906a492f2e19bf243e2683996dcaddd3b7b68d86c8032fd09e3eaf3e14f70571), signed by the Founder on 2026-11-07. Part B is the change; B5 lists the only paths; Part F what is not authorized.
+  148-FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS-a8fb3b2a.txt: the standing act (SHA-256 a8fb3b2a91aa32388960af1741a7af0b9cb3196716c2c8876fac76da7d65a955), cited by the first for its B3 categories and Part C.
+- The operator ran npm ci in ./repo under Node 22, so ./repo/node_modules is the dependency tree. Use it and no package outside ./repo; if it is absent, stop with INCONCLUSIVE. The approved Node 22 is the one the operator names.
+- Build and test where your sandbox allows writing, for example a copy of ./repo, its .git and node_modules included, in a temporary directory. Contact no service.
+- First check that git rev-parse HEAD in ./repo prints the head above; if not, stop with INCONCLUSIVE.
+
+The change, git diff 3bc3c52..HEAD: seven files, +950 -17, in two commits: ce06e6e (the act's Part B) and 1dde9a1 (a fix from an automated review, below).
+- packages/seat-output-schema/src/plandoc.ts: OBJECTIVE_MAX 4,000 (line 51) and LIST_ITEM_MAX = PROSE_MAX, 20,000 (line 59), replacing ITEM_MAX; list items use LIST_ITEM_MAX (line 66), objective OBJECTIVE_MAX (line 115).
+- packages/control-plane/src/planner-loop.ts: PlannerLoopDeps.log and consolePlannerLog; PlanRefusalReason and RoundPlanVerdict; judgeRoundPlan (line 792) returns a reason with each refusal; planDocRefusalReason (813) builds it, with undeclaredKeysOf (857), undeclaredViolation (882) and refusalViolation (897); logPlanRefused (935) writes one line; executeRound calls it before failing (713).
+- packages/control-plane/src/planner-recovery.ts: PlannerRecoveryDeps.log; finish() calls logPlanRefused before failing (278).
+- test/plandoc-item-limit.test.ts (new, 28 tests), test/plan-refusal-log.storage.test.ts (new, 5 tests, PostgreSQL), test/fixtures/phase4-r2-round1-plan.json (R2 round 1's plan, rebuilt from the Founder's pastes; planHash a659c6ed95af407fd67a3b168ef7d7178c0987efc9c29f65f8481cb0279d1a49).
+- test/support/runtime-role-tier.ts: one entry, 'plan-refusal-log', in RUNTIME_ROLE_EXCLUDED. The act's B5 expected no existing test to change; this one did, because runtime-role-tier.test.ts fails while any storage suite is in neither list. Judge whether the entry and its reason are right and whether it changes what any existing test proves.
+
+The automated reviews so far (Copilot, on ce06e6e):
+- Path collision, fixed in 1dde9a1: the validator joins raw keys with "/", so a key the plan wrote such as "claims/plan_approved" or "known_risks/123456789" read back as declared structure, and plan-chosen digits could reach the log. Undeclared keys are now matched against the document; any other path is written only when every segment is declared or a real index, else "<unresolved path>".
+- Not changed, put to the Founder: a plan refused later by the plan store (credential material, classification plan_refused) writes no planner.plan_refused line. The act's B3 names only judgeRoundPlan's refusals. Say whether you agree that this is outside B3, and whether its absence is a defect in what B3 does cover.
+
+The builder's runs at this head, after a forced rebuild: npm run typecheck exit 0; eslint of every changed file clean (eslint of the whole repository reports 30 errors, all in files this change does not touch); gate:secret-scan and gate:path-audit PASS; test/plandoc-item-limit.test.ts 28 of 28; the full default suite 2,384 passing of 2,399, the one failure and twelve cancellations all in migrate-cli, which needs a database the builder's environment lacked, as on main. On a local PostgreSQL 16, as a non-root user: every *.storage.test.js 436 of 436, the new suite among them; the runtime-role tier 18 suites as br_app_runtime, none skipped. Fourteen mutations, each applied alone, each fail at least one new test: list items back to 4,000; objective widened to 20,000; the round's log call removed; recovery's log call removed; the encoding message kept; the try around the log removed; every violation kept; found and bound dropped for strings; the outside-scope booleans swapped; not_ready writing work_id; additional_property parsed from the raw path; a used key matched twice; any digit string kept as an index; an unresolved segment written as is.
+
+If your sandbox cannot run PostgreSQL (the storage suites need its server binaries, found through BUILDROOM_TEST_PG_BINDIR or PATH, and TEST_DATABASE_URL set as the run gate), say so; that part is then an advisory, and CI's storage-integration job runs them.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line or command output):
+1. The bound (act B2). Is each item of the five lists bounded at 20,000 and objective still at 4,000? Is anything else in PLANDOC_SCHEMA_V1 different from 3bc3c52: item counts, minimum lengths, prose sections, enums, constants, patterns, additional_properties, schema_version? Does every document valid at 3bc3c52 stay valid, with the same plan hash, and does the plan hash's code change at all?
+2. The log (act B3). Does each place judgeRoundPlan refuses a plan, in a round and in recovery, write exactly one planner.plan_refused line, with the fields B3 names and no others? Can any string the plan wrote reach the line by any path: an undeclared key at any depth, a key holding slashes, digits in a key, an enum or type violation's value, a scope-path refusal's reason, an encoding error's message, terminal_status, the counts and lengths? Are judgeRoundPlan's verdicts and classifications, the journal's rows, the plan store and the run record exactly as at 3bc3c52? Does a log function that throws change the round's outcome? Is counted-run.ts unchanged?
+3. Scope and track (act B4, B5, Part F; standing act B3). Are the changed paths only those B5 allows, plus the disclosed runtime-role-tier.ts entry? Is nothing changed in plan-doc.ts, plan-store.ts, plan-read.ts, counted-run.ts, packages/journal, the migrations, packages/run-harness or packages/gateway-*? Is the prompt's code unchanged, so that its only difference is the schema it embeds (B4)?
+4. Tests (act B6). Does each of B6(1) to (5) have a test, and does each new test fail on the defect it claims? Do npm run typecheck and npm test complete, with any failure's cause named?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2; the Founder's rule of 2026-10-28): a finding blocks only if it is P1, or concerns checks 1 to 3. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 1dde9a14144e33833966bb1a8ff48bbe116eab85
+Tier2-Verdict: <same as Final Verdict>

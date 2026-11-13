@@ -1,0 +1,15 @@
+room-status: typecheck under exactOptionalPropertyTypes
+
+FOUNDER-ACT-20261103-BR-ROOM-STATUS-OPTIONAL-TYPES B1. The parameter
+type of assertInvariants in packages/room-status/src/status.ts allows
+undefined on its two optional fields, blockReason and slotPhases, so
+the file typechecks for a consumer that sets
+exactOptionalPropertyTypes (madventures-tui's vendored copy). The
+change is to a type annotation only and emits no code: dist/ is
+byte-identical before and after.
+
+Role-Id: builder
+Actor-Id: session:claude-code/session_01Cshrrc2z6NzhDeFE1XffzA
+Execution-Surface: claude-code
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Cshrrc2z6NzhDeFE1XffzA

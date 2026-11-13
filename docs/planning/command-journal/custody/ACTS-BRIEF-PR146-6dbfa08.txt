@@ -1,0 +1,43 @@
+TIER-2 REVIEW: MADVenturesLLC/founder-os-build-room pull request 146, head 6dbfa0861cf418603db85c7f148ff1466204b765, base main 3a1409a91ea692e83c55d2f0831efa4e8bfc31f5
+
+You are the independent Tier-2 reviewer on the codex surface. This is a full review of every check, not a confirmation: Amendment 5 S7 allows this pull request one more correction and one codex Tier-2 review of its exact final head. If it does not pass, the pull request goes back to the Founder. No earlier review carries to this head. The author is claude-code (builder, Anthropic).
+
+History, for context only; judge the head as it is. The pull request exists because the journal's credential guard judged English prose ("bearer credentials") to be credential material, and a counted run's valid plan was refused for it. Your reviews found: at 984518d, that a 32-character token with punctuation escaped a floor of 20 characters of the alphabet; at 65d5591, that a provider-key shape inside a token cut it (R1), and that a token holding the marker's text escaped detection (R2); at 04f2739, that the alternative of 32 or more non-whitespace characters, run first, took the second "Bearer" in a JSON string holding two bearer headers and left the second token whole. The builder found that the same alternative took a following "password:" label. The Founder's Amendment 5 removes that alternative and closes the punctuated-token gap at its source instead: the control plane now refuses tokens outside RFC 6750's token alphabet.
+
+Read-only, as before:
+- Read ./repo at that head, and the six files beside this brief, and nothing else: no host instructions, no memory, nothing outside this directory.
+  146e-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-b90b0ce7.txt: the act (SHA-256 b90b0ce7d14462cfd4fcb0374e7f3d6c0658a73ebcfb9fe4ea2a0f25b2dce34e)
+  146e-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-1-954155f9.txt: Amendment 1 (954155f9f6a4de501abf86df589c2a337c267428c078b04dfb85890bb0ecb925)
+  146e-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-2-a824e438.txt: Amendment 2 (a824e4388257bbe81c19799a906eee94a6a753df6bdfb4d806e761a338731f91)
+  146e-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-3-40ac3fc0.txt: Amendment 3 (40ac3fc01095d1320eef86cdd8ff6e2a8e9d8654e49f52e10567feebbfbdb688)
+  146e-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-4-bbc7ba63.txt: Amendment 4 (bbc7ba63222072948718c33bb50bc8c7ee9887624c3ba27dcf3ec36752ba7dff)
+  146e-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-5-73dc3cad.txt: Amendment 5 (73dc3cad4b68ee502de87a890398e3d46c270f962c2cda46c591af9d41122d58)
+  All six were signed by the Founder in the builder's session on 2026-11-05. Parts B and E of the act, as Amendment 5 leaves them, govern this change; where Amendment 5 replaces a part, read it in place of every earlier version of that part.
+- The operator ran npm ci in ./repo under Node 22 before starting you, so ./repo/node_modules is the dependency tree, installed from ./repo/package-lock.json. Use it, and no package outside ./repo. If it is absent, or a package resolves from outside ./repo, stop with INCONCLUSIVE and say which. The approved Node 22 is the one the operator names, if your default is another.
+- Build and test where your sandbox allows writing, for example a copy of ./repo, its .git and node_modules included, in a temporary directory, with lsof on PATH. Contact no service.
+- Before you start, check that git rev-parse HEAD in ./repo prints the head above. If it does not, stop with INCONCLUSIVE.
+
+The change, git diff 3a1409a..HEAD: six files.
+- packages/journal/src/redact.ts: bearer_token is /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+/=-]{20,}/i (redact.ts:99), placed right after pem_private_key; the comment above it says why and states Amendment 5 S3's limits. Nothing else in the file changes.
+- packages/control-plane/src/config.ts: TOKEN_ALPHABET (config.ts:161); CONTROL_PLANE_TOKEN, and PHASE3_ADJUDICATION_TOKEN and PHASE4_COUNTED_RUN_TOKEN when set, are refused when they hold a character outside it, after the trimming already done; the errors name the variable and the alphabet and not the value. Length and distinctness checks are as at 3a1409a.
+- packages/control-plane/README.md: the rows of those three variables.
+- test/journal-bearer-shape.test.ts (new), test/control-plane-config.test.ts (one test), test/plan-store.storage.test.ts (one storage case, which needs PostgreSQL and runs in CI's storage-integration).
+
+The builder's runs at this head: npm run typecheck exit 0; npm test 2,346 passing of 2,361, with migrate-cli failing only because it needs a database this environment lacks, as on main; the 11 tests of test/journal-bearer-shape.test.ts and the config suite pass. Each new test fails under at least one of ten mutations, each applied alone: the pattern of 3a1409a; {21,}; {19,}; the case-insensitive flag removed; the pattern of 04f2739; the pattern of 2f39b95; the underscore removed from the alphabet; the hyphen removed; bearer_token moved back after labelled_secret; and the config's alphabet checks removed. On 100,000 generated tokens of 32 or more characters of the alphabet, with other credential shapes among their pieces, each written after "Bearer" in one of 42 surroundings (JSON, header lines, a second bearer header, a labelled secret after it, and others), every token was detected, and no part of it, of the second token or of the labelled secret survived redaction. The builder's earlier generated-string checks used a weak random generator, as Amendment 5 S1 records; this one does not.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line or command output):
+1. redact.ts. Is bearer_token exactly Amendment 5 S2(a)'s pattern, right after pem_private_key? Are every other shape, its pattern and its order among the others, the entropy shape, SECRET_ENV_KEYS, redactString and containsCredentialMaterial as at 3a1409a? Does the comment state S3's limits without claiming more?
+2. config.ts and the README. Does the control plane refuse each of the three tokens holding a character outside [A-Za-z0-9._~+/=-], after trimming, with no part of the value in the error, and accept every value of 32 or more of the alphabet that is otherwise valid? Are length and distinctness unchanged, is nothing else in config.ts changed, and do the README rows say what config.ts does?
+3. The guarantee. Is every token the control plane can accept, written after the word "Bearer", detected and redacted whole, in any surrounding text? Does any credential written before or after such a token, or inside it, lose its own detection or redaction because of bearer_token, beyond S3's limits? Is there a credential form that 3a1409a detected or redacted and this head misses, beyond S3's limits?
+4. The false positive, and the callers. Is prose of the form "bearer" plus an ordinary word, alone and inside a plan document, not credential material? Are the false positives S3 accepts the only new ones? Do the plan store and the plan-decision, goal and journal guards that call containsCredentialMaterial behave otherwise as before? Does the new config check change anything for the deployed control plane beyond refusing such tokens at boot?
+5. Scope. Does the diff stay inside Amendment 5 S4's paths, with nothing else in packages/control-plane and nothing in packages/redaction, packages/run-harness, packages/gateway-daemon or the migrations?
+6. Tests. Does every test S5 names exist, and does each fail on the defect or limit it claims? Do the existing journal, redaction, parity, secrets and configuration tests pass? Do npm run typecheck and npm test complete, with any failure's cause named?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2; the Founder's rule of 2026-10-28; Amendment 5 S7): a finding blocks only if it is P1, or concerns checks 1 to 5 outside the stated limits of Amendment 5 S3. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 6dbfa0861cf418603db85c7f148ff1466204b765
+Tier2-Verdict: <same as Final Verdict>

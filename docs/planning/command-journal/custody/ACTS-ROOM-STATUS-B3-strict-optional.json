@@ -1,0 +1,14 @@
+{
+  "extends": "/home/user/founder-os-build-room/tsconfig.base.json",
+  "compilerOptions": {
+    "exactOptionalPropertyTypes": true,
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "rootDir": "/home/user/founder-os-build-room",
+    "types": ["node"],
+    "typeRoots": ["/home/user/founder-os-build-room/node_modules/@types"]
+  },
+  "files": ["/home/user/founder-os-build-room/packages/room-status/src/index.ts"]
+}

@@ -1,0 +1,16 @@
+PASS-WITH-ADVISORIES: No blocking finding was identified in checks 1–3. The full test suite did not finish on its own.
+
+1. Text — PASS. B1–B3 match the supplied act character for character. The revision note follows multiline feedback; the rules and final line are correctly placed. The prior prompt remains intact and in order. Evidence: plannerPrompt (repo/packages/gateway-daemon/src/agy-planner-executor.ts:317), act B1–B4 (150-FOUNDER-ACT-20261108-BR-PLANNER-PROMPT-GROUNDING-39e02e5d.txt:20).
+2. Safety and boundary — PASS. The diff changes only prompt construction and its explanatory comment. It adds no prompt input and changes none of the executor’s arguments, user, sudo use, cleanup, timeouts, lane, evidence handling, or parser. The existing work fields and schema are unchanged.
+3. Scope — PASS. The exact-head diff contains only the executor file and the new test file: `+197 -0`. No existing test changed. Both supplied act hashes match the brief; the original checkout is clean.
+4. Tests — FAIL, advisory. Typecheck passed. The three targeted suites passed 194 tests; all 38 independent mutations were detected, including a defect targeted at each new test. After restoration, the new suite passed 9 of 9. I agree with the builder’s mutation conclusion for the defects independently tested.
+The full `npm test` rerun stalled in the unchanged acceptance-gateway test. Its 26 cases passed in isolation, but the process retained a listening server and open sockets until the diagnostic timeout. After I stopped the stalled process, the full run exited 1: 2,390 passed, one process terminated, three tests skipped. PostgreSQL-dependent migration suites were also skipped because their server binaries were unavailable.
+
+UNPROVEN — act issuance: The brief says the Founder signed the prompt-grounding act. The supplied act labels itself “DRAFT” and its date field is blank; the permitted evidence does not establish whether it was signed in the builder’s session. This does not change the technical findings above.
+Next: provide the signature evidence or Founder confirmation for the supplied act. Planner compliance remains untested until a rehearsal.
+Final Verdict: PASS-WITH-ADVISORIES Tier2-Reviewer-Id: codex Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator) Tier2-Head-Sha: a5817e75795c9cf995ee07abd987f6549e966a99 Tier2-Verdict: PASS-WITH-ADVISORIES
+
+```
+  Worked for 5m 52s • 6:27 PM
+
+```

@@ -1,0 +1,18 @@
+Revise. Much of this plan is accurate, but the statements below are false at 0a7f2a7a21da745f0cee16fff76dc36c13d01c39. Correct each one from the checkout, not from memory, and keep everything that is accurate.
+The rule for this revision: name a file, function, type, route, table, field, value, script or test only if you opened the file and saw it there; otherwise describe the behaviour in plain words or leave it out. Keep the plan under 25,000 characters, and write it once, as one JSON object, at the end of your turn.
+1. README.md: the authority notice is lines 7 to 11, not 3 to 9, and ## Verifying has no numbered items 9 and 10. Quote only text you read there.
+2. There is no npm run verify. The scripts are npm run gate:verify-check (scripts/verify-check.sh) and npm run gate:path-audit (scripts/path-audit.sh); read package.json.
+3. packages/journal/src/codec.ts does not exist. The command-event row encoding is in packages/journal/src/event-row.ts.
+4. GatewayPlannerPollMessage and GatewayPlannerReportMessage do not exist. The signed envelopes are PlannerPollEnvelope and PlannerReportEnvelope in packages/gateway-protocol/src/envelope.ts.
+5. There is no append_build_room_plan. The same-transaction xmin check is a query in packages/control-plane/src/plan-store.ts.
+6. The loop method is PlannerLoop.runRound; runPlannerRound does not exist.
+7. Nothing sets app.journal_writer. The identity latch in journal-store.ts refuses to append unless session_user and current_user are br_app_runtime.
+8. awaitPlan does not return raw output, and the executor does not return raw stdout: the Gateway parses the answer and returns the plan document.
+9. T5 moves PLAN_REVIEW to BUILDING and T22 moves the room to CLOSED_ABANDONED (packages/contracts/src/transitions.ts). There are no PLAN_APPROVED or CANCELLED states.
+10. There is no pre_send_refusal: a refusal before sending is journaled as failed with authorization_does_not_cover, authorization_indeterminate, attestation_failed or identity_mismatch (PLANNER_FAILURES in planner-loop.ts). planner.plan_refused is written only when judgeRoundPlan refuses a plan (plan_invalid, plan_outside_captured_scope), and its reason kinds are schema, scope_path, encoding, not_ready and outside_captured_scope. not_json, schema_invalid, terminal_status_not_ready and scope_mismatch do not exist, and a plan the plan store refuses for credential material writes no such line.
+11. The runner never sends founder.cancel or any other decision, including when the live check fails (packages/run-harness/src/phase4/runner.ts).
+12. There is no public.command_journal. The journal tables are command_journal_events and command_journal_chain_head.
+13. The executor evidence directory is planner-evidence, not planner-executor-evidence.
+14. The runner saves the plan as plan-<planHash>.json in PHASE4_EVIDENCE_DIR, not <label>-plan.json.
+15. Seven of the twelve test files you name do not exist: test/planner-loop.test.ts, test/planner-recovery.test.ts, test/plan-store.test.ts, test/plan-read.test.ts, test/gateway-planner.test.ts, test/counted-run-config.test.ts and test/phase4-harness.test.ts. Files that do exist include test/planner-loop.storage.test.ts, test/planner-recovery.storage.test.ts, test/plan-store.storage.test.ts, test/gateway-planner-channel.test.ts, test/gateway-planner-protocol.test.ts, test/phase4-run-harness.test.ts and test/phase4-counted-run-cli.test.ts. List the test directory before naming a test.
+Before returning the plan, check every name in it against the checkout, and remove any you did not see.

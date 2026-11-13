@@ -1,0 +1,16 @@
+PASS — all five checks passed. No findings. The required head and all three act hashes match; the source checkout remains clean.
+
+1. PASS — Text, B3/B4. The two instructions, blank line, heading and compact JSON match the act exactly. They follow the complete feedback. The old note is removed; every other prompt line is preserved. Comparison against the actual `f90506b` function confirmed identical first-round bytes and correct JSON round trips, including multiline feedback. Evidence: agy-planner-executor.ts:330 (repo/packages/gateway-daemon/src/agy-planner-executor.ts:330).
+2. PASS — Binding and boundary, B2/A4. The plan-store read uses the room’s locked transaction before journaling. The store re-judges and re-hashes the document; missing, mismatched and integrity-failing plans produce no journal row, attestation or dispatch. Recovery, judging and journaled request construction remain unchanged. Executor changes are confined to `plannerPrompt` and its comment; its inputs remain the work and fixed schema. Evidence: planner-loop.ts:540 (repo/packages/control-plane/src/planner-loop.ts:540), plan-store.ts:291 (repo/packages/control-plane/src/plan-store.ts:291), refusal tests:408 (repo/test/planner-loop.storage.test.ts:408).
+3. PASS — Wire, B1/C3. `earlierPlan` is required, must be a JSON object, and has an inclusive 200 KiB UTF-8 bound. Extra revision members are rejected; first-round work is unchanged. Shared protocol validation is retained. The actual base validator rejects the new revision shape, and the Gateway returns no answer for invalid requests—confirming C3’s compatibility warning. Evidence: planner.ts:184 (repo/packages/gateway-protocol/src/planner.ts:184), planner-worker.ts:455 (repo/packages/gateway-daemon/src/planner-worker.ts:455), planner-channel.ts:257 (repo/packages/control-plane/src/gateway/planner-channel.ts:257).
+4. PASS — Scope, B5. `git diff f90506b..HEAD` confirms one commit, eight files, +426/−32. Changes fit B5 and both permissions in the supplied “Both stand” ruling. All excluded paths and migrations are unchanged.
+5. PASS — Tests, B6. Under Node v22.23.4, typecheck exited 0; corrected `npm test` exited 0 with 2,424 passed, 3 skipped, zero failures or cancellations. Both changed storage suites passed 34/34. Initial PostgreSQL startup failed because `LC_ALL` was unset; `LC_ALL=C` resolved it. Changed-file lint and both scan gates passed.
+Independent mutation checks caught 29 of 30 probes; every new test failed under a relevant mutation. The sole survivor matches the builder’s equivalent search change. I agree: T3 leaves PLANNING, while a subsequent T4 becomes the newest opener. Reconciliation preserves this invariant because T19 saves the current state and T20 consumes it. Evidence: transitions.ts:316 (repo/packages/contracts/src/transitions.ts:316), ledger.ts:269 (repo/packages/ledger/src/ledger.ts:269). Restored checks passed 33/33 unit tests and 5/5 selected storage tests.
+
+Not rerun: the complete 440-case storage set or PostgreSQL 16; the 34 relevant storage cases used local PostgreSQL 18.6.
+Final Verdict: PASS Tier2-Reviewer-Id: codex Tier2-Reviewer-Model: MODEL (Codex CLI /status, reported by the operator) Tier2-Head-Sha: a7c48c720f06966e497aad04c1884e3af74d9e67 Tier2-Verdict: PASS
+
+```
+  Worked for 13m 37s • 8:31 PM
+
+```

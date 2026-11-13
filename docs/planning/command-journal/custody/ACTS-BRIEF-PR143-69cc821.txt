@@ -1,0 +1,28 @@
+TIER-2 CONFIRMATION: MADVenturesLLC/founder-os-build-room pull request 143, head 69cc821c1ac1b9d161a8cdd0a036937a837a8f9f, base main 44dcb1c63e5a383203331e259c43700a6a5e873e
+
+You are the independent Tier-2 reviewer on the codex surface. Your review at 5b261ecf3702dce671b8b54c6ae9155a9ba6e972 returned REQUEST-CHANGES with two P2 findings under the act's B1. This is the one confirmation of FOUNDER-ACT-20261028-VELOCITY B2, of the one correction commit that answers them. The author is claude-code (builder, Anthropic).
+
+Read-only:
+- Read ./repo at that head, and the same file beside this brief as before: FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES (SHA-256 af53b4933b1b4abd7aabd7ebacb578f1729f8862db002cc7499f5bb618555f94). Nothing else.
+- Run nothing that writes outside a temporary directory, and contact no service.
+- The correction is git diff 5b261ec..HEAD inside ./repo: one commit, 69cc821, in packages/run-harness/src/phase4/http-driver.ts and test/phase4-rehearsal-fixes.test.ts. Before you start, check that git rev-parse HEAD in ./repo prints the head above. If it does not, stop with INCONCLUSIVE.
+
+What the correction does:
+- Finding 1, the window. call() now sets a deadline at the first failure plus 10 minutes. No wait is taken when the try after it would start at or after the deadline: the read fails then with its last failure. No try is dispatched with no time left, which matters when a wait overshoots. Each retry's timeout is cut to the time left. An answer that is not retried but arrives after the deadline is not taken: the read fails with its last failure. On the fake clock the schedule is now 5, 10, 20, 40, then 60 s eight times, with the last try at 555 s; the final 45 s wait is gone.
+- Finding 2, a received status. once() now takes its timeout as an argument, records the status when the response's headers arrive, and on timeout answers that status with an empty body instead of a transport error. So a 503 or a 200 whose body stalls is not retried and fails as the route's refusal; a 502 or 504 whose body stalls is still retried. With no status, a timeout is still a Phase4TransportError.
+- Tests: a late success is refused; a try's timeout is cut to 50 ms of time left where its own timeout is 10 s; a wait that overshoots the window starts no further try; a stalled body under 503, 200 and 502; and the default timeout of 30 s, pinned with node:test mock timers (not at 29,999 ms, at 30,000 ms). The builder made six mutations, each reverted alone, and each failed the suite: the timeout not cut, a late success taken, a try dispatched with no time left, the status not kept, a wait taken with no time after it, and a default of 300 s. 25 of 25 pass in this file; the full suite passes 2,207, with migrate-cli needing a database, as on main.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line):
+1. Finding 1. Does every try start, run and get taken inside 10 minutes of the first failure, whatever the waits, the requests and the clock do? Can the loop spin or wait without end?
+2. Finding 2. Is a request whose status arrived always answered under that status, never retried unless that status is 502 or 504? Is a request with no status still a transport failure, retried only if it is a GET?
+3. Regressions. Do writes, 4xx and 503 still go untried, the plan route and the plan file behave as your review passed them, and every request still end within its timeout?
+4. Scope. Does the correction stay inside the act's B3 paths?
+
+What blocks: a finding blocks only if it is P1, or concerns checks 1 to 4 in this correction itself. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 69cc821c1ac1b9d161a8cdd0a036937a837a8f9f
+Tier2-Verdict: <same as Final Verdict>

@@ -1,0 +1,9 @@
+REQUEST-CHANGES — one P2 remains in the retry-window correction.
+
+1. Check 1: FAIL. The deadline uses adjustable wall time. A simulated two-minute backward adjustment caused the default clock path to accept `BUILDING` at 615 elapsed seconds, beyond the 600-second limit. A frozen injected clock also allowed continued retries until the probe stopped them. Use an elapsed-time budget independent of wall-clock adjustments. Evidence: http-driver.ts:123 (repo/packages/run-harness/src/phase4/http-driver.ts:123), lines 303–326; reproduction (/tmp/tier2-143-confirm-Hk2ofw/default-clock.tap).
+2. Check 2: PASS. Received statuses survive stalled or rejected bodies. Only GET responses with 502/504 retry; unanswered requests remain transport failures. Evidence: http-driver.ts:350 (repo/packages/run-harness/src/phase4/http-driver.ts:350), lines 86, 292, 314, 370–375.
+3. Check 3: PASS. All 13 supplied request tests passed. Writes, 4xx and 503 remain unretried; timeout behavior passes. Plan handling is unchanged by this correction. Evidence: tests:219 (repo/test/phase4-rehearsal-fixes.test.ts:219), plan-read.ts:32 (repo/packages/control-plane/src/plan-read.ts:32), cli.ts:176 (repo/packages/run-harness/src/phase4/cli.ts:176).
+4. Check 4: PASS. The single correction commit changes only the two named files, both within FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES B3, line 18. Head and act hash match; worktree remains clean.
+
+Not verified: full suite/typecheck or Node 22 execution; local dependencies are missing. Operator model attribution remains UNPROVEN because the requested `/status` line was not supplied.
+Final Verdict: REQUEST-CHANGES Tier2-Reviewer-Id: codex Tier2-Reviewer-Model: UNPROVEN — operator /status model line not supplied Tier2-Head-Sha: 69cc821c1ac1b9d161a8cdd0a036937a837a8f9f Tier2-Verdict: REQUEST-CHANGES

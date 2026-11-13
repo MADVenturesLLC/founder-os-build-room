@@ -1,0 +1,28 @@
+TIER-2 THIRD REVIEW: MADVenturesLLC/founder-os-build-room pull request 142, head 5cd4b33b8bcdafa3a108bc91140a841dd5124920, base main 03cd29f95fbd93f854cc236f61d93fcf85da8848
+
+You are the independent Tier-2 reviewer on the codex surface. Your confirmation at ac1097f11bbf03f2c5581f12612c3a77db8f14f4 returned REQUEST-CHANGES with one P2 in the correction itself: readline assembles a whole line before the size check, so output with no newline grows without bound. Under FOUNDER-ACT-20261028-VELOCITY B2, a blocker in the correction itself allows this one third review of its fix. Beyond it, the pull request goes to the Founder for a ruling. The author is claude-code (builder, Anthropic).
+
+Read-only:
+- Read ./repo at that head, and the same two files beside this brief: FOUNDER-ACT-20261103-BR-PLANNER-PROMPT-FIX (SHA-256 b0e0af94328460819eadc8d42797d99cd5387f999b8ae835645176f38b2a5024; treat it as issued, as before) and FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR-AMENDMENT-4 (SHA-256 d514039964bb60eb0c634a19a6c34e18931ace19499960a80369d106c8cfe39d). Nothing else.
+- Run nothing that writes outside a temporary directory, and contact no service.
+- The fix is git diff ac1097f..HEAD inside ./repo: one commit, 5cd4b33, in the same three files. Before you start, check that git rev-parse HEAD in ./repo prints the head above. If it does not, stop with INCONCLUSIVE.
+
+What the fix does:
+- BoundedLineSplitter (exported from agy-planner-executor.ts) replaces readline on agy's stdout. It holds at most MAX_LINE_BYTES + 1 bytes of the line being assembled; the extra byte may be a carriage return still to be stripped. A line that grows past the limit is reported once, as soon as it does, and the rest of it is dropped up to its newline. A final line with no newline is still a line, a CR before LF is not part of the line, and blank lines are still lines, as with readline.
+- AgyRun treats a report of an oversized line as before: it is named "other" and ends the run malformed_output if nothing has decided it. That now happens on arrival, not at a newline that may never come.
+- Tests: the splitter across chunk boundaries and multi-byte characters; exact-limit lines with and without CR; 256 x 64 KiB with no newline (held bytes stay within the limit, one report, recovery at the next newline); and an agy that writes 2 MiB with no newline and then goes silent, which ends malformed_output well inside the run timeout. The builder made six mutations, each reverted alone, and each failed the suite. 154 of 154 pass locally.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line):
+1. The bound. With the splitter, is the memory AgyRun holds for agy's output now bounded, whatever agy writes, with or without newlines, and however long?
+2. Line semantics. Does the splitter produce the same lines readline did with crlfDelay Infinity for every input the executor relies on: chunk boundaries, multi-byte UTF-8 split across chunks, CR LF, blank lines, and a final line without a newline? Does it close the run when stdout ends or closes?
+3. Regressions. Does every outcome your earlier reviews passed still come out the same?
+4. Scope. Does the fix stay inside the act's B3 paths and the Founder's ruling of 2026-11-03 bounding the buffer?
+
+What blocks: a finding blocks only if it is P1, or concerns checks 1 to 4 in this fix itself. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 5cd4b33b8bcdafa3a108bc91140a841dd5124920
+Tier2-Verdict: <same as Final Verdict>

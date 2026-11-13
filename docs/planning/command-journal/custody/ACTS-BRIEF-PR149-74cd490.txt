@@ -1,0 +1,37 @@
+TIER-2 REVIEW: MADVenturesLLC/founder-os-build-room pull request 149, head 74cd49002063446750ab4655b90bf205f34694f9, base main 41e008194f1cbb92b9c986df74feb7810f33aa23
+
+You are the independent Tier-2 reviewer on the codex surface: one review of this exact head (FOUNDER-ACT-20261028-VELOCITY B2). The author is claude-code (builder, Anthropic).
+
+Why it exists. In round 3 of rehearsal R3 on 2026-11-08, the Planner (agy, gemini-4-argon-high) wrote a complete answer (23,851 bytes), read nine more files, and wrote a second complete answer (24,319 bytes, a valid JSON object of 30 keys). agy's printed result joins every text the Planner writes in its turn, so the Gateway received 48,172 bytes holding both answers, and its parser refused the whole as unparseable_plan. Round 2 of the same run, one answer of 48,652 bytes, arrived as 48,653 bytes and parsed. The Founder's "Fix it" of 2026-11-08 started this fix under the standing act's Part B.
+
+Read-only:
+- Read ./repo at that head, and the file beside this brief, and nothing else: no host instructions, no memory, no history, no files from any earlier review, nothing outside this directory except the temporary copy you make to build and test.
+  149-FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS-a8fb3b2a.txt: the standing act (SHA-256 a8fb3b2a91aa32388960af1741a7af0b9cb3196716c2c8876fac76da7d65a955). Part B is the fix track; B3 lists what a fix may not touch; B7 and Part C say how a Gateway change reaches the PC.
+- The operator ran npm ci in ./repo under Node 22, so ./repo/node_modules is the dependency tree. Use it and no package outside ./repo; if it is absent, stop with INCONCLUSIVE. The approved Node 22 is the one the operator names.
+- Build and test where your sandbox allows writing, for example a copy of ./repo, its .git and node_modules included, in a temporary directory. Contact no service.
+- First check that git rev-parse HEAD in ./repo prints the head above; if not, stop with INCONCLUSIVE.
+
+The change, git diff 41e0081..HEAD: two files, +358 -10, in one commit, 74cd490.
+- packages/gateway-daemon/src/agy-planner-executor.ts: parsePlanResponse (line 374) reads one answer exactly as before (parseOneAnswer, line 402, the strict parse and then the existing backslash repair). Only when that fails, joinedAnswers (line 422) splits a response made only of answers, each a span from { to its matching } outside strings (objectEnd, line 447) or one fenced block, with only whitespace around and between them, and returns null for anything else or for fewer than two. Every answer must parse (each with the same repair) and be an object (isPlainObject, line 412), or the first error is thrown; otherwise the last answer is the document, and answersJoined is its count. EvidenceRecord.answersJoined (line 523), AgyRun.answersJoined (line 1410, set at 1539) and diagnostics (line 1564) put the count on the closing evidence record only when it is above 1.
+- test/agy-plan-joined.test.ts (new, 13 tests).
+
+The automated reviews so far, at 74cd490:
+- Copilot, one finding marked high: at line 397, last could still be null under strict and noUncheckedIndexedAccess, a type-check failure. Not changed: the builder found it does not reproduce (the non-null assertion removes null and undefined; line 396 throws first on any null answer; a forced build exits 0 with both settings). Check it.
+- Cursor Security Agent: neutral.
+
+The builder's runs at this head: npm run typecheck exit 0; eslint of both changed files clean (eslint of the whole repository reports 30 errors, all in files this change does not touch, as on main); gate:secret-scan and gate:path-audit PASS; test/agy-plan-joined.test.ts 13 of 13, test/agy-plan-parse.test.ts 10 of 10 and test/agy-planner-executor.test.ts 157 of 157, both unchanged; the full default suite 2,397 passing of 2,412, the one failure and twelve cancellations all in migrate-cli, which needs a database the builder's environment lacked, as on main. Fourteen mutations, each applied alone: thirteen fail at least one new test (no joined reading; the first answer taken; a broken earlier answer allowed; non-objects allowed; prose between answers skipped; strings ignored in objectEnd; escapes ignored in objectEnd; the count not recorded; the count always recorded; no repair inside joined answers; repairs counted across answers; no fenced answers; the count not passed to the run). The fourteenth, an answer that never closes kept as one, survives and is equivalent: such a span never parses, so the parse check refuses it either way. Say whether you agree.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line or command output):
+1. The parser. Is a response that parsed at 41e0081 read exactly as before, with the same document, the same invalidEscapesRepaired and no answersJoined? Is a response of two or more complete JSON objects or fenced blocks, separated only by whitespace, read as its last, and only when every answer parses and is an object? Is everything else still refused: prose before, between or after answers, a cut-off or broken answer, an array or null answer, an unclosed fence, a fence holding two answers? Can objectEnd end an answer early or late on braces, brackets, quotes or backslashes inside strings, in a way that makes a response accepted that should be refused, or a different answer taken?
+2. Safety and the boundary (standing act B3(e)). In agy-planner-executor.ts, does anything change beyond the parse and the closing record: agy's command line, the user it runs as, its sudo use, the reap, its timeouts, its lane or its prompt? Does the closing record keep any text agy or the model wrote? Is the document the Gateway reports still judged in full by the control plane, which this change does not touch?
+3. Scope and track (standing act B2 to B4, B7). Are the changed paths only the two above, neither in B3, with no existing test changed (B3(h))? Does anything outside packages/gateway-daemon change?
+4. Tests. Does each new test fail on the defect it claims? Do npm run typecheck and npm test complete, with any failure's cause named?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2; the Founder's rule of 2026-10-28): a finding blocks only if it is P1, or concerns checks 1 to 3. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 74cd49002063446750ab4655b90bf205f34694f9
+Tier2-Verdict: <same as Final Verdict>

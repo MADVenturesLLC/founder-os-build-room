@@ -1,0 +1,34 @@
+TIER-2 BRIEF: MADVenturesLLC/founder-os-build-room pull request 143, head 5b261ecf3702dce671b8b54c6ae9155a9ba6e972, base main 44dcb1c63e5a383203331e259c43700a6a5e873e
+
+You are the independent Tier-2 reviewer on the codex surface. The author is claude-code (builder, Anthropic). This is the pull request's one Tier-2 review under FOUNDER-ACT-20261028-VELOCITY B2, as Part C1 of the Founder's act requires.
+
+Read-only:
+- Read ./repo at that head, and the one file beside this brief: FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES (SHA-256 af53b4933b1b4abd7aabd7ebacb578f1729f8862db002cc7499f5bb618555f94; signed by the Founder in the builder's session on 2026-11-03; Parts B and E govern this change). Nothing else: no host instructions, no memory, nothing outside this directory.
+- Run nothing that writes outside a temporary directory, and contact no service.
+- The change is git diff 44dcb1c..HEAD inside ./repo: two commits, 587af71 and 5b261ec, in packages/run-harness/src/phase4/http-driver.ts, cli.ts and runner.ts, packages/control-plane/src/plan-read.ts (new) and server.ts, and test/phase4-rehearsal-fixes.test.ts (new) and test/phase4-counted-run-cli.test.ts. Before you start, check that git rev-parse HEAD in ./repo prints the head above. If it does not, stop with INCONCLUSIVE.
+
+Why it exists. An uncounted rehearsal of a Phase 4 run on 2026-11-03 reached plan_review and the live check passed, but the runner ended interrupted with "fetch failed" while waiting on the Founder's decision: one room read from the Founder's Mac never reached the control plane, which was serving throughout. awaitFounder had no handling for a failed request, and no request had a timeout. The rehearsal also found that no route serves a plan's text (T3 carries only its hash), so the Founder could not read from the record the plan they decided on.
+
+What the change does:
+- B1, http-driver.ts call() and once(): every request ends within 30 s (AbortController plus a race, so a fetch that ignores the signal still ends). A GET that fails with no HTTP answer (Phase4TransportError) or is answered 502 or 504 is tried again after 5, 10, 20, 40, then every 60 s, for at most 10 minutes from its first failure, then fails as before. A POST is never retried. 503 and every other answer are never retried. Each retry calls onRetry with one line: time, method, path, reason; the CLI prints it through its token-scrubbing out().
+- B2, plan-read.ts and server.ts: GET /control-plane/rooms/:roomId/plan behind the API token (requireToken) answers { roomId, commandId, planHash, document } for the plan the room's latest T3 submitted, via PlanStore.planForEvent (parsed, judged again, hash recomputed). 404 for no room, no T3 or no stored plan; 400 for a bad id; 503 when the plan store is unavailable. After reading the plan it reads the room again, and answers 409 plan_changed if the latest T3 moved between the two reads (5b261ec, from Copilot). It writes nothing.
+- B2, runner.ts and cli.ts: runRound now returns the round's planHash; afterRound receives it; at plan_review the CLI reads the plan route, checks the route's planHash equals the round's and is 64 hex, refuses a document holding a token, and writes plan-<planHash>.json to the evidence directory with the existing never-overwrite writer, printing its path and hash. On any failure it prints "PLAN NOT SAVED" and the run goes on waiting; it never decides. The live check of Phase4-CR1 round 1 is unchanged and still runs first.
+- Tests: 20 in test/phase4-rehearsal-fixes.test.ts; and test/phase4-counted-run-cli.test.ts's token-routing test now runs a passing live check, so it reaches the plan read, and expects the API token there (5b261ec, from Copilot). The builder made 17 mutations, each reverted alone, and each failed the suite (one by hanging past a 120 s timeout rather than an assertion: a window check moved past the window makes the delay zero).
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line):
+1. B1 reads. Is every GET retried exactly on transport failure, 502 and 504, on the act's schedule, and never past 10 minutes from its first failure? Does it then fail as before (the transport error, or the route's refusal)? Can the retry loop spin without waiting, or wait without end?
+2. B1 writes and other answers. Is a POST never retried, whatever happens? Are 503 and every 4xx never retried? Does every request, GET or POST, end within the timeout, including a stalled response body?
+3. Tokens. Can a token reach a retry line, a printed line, the plan file or the evidence through this change?
+4. B2 route. Is it behind the API token only, read only, and does it answer the latest T3's plan exactly as the plan store judges it? Does it change the plan-decision route, the counted-run routes or anything they read or write?
+5. B2 runner. Is the plan file written only when the route's hash equals the round's and is 64 hex, never overwritten, and is every failure non-fatal to the run? Does the runner still never decide, and does the live check behave as before?
+6. Scope. Does the diff stay inside the act's B3 paths, with nothing in gateway-daemon, journal, ledger, migrations or the planner wire protocol?
+7. Tests. Do the new tests fail on the defects they claim to cover, and pass for the right reason on the platform you run?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2; the Founder's rule of 2026-10-28): a finding blocks only if it is P1, or concerns checks 1 to 6. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 5b261ecf3702dce671b8b54c6ae9155a9ba6e972
+Tier2-Verdict: <same as Final Verdict>

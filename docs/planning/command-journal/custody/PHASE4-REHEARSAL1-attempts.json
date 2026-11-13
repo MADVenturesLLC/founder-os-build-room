@@ -1,0 +1,24 @@
+{
+  "setId": "FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL",
+  "termsSha256": "062b6cdaa53b2958198c8d5a0a35948e83177b3949cc0b19261046f9883ccc50",
+  "attempts": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "87dd8cbf-926a-4fe8-abec-3a480d7e9281",
+      "outcome": "interrupted",
+      "pending": false,
+      "startedAt": "2026-11-03T13:12:31.820Z",
+      "entryFailures": [],
+      "failures": [],
+      "endedAt": "2026-11-03T13:25:05.919Z",
+      "error": "fetch failed",
+      "liveCheck": {
+        "passed": true,
+        "commandId": "cmd_planner_09d9bd0378ff1b684869d2dc29bdaf4f",
+        "initModel": "gemini-4-argon-high",
+        "providerConversationId": "f8bd71df-1604-427f-bada-0d6e7e4c0c03",
+        "readAt": "2026-11-03T13:18:29.876Z"
+      }
+    }
+  ]
+}

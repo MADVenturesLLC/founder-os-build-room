@@ -1,0 +1,12 @@
+Revise. Most of this plan is accurate, and every file and line range you cite checks out. But the statements below are false at f90506b34ba2abd4fd6318e58a6aacb03a602333. Correct each one from the checkout, and keep the rest of the plan as it is.
+1. There is no OPEN state, and no PLAN_APPROVED or CANCELLED state. T1 moves ROOM_CREATED to SCOPED, T5 moves PLAN_REVIEW to BUILDING, and T22 moves the room to CLOSED_ABANDONED (packages/contracts/src/states.ts and transitions.ts).
+2. The scope of a lifecycle event is roomId, repo and paths (the Scope interface in packages/contracts/src/attribution.ts), not repository, baseSha and paths.
+3. GatewayPlannerChannel does not journal identity_bound and writes nothing to the journal. PlannerLoop journals identity_bound after planner.attest returns.
+4. The finished report does not carry raw PlanDoc text. Its result is either kind plan with the document the Gateway already parsed, or kind failed (PlannerResultWire in packages/gateway-protocol/src/planner.ts).
+5. AgyPlannerExecutor writes no prompt or output evidence. Its evidence record holds commandId, executionId, startedAt, agySha256, initModel, conversationId, sent, endedAt, outcome, exitCode, signal and checkoutRemoved, plus closing diagnostics, and no text that agy or the model wrote.
+6. There is no public.build_room_journal. The journal tables are command_journal_events and command_journal_chain_head.
+7. founderApprovalRecorded and revisionFeedbackAttached do not exist. The T4 fact is feedbackAttached, and the T5 facts are planHash, expectedPlanHash and scopePathsCanonical (packages/control-plane/src/plan-decision.ts).
+8. evaluatePhase4RunSet does not exist. The terms are checked by validatePhase4RunSet (packages/run-harness/src/phase4/run-set.ts) and the set by phase4SetStatus (run-sequence.ts).
+9. There is no npm run custody:check. The scripts are npm run gate:custody-pin-check and npm run gate:custody-pin-selftest (package.json).
+10. Nothing in packages/control-plane concerns occupancy. Do not say CONTROL_PLANE_TOKEN guards occupancy; say what it guards only if you read the routes.
+The plan is about 27,500 characters; keep it under 25,000. Before returning it, check every name and every claim about behaviour against the files you read, and remove any you did not see.

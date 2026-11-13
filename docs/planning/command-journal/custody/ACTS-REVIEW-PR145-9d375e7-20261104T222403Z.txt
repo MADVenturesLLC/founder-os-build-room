@@ -1,0 +1,13 @@
+Checks 4 and 7: PASS. Review complete; no blocking defect reproduced.
+
+1. Check 4 — PASS. Using approved Node v22.23.4, npm 10.9.9, and the copied repository dependencies:
+   * `npm run typecheck`: exit 0.
+   * `npm test`: exit 0; 2,211 passed, 0 failed, 3 skipped, completed in 332 seconds. Full-suite evidence (/tmp/tier2-145c-confirm-W3PErd/final-suite.log:17530).
+   * Both phase4 suites: 108 passed, 0 failed, 0 skipped, exit 0. Phase4 evidence (/tmp/tier2-145c-confirm-W3PErd/final-phase4.log:728).
+Direct probes confirmed both runner flags still force interruption. Outcome priority remains interrupted → rejected → failed → passed. Flag handling (repo/packages/run-harness/src/phase4/run-unit.ts:54), outcome order (repo/packages/run-harness/src/phase4/run-unit.ts:157).
+2. Check 7 — PASS. `git diff 50048fb..HEAD` contains exactly `packages/room-status/src/status.ts`, with 2 insertions and 2 deletions. Its patch matches `git diff 5cbadd4..dd51b08` byte-for-byte; both SHA-256 values are `46c546dd40aecb137abe1de290388edc99b747bbccf0ee510ed44e959ce39055`. Every other tracked file is unchanged from `50048fb`; checks 1, 2, 3, 5 and 6 therefore retain their prior PASS results, with check 6’s isolation qualification preserved.
+
+Both governing-file hashes matched. Dependency auditing found no external package resolution; the original checkout remains clean at the required head.
+Advisory: database-, platform-, and prerequisite-gated suites remain unexecuted where prerequisites are absent, including migrate-cli. No database-backed or live-service validation is claimed.
+Next: give this confirmation to the Founder for the ruling.
+Final Verdict: PASS-WITH-ADVISORIES Tier2-Reviewer-Id: codex Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator) Tier2-Head-Sha: 9d375e79d64feeac432190d46a367eec82b18be9 Tier2-Verdict: PASS-WITH-ADVISORIES

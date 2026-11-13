@@ -1,0 +1,58 @@
+{
+  "setId": "FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL",
+  "founderOsSha": "973717daaff9a89538fab8def71d199428e3629d",
+  "buildRoomSha": "44dcb1c63e5a383203331e259c43700a6a5e873e",
+  "controlPlaneOrigin": "https://rare-enjoyment-production-0869.up.railway.app",
+  "gatewayId": "1880c12d-d98d-4a91-b25a-23320aa7f58a",
+  "planner": {
+    "provider": "google",
+    "model": "gemini-4-argon"
+  },
+  "seats": {
+    "builder": "claude-code:anthropic",
+    "reviewer": "codex:openai"
+  },
+  "founderRelay": {
+    "actualModel": "n/a (deterministic run-harness relay of the act's text)",
+    "executionSurface": "build-room-run-harness"
+  },
+  "decisionTimeoutMs": 14400000,
+  "runs": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "87dd8cbf-926a-4fe8-abec-3a480d7e9281",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "44dcb1c63e5a383203331e259c43700a6a5e873e",
+        "scopePaths": [
+          "README.md"
+        ],
+        "goal": "Plan a section for README.md that describes the Phase 4 planner loop as it is built."
+      }
+    },
+    {
+      "label": "Phase4-CR2",
+      "roomId": "2e312158-1b50-4b4c-85ec-e4e6f76de69e",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "44dcb1c63e5a383203331e259c43700a6a5e873e",
+        "scopePaths": [
+          "docs/command-journal-contract.md"
+        ],
+        "goal": "Plan a glossary for docs/command-journal-contract.md."
+      }
+    },
+    {
+      "label": "Phase4-CR3",
+      "roomId": "9418adc4-b9e1-4360-a3fb-d068b3984cdc",
+      "inputs": {
+        "repository": "MADVenturesLLC/founder-os-build-room",
+        "baseSha": "44dcb1c63e5a383203331e259c43700a6a5e873e",
+        "scopePaths": [
+          "docs/gateway-ops-actions-log-runbook.md"
+        ],
+        "goal": "Plan a troubleshooting section for docs/gateway-ops-actions-log-runbook.md."
+      }
+    }
+  ]
+}

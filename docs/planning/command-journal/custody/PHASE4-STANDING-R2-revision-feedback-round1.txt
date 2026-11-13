@@ -1,0 +1,15 @@
+Revise. Much of this plan is accurate, but the statements below are false at 3bc3c5211cef798cf54ff0d248d056a48b32a682. Correct each one from the checkout, not from memory, and keep everything that is accurate.
+1. README.md has no status table and no headings named Current Status, Journal persistence (PR 2b) or Verification. Its sections are Structure, Status (bold paragraphs per phase), Verifying, Running the Phase 2 gate, Ownership and Related. Anchor every edit to a heading that exists, quoted exactly.
+2. There is no npm script gate:phase2. The Phase 2 script is phase2:runs. Read package.json for every script you name.
+3. The Gateway planner routes are POST /gateway/planner/poll and POST /gateway/planner/report (packages/control-plane/src/gateway/routes.ts), not /control-plane/gateways/:gatewayId/planner-poll or planner-report.
+4. The counted-run routes are always mounted. They answer 503 counted_run_disabled when PHASE4_COUNTED_RUN_TOKEN is unset and 503 counted_run_not_configured when PHASE4_COUNTED_RUN is unset. They are not absent or unmounted.
+5. The counted-run runner has no command-line flags. It reads its inputs from environment variables, runs the next label the set progress names, and never sends a plan decision: the Founder decides separately through the plan-decision route. Remove the invented CLI surface.
+6. plannerAdapterId and planner-v1 appear nowhere in the repository. Remove them.
+7. Room states: T5 moves PLAN_REVIEW to BUILDING, and T22 moves the room to CLOSED_ABANDONED (packages/contracts/src/transitions.ts). There are no APPROVED, CANCELLED or FAILED states.
+8. A failed round appends a failed journal row with a classification such as authorization_does_not_cover or authorization_indeterminate. It does not move the room to FAILED through system.error, and route_authorization_failed does not exist.
+9. The command journal tables are command_journal_events and command_journal_chain_head, not build_room_command_journal.
+10. The runner writes attempts.json, run.lock, plan-<planHash>.json and <label>-<roomId>.record.json in its evidence directory. There is no <label>/attempt-<n>/ directory and no journal.json, events.json or run-result.json.
+11. Six test files you name do not exist: test/planner-loop.test.ts, test/planner-recovery.test.ts, test/plan-store.test.ts, test/plan-read.test.ts, test/gateway-planner-worker.test.ts and test/phase4-harness.test.ts. List the test directory and cite only files that exist.
+12. The planner OS user name is configuration (BUILDROOM_PLANNER_USER). Do not write a user name into README.md.
+13. Step 2 says the PR 2b section ends around line 233. Line 237 is the heading Running the Phase 2 gate. Do not cite a line number you have not read.
+Before returning the plan, check every route, script, file, table, state and identifier it names against the checkout.

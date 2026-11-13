@@ -1,0 +1,40 @@
+Return this head to the Founder: R1 blocks check 3. Step 4 of 4 complete.
+
+The exact head and all six act hashes match. The original repository remains clean. Review used the operator-approved Node v22.23.4; 325 dependency resolutions stayed inside the copied repository.
+
+R1 — P2, blocking: bearer redaction consumes a secret label and exposes its value.
+
+const token = 'a'.repeat(32) + '_password=';
+const input = `Bearer ${token} hunter2`;
+
+Each of the three token configurations accepts token. Independently reproduced results:
+
+Base:                      [REDACTED][REDACTED]
+Head:                      [REDACTED] hunter2
+Guard detects survivor:    false
+normalizeForJournal:       accepts
+
+The bearer match runs before labelled_secret, consumes _password=, and leaves hunter2 without its label. See redact.ts:99 (repo/packages/journal/src/redact.ts:99), lines 113 and 166–175, and dispatch.ts:125 (repo/packages/journal/src/dispatch.ts:125).
+
+This is outside FOUNDER-ACT-20261105-BR-BEARER-SHAPE, Amendment 5 S3 (146e-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-5-73dc3cad.txt:16): the lost credential does not depend on the word "bearer" being glued after it. Its exposed value follows whitespace, rather than being alphabet characters immediately adjacent to the bearer value.
+
+All seven supported secret labels reproduce the regression. Changing only the redaction order back restores the neighboring-secret redaction. Recorded evidence (/tmp/tier2-146e-review-xp4c1E/regression.log:39).
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. redact.ts | PASS | Pattern and placement exactly match S2(a). A byte comparison confirms everything outside the bearer block equals base. The comment describes the intended behavior and accepted limits. |
+| 2. Config and README | PASS | All three checks follow trimming; length and distinctness remain unchanged. Errors contain fixed explanatory text without interpolating values. README rows agree. Independent probes passed 196,608 character checks, plus trimming, length and distinctness checks. config.ts:161 (repo/packages/control-plane/src/config.ts:161), lines 298–333; probe output (/tmp/tier2-146e-review-xp4c1E/probes.log:2). |
+| 3. Guarantee | FAIL | Accepted bearer tokens redact whole in the tested cases, but R1 destroys a neighboring credential’s redaction beyond S3. Base removes that credential; this head exposes it and calls the result clean. |
+| 4. Prose and callers | PASS | Prose strings and judged plans pass. The actual PlanStore write path passed with a database stub; base’s guard rejects the same prose. Caller implementations remain unchanged. Config validation runs before pool creation. The normalization defect is R1 above. plan-store.ts:201 (repo/packages/control-plane/src/plan-store.ts:201), main.ts:45 (repo/packages/control-plane/src/main.ts:45), store probe (/tmp/tier2-146e-review-xp4c1E/regression.log:68). |
+| 5. Scope | PASS | git diff --name-status 3a1409a..HEAD lists exactly the six specified files. No other control-plane, redaction, run-harness, gateway-daemon or migration changes. git diff --check exits 0. |
+| 6. Tests | INCONCLUSIVE | Every S5 case exists. All 11 bearer tests and the new config test fail under at least one isolated mutation; all ten mutations were killed. Restored targeted suites pass 61/61. PostgreSQL storage execution and its mutation sensitivity remain unverified locally. Mutation results (/tmp/tier2-146e-review-xp4c1E/mutations.json.log:1), storage case (repo/test/plan-store.storage.test.ts:279). |
+
+npm run typecheck exited 0. The final full npm test, with restored artifacts throughout, exited 0: 2,341 passing, 0 failing. Existing journal, redaction, parity, secrets and configuration tests passed. PostgreSQL-dependent suites skipped because server binaries/database prerequisites were absent; Prerequisite C suites also reported missing prerequisites. Full test output (/tmp/tier2-146e-review-xp4c1E/npm-test-restored.log).
+
+Not checked: PostgreSQL storage execution or live Railway S6 conformance. Risk: R1 allows a separately labelled secret to survive normalization. Further correction requires the Founder’s ruling under Amendment 5 S7.
+
+Final Verdict: REQUEST-CHANGES
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator)
+Tier2-Head-Sha: 6dbfa0861cf418603db85c7f148ff1466204b765
+Tier2-Verdict: REQUEST-CHANGES

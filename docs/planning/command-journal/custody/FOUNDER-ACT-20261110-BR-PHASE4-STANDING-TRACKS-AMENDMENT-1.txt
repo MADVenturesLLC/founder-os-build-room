@@ -1,0 +1,55 @@
+FOUNDER-ACT-20261110-BR-PHASE4-STANDING-TRACKS-AMENDMENT-1: the builder may close a rehearsal's window; R7
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+origin/main when drafted: 8a62e2cea084eb38c486aebc73e1f7feacc41e39
+Under: FOUNDER-ACT-20261106-BR-PHASE4-STANDING-TRACKS (SHA-256 a8fb3b2a91aa32388960af1741a7af0b9cb3196716c2c8876fac76da7d65a955) Parts D, E and G; FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT (70607860c38ab919b0cd40af19277575012dc9bc0bd8419608861feab126c0af) Parts E and H.
+The builder read, before drafting, at 8a62e2c: parseCountedRunConfig in packages/control-plane/src/counted-run-config.ts, which returns null for an absent, empty or blank value, and its one call, in packages/control-plane/src/config.ts; the counted-run router in packages/control-plane/src/counted-run.ts, which answers 503 counted_run_not_configured on every route when that is null; test/counted-run.test.ts, which checks both; the Railway tools this session has, which set a variable and redeploy the service but cannot delete one; the two acts named above; and its audit record of R6.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. R6 ran at 8a62e2c under E1 of FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT and Part D of the standing act. Round 1 (plan 291cec129ef00b7a4698c960229d612428e20dc42c6923b0b3046b1530e6cd09, 41,003 characters) held 20 subjects of false statements: 19 found in the builder's check of it, and one found when round 2 was checked. Round 2 (4f7683b64557c001f6171d77704a7e61705d9e889b0554df5e7fc03dd1995d5e, 32,181 characters) took all 19 corrections, added no false statement and changed none of round 1's true ones. It dropped about 18 details and about 30 line numbers and paths, of the kind the feedback asked it to cut, kept the one false statement the feedback had not named, and stayed over the prompt's 25,000 characters.
+A2. Round 2 settled at 05:06:44Z on 2026-11-10. No decision was sent within its four hours. The runner stopped at 09:06:45Z with founder_decision_timeout and lifecycle_incomplete, record 3ab30351ff0d57e6c83dc4dc2fe70a4c16b3e68c98e31ea33d5f4e9ef2355b74. The builder had set no reminder for that deadline. This is R6's cause under E3 of the standing act; no code was at fault.
+A3. The window was to close before the PC's apt-daily-upgrade at 11:20:05Z, as D4's readings gave it. The builder read it open at 10:31Z, 10:54Z, 11:12Z and 11:21Z and notified me twice, and could not close it, because D5 gives removing the value to me alone. It closed at 12:07:41Z with deployment 308dce62, 47 minutes late.
+
+Part B: The builder's backstop for D5
+B1. In a rehearsal under Part D of the standing act, the builder may close the window by setting PHASE4_COUNTED_RUN on the rare-enjoyment service to the empty string, live, so that the service redeploys, when I have not removed the value and either:
+  (a) the runner has exited, as its output or the control plane's HTTP log shows, at least 30 minutes earlier; or
+  (b) 30 minutes or less remain before the earlier of the PC's next apt-daily-upgrade, as D4's readings give it, and 14 hours after the deployment that set the value.
+B2. Before acting, the builder reads Railway's staged changes and acts only if none are staged, and says in the session what it is about to do and which of B1 applies. After, it verifies the new deployment as D5 requires: SUCCESS on the commit, /version naming the commit with a new start, /health answering 200, and the deployment that set the value removed.
+B3. Under B1(b), a round in flight is ended by the redeploy and the rehearsal ends interrupted. I accept that over an open window.
+B4. The builder reads no variable's value, sets no other variable and makes no other Railway change. An empty PHASE4_COUNTED_RUN counts as removed for D5; I delete the variable when convenient.
+B5. Removing the value myself under D5 stays the first course; Part B is the backstop.
+
+Part C: Deadlines
+C1. When a window opens, the builder schedules checks in its session for 60 and 15 minutes before the end of each round's decision time, for the end of each decision time, and for 60 and 30 minutes before the time in B1(b). At each check that finds an action of mine outstanding, it notifies me.
+C2. I give a line under D1 of the standing act only when at least six hours remain before the PC's next apt-daily-upgrade, so that three rounds and their decisions fit in the window.
+
+Part D: R7
+D1. R7 is one rehearsal under Part D of the standing act, with Parts B and C above. Part H of FOUNDER-ACT-20261109-BR-PLANNER-REVISION-CONTEXT, which authorized one rehearsal of its own, R6, does not bar it.
+D2. E2 and E3 of that act apply to R7 as they did to R6, with R6's figures beside R4's and R5's (R6: 20 and 1, the 1 carried unchanged from round 1). For each revision round, the builder reports separately the uncorrected statements of the earlier plan that were dropped and those that were changed or made false.
+D3. As D7 of the standing act says, R7 counts for nothing, passed or not, and its result is evidence for my next decision.
+
+Part E: Records and filing
+E1. The builder records each line of mine, each reading, each check and notification, and any action under Part B in its audit record, stamped from the clock.
+E2. This act and R7's evidence are filed with the next custody filing under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, which needs my separate authorization.
+
+Part F: Term
+F1. This act takes effect on my signature and lapses with the standing act. I revoke it, whole or in part, by one line in the builder's session.
+
+Part G: Not authorized
+- The builder setting PHASE4_COUNTED_RUN to anything but the empty string, opening a window, or deleting any variable.
+- Any other Railway variable, setting, deployment, redeploy or rollback by the builder.
+- Any change to the terms beyond D2 of the standing act: goal, scope path, decision time, seats, Planner or Gateway.
+- Any change to code, the PC, agy's arguments, the sudo rule, a Neon role or a secret.
+- Any counted run or counted-run act.
+- Any repository other than MADVenturesLLC/founder-os-build-room.
+
+Part H: Signature
+Signed:
+
+— Michael Daley
+
+Date:
+
+Actor-Id: founder

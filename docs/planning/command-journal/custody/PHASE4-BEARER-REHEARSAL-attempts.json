@@ -1,0 +1,27 @@
+{
+  "setId": "FOUNDER-ACT-20261105-BR-BEARER-SHAPE",
+  "termsSha256": "57feb3e779f03a6185c79ed251f24ca04c2d18945be223a894d73b2dc8a26172",
+  "attempts": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "9c39c6eb-307a-4eb5-a455-e29afcc6754c",
+      "outcome": "interrupted",
+      "pending": false,
+      "startedAt": "2026-11-06T01:42:07.338Z",
+      "endedAt": "2026-11-06T02:05:06.042Z",
+      "entryFailures": [],
+      "failures": [
+        "lifecycle_incomplete",
+        "command_not_clean"
+      ],
+      "recordDigest": "5aa5155b6aaf125a9f731d8189924724c233e8a3761a8d00a728855bb03c880d",
+      "liveCheck": {
+        "passed": true,
+        "commandId": "cmd_planner_3297befea962d0ce72924125cd2b4ae6",
+        "initModel": "gemini-4-argon-high",
+        "providerConversationId": "5dfbf8f2-7523-495e-9173-80a32cbd25e8",
+        "readAt": "2026-11-06T01:50:03.163Z"
+      }
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+Place both Founder act files named in the brief in /Users/<user>/tier2-148, then reply with the exact model name from Codex CLI /status. The required acts are
+  absent, so the review cannot proceed.
