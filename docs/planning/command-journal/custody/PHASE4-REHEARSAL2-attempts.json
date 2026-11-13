@@ -1,0 +1,24 @@
+{
+  "setId": "FOUNDER-ACT-20261103-BR-PHASE4-REHEARSAL-FIXES",
+  "termsSha256": "73b294eedd9c6bae26e4ff38fb76ec70f567c372c2fb10588a059e2568d16981",
+  "attempts": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "7e82f03d-b0d5-45c1-84e8-776eb6a43285",
+      "outcome": "passed",
+      "pending": false,
+      "startedAt": "2026-11-04T11:50:59.569Z",
+      "endedAt": "2026-11-04T12:08:26.776Z",
+      "entryFailures": [],
+      "failures": [],
+      "recordDigest": "0417f0daac8473cf9ad24f88815b8c1e76d530e48c36522ca334002ba82161a2",
+      "liveCheck": {
+        "passed": true,
+        "commandId": "cmd_planner_9db6ad285b5732315923514346d670cf",
+        "initModel": "gemini-4-argon-high",
+        "providerConversationId": "349cdbba-ed2b-4b9b-a4f2-61c0595e7e9f",
+        "readAt": "2026-11-04T11:56:59.854Z"
+      }
+    }
+  ]
+}

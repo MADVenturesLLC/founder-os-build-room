@@ -1,0 +1,27 @@
+{
+  "setId": "FOUNDER-ACT-20261102-BR-PHASE4-COUNTED-RUNS",
+  "termsSha256": "dcf26438b66a9b0e23ae5d9af8ac3fbba353e04e531442a9127c77d6e9e109f8",
+  "attempts": [
+    {
+      "label": "Phase4-CR1",
+      "roomId": "1086e073-e181-49a9-a275-cd1e35541f7c",
+      "outcome": "interrupted",
+      "pending": false,
+      "startedAt": "2026-11-03T02:28:10.062Z",
+      "endedAt": "2026-11-03T02:29:13.388Z",
+      "entryFailures": [],
+      "failures": [
+        "lifecycle_incomplete",
+        "command_not_clean"
+      ],
+      "recordDigest": "a624ec9ed984e2aea35fcd7a6b3c128664f72f1c84d7ab42494e1c721d4e99be",
+      "liveCheck": {
+        "passed": true,
+        "commandId": "cmd_planner_aeac012967b496da88a142b3a86a54b3",
+        "initModel": "gemini-4-argon-high",
+        "providerConversationId": "6ff39888-eb58-4f85-b42a-848fb6e863f6",
+        "readAt": "2026-11-03T02:29:13.091Z"
+      }
+    }
+  ]
+}
