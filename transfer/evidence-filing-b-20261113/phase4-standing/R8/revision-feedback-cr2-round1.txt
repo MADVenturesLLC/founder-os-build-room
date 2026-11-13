@@ -1,0 +1,3 @@
+Revise. Nearly every statement checks out at 8a62e2cea084eb38c486aebc73e1f7feacc41e39; this one is false. Correct it and keep the rest as it is. The plan is 34,320 characters; bring it under 25,000 (rule 6) by removing line numbers and names the glossary section does not need, not by rewording what you keep.
+1. Line 29 of packages/journal/specs/serialization-d-decision-row.md cites no contract section; its references to section 6.2 are at lines 32 and 33. Correct this where constraint 3 lists the lines of the five serialization specifications, or remove those line lists.
+Before returning the plan, check every name, line number and claim about behaviour against the files you read, and remove any you did not see.
