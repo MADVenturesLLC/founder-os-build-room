@@ -180,4 +180,31 @@ describe('journal redaction · every match of every shape (FOUNDER-ACT-20261113-
     // this ceiling only catches a return of the quadratic loop.
     assert.ok(elapsed < 500, `took ${elapsed.toFixed(1)} ms`);
   });
+  it('B9(i): the URL shape takes linear time, and still matches a scheme of 64 characters but not one of 65 (Amendment 2 W1, W6)', () => {
+    const r1Of37fdf8f = `${'tok' + 'en'}=${'a-'.repeat(32765)}`;
+    const hyphens = 'a-'.repeat(32768);
+    for (const input of [r1Of37fdf8f, hyphens]) {
+      const started = performance.now();
+      const out = redactOne(input);
+      containsCredentialMaterial([input]);
+      const elapsed = performance.now() - started;
+      assert.equal(containsCredentialMaterial([out]), false);
+      // Unbounded, the scheme part took about three seconds on each.
+      assert.ok(elapsed < 500, `took ${elapsed.toFixed(1)} ms`);
+    }
+    const userinfo = 'adm' + 'in:hun' + 'ter2';
+    // 64 characters: matched, and the user and password are redacted.
+    const matched = `x${'a-'.repeat(31)}a://${userinfo}@host`;
+    assert.equal(containsCredentialMaterial([matched]), true);
+    assert.equal(redactOne(matched), `${REDACTED}host`);
+    // 65 characters with no "+", "." or "-" in them: not matched. The entropy
+    // shape takes the scheme, and the user and password stay (the stated limit).
+    const unmatched = `x${'a'.repeat(64)}://${userinfo}@host`;
+    assert.equal(containsCredentialMaterial([unmatched]), false);
+    assert.equal(redactOne(unmatched), `${REDACTED}://${userinfo}@host`);
+    // 65 characters with a "-" in the last 64: matched from the letter after it.
+    const later = `x${'a-'.repeat(32)}://${userinfo}@host`;
+    assert.equal(containsCredentialMaterial([later]), true);
+    assert.equal(redactOne(later), `xa-${REDACTED}host`);
+  });
 });

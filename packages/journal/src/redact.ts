@@ -121,7 +121,15 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   },
   // `scheme://user:password@host` — a connection string carries its
   // credential inline and no env-key rule below would catch it.
-  { name: 'url_userinfo_credential', pattern: /(?<![A-Za-z0-9])[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@/i },
+  // The scheme is at most 64 characters (Amendment 2 W1 of
+  // FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION). Unbounded, the scheme
+  // part was tried from every letter of a run such as "a-a-a-", each try
+  // reaching the end of the value, so the time grew with the square of the
+  // run's length: about three seconds for 65,536 characters, here and in the
+  // guard. Stated limit: a longer scheme is matched only from a later letter
+  // that follows one of its "+", "." or "-", so a URL whose scheme has none of
+  // them in its last 64 characters is not matched.
+  { name: 'url_userinfo_credential', pattern: /(?<![A-Za-z0-9])[a-z][a-z0-9+.-]{0,63}:\/\/[^\s:@/]+:[^\s@/]+@/i },
 ];
 
 /**
@@ -132,13 +140,6 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
  * base64-ish shape, and redacting them would corrupt exactly the argv a
  * governed `git` command needs for the §7.1 reconstruction property. A hex
  * run is a digest or an object id, not a credential.
- *
- * Stated limit (FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION B7): on a
- * long run that alternates word and non-word characters of this alphabet,
- * such as "a+" repeated, the time this pattern takes grows with the square of
- * the run's length, about three seconds for 65,536 characters. The journal
- * route's 64 KB body limit, behind the control-plane token, is its only
- * bound. A fix needs a separate act.
  */
 const ENTROPY_SHAPES: readonly RegExp[] = [
   /\b(?![0-9a-fA-F]+\b)[A-Za-z0-9+/]{40,}={0,2}\b/g,
