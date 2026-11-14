@@ -832,6 +832,36 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
     });
   }
 
+  // Appendix B names "the full 40-character head" on every member line, not
+  // only on this pull request's own. The template matches the first member
+  // line and each later member line with separate patterns, so each wrong
+  // width goes on the other member's line in both places (follow-up to
+  // finding 1 of the Tier-2 review of PR 139 at 9ce46f0).
+  const wrongWidths: ReadonlyArray<readonly [number, string]> = [
+    [7, OLDER_HEAD.slice(0, 7)],
+    [39, OLDER_HEAD.slice(0, 39)],
+    [41, `${OLDER_HEAD}0`],
+  ];
+  for (const [width, otherHead] of wrongWidths) {
+    for (const place of ['first', 'second'] as const) {
+      it(`refuses an envelope whose other member line, placed ${place}, names a ${width}-character head`, () => {
+        const lines = (head: string): string[] => {
+          const own = memberLine('founder-os-build-room', PR, HEAD);
+          const other = memberLine('madventures-tui', 12, head);
+          return place === 'first' ? [other, own] : [own, other];
+        };
+        const full = envelopeText({ members: lines(OLDER_HEAD) });
+        const wrong = envelopeText({ members: lines(otherHead) });
+        assert.equal(otherHead.length, width);
+        assert.equal(wrong, full.replace(OLDER_HEAD, otherHead), 'the envelopes differ only in the other head');
+        const accepted = judgeEnvelope(envelopeInput({ comments: [carrierComment(936, full)] }));
+        assert.equal(accepted.status, 0, accepted.stderr);
+        assert.equal(accepted.verdict.authorized, true);
+        assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(936, wrong)] })), /is not the Appendix B text/);
+      });
+    }
+  }
+
   it('refuses a placeholder hidden in a Markdown link target (Tier-2 at 2a4eea3, finding 2)', () => {
     const text = envelopeText({ scope: '[Phase 3 runtime slices](https://example.invalid/<n>)' });
     assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(932, text)] })), /placeholder/);
