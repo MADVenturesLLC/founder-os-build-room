@@ -115,9 +115,18 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   },
   // A JWT is base64URL, whose `-` and `_` fall outside the entropy shape's
   // alphabet, so it would otherwise reach a row untouched.
+  // Its first part does not run past a "-" or "_" that begins a later "eyJ"
+  // with 8 more characters of the alphabet (Amendment 3 X3 of
+  // FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION). Without that, the part
+  // was tried from every "eyJ" of a run such as "eyJ-eyJ-", each try reaching
+  // the end of the run, so the time grew with the square of the run's length:
+  // about a second for 65,536 characters, here and in the guard. The shape
+  // finds a JWT wherever it did before. Stated limit: where a JWT's first part
+  // holds such a "-" or "_", the match begins at the "eyJ" after the last of
+  // them, and the characters before it stay.
   {
     name: 'json_web_token',
-    pattern: /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
+    pattern: /(?<![A-Za-z0-9])eyJ(?:[A-Za-z0-9]|[_-](?!eyJ[A-Za-z0-9_-]{8})){8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
   },
   // `scheme://user:password@host` — a connection string carries its
   // credential inline and no env-key rule below would catch it.
@@ -126,9 +135,11 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   // part was tried from every letter of a run such as "a-a-a-", each try
   // reaching the end of the value, so the time grew with the square of the
   // run's length: about three seconds for 65,536 characters, here and in the
-  // guard. Stated limit: a longer scheme is matched only from a later letter
-  // that follows one of its "+", "." or "-", so a URL whose scheme has none of
-  // them in its last 64 characters is not matched.
+  // guard. Stated limit (Amendment 3 X1): a scheme longer than 64 characters
+  // is matched only from a letter that directly follows one of its "+", "."
+  // or "-" and leaves at most 64 characters of the scheme from that letter
+  // on. A URL whose scheme has no such letter is not matched, and its user
+  // and password stay unless another shape takes them.
   { name: 'url_userinfo_credential', pattern: /(?<![A-Za-z0-9])[a-z][a-z0-9+.-]{0,63}:\/\/[^\s:@/]+:[^\s@/]+@/i },
 ];
 

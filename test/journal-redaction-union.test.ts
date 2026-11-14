@@ -180,7 +180,7 @@ describe('journal redaction · every match of every shape (FOUNDER-ACT-20261113-
     // this ceiling only catches a return of the quadratic loop.
     assert.ok(elapsed < 500, `took ${elapsed.toFixed(1)} ms`);
   });
-  it('B9(i): the URL shape takes linear time, and still matches a scheme of 64 characters but not one of 65 (Amendment 2 W1, W6)', () => {
+  it('B9(i): the URL shape takes linear time, matches a scheme of 64 characters, and matches a longer one only from a letter after its "+", "." or "-" that leaves at most 64 (Amendment 2 W1, W6; Amendment 3 X2)', () => {
     const r1Of37fdf8f = `${'tok' + 'en'}=${'a-'.repeat(32765)}`;
     const hyphens = 'a-'.repeat(32768);
     for (const input of [r1Of37fdf8f, hyphens]) {
@@ -197,14 +197,71 @@ describe('journal redaction · every match of every shape (FOUNDER-ACT-20261113-
     const matched = `x${'a-'.repeat(31)}a://${userinfo}@host`;
     assert.equal(containsCredentialMaterial([matched]), true);
     assert.equal(redactOne(matched), `${REDACTED}host`);
-    // 65 characters with no "+", "." or "-" in them: not matched. The entropy
-    // shape takes the scheme, and the user and password stay (the stated limit).
+    // 65 characters with no "+", "." or "-": not matched. The entropy shape
+    // takes the scheme, and the user and password stay (the stated limit).
     const unmatched = `x${'a'.repeat(64)}://${userinfo}@host`;
     assert.equal(containsCredentialMaterial([unmatched]), false);
     assert.equal(redactOne(unmatched), `${REDACTED}://${userinfo}@host`);
-    // 65 characters with a "-" in the last 64: matched from the letter after it.
+    // 65 characters, a letter after a "-" leaving 62: matched from that letter.
     const later = `x${'a-'.repeat(32)}://${userinfo}@host`;
     assert.equal(containsCredentialMaterial([later]), true);
     assert.equal(redactOne(later), `xa-${REDACTED}host`);
+    // The confirmation run's three cases (Amendment 3 X2).
+    // 66 characters, the "-" outside the last 64, a letter after it leaving 64: matched.
+    const leaves64 = `x-${'a'.repeat(64)}://${userinfo}@host`;
+    assert.equal(containsCredentialMaterial([leaves64]), true);
+    assert.equal(redactOne(leaves64), `x-${REDACTED}host`);
+    // 65 characters, a "-" in the last 64 but a digit after it: not matched.
+    const digitAfter = `x${'a'.repeat(62)}-1://${userinfo}@host`;
+    assert.equal(containsCredentialMaterial([digitAfter]), false);
+    assert.equal(redactOne(digitAfter), `${REDACTED}-1://${userinfo}@host`);
+    // 65 letters, all hexadecimal: not matched, and the entropy shape leaves a
+    // hex run, so the value comes back unchanged.
+    const allHex = `${'a'.repeat(65)}://${userinfo}@host`;
+    assert.equal(containsCredentialMaterial([allHex]), false);
+    assert.equal(redactOne(allHex), allHex);
+  });
+
+  it('B9(j): the JWT shape takes linear time, finds a JWT wherever the former shape did, and begins after the last "-" or "_" that opens a later start (Amendment 3 X3)', () => {
+    const ey = 'ey' + 'J';
+    // The confirmation run's input of 7e8c9cf, and the same run without a label.
+    const labelled = `${'tok' + 'en'}=${`${ey}-`.repeat(16382)}ey`;
+    const unlabelled = `${ey}-`.repeat(16384);
+    for (const input of [labelled, unlabelled]) {
+      assert.equal(input.length, 65_536);
+      const started = performance.now();
+      const out = redactOne(input);
+      containsCredentialMaterial([input]);
+      const elapsed = performance.now() - started;
+      assert.equal(containsCredentialMaterial([out]), false);
+      // Before X3, the shape took about a second on each.
+      assert.ok(elapsed < 500, `took ${elapsed.toFixed(1)} ms`);
+    }
+    // A JWT, alone and glued after "_": redacted.
+    const jwt = `${ey}${'a'.repeat(20)}.${'b'.repeat(20)}.${'c'.repeat(20)}`;
+    assert.equal(redactOne(jwt), REDACTED);
+    assert.equal(redactOne(`cmd_${jwt}`), `cmd_${REDACTED}`);
+    // A later start with fewer than 8 characters after it does not stop the first part.
+    const shortLater = `${ey}${'a'.repeat(8)}-${ey}abc.${'b'.repeat(8)}.${'c'.repeat(8)}`;
+    assert.equal(redactOne(shortLater), REDACTED);
+    // A later start with 8: the match begins there, and the characters before it stay (the stated limit).
+    const longLater = `${ey}${'a'.repeat(8)}_${ey}${'b'.repeat(8)}.${'c'.repeat(8)}.${'d'.repeat(8)}`;
+    assert.equal(containsCredentialMaterial([longLater]), true);
+    assert.equal(redactOne(longLater), `${ey}${'a'.repeat(8)}_${REDACTED}`);
+    // The guard finds a JWT exactly where the former shape did. No other shape
+    // can match these fragments, so the guard's answer is the JWT shape's.
+    const former = /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/;
+    const fragments = [ey, '-', '_', '.', 'a', 'Zq7', 'abcdefgh', '0', ' ', `${ey}hbGciOiJIUzI1NiJ9`, `${ey}-`, `_${ey}`, `.${ey}`];
+    const next = lcg(2024);
+    let found = 0;
+    for (let i = 0; i < 100_000; i++) {
+      let input = '';
+      const parts = 1 + Math.floor(next() * 14);
+      for (let j = 0; j < parts; j++) input += fragments[Math.floor(next() * fragments.length)];
+      const expected = former.test(input);
+      if (expected) found += 1;
+      assert.equal(containsCredentialMaterial([input]), expected, JSON.stringify(input));
+    }
+    assert.ok(found > 200, `the generator should build some JWTs; it built ${found}`);
   });
 });
