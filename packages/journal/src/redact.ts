@@ -87,15 +87,16 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   // CONTROL_PLANE_TOKEN, PHASE3_ADJUDICATION_TOKEN or PHASE4_COUNTED_RUN_TOKEN
   // shorter than 32 characters or holding a character outside this alphabet
   // (packages/control-plane/src/config.ts), so every token it accepts is
-  // matched whole. This shape comes before every shape but the PEM block, so
-  // that such a token is redacted whole before another shape can redact part
-  // of it and leave the rest too short to match.
+  // matched whole. redactString finds every shape's matches in the value as
+  // it was written (FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION), so the
+  // order of this list decides nothing that is redacted: such a token is
+  // redacted whole even where another shape matches inside it, and a secret's
+  // label glued to its end is still found by labelled_secret.
   // Stated limits: a value with fewer than 20 characters of the alphabet
   // before its first other character is not caught, and a longer one is
-  // redacted only up to that character; another credential that reaches its
-  // own shape's length only with "bearer" glued after it loses that match;
-  // and 20 or more characters of the alphabet after "bearer", such as a bare
-  // PHASE4_COUNTED_RUN_TOKEN or a file path, are caught although not secret.
+  // redacted only up to that character; and 20 or more characters of the
+  // alphabet after "bearer", such as a bare PHASE4_COUNTED_RUN_TOKEN or a
+  // file path, are caught although not secret.
   { name: 'bearer_token', pattern: /(?<![A-Za-z0-9])Bearer\s+[A-Za-z0-9._~+/=-]{20,}/i },
   { name: 'provider_api_key', pattern: /(?<![A-Za-z0-9])(?:sk|pk|rk|ak)-[A-Za-z0-9_-]{16,}(?![A-Za-z0-9])/ },
   { name: 'github_token', pattern: /(?<![A-Za-z0-9])(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/ },
@@ -114,13 +115,32 @@ const CREDENTIAL_SHAPES: readonly CredentialShape[] = [
   },
   // A JWT is base64URL, whose `-` and `_` fall outside the entropy shape's
   // alphabet, so it would otherwise reach a row untouched.
+  // Its first part does not run past a "-" or "_" that begins a later "eyJ"
+  // with 8 more characters of the alphabet (Amendment 3 X3 of
+  // FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION). Without that, the part
+  // was tried from every "eyJ" of a run such as "eyJ-eyJ-", each try reaching
+  // the end of the run, so the time grew with the square of the run's length:
+  // about a second for 65,536 characters, here and in the guard. The shape
+  // finds a JWT wherever it did before. Stated limit: where a JWT's first part
+  // holds such a "-" or "_", the match begins at the "eyJ" after the last of
+  // them, and the characters before it stay.
   {
     name: 'json_web_token',
-    pattern: /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
+    pattern: /(?<![A-Za-z0-9])eyJ(?:[A-Za-z0-9]|[_-](?!eyJ[A-Za-z0-9_-]{8})){8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
   },
   // `scheme://user:password@host` — a connection string carries its
   // credential inline and no env-key rule below would catch it.
-  { name: 'url_userinfo_credential', pattern: /(?<![A-Za-z0-9])[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@/i },
+  // The scheme is at most 64 characters (Amendment 2 W1 of
+  // FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION). Unbounded, the scheme
+  // part was tried from every letter of a run such as "a-a-a-", each try
+  // reaching the end of the value, so the time grew with the square of the
+  // run's length: about three seconds for 65,536 characters, here and in the
+  // guard. Stated limit (Amendment 3 X1): a scheme longer than 64 characters
+  // is matched only from a letter that directly follows one of its "+", "."
+  // or "-" and leaves at most 64 characters of the scheme from that letter
+  // on. A URL whose scheme has no such letter is not matched, and its user
+  // and password stay unless another shape takes them.
+  { name: 'url_userinfo_credential', pattern: /(?<![A-Za-z0-9])[a-z][a-z0-9+.-]{0,63}:\/\/[^\s:@/]+:[^\s@/]+@/i },
 ];
 
 /**
@@ -163,17 +183,89 @@ const SECRET_BEARING_FLAG = /^--?(?:token|api-?key|secret|password|passwd|creden
 const SECRET_BEARING_FLAG_INLINE =
   /^(--?(?:token|api-?key|secret|password|passwd|credential))=/i;
 
+/** Every shape that redacts, global: the credential shapes, then the entropy shape. */
+const REDACTION_SHAPES_GLOBAL: readonly RegExp[] = [...CREDENTIAL_SHAPES_GLOBAL, ...ENTROPY_SHAPES];
+
+/**
+ * Every range, `[start, end)`, that any shape matches in `value` as it was
+ * written. Each shape scans the whole value from its start, leftmost first,
+ * as `String.replace` with that global pattern would, and never sees what
+ * another shape matched (FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION B1).
+ * Replacing shape after shape instead let one shape's match decide what a
+ * later shape could see: a bearer value took a secret's label as characters
+ * of its alphabet, and the labelled value after it stayed in the row.
+ */
+function matchedRanges(value: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (const pattern of REDACTION_SHAPES_GLOBAL) {
+    // A failed `exec` resets lastIndex to 0, so each scan ends where the next
+    // one must start; it is set here as well, so a scan never depends on that.
+    pattern.lastIndex = 0;
+    for (let match = pattern.exec(value); match !== null; match = pattern.exec(value)) {
+      if (match[0].length === 0) {
+        pattern.lastIndex += 1;
+        continue;
+      }
+      ranges.push([match.index, match.index + match[0].length]);
+    }
+  }
+  return ranges;
+}
+
+/**
+ * `value` with each range replaced by REDACTED. Ranges that overlap are
+ * merged and take one marker; ranges that only touch keep one marker each.
+ */
+function replaceRanges(value: string, ranges: Array<[number, number]>): string {
+  if (ranges.length === 0) {
+    return value;
+  }
+  ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let out = '';
+  let cursor = 0;
+  let [start, end] = ranges[0]!;
+  for (let i = 1; i < ranges.length; i++) {
+    const [nextStart, nextEnd] = ranges[i]!;
+    if (nextStart < end) {
+      end = Math.max(end, nextEnd);
+      continue;
+    }
+    out += value.slice(cursor, start) + REDACTED;
+    cursor = end;
+    start = nextStart;
+    end = nextEnd;
+  }
+  return out + value.slice(cursor, start) + REDACTED + value.slice(end);
+}
+
+/**
+ * True when `containsCredentialMaterial` would still find a credential shape
+ * in `value`. The guard reads `value` with every marker removed, so text on
+ * either side of a marker can join into a shape.
+ */
+function guardStillFinds(value: string): boolean {
+  const surviving = withoutMarkers(value);
+  return CREDENTIAL_SHAPES.some((shape) => shape.pattern.test(surviving));
+}
+
+/**
+ * Redact every match of every shape in the value as it was written (B1).
+ * If the guard would still find a credential shape in what is left, the
+ * whole value is redacted (B2, as Amendment 1 of the act sets it), so the
+ * result always passes the guard's shape test. That is one pass of B1 and
+ * one read of the guard's view, whatever the value holds: the act's first
+ * B2, which redacted one surviving match per pass, took time that grew with
+ * the square of the value's length on values of many marker-split
+ * credentials.
+ *
+ * Stated limits: on some inputs this keeps a character that replacing shape
+ * after shape removed, such as the "!" of "token:Bearer <value>!" (B5); and
+ * a value on which B1 leaves text where the guard still finds a credential
+ * shape loses all of its text, not only the credential (Amendment 1 V3).
+ */
 function redactString(value: string): string {
-  let out = value;
-  // `String.replace` with a global regex resets lastIndex itself, so these
-  // are safe to reuse across calls; `.test()` would not be.
-  for (const pattern of CREDENTIAL_SHAPES_GLOBAL) {
-    out = out.replace(pattern, REDACTED);
-  }
-  for (const pattern of ENTROPY_SHAPES) {
-    out = out.replace(pattern, REDACTED);
-  }
-  return out;
+  const out = replaceRanges(value, matchedRanges(value));
+  return guardStillFinds(out) ? REDACTED : out;
 }
 
 /**
