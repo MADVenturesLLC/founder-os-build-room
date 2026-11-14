@@ -835,16 +835,20 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
   // Appendix B names "the full 40-character head" on every member line, not
   // only on this pull request's own. The template matches the first member
   // line and each later member line with separate patterns, so each wrong
-  // width goes on the other member's line in both places (follow-up to
-  // finding 1 of the Tier-2 review of PR 139 at 9ce46f0).
-  const wrongWidths: ReadonlyArray<readonly [number, string]> = [
-    [7, OLDER_HEAD.slice(0, 7)],
-    [39, OLDER_HEAD.slice(0, 39)],
-    [41, `${OLDER_HEAD}0`],
+  // head goes on the other member's line in both places (follow-up to
+  // finding 1 of the Tier-2 review of PR 139 at 9ce46f0). A head of 40
+  // characters that are not all hexadecimal is wrong too (the Tier-2 review
+  // of PR 158 at c968453).
+  const wrongHeads: ReadonlyArray<readonly [string, string, number]> = [
+    ['a 7-character head', OLDER_HEAD.slice(0, 7), 7],
+    ['a 39-character head', OLDER_HEAD.slice(0, 39), 39],
+    ['a 41-character head', `${OLDER_HEAD}0`, 41],
+    ['a 40-character head holding "g"', `${OLDER_HEAD.slice(0, 39)}g`, 40],
+    ['a 40-character head holding "G"', `G${OLDER_HEAD.slice(1)}`, 40],
   ];
-  for (const [width, otherHead] of wrongWidths) {
+  for (const [what, otherHead, length] of wrongHeads) {
     for (const place of ['first', 'second'] as const) {
-      it(`refuses an envelope whose other member line, placed ${place}, names a ${width}-character head`, () => {
+      it(`refuses an envelope whose other member line, placed ${place}, names ${what}`, () => {
         const lines = (head: string): string[] => {
           const own = memberLine('founder-os-build-room', PR, HEAD);
           const other = memberLine('madventures-tui', 12, head);
@@ -852,7 +856,8 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
         };
         const full = envelopeText({ members: lines(OLDER_HEAD) });
         const wrong = envelopeText({ members: lines(otherHead) });
-        assert.equal(otherHead.length, width);
+        assert.equal(otherHead.length, length);
+        assert.equal(/^[0-9A-Fa-f]{40}$/.test(otherHead), false, 'the head is not 40 hexadecimal characters');
         assert.equal(wrong, full.replace(OLDER_HEAD, otherHead), 'the envelopes differ only in the other head');
         const accepted = judgeEnvelope(envelopeInput({ comments: [carrierComment(936, full)] }));
         assert.equal(accepted.status, 0, accepted.stderr);
