@@ -1,0 +1,57 @@
+Return this head for correction: R1 blocks checks 2 and 5. Step 5 of 5 complete. The pinned head and all three act hashes match; the original checkout remains clean.
+
+R1 — P2: scanning the original value introduces quadratic runtime outside B7’s exception.
+
+redactArgv(['token=' + 'a-'.repeat(32765)]);
+
+For this 65,536-character entry, five-run medians were:
+
+- Base: 0.338 ms
+- Head: 1,858.404 ms
+- B6 maximum: 25.677 ms
+
+Previously, labelled_secret removed the value before the URL pattern ran. Now matchedRanges:192 (repo/packages/journal/src/redact.ts:192) applies the unchanged URL pattern:124 (repo/packages/journal/src/redact.ts:124) to the original value. Repeated hyphens permit successive candidate starts, each searching the remaining suffix for ://.
+
+Independent confirmation measured 29.4 / 116.6 / 465.7 ms at lengths 8,192 / 16,384 / 32,768: doubling length approximately quadruples runtime. The URL shape alone took 1,866.8 ms; entropy took 0.5 ms. This is distinct from B7.
+
+A 60,087-byte command body, below the route’s 64 KB limit, took 1,566 ms through normalizeForJournal, versus 0.77 ms at base. Both versions returned [REDACTED]. Reproduction evidence (/tmp/tier2-157-review-MoMiHb/performance-confirm.log:1)
+
+| Check | Result | Evidence |
+|---|---|---|
+| 1. B1 | PASS | Each global pattern scans the original value. Sorting, strict overlap comparison and Math.max preserve the union while keeping touching ranges separate. R1 redacts whole for all eight labels. Independent range comparisons passed 30,000 inputs. Agree with reading (b): global matching does not enumerate overlapping matches within one shape; B2 handles guard-visible residue. redact.ts:186 (repo/packages/journal/src/redact.ts:186), merge:207 (repo/packages/journal/src/redact.ts:207). |
+| 2. B2 and adversarial search | FAIL — runtime finding R1 | B2’s functional behavior passes: marker removal and credential tests agree with the guard; surviving matches replace the whole value. The committed 200,000-input test and 250,000 independently generated inputs found no flagged output; every flagged input changed. No additional credential-shaped survivor was found. Agree with (c)’s scan counts, but one scan can itself take quadratic time. redact.ts:234 (repo/packages/journal/src/redact.ts:234), probe evidence (/tmp/tier2-157-review-MoMiHb/probes.log:1). |
+| 3. B3 | PASS | Diff inspection and declaration comparisons confirm unchanged patterns, flags, order, entropy, environment keys, flag patterns, redactArgv, withoutMarkers, detector and marker. Callers are unchanged. Registry-parity and journal-route tests pass unchanged. Comparison output (/tmp/tier2-157-review-MoMiHb/b3.log:1). |
+| 4. B4/B5/B7/V3 | PASS | Comments describe the amended behavior. The B5 example returns [REDACTED]! versus base’s [REDACTED]; marker-split credentials cause whole-value replacement where base leaves guard-detectable material. Agree with (d). B7’s quadratic behavior is confirmed; its absolute timing depends on the machine—here approximately 1.87 seconds, rather than three. Examples (/tmp/tier2-157-review-MoMiHb/probes.log:1), B7 scaling (/tmp/tier2-157-review-MoMiHb/b7-scale.json:1). |
+| 5. B6 | FAIL | All nine required inputs satisfy the bound. Added hyphenated inputs violate it, including inputs below the HTTP body limit. See table below and R1. |
+| 6. B8/B9 and execution | INCONCLUSIVE overall | Scope and executable checks pass. Exactly three authorized paths changed; the glued-prefix assertion is the only existing assertion changed. Every new test is reached by defect mutations. All six independently applied mutants fail tests; restoration passes 125/125. Typecheck, changed-file ESLint and npm test exit 0. PostgreSQL execution remains unverified because binaries are unavailable. Mutation evidence (/tmp/tier2-157-review-MoMiHb/mutations.json:1), full-suite output (/tmp/tier2-157-review-MoMiHb/npm-test.log:19145). |
+
+Reading (a) is correct about the data boundary: this redactor handles command argv; goals, revision feedback and plans are refused whole by credential guards. Its call-site description is abbreviated: normalization also runs in standalone dispatch and when computing planner-command evidence. dispatch.ts:125 (repo/packages/journal/src/dispatch.ts:125), planner-loop.ts:557 (repo/packages/control-plane/src/planner-loop.ts:557).
+
+Five-run benchmark medians, milliseconds, using approved Node v22.23.4 and separately built base/head copies:
+
+| Input | Base | Head | B6 maximum |
+|---|---:|---:|---:|
+| a repeated | 0.939 | 1.741 | 26.877 |
+| a+ repeated | 1,875.167 | 1,873.303 | 3,775.334 |
+| Bearer alphabet | 0.104 | 0.792 | 25.207 |
+| token=x  repeated | 1.783 | 2.951 | 28.565 |
+| Provider keys repeated | 0.731 | 1.251 | 26.461 |
+| Unterminated PEM | 0.939 | 1.739 | 26.879 |
+| PEM headers repeated | 7.144 | 13.818 | 39.289 |
+| Random base64 | 1.597 | 1.592 | 28.193 |
+| Amendment 1 input | 1.108 | 1.233 | 27.217 |
+| Added hyphenated value | 0.338 | 1,858.404 | 25.677 — FAIL |
+
+Benchmark construction and samples (/tmp/tier2-157-review-MoMiHb/probes.mjs:1).
+
+npm test completed in 332 seconds: 2,442 passed, zero failures, zero cancellations, three counted skips; additional PostgreSQL and Prerequisite C suites were gated off. Path-audit and attribution-shape pass. Custody-pin checking exits 2 because GNU sed is unavailable; secret scanning was not rerun because its available fallback downloads a tool.
+
+Next: send R1 to the builder for correction or Founder disposition of B6.
+
+Not verified: PostgreSQL persistence, gated Prerequisite C proofs or live CI. Confirmed risk: a permitted-size command can occupy the control-plane event loop for over one second.
+
+Final Verdict: REQUEST-CHANGES
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: GPT-6.1-Sol xhigh Fast (Codex CLI /status, reported by the operator)
+Tier2-Head-Sha: 37fdf8fd658d2ff4028a1eb1eb69dad25fa12652
+Tier2-Verdict: REQUEST-CHANGES

@@ -1,0 +1,30 @@
+FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION, Amendment 2: the URL shape's scheme bounded, and B7 corrected
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+Amends: FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION (SHA-256 639f08adab0d2f8a777712c6fe68559a790c30c1c7c2ad9dfada34177c626c98) as amended by its Amendment 1 (eb35842d452b1425113225bdd9ba960aaadc1db13a1746730353c2d3bbc8be4a)
+Pull request: MADVenturesLLC/founder-os-build-room#157, head 37fdf8fd658d2ff4028a1eb1eb69dad25fa12652
+Basis:
+  - The codex Tier-2 review of 37fdf8f under C1. The model is GPT-6.1-Sol xhigh Fast (Codex CLI /status, reported by me). The Tier2-Head-Sha is 37fdf8fd658d2ff4028a1eb1eb69dad25fa12652, and the verdict is REQUEST-CHANGES on its finding R1, under its checks 2 and 5.
+  - R1: on the argv entry "token=" followed by "a-" 32,765 times, redactArgv took a median of 1,858 ms at the head and 0.3 ms at the base, against a B6 bound of 26 ms. B1 now runs url_userinfo_credential over the value as written, and that shape's scheme part, "[a-z][a-z0-9+.-]*", is tried from every letter after a hyphen, each try running to the end of the value.
+  - The builder's checks of 2026-11-13, on the base's code: the cost is not new. On 65,536 characters of "a-" with no label before them, the guard itself takes about 3.2 seconds. On 204,800 characters, the plan store's bound, it takes 28.6 seconds. The guard checks every goal, piece of revision feedback, plan and journal row.
+  - The builder's error: on "a+" repeated, the 3 seconds that A5 and B7 attribute to the entropy shape are this shape's too. Measured on 65,536 characters of "a+", the entropy shape alone takes 1.1 ms and url_userinfo_credential alone 3,195.7 ms.
+
+I, Michael Daley, Founder of MAD Ventures, amend the act as follows. Every part not named here stands as signed and amended.
+
+W1. The scheme bounded. url_userinfo_credential's pattern becomes /(?<![A-Za-z0-9])[a-z][a-z0-9+.-]{0,63}:\/\/[^\s:@/]+:[^\s@/]+@/i: a scheme of at most 64 characters, where it had no bound. Nothing else in the pattern, its flags or its place in the list changes. This is the one change to a shape this act makes, an exception to B3 and to Part F's first line. The comment above the shape states the bound and why.
+W2. What W1 changes, measured by the builder on a prototype of W1 over the 37fdf8f build:
+  - Times, against the base: R1's input takes 11.0 ms (base 0.3 ms). "a-" repeated 32,768 times takes 23.6 ms (base 3,310.7 ms). "a+" repeated 32,768 times takes 10.8 ms (base 3,256.4 ms).
+  - The guard on 204,800 characters of "a-" takes 35.1 ms.
+  - The journal suites pass, 125 of 125, and every result of A4 and of Amendment 1 V2 holds.
+  - All eleven inputs of W4 are within B6.
+W3. Stated limit, added to B5: a URL whose scheme is longer than 64 characters is no longer matched by url_userinfo_credential, in redaction or in the guard.
+W4. B6's inputs are A4's eight, Amendment 1's, R1's and "a-" repeated 32,768 times.
+W5. A5's last sentence and B7 are withdrawn: with W1, "a+" repeated is no longer slow. The comment above ENTROPY_SHAPES that B7 placed is removed.
+W6. B9 gains: "(i) The URL shape's time and reach. R1's input of the review of 37fdf8f, and 'a-' repeated 32,768 times, are each redacted, and read by the guard, in under 500 ms. A URL carrying a user and password is still matched with a scheme of 64 characters, and not with one of 65."
+W7. The builder pushes W1, W5's comment change and W6's tests to pull request 157 as one commit, within B8's three paths. It also briefs the reviewer for the confirmation run of FOUNDER-ACT-20261028-VELOCITY B2, in a fresh session, at the new head. The brief corrects reading (a): normalizeForJournal also runs in dispatchGovernedCommand (packages/journal/src/dispatch.ts) and when the planner loop digests a command's evidence (packages/control-plane/src/planner-loop.ts).
+W8. Nothing else changes.
+
+Signed: Michael Daley
+Date: 2026-11-13 (UTC)
+
+Actor-Id: founder

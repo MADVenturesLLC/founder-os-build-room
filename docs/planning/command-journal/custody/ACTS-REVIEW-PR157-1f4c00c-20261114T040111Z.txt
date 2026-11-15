@@ -1,0 +1,34 @@
+Step 4 of 4 complete: PASS-WITH-ADVISORIES. No blocking defect found in the correction. Unassisted default-suite completion remains inconclusive.
+
+VERIFIED: exact HEAD, all five supplied authority hashes, and Node v22.23.4. Scope: FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION, Amendment 3 X1–X4.
+
+1. PASS — P3, X1 and X2. Agree with (a).
+   The URL comment accurately describes the bounded pattern. All B9(i) cases passed, including the three P3 cases: x-[REDACTED]host, [REDACTED]-1://admin:hunter2@host, and the unchanged URL, respectively. An independent generator checked 600,000 valid schemes, including the earliest match position, without disagreement. Evidence: redact.ts:138 (repo/packages/journal/src/redact.ts:138), B9(i):183 (repo/test/journal-redaction-union.test.ts:183), probe output:2 (/tmp/tier2-157c-third-mf1Spz/properties.log:2).
+2. PASS — X3 time. Agree with (b) and (c).
+   The former pattern repeatedly scanned overlapping suffixes. The replacement stops before qualified later starts, with bounded lookahead. Because dots are outside the alphabet, segment backtracking adds only constant rescanning. This supports linear matching for both detection and global scanning. No superlinear counterexample was found for either touched shape through 65,536 characters, across 13 scaling families. All 27 timing inputs, covering the brief’s listed families and additional adversarial inputs, met B6. Evidence: pattern:129 (repo/packages/journal/src/redact.ts:129), timings and scaling (/tmp/tier2-157c-third-mf1Spz/benchmark.log:2), additional probes (/tmp/tier2-157c-third-mf1Spz/benchmark-extra.log:2).
+3. PASS — X3 reach. Agree with (d) and (e).
+   The rightmost qualified later start has the required eight characters and reaches the same following segments. Every new match is also a former-pattern match. Independent checks covered 403,251 inputs, including 38,492 positives: detection agreed, match ends stayed unchanged, and starts moved exactly as documented. Every tested redacted output passed the guard. The existing generator’s 645 positives were reproduced. The behavioral change is the documented surviving header prefix, subject to unchanged overlap handling and B2’s whole-value fallback. The comment and B9(j) describe that limit accurately. Evidence: comment:118 (repo/packages/journal/src/redact.ts:118), guard fallback:246 (repo/packages/journal/src/redact.ts:246), probe output:3 (/tmp/tier2-157c-third-mf1Spz/properties.log:3).
+4. INCONCLUSIVE — unassisted default-suite completion; scope checks PASS.
+   Git confirmed one commit, two files, +76/−8. Transpiled-source comparison confirmed exactly X3’s replacement and no other executable production change. All seven prior tests retain their statements and assertions; B9(i) appends the authorized cases, and B9(j) is new. Typecheck and changed-file eslint exited 0.
+
+   npm test retained the acceptance-gateway fixture process. After approximately 119 seconds, I terminated that process; the command exited 1, reporting 2,433 passing, 1 failing, 3 skipped. Isolated diagnostics passed all 26 subtests but retained a Unix server and timed out. The same behavior reproduced with the previous JWT pattern; the acceptance test’s blob also matches main and the previous head. This is an unrelated advisory, not a correction defect. Evidence: default-run failure (/tmp/tier2-157c-third-mf1Spz/npm-test-corrected.log:14850), retained server (/tmp/tier2-157c-third-mf1Spz/acceptance-handles.log:51), previous-pattern reproduction (/tmp/tier2-157c-third-mf1Spz/acceptance-previous-pattern.log:51).
+
+Median of five runs, milliseconds:
+
+| Input | 6dbfa08 | HEAD | B6 bound | HEAD guard |
+|---|---:|---:|---:|---:|
+| Confirmation JWT input | 0.182 | 6.485 | 25.363 | 0.171 |
+| eyJ- ×16,384 | 3,040.900 | 12.026 | 6,106.801 | 5.677 |
+| R1 of 37fdf8f | 0.318 | 10.323 | 25.636 | 0.314 |
+
+Advisory — agree with (f). The unchanged registry JWT pattern:108 (repo/packages/redaction/src/registry.ts:108) remains quadratic: 129.4 → 521.9 → 2,091.9 ms at 16,384 → 32,768 → 65,536 characters. Its follow-up remains outside B8. Registry parity passed.
+
+All seven mutations failed their intended tests. After restoration, the focused suites passed 55/55, exit 0. The original checkout remains clean at the required HEAD.
+
+Not checked: database-backed/live-custody coverage or the builder’s other gate commands. Follow-ups remain the registry cost and acceptance-fixture cleanup; both are advisories under the brief’s B2 rule:69 (BRIEF-PR157-1f4c00c.txt:69).
+
+Final Verdict: PASS-WITH-ADVISORIES
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: GPT-6.1-Sol (Codex CLI /status, reported by the operator)
+Tier2-Head-Sha: 1f4c00c7cb99aca700412ff57de30dffa5f06b1c
+Tier2-Verdict: PASS-WITH-ADVISORIES

@@ -1,0 +1,80 @@
+TIER-2 REVIEW: MADVenturesLLC/founder-os-build-room pull request 157, head 37fdf8fd658d2ff4028a1eb1eb69dad25fa12652, base main 4ebea4ca40ab643484d8c39b17725d7d4f63ca19
+
+You are the independent Tier-2 reviewer on the codex surface: one review of this exact head (FOUNDER-ACT-20261028-VELOCITY B2). The author is claude-code (builder, Anthropic).
+
+Why it exists. The journal's write path redacts credential shapes from a command's argv before the row is written (packages/journal/src/redact.ts, redactArgv, called by normalizeForJournal). Until this pull request, redactString replaced shape after shape, each over what the earlier shapes had left. The review of pull request 146 at 6dbfa08 found R1: in "Bearer " followed by 32 characters, then "_password=", a space and a value, bearer_token takes the label as characters of its alphabet, labelled_secret never sees it, and the value stays in the row. The Founder accepted R1 as a stated limit and merged 6dbfa08 (Amendment 6 of the bearer act), and owed a fix (its U5). His Phase 4 stop-gate ruling holds the gate open until that fix merges with a Tier-2 PASS at its exact final head. This pull request is that fix, under FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION and its Amendment 1.
+
+Read-only:
+- Read ./repo at that head, and the three files beside this brief, and nothing else: no host instructions, no memory, no history, no files from any earlier review, nothing outside this directory except the temporary copy you make to build and test.
+  157-FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION-639f08ad.txt: the act (SHA-256 639f08adab0d2f8a777712c6fe68559a790c30c1c7c2ad9dfada34177c626c98). Part B is the change: B1 every match, B2 the guard agrees, B3 what stays unchanged, B4 the comments, B5 and B7 stated limits, B6 time, B8 paths, B9 tests. C1 names what this review checks; Part F names what is not authorized.
+  157-FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION-AMENDMENT-1-eb35842d.txt: Amendment 1 (SHA-256 eb35842d452b1425113225bdd9ba960aaadc1db13a1746730353c2d3bbc8be4a). It replaces B2 (V1), adds a stated limit (V3), adds an input to B6 (V4) and replaces B9(f) (V5). Read B2 and B9(f) as it sets them.
+  157-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-6-4607c85c.txt: Amendment 6 of the bearer act (SHA-256 4607c85c3d7cc677a46eeb548d543e7939a6eeff70a43b8587dcec3e1035262a), for U1 (the cause), U2 (the limit) and U5 (what is owed).
+  The four reviews of pull request 146 are in the repository: docs/planning/command-journal/custody/ACTS-REVIEW-PR146-*.txt.
+- The operator ran npm ci in ./repo under Node 22, so ./repo/node_modules is the dependency tree. Use it and no package outside ./repo; if it is absent, stop with INCONCLUSIVE.
+- Build and test where your sandbox allows writing, for example a copy of ./repo, its .git and node_modules included, in a temporary directory. Contact no service. Storage suites start their own PostgreSQL (BUILDROOM_TEST_PG_BINDIR) and refuse to run as root; if your sandbox has neither, say so and judge them by reading them.
+- First check that git rev-parse HEAD in ./repo prints the head above; if not, stop with INCONCLUSIVE.
+- The model line. The operator names the model from Codex CLI /status before you start. If no model has been named, stop and ask for it. Never write a placeholder in Tier2-Reviewer-Model: a review whose model line is a placeholder does not count (the Founder's ruling of 2026-11-13).
+
+The change, git diff 4ebea4c..HEAD: 3 files, +285 -20, in two commits. c542c24 is the act's change; 37fdf8f replaces its B2 under Amendment 1. That amendment answers Copilot's review of c542c24, whose finding was that the first B2 rescanned the whole value once per surviving match.
+- packages/journal/src/redact.ts:
+  - REDACTION_SHAPES_GLOBAL (line 175).
+  - matchedRanges (line 186): every range each shape matches in the value as written (B1).
+  - replaceRanges (line 207): overlapping ranges merged under one marker, touching ranges one marker each.
+  - guardStillFinds (line 234): whether the guard's shapes match the value with its markers removed.
+  - redactString (line 254): B1, then the whole value as one marker if guardStillFinds (B2 as Amendment 1 V1 sets it).
+  - The comments above bearer_token (lines 90 to 99) and above ENTROPY_SHAPES (lines 135 to 141) are corrected (B4, B7).
+  - Nothing else in the file changes.
+- test/journal-redaction-union.test.ts, new: B9 (a), (b), (d), (e) and (f), at lines 49, 60, 88, 131, 149 and 170.
+- test/journal-bearer-shape.test.ts: the test of Amendment 4 Q3's glued prefix (line 178) now expects one marker, and its title says the limit is closed (B9(c)). The file's header comment no longer says the order of the shapes decides what is redacted. Nothing else changes.
+
+The builder's readings. Say whether you agree with each.
+(a) Where redaction runs (A2). redactString is reached only through redactArgv, which normalizeForJournal applies to a command envelope's argv. That happens at the journal HTTP route (packages/control-plane/src/journal-routes.ts) and when the control plane journals a planner command (packages/control-plane/src/journal-store.ts, the journaled row). Goals, revision feedback and plans never pass through it; containsCredentialMaterial refuses them whole.
+(b) B1 scans each shape as a global regular expression scans the value as written, leftmost first. It does not search from every position, so a later match of one shape that starts inside an earlier match of the same shape is not sought. B2 covers anything such a match could leave: if the guard would still find it, the whole value goes.
+(c) B2 reads the guard's view once, so redactString costs one scan per shape for B1 plus one marker-removal and one test per credential shape for B2, whatever the value holds.
+(d) Stated limits.
+  - B5: on some inputs the change keeps a character that 6dbfa08 replaced. For example, "token:Bearer evt_<uuid>!" becomes "[REDACTED]!" where 6dbfa08 gives "[REDACTED]".
+  - Amendment 1 V3: a value on which B1 leaves text where the guard still finds a credential shape becomes one marker. At 6dbfa08 normalizeForJournal refuses such a value.
+  - Neither limit leaves text in which the guard finds a credential shape.
+
+The builder's runs at 37fdf8f:
+- npm run typecheck exit 0; eslint of the three changed files clean.
+- scripts/path-audit.sh, scripts/secret-scan.sh and scripts/custody-pin-check.sh exit 0; scripts/attribution-shape-check.sh pr passes.
+- The full default suite: 2,462 tests, 2,447 passing, 2 skipped. The one failure and the 12 cancellations are all in migrate-cli, whose setup cannot reach a PostgreSQL server in the builder's environment (ECONNREFUSED), as on main. CI at 37fdf8f: storage-integration passed, the storage suite, its re-run and the runtime-role tier among it, and Typecheck passed on Linux and macOS.
+- Mutation: five mutants, each applied alone, each failing at least one test:
+  - B1 made sequential again;
+  - B2 removed;
+  - touching ranges merged;
+  - a nested range shrinking the merged end;
+  - the guard's view keeping the markers.
+- Time (B6): the median of five runs on one machine, in ms, for 6dbfa08 (whose redact.ts the base carries unchanged) and then this head:
+  - "a" x65,536: 1.1, 1.6;
+  - "a+" x32,768: 3,162.7, 3,196.0 (B7's stated limit);
+  - "Bearer " then the alphabet to 65,536: 0.1, 0.9;
+  - "token=x " repeated: 2.3, 4.7;
+  - "sk-" keys repeated: 1.0, 2.9;
+  - a PEM BEGIN line then 65,505 "A": 1.7, 3.1;
+  - PEM BEGIN lines repeated: 36.1, 72.8;
+  - random base64: 0.9, 0.9;
+  - Amendment 1's input, 1,872 copies of "ghp_[REDACTED]" + 20 "A" + space: 1.1, 1.2.
+
+Other reviews. Copilot reviewed c542c24: its one finding, the first B2's per-match rescans, is fixed by 37fdf8f under Amendment 1. Copilot reviewed 37fdf8f: two findings, both answered on the pull request with no change. One said the new test does not type-check under noUncheckedIndexedAccess; it does (npm run typecheck exit 0; CI's Typecheck green). The other asked for distinct clause labels; both tests prove B9(f) as V5 sets it. Cursor's security agent returned neutral on each head.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line or command output):
+1. B1. Does redactString find every match of every credential shape and of the entropy shape in the value as written, each shape over the whole value? Does it replace the union of their ranges, with overlapping ranges under one marker and touching ranges under one each? Is R1 redacted whole for each of the eight label forms labelled_secret knows? Do you agree with reading (b)?
+2. B2 as Amendment 1 sets it. Does every output of redactArgv pass containsCredentialMaterial, for argv you construct yourself as well as the test's? Is each input the guard flags changed? Do you agree with reading (c)? Find, if you can, any of these:
+   - an output the guard flags;
+   - a credential value that survives where 6dbfa08 redacted it;
+   - an input whose time grows faster than its length, apart from B7's.
+3. B3. By the diff, is each of these unchanged: every shape's pattern, flag and order; the entropy shape; SECRET_ENV_KEYS; the two flag patterns; redactArgv's rules; withoutMarkers; containsCredentialMaterial; REDACTED; every caller? Do the registry-parity and journal-route tests pass unchanged?
+4. B4, B5, B7 and Amendment 1 V3. Do the corrected comments say what the code does? Are the examples right, and do you agree with reading (d)? Is B7's measurement right?
+5. B6. Rerun the nine inputs above, five times each, against a build of the base and of this head on the same machine. Is the head's median within twice the base's plus 25 ms on each, and on any input you add?
+6. B8 and B9 as Amendment 1 sets it. Are the changed paths only the three above? Does each test exist and fail on the defect it claims? Is the glued-prefix test the only existing assertion that changes? Do npm run typecheck and npm test complete, with any failure's cause named?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2; the Founder's rule of 2026-10-28): a finding blocks only if it is P1, or concerns checks 1 to 6. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 37fdf8fd658d2ff4028a1eb1eb69dad25fa12652
+Tier2-Verdict: <same as Final Verdict>

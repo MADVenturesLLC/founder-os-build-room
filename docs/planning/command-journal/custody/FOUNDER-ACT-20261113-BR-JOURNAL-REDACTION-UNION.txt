@@ -1,0 +1,68 @@
+FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION: redact every match of every shape in the value as written (Amendment 6 U5 of the bearer act)
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+origin/main when drafted: 4ebea4ca40ab643484d8c39b17725d7d4f63ca19 (packages/journal/src/redact.ts unchanged since 6dbfa0861cf418603db85c7f148ff1466204b765)
+Under: FOUNDER-ACT-20261105-BR-BEARER-SHAPE (SHA-256 b90b0ce7d14462cfd4fcb0374e7f3d6c0658a73ebcfb9fe4ea2a0f25b2dce34e) as amended by Amendments 1 to 7 (954155f9f6a4de501abf86df589c2a337c267428c078b04dfb85890bb0ecb925, a824e4388257bbe81c19799a906eee94a6a753df6bdfb4d806e761a338731f91, 40ac3fc01095d1320eef86cdd8ff6e2a8e9d8654e49f52e10567feebbfbdb688, bbc7ba63222072948718c33bb50bc8c7ee9887624c3ba27dcf3ec36752ba7dff, 73dc3cad4b68ee502de87a890398e3d46c270f962c2cda46c591af9d41122d58, 4607c85c3d7cc677a46eeb548d543e7939a6eeff70a43b8587dcec3e1035262a, 1747dd7a061ce4a97d03912085cd0a105785b9e2d0e9f45957d2df66423c885a), its Amendment 6 U5 in particular; DEC-20260815-17, Founder Authorization - Phase 4 (Planner Loop) (2026-08-31), Section 7 item 3; my choices on the draft Part G ruling in the builder's session at 2026-11-13T19:40:42Z, "1a, 4a, accept 2 3 5, scope b; draft U5"; the Founder ruling on journal redaction of 2026-10-04 (C3); DEC-20260718-04; FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE C1 and C4; FOUNDER-ACT-20261028-VELOCITY B1 to B4; FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY B3
+The builder read, before drafting, at 4ebea4c: packages/journal/src/redact.ts in full; redactArgv's and normalizeForJournal's callers (packages/journal/src/dispatch.ts, packages/control-plane/src/journal-store.ts, packages/control-plane/src/planner-loop.ts); JOURNAL_BODY_LIMIT in packages/control-plane/src/journal-routes.ts; test/journal-bearer-shape.test.ts; the four Tier-2 reviews of pull request 146 as filed (ACTS-REVIEW-PR146-*.txt); its own record of the prototype of 2026-11-05.
+
+I, Michael Daley, Founder of MAD Ventures, act as follows.
+
+Part A: Basis
+A1. What is owed. Amendment 6 U5 reads: "After the merge and its deploy, the builder drafts my separate act to change redactString so that it redacts every match of every shape found in the value as it was written, merging matches that overlap, and to settle the cases its prototype left open: outputs in which, with the markers removed, the guard still finds a match. That act carries R1 and every case of the four reviews as tests, with its own review." Under Exception 1 (a) of my Part G ruling as I chose it, the Phase 4 stop gate stays open until this change merges with a Tier-2 PASS at its exact final head.
+A2. Where redaction runs. redactString is reached only through redactArgv, which normalizeForJournal applies to a command envelope's argv. That happens at the journal HTTP route and when the control plane journals a planner command. Goals, revision feedback and plans never pass through it: containsCredentialMaterial refuses them whole if they hold a credential shape. In counted set 3 the seven journaled argv arrays were each "--room <room id> --opened-by evt_<uuid>", and redaction at 6b80c22 left every one unchanged (the builder's check, 2026-11-13).
+A3. The defect. At 6dbfa08 redactString applies the shapes one after another, each to what the shapes before it left, so the end of one match decides what a later shape can see (U1). R1 is that case: in "Bearer " followed by 32 characters, then "_password=", a space and a value, bearer_token takes the label and labelled_secret never sees it, so the value stays in the row. The same cause leaves the start of a provider-key shape that reached its length only with "-bearer" glued after it (Amendment 4 Q3's stated limit).
+A4. The builder's prototype of 2026-11-13, outside the repository, with B1 and B2's design over the 6dbfa08 build:
+  - R1 is redacted whole for each of the eight label forms labelled_secret knows. 6dbfa08 leaves " hunter2" in each.
+  - Amendment 4 Q3's glued input is redacted whole.
+  - Over 200,000 inputs generated from credential fragments, markers and glue, the guard flags none of its outputs, and 164 of 6dbfa08's outputs for the same inputs.
+  - Every input the existing bearer tests hold comes out as at 6dbfa08, apart from Amendment 4 Q3's glued input. The planner command's argv form is unchanged.
+  - Over another 200,000 such inputs, 164 keep a character that 6dbfa08 replaced. Each such character is outside every credential shape; for example, "token:Bearer evt_<uuid>!" becomes "[REDACTED]!" where 6dbfa08 gives "[REDACTED]".
+  - On eight 65,536-character inputs, the median of five runs is within twice 6dbfa08's median plus 25 ms in each. The closest is repeated PEM headers: 78.4 ms against a bound of 93.8 ms. The 2026-11-05 prototype, which searched from every position, took about 340 ms on random base64 where 6dbfa08 takes about 2 ms; it is not the design here.
+A5. A cost found here, not caused here. On 65,536 characters of "a+" repeated, 6dbfa08's entropy shape takes about 3.1 to 3.3 seconds, and the prototype the same. The journal route accepts a body of 64 KB from a holder of the control-plane token, so one request can hold the route for seconds.
+
+Part B: The change
+B1. Every match. redactString finds every match of each credential shape and of the entropy shape in the value as it was written, each shape scanning the whole value from its start, leftmost first, as a global regular expression scans. It replaces the union of their ranges: ranges that overlap become one range, replaced by one [REDACTED]; ranges that only touch stay separate, each replaced by its own [REDACTED].
+B2. The guard agrees. After B1, while the result, with every [REDACTED] removed as containsCredentialMaterial removes them, still matches a credential shape, the first such match, mapped back onto the result together with any marker within it, is replaced by one [REDACTED]. Each pass replaces at least one character outside a marker, so it ends. This settles U5's open cases: such a value is redacted, where at 6dbfa08 normalizeForJournal refuses it.
+B3. Unchanged: each shape's pattern and flags; the shapes' list and order; the entropy shape; SECRET_ENV_KEYS; the two flag patterns; redactArgv's own rules; withoutMarkers; containsCredentialMaterial; REDACTED; and every caller. Registry parity under the ruling of 2026-10-04 is unaffected.
+B4. The comments. The comment above bearer_token and the module's text on order are corrected to the code after B1: order no longer decides what is redacted. The stated limits B1 closes (R1's, U2; the glued prefix, Amendment 4 Q3) are removed. Those that stand stay, word for word where still true: fewer than 20 characters of the alphabet are not caught; a value holding a character outside the alphabet is caught only by its leading run; 20 or more characters of the alphabet after "bearer" are caught although not secret. B5's limit is added.
+B5. Stated limit, accepted: on some inputs this change keeps a character that 6dbfa08 replaced. B2 ensures no such character is left where the guard finds a credential shape.
+B6. Time. On each of A4's eight 65,536-character inputs, and on any input the reviewer adds, the median of five runs of the new redactString takes no more than twice 6dbfa08's median, plus 25 ms, on the same machine. The builder reports the table in the pull request and the reviewer reruns it. It is not a CI test.
+B7. A5's cost is left as a stated limit, named in the comment above ENTROPY_SHAPES. A fix needs my separate act.
+B8. Paths: packages/journal/src/redact.ts; test/journal-bearer-shape.test.ts; a new test/journal-redaction-union.test.ts. No other path.
+B9. Tests.
+  (a) R1, for each of the eight label forms labelled_secret knows (token, api_key, api-key, apikey, secret, password, passwd, credential): redacted whole, and the guard passes the result.
+  (b) Every case of the four reviews of pull request 146, each with its expected output stated: of 984518d, the punctuated 32-character token (unchanged; the stated limit the control plane's config closes for its tokens); of 65d5591, R1 ("Bearer q7Rq7Rq7R![REDACTED]!tail"; the same limit) and R2 (the token holding a marker: unchanged); of 04f2739, two bearer values in one JSON-serialized string (both redacted); of 6dbfa08, R1 (as (a)). A case an existing test already holds keeps its input unchanged.
+  (c) The glued prefix of Amendment 4 Q3. The existing test "leaves the start of a provider-key shape that reached its length only with "-bearer" glued after it: a stated limit" changes its expected output from the prefix and a marker to one marker, and its title to say the limit is closed. This is the only existing assertion this act changes, and it is strengthened.
+  (d) The guard agrees. For 200,000 inputs generated from a fixed seed out of credential fragments, markers and glue, containsCredentialMaterial(redactArgv([x])) is false; and every input the guard flags is changed by redactArgv.
+  (e) No match, no change. An argv entry in which no shape matches comes back unchanged: prose, Git SHAs, SHA-256 digests, UUIDs, and the planner command's argv form "--room <room id> --opened-by evt_<uuid>".
+  (f) Overlap and passes. Overlapping ranges become one marker; touching ranges stay two; B2 ends on an input that needs more than one pass.
+  (g) Each new test fails when what it covers is removed or changed (B1 made sequential again, B2 removed, the overlap test made inclusive or exclusive), shown by mutation as for pull requests 149 to 153.
+  (h) Every other existing test passes unchanged, the journal, secrets, registry-parity, bearer, journal-route and plan-store suites among them.
+
+Part C: Review, merge and deploy
+C1. Review: Codex Tier-2 of the exact final head under FOUNDER-ACT-20261028-VELOCITY B1 to B4, on the codex:openai lane, with the model read from Codex CLI /status and written in Tier2-Reviewer-Model. A placeholder there means the review does not count, as I ruled on 2026-11-13. The brief asks the reviewer to check: B1 and B2 against the code; B3 by the diff; B5 and its own search for any output the guard flags; B6's table; B9 case by case; and B8's paths. Advisory reviews are dispositioned under C4 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE.
+C2. Merge: my separate SHA-named authorization. Merging deploys the control plane, whose code this changes; under B3 of FOUNDER-ACT-20261029-BR-CONTROL-PLANE-DEPLOY that authorization also authorizes the deploy, and the builder verifies it reached SUCCESS and that /version and boot.start name the merge commit.
+C3. No Gateway move. The Gateway imports nothing from packages/journal (the builder's check at 4ebea4c), so nothing changes on the PC.
+C4. Order. The merge is made only when no rehearsal window and no counted-run freeze is open, and the builder states that at the merge.
+
+Part D: What follows
+D1. After the merge and its deploy, the builder drafts, at the merge commit, the brief for the bounded review of Exception 4 (a) of my Part G ruling, and then the further ruling that closes Exception 1 (a). Neither is authorized here.
+D2. Whether counted set 3 stands for item 13 across this change is decided in my Part G ruling, not here.
+
+Part E: Records and filing
+E1. The builder records each line of mine, each check and each result in its audit record, stamped from the clock.
+E2. This act, its review, the merge and deploy verification and the benchmark table are filed with the next custody filing under C1 of FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE, which needs my separate authorization.
+
+Part F: Not authorized
+- Any change beyond Part B, including any shape, its alphabet or length, the guard, a caller, or packages/redaction.
+- Closing Phase 4, or the review of Exception 4 (a), by this act.
+- Any run, counted or not; any Railway variable or setting; any migration or SQL; any change on the PC or the MacBook.
+- Any merge without my separate authorization.
+- Phase 5.
+- Any repository other than MADVenturesLLC/founder-os-build-room.
+
+Part G: Signature
+Signed: Michael Daley
+Date: 2026-11-13 (UTC)
+
+Actor-Id: founder
