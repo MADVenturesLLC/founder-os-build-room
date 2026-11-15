@@ -832,6 +832,44 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
     });
   }
 
+  // Appendix B names "the full 40-character head" on every member line, not
+  // only on this pull request's own. The template matches the first member
+  // line and each later member line with separate patterns, so each wrong
+  // head goes on the other member's line in both places (follow-up to
+  // finding 1 of the Tier-2 review of PR 139 at 9ce46f0). A head of 40
+  // characters that are not all hexadecimal is wrong too (the Tier-2 review
+  // of PR 158 at c968453), and so is one holding a digit outside ASCII,
+  // which jq's \d and \p{Hex_Digit} admit (its confirmation run at 230981b).
+  const wrongHeads: ReadonlyArray<readonly [string, string, number]> = [
+    ['a 7-character head', OLDER_HEAD.slice(0, 7), 7],
+    ['a 39-character head', OLDER_HEAD.slice(0, 39), 39],
+    ['a 41-character head', `${OLDER_HEAD}0`, 41],
+    ['a 40-character head holding "g"', `${OLDER_HEAD.slice(0, 39)}g`, 40],
+    ['a 40-character head holding "G"', `G${OLDER_HEAD.slice(1)}`, 40],
+    ['a 40-character head holding the Arabic-Indic digit one (U+0661)', `${OLDER_HEAD.slice(0, 39)}\u0661`, 40],
+    ['a 40-character head holding the fullwidth digit one (U+FF11)', `\uFF11${OLDER_HEAD.slice(1)}`, 40],
+  ];
+  for (const [what, otherHead, length] of wrongHeads) {
+    for (const place of ['first', 'second'] as const) {
+      it(`refuses an envelope whose other member line, placed ${place}, names ${what}`, () => {
+        const lines = (head: string): string[] => {
+          const own = memberLine('founder-os-build-room', PR, HEAD);
+          const other = memberLine('madventures-tui', 12, head);
+          return place === 'first' ? [other, own] : [own, other];
+        };
+        const full = envelopeText({ members: lines(OLDER_HEAD) });
+        const wrong = envelopeText({ members: lines(otherHead) });
+        assert.equal(otherHead.length, length);
+        assert.equal(/^[0-9A-Fa-f]{40}$/.test(otherHead), false, 'the head is not 40 hexadecimal characters');
+        assert.equal(wrong, full.replace(OLDER_HEAD, otherHead), 'the envelopes differ only in the other head');
+        const accepted = judgeEnvelope(envelopeInput({ comments: [carrierComment(936, full)] }));
+        assert.equal(accepted.status, 0, accepted.stderr);
+        assert.equal(accepted.verdict.authorized, true);
+        assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(936, wrong)] })), /is not the Appendix B text/);
+      });
+    }
+  }
+
   it('refuses a placeholder hidden in a Markdown link target (Tier-2 at 2a4eea3, finding 2)', () => {
     const text = envelopeText({ scope: '[Phase 3 runtime slices](https://example.invalid/<n>)' });
     assertRefused(judgeEnvelope(envelopeInput({ comments: [carrierComment(932, text)] })), /placeholder/);
