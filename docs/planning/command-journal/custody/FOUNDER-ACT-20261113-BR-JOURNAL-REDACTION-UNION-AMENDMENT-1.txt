@@ -1,0 +1,29 @@
+FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION, Amendment 1: B2 in one step, so its time is bounded
+DRAFT by the builder (claude-code). It has no effect until I sign it in the builder's session.
+Repository: MADVenturesLLC/founder-os-build-room
+Amends: FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION (SHA-256 639f08adab0d2f8a777712c6fe68559a790c30c1c7c2ad9dfada34177c626c98)
+Pull request: MADVenturesLLC/founder-os-build-room#157, head c542c242608bd0306e4f1fec82790cea304b8955
+Basis: Copilot's review of c542c24 (review 5897372769; its thread on packages/journal/src/redact.ts, comment 4568116066) found that B2 rescans the whole value once per credential it redacts, so a value holding many credentials split by markers takes time that grows with the square of its length. The builder reproduced it on a 65,520-character argv entry of 1,872 GitHub tokens, each written "ghp_[REDACTED]" then 20 letters and a space. On that entry redactArgv takes 2,058.7 ms at c542c24 and 2.0 ms at 6dbfa08, where the guard then flags the value and normalizeForJournal refuses it. B6's bound for that input is 29 ms, so c542c24 does not meet the act.
+
+I, Michael Daley, Founder of MAD Ventures, amend the act as follows. Every part not named here stands as signed.
+
+V1. B2 is replaced by: "B2. The guard agrees. After B1, if the result, with every [REDACTED] removed as containsCredentialMaterial removes them, still matches a credential shape, the whole value is replaced by one [REDACTED]. This settles U5's open cases: such a value is redacted whole, where at 6dbfa08 normalizeForJournal refuses it. B2 reads the result once, so redactString makes one pass of B1 and one read of the guard's view."
+V2. What V1 costs, measured by the builder on a prototype of V1 over the c542c24 build:
+  - The input of the basis takes 7.8 ms.
+  - Every result of A4 holds:
+    - R1 is redacted whole for the eight label forms.
+    - The existing bearer tests' inputs come out as at 6dbfa08, apart from the glued input.
+    - The guard flags none of the outputs for the 200,000 generated inputs.
+    - The planner command's argv is unchanged.
+    - Each of the eight timings is within B6.
+  - On 327 of those 200,000 inputs, the result is one marker where c542c24 kept some text. 164 of the 327 held a literal marker before redaction.
+V3. Stated limit, added to B5: a value on which B1 leaves text in which the guard still finds a credential shape loses all of its text, not only the credential.
+V4. B6 stands, and the input of the basis joins A4's eight inputs.
+V5. B9(f) is replaced by: "(f) Overlap and the guard. Overlapping ranges become one marker; touching ranges stay two; a value whose credentials appear only once its markers are removed becomes one marker; and the input of Amendment 1's basis finishes within B6's bound." In B9(g), "B2 removed" stays.
+V6. The builder pushes V1, with the tests V5 changes, to pull request 157 as one commit, and gives the reviewer a brief at the new head. C1's review is of that head.
+V7. Nothing else changes.
+
+Signed: Michael Daley
+Date: 2026-11-13 (UTC)
+
+Actor-Id: founder

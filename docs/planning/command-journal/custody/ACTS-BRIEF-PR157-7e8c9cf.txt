@@ -1,0 +1,64 @@
+TIER-2 CONFIRMATION RUN: MADVenturesLLC/founder-os-build-room pull request 157, head 7e8c9cf5586b04d2d6bc89f3e2d381fdb735fba4, previously reviewed head 37fdf8fd658d2ff4028a1eb1eb69dad25fa12652, base main 4ebea4ca40ab643484d8c39b17725d7d4f63ca19
+
+You are the independent Tier-2 reviewer on the codex surface, in a fresh session. This is the confirmation run of FOUNDER-ACT-20261028-VELOCITY B2: it reviews only the correction diff, 37fdf8f..7e8c9cf, and the one blocking finding it answers. The author is claude-code (builder, Anthropic).
+
+The finding it answers. The review of 37fdf8f returned REQUEST-CHANGES on R1 (P2, checks 2 and 5): on the argv entry "token=" followed by "a-" 32,765 times, redactArgv took a median of 1,858 ms at that head against 0.3 ms at the base, outside B6's bound of 26 ms. The cause was url_userinfo_credential's unbounded scheme part, which B1 now runs over the value as written. Its checks 1, 3 and 4 passed; check 6 was INCONCLUSIVE only because PostgreSQL could not run.
+
+Read-only:
+- Read ./repo at the head above, and the four files beside this brief, and nothing else: no host instructions, no memory, no history, no files from any earlier review, nothing outside this directory except the temporary copy you make to build and test.
+  157-FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION-639f08ad.txt: the act (SHA-256 639f08adab0d2f8a777712c6fe68559a790c30c1c7c2ad9dfada34177c626c98).
+  157-FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION-AMENDMENT-1-eb35842d.txt: Amendment 1 (SHA-256 eb35842d452b1425113225bdd9ba960aaadc1db13a1746730353c2d3bbc8be4a).
+  157-FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION-AMENDMENT-2-8fa64452.txt: Amendment 2 (SHA-256 8fa644524b76ddcc9c9860ed004b84e588f6774dbac98e499683314453bee115), the correction's authority: W1 the bound, W3 its stated limit, W4 B6's inputs, W5 B7 withdrawn, W6 the test, W7 this run.
+  157-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-6-4607c85c.txt: Amendment 6 of the bearer act (SHA-256 4607c85c3d7cc677a46eeb548d543e7939a6eeff70a43b8587dcec3e1035262a), for context.
+- The operator ran npm ci in ./repo under Node 22, so ./repo/node_modules is the dependency tree. Use it and no package outside ./repo; if it is absent, stop with INCONCLUSIVE.
+- Build and test in a temporary copy of ./repo, its .git and node_modules included. Contact no service.
+- First check that git rev-parse HEAD in ./repo prints the head above; if not, stop with INCONCLUSIVE.
+- The model line. The operator names the model from Codex CLI /status before you start. If no model has been named, stop and ask for it. Never write a placeholder in Tier2-Reviewer-Model.
+
+The correction, git diff 37fdf8f..HEAD: one commit, 2 files, +36 -8.
+- packages/journal/src/redact.ts:
+  - url_userinfo_credential (line 132): its scheme part "[a-z][a-z0-9+.-]*" becomes "[a-z][a-z0-9+.-]{0,63}" (W1). Nothing else in the pattern, its flags or its place in the list changes.
+  - The comment above it (lines 122 to 131) states the bound, why, and the limit.
+  - The comment above ENTROPY_SHAPES that B7 placed is removed (W5).
+- test/journal-redaction-union.test.ts: a new test, B9(i) (line 183), as W6 sets it.
+
+The builder's readings. Say whether you agree with each.
+(a) The cause. On 65,536 characters of "a+" repeated, the builder timed each shape alone at the base: the entropy shape took 1.1 ms, url_userinfo_credential 3,195.7 ms. So B7's attribution to the entropy shape was wrong, and W5 withdraws it. The same shape made R1 slow. At the base, with no label before the run, the guard itself takes about 3.2 seconds on 65,536 characters of "a-", and 28.6 seconds on 204,800.
+(b) The bound makes the shape's cost linear: from each starting letter, the scheme part tries at most 64 characters before it fails or reaches "://".
+(c) W3 overstates the limit; the real limit is narrower. The pattern may begin at any letter that follows a non-alphanumeric character, so a scheme longer than 64 characters is still matched from a later letter after one of its "+", "." or "-". Only a URL whose scheme has none of these in its last 64 characters goes unmatched. In that case, if the scheme's last 40 or more characters are letters or digits, the entropy shape redacts the scheme and the user and password stay. The comment and B9(i) state this exact limit.
+(d) Reading (a) of the first brief, corrected (W7). normalizeForJournal, and so redactString, also runs in dispatchGovernedCommand (packages/journal/src/dispatch.ts:125), and when the planner loop digests a command's evidence (packages/control-plane/src/planner-loop.ts:557).
+
+The builder's runs at 7e8c9cf:
+- npm run typecheck exit 0; eslint of the two changed files clean.
+- scripts/path-audit.sh, scripts/secret-scan.sh and scripts/custody-pin-check.sh exit 0; scripts/attribution-shape-check.sh pr passes.
+- The journal suites (redaction-union, bearer-shape, 7.3-secrets, registry-parity, journal-routes): 126 of 126.
+- The full default suite: 2,463 tests, 2,448 passing, 2 skipped. The one failure and the 12 cancellations are all in migrate-cli, which cannot reach a PostgreSQL server in the builder's environment, as on main.
+- Mutation: making the scheme part unbounded again, or bounding it at 63, each fails B9(i).
+- The guard on 204,800 characters of "a-": base 28,607 ms, head 35.7 ms.
+- Time (B6 as W4 sets it), the median of five runs on one machine, in ms, for 6dbfa08 (whose redact.ts the base carries unchanged) and then this head:
+  - "a" x65,536: 0.9, 1.3;
+  - "a+" x32,768: 3,187.8, 11.3;
+  - "Bearer " then the alphabet to 65,536: 0.1, 0.8;
+  - "token=x " repeated: 2.2, 5.3;
+  - "sk-" keys repeated: 0.9, 1.9;
+  - a PEM BEGIN line then 65,505 "A": 1.2, 1.4;
+  - PEM BEGIN lines repeated: 36.3, 71.7;
+  - Amendment 1's input: 1.2, 1.4;
+  - R1's input: 0.2, 11.0;
+  - "a-" x32,768: 3,185.5, 22.7;
+  - random base64: 0.9, 1.2.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line or command output):
+1. R1. Is R1 resolved: does its input, and "a-" repeated 32,768 times, now meet B6, and does B9(i) fail if the bound is removed? Do you agree with readings (a) and (b)? Find, if you can, another input of up to 65,536 characters whose time grows faster than its length.
+2. W1 and W3. Is the pattern changed exactly as W1 writes it, and nothing else in any shape? Do you agree with reading (c), and do the comment and B9(i) state the limit truly? Does any URL with a user and password that the base's pattern matched now go unmatched, other than as reading (c) describes?
+3. W5 and W6. Is B7's comment removed? Does B9(i) exist as W6 sets it, and do the existing tests still pass unchanged?
+4. Scope. Does the correction diff touch only the two files above? Do npm run typecheck and npm test complete, with any failure's cause named?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2; the Founder's rule of 2026-10-28): a finding blocks only if it is P1, or a defect in the correction itself under checks 1 to 4. Every other finding is an advisory and tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 7e8c9cf5586b04d2d6bc89f3e2d381fdb735fba4
+Tier2-Verdict: <same as Final Verdict>

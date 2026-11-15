@@ -1,0 +1,76 @@
+TIER-2 THIRD REVIEW: MADVenturesLLC/founder-os-build-room pull request 157, head 1f4c00c7cb99aca700412ff57de30dffa5f06b1c, previously reviewed head 7e8c9cf5586b04d2d6bc89f3e2d381fdb735fba4, base main 4ebea4ca40ab643484d8c39b17725d7d4f63ca19
+
+You are the independent Tier-2 reviewer on the codex surface, in a fresh session. The author is claude-code (builder, Anthropic). The confirmation run at 7e8c9cf found one blocking defect in the correction itself, P3, so FOUNDER-ACT-20261028-VELOCITY B2 allows this one third review. It is the last review the rules allow without the Founder's ruling. Under Amendment 3 X4, it reviews only the diff 7e8c9cf..HEAD, P3 and X3.
+
+What it answers.
+- P3 of the confirmation run (blocking): the comment above url_userinfo_credential stated its limit wrongly. Each case below is followed by "://admin:hunter2@host". "x-" then 64 "a" is matched, although the comment said it was not. "x", then 62 "a", then "-1" is not matched: the user and password stay, and the guard does not flag it. 65 "a" is not matched, and the whole URL stays.
+- The confirmation run's inherited advisory. The input is "token=", then "eyJ-" 16,382 times, then "ey". It took 2,094.2 ms against a bound of 25.4 ms. The Founder chose to fix it in this pull request (Amendment 3 X3, option (b)).
+
+Read-only:
+- Read ./repo at the head above, and the five files beside this brief, and nothing else: no host instructions, no memory, no history, no files from any earlier review, and nothing outside this directory except the temporary copy you make to build and test.
+  157-FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION-639f08ad.txt: the act (SHA-256 639f08adab0d2f8a777712c6fe68559a790c30c1c7c2ad9dfada34177c626c98).
+  157-FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION-AMENDMENT-1-eb35842d.txt: Amendment 1 (SHA-256 eb35842d452b1425113225bdd9ba960aaadc1db13a1746730353c2d3bbc8be4a).
+  157-FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION-AMENDMENT-2-8fa64452.txt: Amendment 2 (SHA-256 8fa644524b76ddcc9c9860ed004b84e588f6774dbac98e499683314453bee115).
+  157-FOUNDER-ACT-20261113-BR-JOURNAL-REDACTION-UNION-AMENDMENT-3-51713089.txt: Amendment 3 (SHA-256 51713089fd2a41bc1d226727da6b340e3ab056559f878e49bd8269c55586ee4a), this correction's authority. X1 is the comment. X2 restates W3 and W6 and adds B9(i)'s cases. X3 is the JWT shape. X4 is this review.
+  157-FOUNDER-ACT-20261105-BR-BEARER-SHAPE-AMENDMENT-6-4607c85c.txt: Amendment 6 of the bearer act (SHA-256 4607c85c3d7cc677a46eeb548d543e7939a6eeff70a43b8587dcec3e1035262a), for context.
+- The operator ran npm ci in ./repo under Node 22, so ./repo/node_modules is the dependency tree. Use it and no package outside ./repo. If it is absent, stop with INCONCLUSIVE.
+- Build and test in a temporary copy of ./repo, its .git and node_modules included. Contact no service.
+- First check that git rev-parse HEAD in ./repo prints the head above. If it does not, stop with INCONCLUSIVE.
+- The model line. The operator names the model from Codex CLI /status before you start. If no model has been named, stop and ask for it. Never write a placeholder in Tier2-Reviewer-Model: a review whose model line is a placeholder does not count.
+
+The correction, git diff 7e8c9cf..HEAD: one commit, 2 files, +76 -8.
+- packages/journal/src/redact.ts:
+  - json_web_token (line 128). Its first part, "[A-Za-z0-9_-]{8,}", becomes "(?:[A-Za-z0-9]|[_-](?!eyJ[A-Za-z0-9_-]{8})){8,}" (X3). Nothing else in the pattern, its flags or its place in the list changes.
+  - The comment above json_web_token (lines 118 to 126) states why, and the limit.
+  - The comment above url_userinfo_credential (lines 138 to 142) states the limit as X1 sets it. No pattern there changes.
+- test/journal-redaction-union.test.ts:
+  - B9(i) (line 183): the title and the notes on its cases are corrected, and the confirmation run's three cases are added (line 209), as X2 sets them. Its earlier assertions are unchanged.
+  - B9(j) (line 225) is new. It tests the JWT shape's time on the run's input and on "eyJ-" repeated to 65,536 characters (under 500 ms each, redaction and the guard). It tests the shape's reach on a JWT alone and glued after "_", a later start too short to stop the first part, and the stated limit. Over 100,000 generated inputs, 645 of which the former shape matches, it checks that the guard's answer equals the former shape's (line 253).
+
+The builder's readings. Say whether you agree with each.
+(a) The URL rule. A scheme longer than 64 characters is matched only from a letter that directly follows one of its "+", "." or "-", where the scheme from that letter on is at most 64 characters. The builder checked this against the pattern on 600,000 generated schemes, with no mismatch.
+(b) Why the former JWT shape was slow. Its first part was tried from every "eyJ" that is not preceded by a letter or digit, which includes every "eyJ" after "-" or "_". Each try ran to the end of the run of base64URL characters, then backtracked looking for ".". On "eyJ-" repeated, that is a quarter of the run's positions times the run's length.
+(c) Why the new shape is linear. A start's first part stops at the next "-" or "_" that begins a later "eyJ" followed by 8 more characters of the alphabet. In a run, every start is either the run's first, one of these later starts, or within the run's last 11 characters. So the stretches the tries scan do not overlap. Each "-" or "_" costs a lookahead of at most 11 characters. The second part is reached from at most one start per run. The guard reads the same pattern.
+(d) Why it finds a JWT wherever the former shape did. The alphabet excludes ".", so a first part that is followed by "." is the whole rest of its run. Suppose the former shape matches from the run's leftmost start. Take the last "-" or "_" in that first part that begins an "eyJ" with 8 more characters. The start after it has a first part that reaches the same end, has at least 8 characters, and contains no such "-" or "_". It is followed by the same second and third parts, so the new shape matches there. If there is no such "-" or "_", it matches from the same start. Every match of the new shape is a match of the former. Matches end where they did and begin at the same place or later in the same first part.
+(e) The stated limit. Where a JWT's first part holds such a "-" or "_", the characters before the later start stay in the row. They are the start of the JWT's header, as in B9(j)'s case at "longLater". B2 still makes the whole value one marker if the guard would find a credential in what is left.
+(f) Outside this act. packages/redaction/src/registry.ts:108 has its own jwt shape, with the former first part and a trailing lookahead, and packages/run-harness/src/redaction-boundary.ts uses it. It is outside B8's paths and is not changed. The builder reports it to the Founder as a follow-up. Registry parity still holds: the guard detects every vector in journal-redaction-registry-parity.
+
+The builder's runs at 1f4c00c:
+- npm run typecheck exit 0; eslint of the two changed files clean.
+- scripts/path-audit.sh, scripts/secret-scan.sh and scripts/custody-pin-check.sh exit 0; scripts/attribution-shape-check.sh pr passes.
+- Journal union, bearer-shape and 7.3-secrets: 45 of 45.
+- The full default suite: 2,464 tests, 2,449 passing, 2 skipped. The one failure and the 12 cancellations are all in migrate-cli, which cannot reach a PostgreSQL server in the builder's environment (ECONNREFUSED), as on main.
+- Mutation, each applied alone, each failing its test:
+  - for the URL shape, the scheme bounded at {0,62} or at {0,64}, or unbounded, each fails B9(i);
+  - for the JWT shape, the former first part fails B9(j) (1,217.5 ms);
+  - the lookahead counting 7 or 9 characters fails B9(j);
+  - the first part without its "-" or "_" alternative fails B9(j).
+- Time (B6, on any input the reviewer adds as well): the median of five runs on one machine, in ms, for 6dbfa08 (whose redact.ts the base carries unchanged) and then this head. This machine ran faster than the one behind the earlier briefs.
+  - "a" x65,536: 0.5, 0.7;
+  - "a+" x32,768: 1,024.1, 5.8;
+  - "Bearer " then the alphabet to 65,536: 0.1, 0.5;
+  - "token=x " repeated: 1.6, 3.7;
+  - "sk-" keys repeated: 0.7, 1.5;
+  - a PEM BEGIN line then 65,505 "A": 0.5, 0.8;
+  - PEM BEGIN lines repeated: 24.1, 48.2;
+  - Amendment 1's input: 0.8, 1.0;
+  - R1's input of 37fdf8f: 0.2, 6.2;
+  - "a-" x32,768: 984.4, 11.4;
+  - the confirmation run's JWT input: 0.1, 3.8;
+  - "eyJ-" x16,384: 1,545.9, 7.1;
+  - random base64: 0.6, 0.7.
+
+Checks (answer each PASS / FAIL / INCONCLUSIVE, citing file:line or command output):
+1. P3, X1 and X2. Does the comment above url_userinfo_credential state the rule truly? Do B9(i)'s cases hold, the three new ones included? Do you agree with reading (a)?
+2. X3, time. Is json_web_token now linear, in redaction and in the guard? Do the confirmation run's input and "eyJ-" x16,384 meet B6? Do you agree with readings (b) and (c)? Find, if you can, any input of up to 65,536 characters on which a shape this diff touches takes time that grows faster than its length.
+3. X3, reach. Does the new shape match wherever the former did? Do you agree with reading (d)? Does every output of redactArgv pass containsCredentialMaterial? Is reading (e)'s limit the only change to what is redacted? Do the comment and B9(j) state that limit truly?
+4. Scope. Does the diff touch only the two files above? Is the pattern changed exactly as X3 writes it, and nothing else in any shape? Are the existing tests unchanged, apart from B9(i) as X2 sets it? Do npm run typecheck and npm test complete, with the cause of any failure named?
+
+What blocks (FOUNDER-ACT-20261028-VELOCITY B2): a finding blocks only if it is P1, or a defect in this correction itself under checks 1 to 4. Every other finding is an advisory and a tracked follow-up. A head whose only findings are advisories is PASS-WITH-ADVISORIES.
+
+End with exactly these lines:
+Final Verdict: <PASS | PASS-WITH-ADVISORIES | REQUEST-CHANGES | INCONCLUSIVE>
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: <the model the operator's line names, verbatim, then " (Codex CLI /status, reported by the operator)">
+Tier2-Head-Sha: 1f4c00c7cb99aca700412ff57de30dffa5f06b1c
+Tier2-Verdict: <same as Final Verdict>

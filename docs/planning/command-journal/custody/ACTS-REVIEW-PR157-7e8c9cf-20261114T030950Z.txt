@@ -1,0 +1,40 @@
+REQUEST-CHANGES — correct the newly added URL-limit comment. All four checks are reported; the source checkout remains unchanged.
+
+1. PASS — R1 resolved. Median of five runs under Node v22.23.4: R1 takes 10.103 ms, below its 25.435 ms B6 bound. Bare a- repeated 32,768 times takes 20.017 ms. Removing the bound makes B9(i) fail at 1,865.5 ms. Readings (a) and (b) agree with the evidence: the base URL shape took 1,874 ms versus 0.38 ms for entropy, and the bounded scheme tries at most 64 characters per eligible start. Timing evidence (/tmp/tier2-157-confirm-Pa59XX/shape-times.json), mutation failure (/tmp/tier2-157-confirm-Pa59XX/mutation-unbounded.tap:4).
+2. FAIL — P3 correction defect: the stated limit is inaccurate. W1’s pattern, flags and position are exact; every other shape is unchanged. However, the new comment (repo/packages/journal/src/redact.ts:129) and reading (c) fail these probes. Each scheme below is followed by ://admin:hunter2@host, and the base matches all three:
+
+   | Scheme | Verified head behavior |
+   |---|---|
+   | 'x-' + 'a'.repeat(64) — 66 characters | Matches, despite having no punctuation in its last 64 characters; contradicts the comment. |
+   | 'x' + 'a'.repeat(62) + '-1' — 65 characters | Misses, despite punctuation in its last 64 characters; credentials remain and the guard returns false. |
+   | 'a'.repeat(65) | Entire URL remains unchanged; entropy excludes all-hex runs. |
+
+   The exact rule requires a letter-starting suffix of at most 64 characters, beginning at the scheme start or immediately after +, . or -. Twenty thousand generated schemes agreed with that rule. B9(i)’s specific assertions pass, but they do not establish the claimed exact limit. Correct the comment and add these boundary cases. This newly introduced defect blocks under the brief’s checks 1–4 rule. Probe results (/tmp/tier2-157-confirm-Pa59XX/url-probes.json), entropy exclusion (repo/packages/journal/src/redact.ts:145).
+3. PASS — W5 and W6. B7’s comment is removed; B9(i) exists (repo/test/journal-redaction-union.test.ts:183). Both mutations—unbounded scheme and a 63-character cap—fail B9(i). After restoring and rebuilding, the five journal suites pass 126/126, exit 0. Both reviewed files match the originals byte-for-byte. Mutation results (/tmp/tier2-157-confirm-Pa59XX/mutations.json), restored tests (/tmp/tier2-157-confirm-Pa59XX/journal-restored.tap).
+4. INCONCLUSIVE — full-suite completion. Scope passes: exactly one commit, two files, +36/−8. All four authority hashes match, and npm run typecheck exits 0. npm test exits 1 after reviewer termination of the unchanged room-runtime acceptance test at 194.8 seconds: 2,432 passed, 1 terminated, 3 skipped. Its underlying nontermination cause remains UNPROVEN; PostgreSQL suites skipped because server binaries were unavailable. Reading (d) is correct: normalization occurs in dispatch (repo/packages/journal/src/dispatch.ts:165) and the planner evidence digest (repo/packages/control-plane/src/planner-loop.ts:557). Full-suite failure (/tmp/tier2-157-confirm-Pa59XX/npm-test-corrected.log:14843).
+
+All eleven benchmark categories pass B6; medians are milliseconds, measured through redactArgv([input]). Fixtures and samples (/tmp/tier2-157-confirm-Pa59XX/benchmark.json).
+
+| Input | Base | Head | B6 bound |
+|---|---:|---:|---:|
+| a repeated | 0.827 | 1.369 | 26.655 |
+| a+ repeated | 1,872.573 | 9.742 | 3,770.146 |
+| Bearer alphabet | 0.112 | 1.328 | 25.225 |
+| token=x repeated | 1.820 | 2.501 | 28.640 |
+| Provider keys | 0.700 | 1.850 | 26.401 |
+| PEM header plus As | 0.971 | 1.175 | 26.941 |
+| PEM headers repeated | 35.287 | 70.110 | 95.575 |
+| Amendment 1 | 1.131 | 1.334 | 27.261 |
+| R1 | 0.218 | 10.103 | 25.435 |
+| a- repeated | 1,872.364 | 20.017 | 3,769.728 |
+| Seeded base64 | 1.617 | 1.772 | 28.233 |
+
+Inherited advisory: 'token=' + 'eyJ-'.repeat(16382) + 'ey' is 65,536 characters and takes 2,094.2 ms, against a 25.427 ms bound. Doubling length approximately quadruples runtime. It also fails at 37fdf8f (3,025.7 ms), so it is outside this correction’s blocking scope. Adversarial measurements (/tmp/tier2-157-confirm-Pa59XX/adversarial.json).
+
+Scope limitation: one overbroad repository search surfaced historical custody/review excerpts, contrary to the brief; those excerpts were excluded from the review evidence. No memory was accessed. PostgreSQL coverage and a clean default-suite result remain unverified.
+
+Final Verdict: REQUEST-CHANGES
+Tier2-Reviewer-Id: codex
+Tier2-Reviewer-Model: GPT-6.1-Sol xhigh Fast (Codex CLI /status, reported by the operator)
+Tier2-Head-Sha: 7e8c9cf5586b04d2d6bc89f3e2d381fdb735fba4
+Tier2-Verdict: REQUEST-CHANGES
