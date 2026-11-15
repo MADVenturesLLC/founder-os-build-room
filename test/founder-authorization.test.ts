@@ -838,13 +838,16 @@ describe('envelope route — refused envelope comments (B1.3, B1.6, B1.7)', () =
   // head goes on the other member's line in both places (follow-up to
   // finding 1 of the Tier-2 review of PR 139 at 9ce46f0). A head of 40
   // characters that are not all hexadecimal is wrong too (the Tier-2 review
-  // of PR 158 at c968453).
+  // of PR 158 at c968453), and so is one holding a digit outside ASCII,
+  // which jq's \d and \p{Hex_Digit} admit (its confirmation run at 230981b).
   const wrongHeads: ReadonlyArray<readonly [string, string, number]> = [
     ['a 7-character head', OLDER_HEAD.slice(0, 7), 7],
     ['a 39-character head', OLDER_HEAD.slice(0, 39), 39],
     ['a 41-character head', `${OLDER_HEAD}0`, 41],
     ['a 40-character head holding "g"', `${OLDER_HEAD.slice(0, 39)}g`, 40],
     ['a 40-character head holding "G"', `G${OLDER_HEAD.slice(1)}`, 40],
+    ['a 40-character head holding the Arabic-Indic digit one (U+0661)', `${OLDER_HEAD.slice(0, 39)}\u0661`, 40],
+    ['a 40-character head holding the fullwidth digit one (U+FF11)', `\uFF11${OLDER_HEAD.slice(1)}`, 40],
   ];
   for (const [what, otherHead, length] of wrongHeads) {
     for (const place of ['first', 'second'] as const) {
