@@ -57,10 +57,10 @@ bind the pull request and the runs, not tests, and are not mapped.
 | 1 | S | test/journal-authority.storage.test.ts | B-R1 runtime INSERT/UPDATE/DELETE/TRUNCATE on both journal tables: eight distinct permission denied for table | the runtime login cannot change journal rows |
 | 1 | S | test/journal-writer.storage.test.ts | finds a chain-hash tamper at its seq, then passes once restored | PostgreSQL verify names the tampered seq; reconstruction is refused |
 | 1 | S | test/journal-store.storage.test.ts | every persisted row re-encodes to its own column seq and re-chains from genesis to the head | every row re-encodes and re-chains to the head |
-| 1 | D | test/journal-sole-writer.test.ts | names the routine in exactly journal-store.ts and migrations.ts under packages/, and nowhere else | one module writes the journal |
+| 1 | D | test/journal-sole-writer.test.ts | names the routine in exactly journal-store.ts and migrations.ts under packages/, and nowhere else | under `packages/`, only the store and the migrations name the append routine (a name check, not proof that one module writes) |
 | 1 | S | test/phase4-lifecycle.storage.test.ts | items 1, 10: fresh stores over the same database rebuild every room, the journal verifies from genesis, and nothing is duplicated | after a whole lifecycle, the journal verifies and rebuilds |
 | 2 | D | test/control-plane-server.test.ts | refuses ${name} with 403 and never reaches the store | the generic route refuses every planner-path event before the store |
-| 2 | S | test/journal-store.storage.test.ts | the identity latch: the owner-class login that applied the migrations is refused — 503, no statement past the latch, zero rows — while WITHOUT the latch its append succeeds (the bypass is real) | no login but the runtime one reaches the journal |
+| 2 | S | test/journal-store.storage.test.ts | the identity latch: the owner-class login that applied the migrations is refused — 503, no statement past the latch, zero rows — while WITHOUT the latch its append succeeds (the bypass is real) | the store and its route refuse the owner-class login that applied the migrations before any journal statement (no head read, no routine call); that login can still append by calling the routine directly (a stated limit, below) |
 | 2 | S | test/planner-loop.storage.test.ts | a round: T2 with its journaled command, then identity_bound, dispatched, and T3 committing with the plan and completed | T2 commits with its journaled command; its evidence is that row |
 | 2 | S | test/phase4-lifecycle.storage.test.ts | items 2, 6, 7: no surface but the plan-decision route decides, and only with the adjudication token and the plan under review | over HTTP, the generic route refuses every planner-path event |
 | 3 | S | test/journal-store.storage.test.ts | persists exactly encodeCommandEventRow of the submitted fields at the persisted seq with the injected clock, chained as packages/journal chains | a token in an argument is stored as `[REDACTED]` |
@@ -77,7 +77,7 @@ bind the pull request and the runs, not tests, and are not mapped.
 | 5 | S | test/phase4-lifecycle.storage.test.ts | items 4, 5, 8: the goal captured on T1 reaches the Planner on the Gateway and returns as a stored, bound plan | the Gateway's plan is stored once, keyed by its command |
 | 6 | S | test/plan-decision.storage.test.ts | a wrong hash is G5’s recorded rejection, with no decision record | a wrong hash approves nothing |
 | 6 | S | test/plan-decision.storage.test.ts | a revision moves the room back to PLANNING and carries the feedback | rejection by revision is a recorded transition |
-| 6 | D | test/plan-decision.test.ts | with the token set, the control-plane token and no token are both unauthorized | only the adjudication token decides |
+| 6 | D | test/plan-decision.test.ts | with the token set, the control-plane token and no token are both unauthorized | neither the control-plane token nor no token can decide a plan (401); the adjudication token deciding is the next row's |
 | 6 | S | test/phase4-lifecycle.storage.test.ts | items 6, 7, 8: a revision invalidates the plan; the revised plan, not the first, is approved and enters BUILDING | revise, re-plan and approve over HTTP |
 | 7 | S | test/plan-decision.storage.test.ts | a decided plan cannot be decided again | one decision per plan |
 | 7 | S | test/planner-loop.storage.test.ts | cancel in PLAN_REVIEW carries the plan hash; afterwards nothing plans or approves | a cancelled room plans and approves nothing |
@@ -109,7 +109,7 @@ bind the pull request and the runs, not tests, and are not mapped.
 | §12-c | S | test/plan-decision.storage.test.ts | when the decision record cannot be written, the transition does not stand either | the converse: the transition rolls back with the decision |
 | §12-d | D | test/journal-vectors.test.ts | the mixed chain verifies from the 64-zero genesis in seq order | the committed mixed chain verifies in order |
 | §12-d | S | test/phase4-lifecycle.storage.test.ts | items 1, 10: fresh stores over the same database rebuild every room, the journal verifies from genesis, and nothing is duplicated | PostgreSQL's rebuild of a mixed chain reproduces both classes in seq order |
-| §2-a | D | test/journal-vectors.test.ts | the mixed chain verifies from the 64-zero genesis in seq order | the chain holds a pre-plan cancel with no `plan_hash`, and verifies |
+| §2-a | D | test/journal-vectors.test.ts | the mixed chain verifies from the 64-zero genesis in seq order | the committed chain, its pre-plan cancel row included, verifies in order; the test does not read that row's state or `plan_hash` (the next row shows the cancel) |
 | §2-a | D | test/plan-decision.test.ts | in PLANNING after a failed command: no plan hash, bound to that command, G22 fact derived | a cancel in PLANNING carries no hash |
 | §2-b | D | test/journal-serialization.test.ts | requires plan_hash at a post-plan state and forbids it pre-plan (no sentinel) | a post-plan decision without its hash is refused |
 | §2-b | D | test/plan-decision.test.ts | in PLAN_REVIEW the Founder sends the plan’s hash, and the row carries it | a hash-less decision in PLAN_REVIEW is refused |
@@ -153,6 +153,40 @@ more into the map than it holds.
 - **§2-b.** No test offers PostgreSQL's `verify()` stored post-plan decision
   bytes that lack `plan_hash`, because the encoder will not produce them;
   the refusal is shown at the encoder and at `decidePlan`.
+- **The owner-class login.** The store refuses to append unless the
+  connected login and role are both `br_app_runtime`, checked by its own
+  identity query before any journal statement (`requireRuntimeIdentity`,
+  `control-plane/src/journal-store.ts`), and the control plane refuses to
+  boot as any other role (`control-plane/src/schema-preflight.ts`). The
+  database's grants do not latch the same way. A non-superuser login that
+  applied the migrations with `createrole_self_grant` set to SET and INHERIT
+  (the shape the identity-latch test gives Neon's owner) holds
+  `br_app_runtime`'s privileges through its membership and can call
+  `command_journal_append` directly, outside the control plane; the
+  identity-latch row above proves it. A superuser bypasses the grants
+  outright. A row appended that way skips the store's append-time checks:
+  the latch, the lifecycle-event check and the completion-authorization
+  check. It enters the same chain, and `verify()` and `reconstruct()` still
+  apply the hash chain, decoding, spec order and the cross-row rules to it.
+  Rows do not record the login that appended them, so a row that passes
+  those checks cannot be told from one the store wrote. The map shows the
+  latch, not the closing of this path. It is one case of a wider boundary:
+  the journal's protections bind the logins the control plane uses. The
+  administrative login that applies the migrations creates the journal's
+  roles, and the migration's own note says such a creator holds ADMIN OPTION
+  on them (`0006` in `control-plane/src/migrations.ts`, "Applier
+  privileges"). No test here shows the journal holding against that login.
 - **Most of the evidence is storage-suite evidence.** A run without
   PostgreSQL skips it. CI runs both storage tiers; the lifecycle suite runs
   in the runtime-role tier only, because the journal accepts no other login.
+
+## Corrections
+
+- **2026-11-16.** The Tier-2 review that Exception 4 of the Founder's
+  Phase 4 stop-gate ruling requires, run at `f3e884b` on grok-build,
+  returned FAIL: in four rows the last column said more than the cited
+  test shows. Rewritten to what each test shows: the sole-writer row
+  (label 1), the identity-latch row (label 2, the blocking finding), the
+  adjudication-token row (label 6) and the vector-chain row (label §2-a).
+  The owner-class login is now a stated limit above. No test and no code
+  changed.
