@@ -102,7 +102,7 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.type == 'User'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Read-only: the model holds the credential here, so it holds no write
     # capability anywhere. Publishing happens in `post`.
     permissions:
@@ -245,7 +245,7 @@ jobs:
   post:
     needs: review
     if: needs.review.result == 'success' && needs.review.outputs.structured != ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The only job with a write capability; it runs no model and holds no
     # credential.
     permissions:

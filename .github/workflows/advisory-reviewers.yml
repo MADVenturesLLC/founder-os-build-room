@@ -108,7 +108,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
       && github.event.pull_request.user.type == 'User'
       && github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Worst-case step budgets inside this job: context 5 + gemini 40 + claude
     # 20 plus the diff/install steps is ~69 minutes, so the job cap must
     # exceed that. Typical runs finish in minutes; this is a ceiling, not a
@@ -805,7 +805,7 @@ jobs:
     # leg of `review` failed, so the surviving review still posts and the
     # summary still fails closed.
     if: ${{ always() && !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       # No contents: read — nothing here reads the repository.
