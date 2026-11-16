@@ -60,7 +60,7 @@ bind the pull request and the runs, not tests, and are not mapped.
 | 1 | D | test/journal-sole-writer.test.ts | names the routine in exactly journal-store.ts and migrations.ts under packages/, and nowhere else | under `packages/`, only the store and the migrations name the append routine (a name check, not proof that one module writes) |
 | 1 | S | test/phase4-lifecycle.storage.test.ts | items 1, 10: fresh stores over the same database rebuild every room, the journal verifies from genesis, and nothing is duplicated | after a whole lifecycle, the journal verifies and rebuilds |
 | 2 | D | test/control-plane-server.test.ts | refuses ${name} with 403 and never reaches the store | the generic route refuses every planner-path event before the store |
-| 2 | S | test/journal-store.storage.test.ts | the identity latch: the owner-class login that applied the migrations is refused — 503, no statement past the latch, zero rows — while WITHOUT the latch its append succeeds (the bypass is real) | the store and its route refuse every login but the runtime one before any statement; the owner-class login can still append by calling the routine directly (a stated limit, below) |
+| 2 | S | test/journal-store.storage.test.ts | the identity latch: the owner-class login that applied the migrations is refused — 503, no statement past the latch, zero rows — while WITHOUT the latch its append succeeds (the bypass is real) | the store and its route refuse every login but the runtime one before any journal statement (no head read, no routine call); the owner-class login can still append by calling the routine directly (a stated limit, below) |
 | 2 | S | test/planner-loop.storage.test.ts | a round: T2 with its journaled command, then identity_bound, dispatched, and T3 committing with the plan and completed | T2 commits with its journaled command; its evidence is that row |
 | 2 | S | test/phase4-lifecycle.storage.test.ts | items 2, 6, 7: no surface but the plan-decision route decides, and only with the adjudication token and the plan under review | over HTTP, the generic route refuses every planner-path event |
 | 3 | S | test/journal-store.storage.test.ts | persists exactly encodeCommandEventRow of the submitted fields at the persisted seq with the injected clock, chained as packages/journal chains | a token in an argument is stored as `[REDACTED]` |
@@ -154,26 +154,28 @@ more into the map than it holds.
   bytes that lack `plan_hash`, because the encoder will not produce them;
   the refusal is shown at the encoder and at `decidePlan`.
 - **The owner-class login.** The store refuses to append unless the
-  connected login and role are both `br_app_runtime`, before any statement
-  (`requireRuntimeIdentity`, `control-plane/src/journal-store.ts`), and the
-  control plane refuses to boot as any other role
-  (`control-plane/src/schema-preflight.ts`). The database's grants do not
-  latch the same way: a non-superuser login that applied the migrations
-  holds `br_app_runtime`'s privileges through its membership and can call
-  `command_journal_append` directly, outside the control plane. The
-  identity-latch row above proves it. Such a row skips the store's
-  append-time checks: the latch, the lifecycle-event check and the
-  completion-authorization check. It enters the same chain, and `verify()`
-  and `reconstruct()` still apply the hash chain, decoding, spec order and
-  the cross-row rules to it. Rows do not record the login that appended them,
-  so a row that passes those checks cannot be told from one the store
-  wrote. The map shows the latch, not the closing of this path. It is one
-  case of a wider boundary: the journal's protections bind the logins the
-  control plane uses. The administrative login that applies the migrations
-  creates the journal's roles, and the migration's own note says such a
-  creator holds ADMIN OPTION on them (`0006` in
-  `control-plane/src/migrations.ts`, "Applier privileges"). No test here
-  shows the journal holding against that login.
+  connected login and role are both `br_app_runtime`, checked by its own
+  identity query before any journal statement (`requireRuntimeIdentity`,
+  `control-plane/src/journal-store.ts`), and the control plane refuses to
+  boot as any other role (`control-plane/src/schema-preflight.ts`). The
+  database's grants do not latch the same way. A non-superuser login that
+  applied the migrations with `createrole_self_grant` set to SET and INHERIT
+  (the shape the identity-latch test gives Neon's owner) holds
+  `br_app_runtime`'s privileges through its membership and can call
+  `command_journal_append` directly, outside the control plane; the
+  identity-latch row above proves it. A superuser bypasses the grants
+  outright. A row appended that way skips the store's append-time checks:
+  the latch, the lifecycle-event check and the completion-authorization
+  check. It enters the same chain, and `verify()` and `reconstruct()` still
+  apply the hash chain, decoding, spec order and the cross-row rules to it.
+  Rows do not record the login that appended them, so a row that passes
+  those checks cannot be told from one the store wrote. The map shows the
+  latch, not the closing of this path. It is one case of a wider boundary:
+  the journal's protections bind the logins the control plane uses. The
+  administrative login that applies the migrations creates the journal's
+  roles, and the migration's own note says such a creator holds ADMIN OPTION
+  on them (`0006` in `control-plane/src/migrations.ts`, "Applier
+  privileges"). No test here shows the journal holding against that login.
 - **Most of the evidence is storage-suite evidence.** A run without
   PostgreSQL skips it. CI runs both storage tiers; the lifecycle suite runs
   in the runtime-role tier only, because the journal accepts no other login.
