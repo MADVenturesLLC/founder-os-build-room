@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -74,7 +74,7 @@ jobs:
   # the real-Keychain suite under its synthetic service name, which never
   # touches a real Gateway item.
   build-and-test-macos:
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -110,7 +110,7 @@ jobs:
   # someone remembering to export a variable is coverage that quietly lapses.
   # This job supplies the database so the suite always runs.
   storage-integration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     services:
@@ -151,6 +151,7 @@ jobs:
       # bindir for the suites. It creates nothing outside the runner's temp
       # dir and does not touch the service container. Same major as the
       # `postgres:16` service, so both shapes qualify the same server line.
+      # The step fails unless the resolved pg_ctl reports major 16.
       - name: Resolve PostgreSQL 16 server binaries for owned test instances
         run: |
           set -euo pipefail
@@ -159,7 +160,12 @@ jobs:
             BINDIR="/usr/lib/postgresql/16/bin"
           fi
           test -x "$BINDIR/initdb" && test -x "$BINDIR/pg_ctl"
-          "$BINDIR/pg_ctl" --version
+          VERSION="$("$BINDIR/pg_ctl" --version)"
+          echo "$VERSION"
+          case "$VERSION" in
+            *"(PostgreSQL) 16."*) ;;
+            *) echo "::error::owned test instances need PostgreSQL 16 server binaries; $BINDIR has: $VERSION"; exit 1 ;;
+          esac
           echo "BUILDROOM_TEST_PG_BINDIR=$BINDIR" >> "$GITHUB_ENV"
 
       # `npm run test:storage` rather than `npm test`, and the difference is not
@@ -208,7 +214,7 @@ jobs:
   # is a repository security-posture change reserved to the Founder
   # (AGENTS.md "Approval gates").
   hygiene:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout (full history for the secret scan)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

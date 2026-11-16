@@ -92,7 +92,7 @@ permissions:
 jobs:
   # Stage 1 (r6 §10). Ungated: no environment key, no secret access.
   preflight:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Validate input shape before any other step
         env:
@@ -141,7 +141,7 @@ jobs:
   # unreachable until a required reviewer approves this job (r6 §7.2).
   migrate:
     needs: preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: db-admin-migration
     steps:
       # Stage 3, first: before any step that could touch the secret

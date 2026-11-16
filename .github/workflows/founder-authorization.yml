@@ -132,7 +132,7 @@ jobs:
     # neither write an envelope nor change one. Judging still queues per PR in
     # the evaluate job, where a replaced pending judgment loses nothing, since
     # every judgment reads the PR's current state.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       prs: ${{ steps.find.outputs.prs }}
     steps:
@@ -228,7 +228,7 @@ jobs:
     concurrency:
       group: founder-authorization-${{ matrix.pr }}
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # The default branch, never the PR head: the gate that judges a PR must
       # not be something the PR can change.
