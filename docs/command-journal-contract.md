@@ -260,10 +260,11 @@ happen to be absent.
 
 **The stored `command_id` column — [RULED, §13 G4].** A decision row
 and a binding row each have a stored `command_id` column, which stays
-outside the row's canonical bytes. On a decision row it names the
-planner command whose plan the decision decides (the Founder's direction
-of 2026-10-15; `packages/journal/src/sequence.ts`); on a binding row it
-names the first Builder command, the one the binding commits with (B3).
+outside the row's canonical bytes. On the plan path's decision rows
+(T4, T5 and T22) it names the planner command whose plan the decision
+decides (the Founder's direction of 2026-10-15;
+`packages/journal/src/sequence.ts`); on a binding row it names the first
+Builder command, the one the binding commits with (B3).
 C9 binds each T7 decision to the Builder command its request arose in
 (§4.5, §7.7); the ruling does not say which stored column carries that
 binding on a T7 decision row, and §13 records the point as open.
@@ -760,8 +761,14 @@ as written.
    commits. A request is answered by at most one T7 act: an act that
    names a request already answered, a request of another room, or a
    request that is not the room's open one is refused and writes
-   nothing. Nothing limits how many T6 and T7 cycles a build has. The
-   Gateway acts on a T7 act only after the control plane has committed
+   nothing. Nothing limits how many T6 and T7 cycles a build has.
+   *How the refusal holds under concurrency, as the builder reads §§1.4
+   and 4.1 (not a ruled clause):* the act's checks and its writes run in
+   the one transaction of §1.4, which takes the chain-head lock of §4.1
+   before it checks whether the request is open and unanswered; two acts
+   for one request therefore serialize, and the second finds the first
+   committed and is refused before it writes. `verify()` (§4.5) remains
+   the after-the-fact check. The Gateway acts on a T7 act only after the control plane has committed
    it and delivered it over the signed channel; a marked action runs
    only after `command.approved` for its exact `subject_digest` has been
    committed and delivered that way. After `command.denied` the action
@@ -1149,7 +1156,13 @@ answer; it is the Founder's.
   and `DEC-20260815-11` row 30 and T6 to T8. §12: a one-line note. The
   eleven elements, the closed command vocabulary and its ordering rules,
   the completion test of §5.3, §3, and `DEC-20260815-11` are unchanged
-  (§13 I1). §13 states one point the ruling leaves open.
+  (§13 I1). §13 states one point the ruling leaves open. On Copilot's
+  review of the first head, `ac463fe`, two findings were taken: §2's
+  sentence on the stored `command_id` column now covers only the plan
+  path's decision rows (T4, T5 and T22), which it had stated for every
+  decision row; and §8.3 states how C7's refusal holds under concurrent
+  acts, marked as the builder's reading of §§1.4 and 4.1, not a ruled
+  clause.
 - **v0.18 (2026-10-28):** the init model and conversation id in the
   journal, under FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR Amendment 5
   B1 and FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS with its
