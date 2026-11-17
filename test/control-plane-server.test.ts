@@ -711,7 +711,31 @@ describe('control plane — the Builder\'s T6, T7 and T8 events are not the gene
     });
   }
 
-  it('refuses exactly the five planner-path events and these eight, no more', () => {
+  it('refuses runtime_room.bound with 403 and never reaches the store: the binding is recorded only by its governed path (journal ruling F2, B3)', async () => {
+    let reached = false;
+    const store = {
+      append: async () => {
+        reached = true;
+        throw new Error('should not be reached');
+      },
+    } as unknown as PostgresLedgerStore;
+
+    const harness = await start(reachablePool, store);
+    const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify(makeEvent('runtime_room.bound')),
+    });
+    const body = await json(response);
+
+    assert.equal(response.status, 403);
+    assert.equal(body.error, 'governed_path_required');
+    assert.equal(body.event, 'runtime_room.bound');
+    assert.equal(reached, false);
+    await harness.close();
+  });
+
+  it('refuses exactly the five planner-path events, these eight and runtime_room.bound, no more', () => {
     assert.deepEqual(
       [...GOVERNED_PATH_EVENTS].sort(),
       [
@@ -721,6 +745,7 @@ describe('control plane — the Builder\'s T6, T7 and T8 events are not the gene
         'plan.approved',
         'founder.cancel',
         ...builderEvents,
+        'runtime_room.bound',
       ].sort(),
     );
   });
