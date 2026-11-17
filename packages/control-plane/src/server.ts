@@ -228,10 +228,10 @@ export function createServer(deps: ServerDeps): Express {
       const roomId = requireUuid(req.params.roomId, 'roomId');
       const offered = requireEvent(req.body);
       /*
-       * The planner path's events are not this route's to accept: the
-       * governed planner loop and the Founder's plan decision write them
-       * (see governed-events.ts). Refused before the ledger, unrecorded, as
-       * an authorization refusal.
+       * The planner path's events, and the Builder's T6, T7 and T8 events,
+       * are not this route's to accept: their governed paths write them (see
+       * governed-events.ts). Refused before the ledger, unrecorded, as an
+       * authorization refusal.
        */
       if (requiresGovernedPath(offered.event)) {
         res.status(403).json({ error: 'governed_path_required', event: offered.event });
