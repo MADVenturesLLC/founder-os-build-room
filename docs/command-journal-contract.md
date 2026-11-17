@@ -1,4 +1,4 @@
-# Build Room Canonical Command Journal — Contract v0.18 (PROPOSED)
+# Build Room Canonical Command Journal — Contract v0.19 (PROPOSED)
 
 Status: **proposed** — Phase 4 journal-first implementation order, step 1
 ("establish the command-journal contract and invariants"). The two clauses
@@ -9,6 +9,16 @@ on 2026-09-01** in the Founder ruling comment on PR #11; both are marked
 unblocked by those rulings once this contract merges. Everything else
 binds the implementation once this contract merges under the repository's
 gates and the Founder's SHA-named merge authorization.
+
+**v0.19, the Phase 5 amendment — [RULED].** The Founder's ruling of
+2026-11-17, `FOUNDER-RULING-20261117-BR-JOURNAL-PHASE5`, amends this
+contract from v0.18 to v0.19, as B6 of the Phase 5 authorization
+requires. Its text and SHA-256 are quoted in §13, and each clause it
+rules is marked **[RULED, §13 <clause>]** where it lands, naming the clause.
+The ruling has been in force since the Founder's signature (its J1);
+this document carries it from the merge of the pull request that brings
+it to v0.19, and the code of Phase 5 build steps 1 and 3 merges only
+after that merge (J1).
 
 **Authority derivation — this document is an implementation contract, not
 governance doctrine.** Its entire authority derives from the FounderOS
@@ -39,7 +49,13 @@ Governing authority: the command-journal Phase 4 ruling
 Phase 4 Founder Authorization
 (`FounderOS/07-decisions/DEC-20260815-17`, `## Founder Authorization —
 Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
-`main` at `ad23c6ea6117a54bce5be7208a5a5768ec5bfbc9`.
+`main` at `ad23c6ea6117a54bce5be7208a5a5768ec5bfbc9`. From v0.19 the
+Phase 5 Founder Authorization, `FOUNDER-AUTHORIZATION-20261116-BR-PHASE5`
+(`FounderOS/07-decisions/DEC-20260815-17`, `## Founder Authorization —
+Phase 5 (Builder) (2026-11-17)`), and the ruling quoted in §13 (recorded
+in `FounderOS/07-decisions/DEC-20260827-01` Section 13) also govern.
+Phase 5 starts from Build Room `main` at
+`abd943c8d3447530b7ed60633dc49ecef3f65297` (that authorization's B1).
 
 ## 1. Authority and singularity
 
@@ -48,12 +64,13 @@ Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
    authority over command history transfers (BR-Authority Principle,
    `DEC-20260827-01` §2).
 2. There is exactly one canonical governed command history: **one
-   canonical journal, one chain, one `seq` space, two record classes**
+   canonical journal, one chain, one `seq` space, three record classes**
    (`command` and `decision`, per the Founder ruling of 2026-09-01 —
-   §12). A record class is not a second journal, and nothing permits a
-   second chain. No planner, gateway, adapter, CLI, TUI, provider
-   integration, local process, evidence recorder, or other component may
-   establish a second authoritative command journal. Local diagnostic
+   §12; and `binding`, **[RULED, §13 B1]** by the Founder's ruling of
+   2026-11-17). A record class is not a second journal, and nothing
+   permits a second chain. No planner, gateway, adapter, CLI, TUI,
+   provider integration, local process, evidence recorder, or other
+   component may establish a second authoritative command journal. Local diagnostic
    logs, provider logs, process output, evidence records, and telemetry
    are not substitutes.
 3. Singularity is tested, not asserted: the Phase 4 suite must demonstrate
@@ -70,7 +87,13 @@ Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
    - `build_room_events` remains authoritative for **lifecycle facts**: a
      room's state transitions, the transition's actor, guard, and
      resulting state. Nothing in this contract moves, duplicates, or
-     re-derives lifecycle authority.
+     re-derives lifecycle authority. **[RULED, §13 B4]** The lifecycle
+     log gains a third outcome, `recorded`, for an event that triggers no
+     transition: it carries no transition or guard, and the state it
+     records from and to is the same. `runtime_room.bound` is the only
+     event that uses it, and the conformance count of events becomes 30
+     (`DEC-20260815-11` row 30, added by
+     `FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING`).
    - The command journal is authoritative for **governed-command facts**:
      command identity, the normalized envelope and digest, the governing
      authorization binding, dispatch state, the command's terminal
@@ -96,7 +119,13 @@ Phase 4 (Planner Loop) (2026-08-31)`). Implementation base: Build Room
      over durable pending/apply states because both stores live in the
      same bound database, the append protocol already runs in a
      transaction the lifecycle insert joins, and (a) adds no member to
-     the closed vocabulary.
+     the closed vocabulary. **[RULED, §13 B3, C6, D1]** Three Phase 5
+     acts commit under this boundary: the room binding, whose one
+     transaction writes the lifecycle entry, the first Builder command's
+     `journaled` row and the binding record (§2); each of the Founder's
+     T7 acts, with its T7 lifecycle entry (§8.3); and T8, whose lifecycle
+     entry commits with the `completed` row of the Builder command that
+     reports the build ready (§7.8).
    - A disagreement between the two stores on a shared fact is a
      reconciliation `mismatch`: surfaced, never auto-resolved in either
      direction, and never silently overwritten in either store. With the
@@ -162,6 +191,18 @@ resolved prior state where that state is `RECONCILING`), `plan_hash`
 **where a plan exists at the decision**, `authorization_ref`,
 `lifecycle_event_ref`, and timestamps.
 
+**The decision class in Phase 5 — [RULED, §13 C5].** The class admits
+four more events, the Founder's T7 acts: `decision.answered`,
+`command.approved`, `command.denied` and `ceiling.raised`. For these
+four its closed element set adds `request_ref`, the room id and event id
+of the T6 request the act answers (§7.7), and `subject_digest`, the
+digest of that request's typed subject (§6.2(f)). `ceiling.raised` also
+carries the new per-room ceiling, which must exceed the one it replaces;
+`decision.answered` also carries the digest of the Founder's answer. The
+recorded lifecycle state is `BLOCKED_ON_FOUNDER`, and `plan_hash` is
+required. The four are serialized by the second version of
+specification (d), `BRJ:d:2` (§6.2).
+
 **`plan_hash` conditionality (Founder rulings, 2026-09-01 — v0.14,
 amended v0.16).** `plan_hash` presence is **derived, not enumerated**:
 it is absent exactly when the decision's **effective plan-bearing
@@ -216,6 +257,58 @@ are class-scoped to command records. The record class is an explicit
 field on every row and part of the canonical byte input to the row hash
 (§6.2): a verifier must never infer a record's class from which fields
 happen to be absent.
+
+**The stored `command_id` column — [RULED, §13 G4].** A decision row
+and a binding row each have a stored `command_id` column, which stays
+outside the row's canonical bytes. On a decision row it names the
+planner command whose plan the decision decides (the Founder's direction
+of 2026-10-15; `packages/journal/src/sequence.ts`); on a binding row it
+names the first Builder command, the one the binding commits with (B3).
+C9 binds each T7 decision to the Builder command its request arose in
+(§4.5, §7.7); the ruling does not say which stored column carries that
+binding on a T7 decision row, and §13 records the point as open.
+
+**Binding-class records — [RULED, §13 Part B].** The room binding,
+`runtime_room.bound`, is journaled as a third record class, `binding`
+(B1). A binding record is a **single event, terminal by construction,
+with no state machine** (B2). Its element set is closed: the event,
+`runtime_room.bound`; the actor, `system`; the three payload fields
+`FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING` B2 fixes,
+`lifecycle_room_id`, `runtime_room_id` and `gateway_id`; the recorded
+lifecycle state, `BUILDING`; the `plan_hash` T5 bound; the
+`lifecycle_event_ref`; and timestamps. §2's elements 4, 8 and 9 do not
+apply to the class. Its canonical bytes follow specification (e),
+`BRJ:e:1` (§6.2), with the record class an explicit field in them.
+
+- **How it commits (B3).** One transaction writes three things, and all
+  three exist or none does: the `runtime_room.bound` entry in the
+  lifecycle log; the `journaled` row of the first Builder command, whose
+  `lifecycle_event_ref` names that entry; and the binding record, next
+  in `seq` after that row and bound to that command in the stored
+  `command_id` column. The transaction commits before the command is
+  dispatched.
+- **One to one, by constraint (B5).** The database refuses a second
+  binding for a lifecycle room, and a binding that names a runtime room
+  already bound, each by a constraint and not by application code alone;
+  a refused binding aborts the whole transaction above. `verify()`
+  re-checks both directions over the chain's binding records (§4.5).
+- **Every Builder command names the binding (B6).** The `journaled` row
+  of each later Builder command of a room names that room's
+  `runtime_room.bound` entry in its `lifecycle_event_ref`. No Builder
+  command is journaled for a room that has no binding, except the first,
+  which commits with it.
+- **Rebuild (B7).** `verify()` and reconstruction reproduce binding
+  records in `seq` order with the other classes, and replaying one
+  creates no second binding.
+
+The checks the control plane makes before it appends the binding (an
+enrolled, live Gateway; a runtime room id that Gateway reported as
+minted for this lifecycle room; a room in `BUILDING` with no binding)
+are the lifecycle ruling's, B5 of
+`FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING`, and are not restated
+here. **Alternative considered and not ruled (B8):** carrying the three
+fields on the first Builder command's journaled row, which would put a
+carve-out in the command row and its identity rules.
 
 ## 3. Storage locus and sole writer — [RULED]
 
@@ -330,6 +423,8 @@ as written.
      unique; `(command_id, event_type)` unique for the at-most-once
      event types (`journaled`, `identity_bound`, `dispatched`,
      `resolved`); the exactly-one-terminal rule is verified on rebuild.
+     **[RULED, §13 B5]** For binding records: one per lifecycle room and
+     one per runtime room, each by a database constraint (§2).
 2. Primitive reuse: the Build Room `packages/ledger` implementation and the
    consumed MadBridge contracts (`DEC-20260827-01` §5, rows 3.3 and 3.5:
    `Ledger`/`LedgerRow`/`VerifyResult`; `rebuildState`, reconciliation
@@ -346,6 +441,15 @@ as written.
    permits; step 3 covers the remaining consumed capabilities for the
    planner path (3.1 worktree/sandbox, 3.4 adapter lifecycle, and any
    3.3/3.5 surface not already integrated).
+5. **Phase 5 verification — [RULED, §13 B5, B7, C9, G3].** `verify()`
+   re-checks both directions of the binding constraint over the chain's
+   binding records, and reproduces binding records in `seq` order with
+   the other classes; it reads each decision row by the specification
+   version its bytes name. For the decisions bound to a Builder command:
+   the command's `journaled` row precedes them; no two T7 acts in the
+   chain name the same request; and no decision for a room follows that
+   room's `founder.cancel`. The rule that a plan is decided once stands
+   for plan decisions.
 
 ## 5. Command events, derived state, and the fail-closed rule
 
@@ -360,7 +464,8 @@ as written.
    command-class records**. Decision-class records are not events in
    this vocabulary: each is a single terminal record defined in §2 under
    the §12 ruling, chained on the same `seq` space, with no state
-   machine, no `dispatch_state`, and no reconciliation path. For command
+   machine, no `dispatch_state`, and no reconciliation path. Nor are
+   binding-class records, defined in §2 **[RULED, §13 B2]**. For command
    records: `journaled` (the
    pre-dispatch record, carrying §2 elements 1, 3, and 5–7, any element-2
    identities that already exist, and the intended routing identity);
@@ -457,6 +562,18 @@ as written.
    mid-dispatch, crash between `journaled` and dispatch, duplicate replay
    after restart — no duplicate dispatch, no duplicate authority, no
    silent success (stop-gate items §7.9–7.10).
+7. **Builder commands (Phase 5) — [RULED, §13 C1].** A Builder command
+   in the journal is one dispatch of the Builder executor. An action
+   inside that execution that the classification marks for the Founder
+   (a shell command, a network call, a write the policy holds) is the
+   typed subject of a T6 request, and the Founder's T7 act decides it
+   (§7.7, §8.3); it is not a command-class record of its own. Actions the
+   classification does not mark leave Gateway-signed evidence and no
+   journal row. The vocabulary above, its ordering rules and the
+   completion test of §5.3 are unchanged (§13 I1). **Alternative
+   considered and not ruled:** each marked action as its own
+   command-class record, journaled before it runs, which would need a
+   carve-out in element 4 and the command row's identity rules.
 
 ## 6. Secrets and normalization
 
@@ -466,7 +583,7 @@ as written.
    normalized representation plus digest and evidence reference. Redaction
    runs before the journal write, never after.
 2. Spec-before-hashing applies to **every** hashed surface, not only the
-   envelope. Four serialization contracts, each versioned with golden
+   envelope. Six serialization contracts, each versioned with golden
    vectors and ratified **before** the corresponding hashing
    implementation:
    (a) the normalized command envelope; (b) the plan digest; (c) the
@@ -484,15 +601,19 @@ as written.
    with golden vectors covering both presence shapes — absence is
    encoded structurally by the specification, never by a sentinel
    value, and presence is verified against the effective plan-bearing
-   state (§2), never the reverse. **The record class is an explicit field in the
-   canonical byte input to the row hash for both classes** — never
-   inferred from absent fields. Two conforming
+   state (§2), never the reverse; **[RULED, §13 B2, C2, G2]** (e) the
+   **complete binding-class record row**, with the record class an
+   explicit field in its canonical bytes; and (f) the **typed subject**
+   of a T6 request and the Founder's **answer** to a decision, with
+   redaction run before the bytes are formed. **The record class is an
+   explicit field in the canonical byte input to the row hash for every
+   class** — never inferred from absent fields. Two conforming
    implementations must produce byte-identical canonical forms and
    identical chain hashes for the same events, so a benign serializer
    difference can never masquerade as — or mask — tampering. Hash values
    are generated by implementation against the specs, never hand-authored
    into this document.
-   **Algorithm and encoding, fixed for all four:** SHA-256, stored and
+   **Algorithm and encoding, fixed for all six:** SHA-256, stored and
    compared as 64-character lowercase hexadecimal with no prefix and no
    separators — following the corpus's existing convention for ratified
    artifact pins rather than introducing a new one. Exact byte inputs:
@@ -500,11 +621,15 @@ as written.
      normalized command envelope per the (a) specification;
    - `plan_hash` = SHA-256 over the canonical byte sequence of the
      PlanDoc per the (b) specification;
+   - `subject_digest` = SHA-256 over the canonical byte sequence of the
+     typed subject per the (f) specification, and the digest of the
+     Founder's answer to a decision likewise over the answer's canonical
+     byte sequence per (f);
    - `chain_hash` = SHA-256 over the concatenation of the prior row's
      `chain_hash` rendered as its 64 lowercase-hex ASCII bytes (the
      64-ASCII-zero genesis constant for the first row) followed by the
-     row's canonical byte sequence per the (c) or (d) specification as
-     the row's record class determines.
+     row's canonical byte sequence per the (c), (d) or (e) specification
+     as the row's record class determines.
    The golden vectors for each specification verify against exactly
    these definitions.
    **Specification (c) has two versions (v0.18).** `BRJ:c:1`
@@ -515,12 +640,22 @@ as written.
    that encodes them, and a reader selects the version by it, never by
    which fields are present. A chain's command rows move from `BRJ:c:1` to
    `BRJ:c:2` once and never back; existing rows are never rewritten.
+   **Specification (d) gains a second version, and (e) and (f) are new
+   (v0.19) — [RULED, §13 C5, G2, G3].** `BRJ:d:1` is
+   `packages/journal/specs/serialization-d-decision-row.md`. `BRJ:d:2`
+   encodes decision rows with the four T7 events and their added
+   elements (§2); a chain's decision rows move from `BRJ:d:1` to
+   `BRJ:d:2` once and never back, existing rows are never rewritten, and
+   a reader selects each decision row's version by the identifier its
+   bytes name. `BRJ:d:2`, `BRJ:e:1` (binding rows) and `BRJ:f:1` (typed
+   subjects and answers) are each written with golden vectors generated
+   by the implementation before the corresponding hashing.
 3. Security-negative obligation: seeded credential-shaped values in
    command envelopes must never reach a persisted row (stop-gate §7.3).
 4. Committed exports or diagnostics derived from the journal follow the
    repository's existing redaction practice.
 
-## 7. Planner lifecycle binding
+## 7. Lifecycle binding — the Planner (Phase 4) and the Builder (Phase 5)
 
 1. States and events are the ratified `DEC-20260815-11` set, unmodified.
    Phase 4 uses T1 `scope.captured`, T2 `task.dispatched.planner`
@@ -531,17 +666,49 @@ as written.
 2. Rejection binds to T4 or T22 only. No `plan.rejected` event, no
    rejected terminal state, no third path; any addition requires a
    `DEC-20260815-11` lifecycle amendment ruled before implementation.
-3. T5 enters BUILDING and dispatches nothing: the approved-plan record
-   only — no Builder execution, no target-repository modification, no
-   runtime draft-PR (Phase 4 authorization, Section 2).
+3. In Phase 4, T5 enters BUILDING and dispatches nothing: the
+   approved-plan record only — no Builder execution, no
+   target-repository modification, no runtime draft-PR (Phase 4
+   authorization, Section 2).
 4. A modified plan invalidates prior approval unless byte- or
    digest-equivalence is proven under §6's serialization discipline.
 5. Enforcement obligations: the Planner cannot self-approve; an unapproved
    or invalidated plan cannot progress; identity, role, provider, model,
    surface, scope, authorization, journal, and evidence stay bound through
    every transition (stop-gate §7.6–7.8).
+6. **Phase 5 events — [RULED, §13 G4].** Phase 5 uses, from
+   `BUILDING`: `runtime_room.bound`, recorded with no transition (§1.4,
+   §2); T6 `decision.requested`, `command.queued` and `ceiling.exceeded`
+   (`BUILDING` to `BLOCKED_ON_FOUNDER`; guard: typed subject bound); T7
+   `decision.answered`, `command.approved`, `command.denied` and
+   `ceiling.raised` (`BLOCKED_ON_FOUNDER` to `BUILDING`; guard: bound to
+   request id); and T8 `build.ready_for_evidence` (`BUILDING` to
+   `EVIDENCE_CAPTURE`; guard: local commits exist). T22 stays as §7.1
+   uses it. T9 and later are Phase 6 (§9).
+7. **T6 requests — [RULED, §13 C2 to C4].** Each T6 event is recorded in
+   the lifecycle log through its governed path only. It carries a typed
+   subject of one of three types, `decision`, `command` or `ceiling`;
+   the subject's digest (§6.2(f)); and the Builder command it arose in.
+   The entry's event id is the request id that T7's guard binds to. A
+   `decision` subject carries a reason, and `MATERIAL_PLAN_DRIFT` is
+   one. The Gateway proposes `decision.requested`, for the Builder, and
+   `command.queued`, over its signed channel; the control plane decides
+   and records them, and itself records `ceiling.exceeded`. The control
+   plane refuses a request whose room is not in `BUILDING`, whose
+   Gateway or runtime room is not the room's binding, or whose named
+   Builder command is not that room's own unfinished command. A T6
+   request is not a journal record of its own: the chain covers it
+   through the T7 act that answers it, and a request never answered,
+   because the room is cancelled first, is in the lifecycle log and not
+   in the chain.
+8. **T8 — [RULED, §13 D1].** The T8 lifecycle entry commits in one
+   transaction (§1.4) with the `completed` row of the Builder command
+   that reports the build ready, and that row's `evidence_refs` name the
+   Gateway-signed, redacted evidence at head, verified and persisted
+   before the commit. G8 is not changed (B3 step 5 of the Phase 5
+   authorization).
 
-## 8. Founder plan-decision origination and authentication
+## 8. Founder decision origination and authentication
 
 1. Ruled and binding: the plan decision originates at the control plane on
    the `DEC-20260818-01` clause 1 pattern — the client surface may render
@@ -576,12 +743,71 @@ as written.
    **Alternative considered, not adopted:** a dedicated Founder Ed25519
    keypair signing each decision payload — recorded as considered; the
    Founder ruled the credential binding above.
+   **[RULED, §13 E1]** This clause no longer scopes the credential to
+   Phase 4. `PHASE3_ADJUDICATION_TOKEN` is the Founder's control-plane
+   credential for T4, T5, T7 and T22 through Phase 5, under this
+   clause's existing rules: required and present, at least 32
+   characters, distinct from `CONTROL_PLANE_TOKEN`, never echoed, and
+   fail closed when unset. No new secret is created. Step-up stays bound
+   for T15 in Phase 6.
+3. **The Founder's T7 acts — [RULED, §13 C6 to C8].** A T7 act
+   originates at the control plane, never at a client surface. Its
+   endpoint requires the Founder's control-plane credential (§8.2), the
+   request id and the exact `subject_digest` being decided; a digest
+   that does not match the open request refuses the act. The decision
+   record and its T7 lifecycle entry commit in one transaction under
+   §1.4, and the act has taken effect only when that transaction
+   commits. A request is answered by at most one T7 act: an act that
+   names a request already answered, a request of another room, or a
+   request that is not the room's open one is refused and writes
+   nothing. Nothing limits how many T6 and T7 cycles a build has. The
+   Gateway acts on a T7 act only after the control plane has committed
+   it and delivered it over the signed channel; a marked action runs
+   only after `command.approved` for its exact `subject_digest` has been
+   committed and delivered that way. After `command.denied` the action
+   never runs, the room returns to `BUILDING`, and the Builder command
+   continues without it. The Gateway's signed evidence records which
+   happened.
+4. **The generic event route — [RULED, §13 F1, F2].** The control
+   plane's generic event route refuses `runtime_room.bound`, the three
+   T6 events, the four T7 events and the T8 event, as it refuses the
+   planner path's five: before the ledger, unrecorded, as an
+   authorization refusal. The refusal could merge before the governed
+   paths of §§2, 7 and 8.3, and until they exist those events cannot be
+   recorded at all. For the T6, T7 and T8 events it merged in Build Room
+   pull request 162, at `b13c1a0778e699bca1bd19d3a880f9e6b312e0c8`
+   (`packages/control-plane/src/governed-events.ts`);
+   `runtime_room.bound` joins the refused set in the change that adds it
+   to the code's vocabulary.
 
 ## 9. Out of scope
 
-Phase 5 Builder execution; runtime draft-PR creation; autonomous merge;
-deployment; activation; new infrastructure, credentials, providers, or
-spend; `build-room-web`; evidence-custody changes; modification of the
+**Phase 5 — [RULED, §13 G4].** Out of scope, as Phase 6 under B2a and
+Part D of the Phase 5 authorization: T9, the push to GitHub, the draft
+pull request by the runtime, the GitHub App service and any GitHub
+credential for the runtime; review rounds (T10 to T13), checks
+verification, T14 to T17 as runtime acts and the void cascade live; and
+step-up authentication or TOTP enrollment. Also out of scope, as that
+Part D and §13 I2 leave them: any provider binding, credential or
+Gateway change, and any repository modification by the Builder, except
+as the Founder's ruling of B4 states
+(`FOUNDER-RULING-20261117-BR-BUILDER-EXECUTOR`, recorded in
+`FounderOS/07-decisions/DEC-20260827-01` Section 14); autonomous merge;
+deployment, redeployment or rollback, and migration apply, except as a
+Founder merge authorization states; production activation; new
+infrastructure, provider onboarding, expansion of provider authority,
+or spend; `build-room-web`, Telegram work, and MadBridge, TUI or CLI
+work beyond what Phase 5 needs and the Founder separately authorizes; a
+change to the consumed contracts without the required amendment, a
+second command journal, or an evidence-custody change; and closing or narrowing the owner-class
+path, or any change to the database's roles or grants. Counted Phase 5
+runs require their own Founder act, which defines the Phase 5 run unit
+(Part E item 11).
+
+**Phase 4, as this section stood through v0.18** (Phase 4 closed by the
+Founder's ruling of 2026-11-16): Phase 5 Builder execution; runtime
+draft-PR creation; autonomous merge; deployment; activation; new
+infrastructure, credentials, providers, or spend; `build-room-web`; evidence-custody changes; modification of the
 frozen consumed contracts; any second authoritative command journal.
 Counted Phase 4 runs require their own Founder entry authorization, which
 defines the Phase 4 run unit and its per-run-vs-set granularity.
@@ -610,6 +836,43 @@ Items 11–13 (repository gates, exact-head Tier-2, counted runs) bind the
 pull requests and runs, not this document. The repository's required
 status-check contexts on `main`, read from the rulesets API on 2026-08-31:
 `path-audit`, `attribution-shape`, `CodeRabbit`, `build-and-test`.
+
+**Phase 5 — [RULED, §13 G4].** The test map to Part E of the Phase 5
+authorization. It is a list, not a table, so that the Phase 4 table
+above stays exactly as `test/phase4-stop-gate-map.test.ts` holds it.
+
+- Item 1, the binding: once per lifecycle room, in the transaction of
+  the first Builder command's journal record and before its dispatch; a
+  second binding and a binding naming a bound runtime room each refused,
+  writing nothing — §1.4, §2 (binding), §4.1, §4.5. Item 1's T17 limb is
+  the lifecycle ruling's guard, outside this contract.
+- Item 2, execution only from an approved plan whose hash matches, inside
+  its scope paths — §2 (the binding carries the `plan_hash` T5 bound),
+  §7.6. Scope confinement itself is step 2 of the Phase 5
+  authorization's B3, outside this contract.
+- Item 3, every marked command routed through T6 and T7, and an
+  unapproved command never runs — §5.7, §7.7, §8.3.
+- Item 4, a material plan change or scope violation stops the build —
+  §7.7 (`MATERIAL_PLAN_DRIFT`).
+- Item 5, evidence at head and T8 — §7.8; nothing leaves for GitHub —
+  §9.
+- Item 6, fail-closed interruption and rebuild without duplicate
+  commands, approvals, dispatch or binding — §4, §5, §2 (binding
+  rebuild), §8.3 (one act per request).
+- Item 7, no secret persisted — §6, with redaction before (f)'s bytes.
+- Item 8, identity, scope, authorization, journal and evidence bound
+  through the build — §2, §7.
+- Items 9 to 11 (repository gates, exact-head Tier-2, counted runs) bind
+  the pull requests and runs, not this document.
+- §13's own cases: a refused binding aborts the whole B3 transaction
+  (§2); a T7 act whose `subject_digest` does not match the open request
+  is refused (§8.3); a T7 act naming an answered request, another room's
+  request or a request that is not the open one is refused and writes
+  nothing (§8.3); `verify()` fails a chain in which two T7 acts name one
+  request, a decision follows its room's `founder.cancel`, or a decision
+  bound to a Builder command precedes that command's `journaled` row
+  (§4.5); a `BRJ:d:1` decision row after a `BRJ:d:2` one fails (§6.2);
+  and the generic event route refuses all nine events of §8.4.
 
 ## 11. Citation basis
 
@@ -643,13 +906,28 @@ full, with the exact clauses relied on:
   authority-bearing act), relied on in §8.1.
 - `DEC-20260815-07` — authentication proposals unbound; step-up not
   activated by this contract, relied on in §8.2.
+- From v0.19: `DEC-20260815-17` — `## Founder Authorization — Phase 5
+  (Builder) (2026-11-17)`: B1 (base), B2a (Phase 5 ends at T8; Phase 6
+  scope), B3 (the build order, step 5 on T8), B6 (this amendment), B7
+  (the credential), Part D (scope) and Part E (stop gate) — relied on in
+  the preamble and §§7, 8.2, 9, 10.
+- From v0.19: `DEC-20260827-01` — Section 13, the ruling quoted in §13,
+  relied on throughout v0.19; Section 14,
+  `FOUNDER-RULING-20261117-BR-BUILDER-EXECUTOR`, relied on in §9.
+- From v0.19: `DEC-20260815-11` — row 30, `runtime_room.bound`, and the
+  T17 guard, added by `FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING`
+  (its B1 to B6 and D3), relied on in §§1.4, 2, 7; and T6 to T8 with
+  guards G6 to G8, relied on in §7.6.
 
 All were read at the pinned controlling FounderOS head
 `6f5f4405da40c90028df0c1efefed2f44da65b1c` on 2026-08-31, and the §3/§8
 rulings at the Founder ruling comment on PR #11 (2026-09-01) — named
 checks, not memory. The lifecycle guard texts quoted in §7 match
 `packages/contracts/src/transitions.ts` at this repository's base
-`ad23c6e`.
+`ad23c6e`. The v0.19 citations were read at FounderOS `main`
+`5c5333de29066167310d9d41aa4f1d4e894d7d2c` on 2026-11-17, and the T6 to
+T8 guard texts quoted in §7.6 match `packages/contracts/src/transitions.ts`
+at Build Room `main` `b13c1a0778e699bca1bd19d3a880f9e6b312e0c8`.
 
 ## 12. Founder ruling — terminal semantics for non-dispatch authority acts — [RULED]
 
@@ -662,6 +940,9 @@ where a plan exists at the decision, absent where none does. The
 option drafts below predate that amendment and are preserved
 unrevised. The collision analysis and both option drafts are
 preserved below as the record of why this clause exists.]**
+
+**v0.19:** the class admits the Founder's four T7 acts, §2 under
+§13 C5.
 
 **The collision.** The §8 ruling requires the Founder plan decision
 journaled before it takes effect. But T5 enters BUILDING and dispatches
@@ -726,8 +1007,149 @@ decision class carrying its own closed element set and elements 4, 8,
 and 9 stated as not applicable (§2); and four new §10 cases. The
 decision-act write path is unblocked by those landings.
 
+## 13. Founder ruling — the Phase 5 amendment (2026-11-17) — [RULED]
+
+On 2026-11-17 the Founder signed
+`FOUNDER-RULING-20261117-BR-JOURNAL-PHASE5` in the builder's session:
+the contract amendment that B6 of the Phase 5 authorization requires. It
+is recorded verbatim in FounderOS `DEC-20260827-01` Section 13, on
+FounderOS `main` from `5c5333de29066167310d9d41aa4f1d4e894d7d2c`. Its J3
+directs this fold: the ruling's text and SHA-256 quoted here, and each
+ruled clause marked as ruled where it lands.
+
+**The signature, verbatim**, given in session at 2026-11-17T03:01:00Z:
+
+> I sign FOUNDER-RULING-20261117-BR-JOURNAL-PHASE5 as delivered
+
+**The text.** The text delivered for signature is 14,384 bytes, SHA-256
+`8cee6d3122988def64bca9a34a05dda9944a518b0b443499f76a39539f34f88c`. The
+signed copy is that text with one fill, the date line "Date: 2026-11-__
+(UTC)" made "Date: 2026-11-17 (UTC)": 14,384 bytes, 67 lines, SHA-256
+`b6c64fba2158c92452a544b5b027adfd5d05c84e64bf3803173dbb6a43408a53`.
+
+```text
+FOUNDER-RULING-20261117-BR-JOURNAL-PHASE5: the Phase 5 amendment of the Build Room command-journal contract
+Status: prepared by the builder for my signature under B6 of FOUNDER-AUTHORIZATION-20261116-BR-PHASE5, with my answers of 2026-11-17 to its two open decisions applied. It has no effect until I sign it in the builder's session.
+Repositories: MADVenturesLLC/founder-os-build-room (the contract, docs/command-journal-contract.md); MADVenturesLLC/FounderOS (where this ruling is recorded)
+Amends: docs/command-journal-contract.md, v0.18, as it stands on Build Room main at abd943c8d3447530b7ed60633dc49ecef3f65297, to v0.19. The contract's eleven record elements and its closed command-event vocabulary are not changed.
+Acts under: B6 and B7 of FOUNDER-AUTHORIZATION-20261116-BR-PHASE5 (in force from FounderOS main 6367e62170ed9fdb4b8c9e2525463aef0b5b93bb); D3 of FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING; DEC-20260827-01 Section 10; my ruling of 2026-09-01 on the decision record class (contract section 12)
+I, Michael Daley, Founder of MAD Ventures, rule as follows.
+
+Part A: Basis, as the builder read it at abd943c
+A1. The journal has two record classes on one chain, command and decision. The decision class admits three events, plan.revision_requested, plan.approved and founder.cancel: in its encoder (packages/journal/src/decision-row.ts), its specification (BRJ:d:1), the database constraint of migration 0006, and the verifier's rule that a plan is decided once.
+A2. The lifecycle log (build_room_events) is append-only and ordered per room. It is not hash-chained, and it stores only two outcomes, a transition or a pending conjunction. So it cannot store an event that triggers no transition, and nothing chains a lifecycle event's payload. A journal row that names a lifecycle event carries only its room id and event id.
+A3. The generic event route refuses five events, those of T2, T3, T4, T5 and T22. It accepts every other event, the T6, T7 and T8 events included, from any holder of CONTROL_PLANE_TOKEN, with the actor and the guard facts the caller supplies in the request body. No code outside the tests posts those events today.
+A4. The Gateway mints a runtime room in memory. Its signed channel to the control plane has four purposes, session start, heartbeat, planner poll and planner report, and none carries a room id or an occupancy. No code classifies a command for my approval; the consumed policy engine and its command policy are recorded as deferred.
+A5. On 2026-09-01 I ruled that an act with no in-flight period is a record class of its own, committed with its lifecycle event or not at all, and I declined carve-outs inside the closed command vocabulary and its identity rules. This ruling follows that reasoning.
+
+Part B: The binding record (B6(a))
+B1. A third record class, binding. Contract section 1.2 becomes: one canonical journal, one chain, one seq space, three record classes. A record class is not a second journal.
+B2. What it holds. A binding record is a single event, terminal by construction, with no state machine. Its element set is closed: the event, runtime_room.bound; the actor, system; the three payload fields my ruling of 2026-10-27 fixes, lifecycle_room_id, runtime_room_id and gateway_id; the recorded lifecycle state, BUILDING; the plan_hash T5 bound; the lifecycle_event_ref; and timestamps. Contract elements 4, 8 and 9 do not apply to the class. Its canonical bytes follow a new specification, BRJ:e:1, with the record class an explicit field in them.
+B3. How it commits. One transaction writes three things, and all three exist or none does: the runtime_room.bound entry in the lifecycle log; the journaled row of the first Builder command, whose lifecycle_event_ref names that entry; and the binding record, next in seq after that row and bound to that command in the stored command_id column. The transaction commits before the command is dispatched.
+B4. The lifecycle log's entry. The lifecycle log gains a third outcome, recorded, for an event that triggers no transition: it carries no transition or guard, and the state it records from and to is the same. runtime_room.bound is the only event that uses it. The conformance count of events becomes 30.
+B5. One to one, by constraint. The database refuses a second binding for a lifecycle room and a binding that names a runtime room already bound, each by a constraint and not by application code alone, and a refused binding aborts the whole transaction of B3. verify() re-checks both directions over the chain's binding records.
+B6. Every Builder command names the binding. The journaled row of each later Builder command of a room names that room's runtime_room.bound entry in its lifecycle_event_ref. No Builder command is journaled for a room that has no binding, except the first, which commits with it.
+B7. Rebuild. verify() and reconstruction reproduce binding records in seq order with the other classes, and replaying one creates no second binding.
+B8. Alternative considered and not ruled: carrying the three fields on the first Builder command's journaled row. It would put a carve-out in the command row and its identity rules, which A5 declines.
+
+Part C: T6 requests and my T7 acts (B6(b))
+C1. The unit. A Builder command in the journal is one dispatch of the Builder executor. An action inside that execution that the classification marks for me (a shell command, a network call, a write the policy holds) is the typed subject of a T6 request, and my T7 act decides it. It is not a command-class record of its own. Actions the classification does not mark leave Gateway-signed evidence and no journal row. Alternative considered and not ruled: each marked action as its own command-class record, journaled before it runs. Element 4 (provider, model, surface) does not fit an action that no provider executes, so the command row's identity rules would need a carve-out, which A5 declines.
+C2. A T6 request. Each of decision.requested, command.queued and ceiling.exceeded is recorded in the lifecycle log through its governed path only. It carries a typed subject of one of three types, decision, command or ceiling; the subject's digest; and the Builder command it arose in. The entry's event id is the request id that T7's guard binds to. A decision subject carries a reason, and MATERIAL_PLAN_DRIFT is one. The subject's canonical bytes follow a new specification, BRJ:f:1, written and vectored before anything hashes them, and redaction runs before the bytes are formed.
+C3. Who originates it. The Gateway proposes decision.requested, for the Builder, and command.queued, over its signed channel; the control plane decides and records them. The control plane itself records ceiling.exceeded. The control plane refuses a request whose room is not in BUILDING, whose Gateway or runtime room is not the room's binding, or whose named Builder command is not that room's own unfinished command.
+C4. A T6 request is not a journal record of its own. The chain covers it through the act that answers it (C5). A request that is never answered, because I cancel the room first, is in the lifecycle log and not in the chain.
+C5. My T7 act is a decision-class record. The decision class admits four more events: decision.answered, command.approved, command.denied and ceiling.raised. For these four its closed element set adds: request_ref, the room id and event id of the T6 request the act answers; and subject_digest, the digest of that request's typed subject. ceiling.raised also carries the new per-room ceiling, which must exceed the one it replaces. decision.answered also carries the digest of my answer. The recorded state is BLOCKED_ON_FOUNDER, and plan_hash is required. Specification (d) gains a second version, BRJ:d:2; a chain moves to it once and never back, and existing rows are never rewritten.
+C6. Origination and authentication. A T7 act originates at the control plane, never at a client surface. Its endpoint requires my control-plane credential (Part E), the request id and the exact subject_digest being decided. A digest that does not match the open request refuses the act. The decision record and its T7 lifecycle entry commit in one transaction under contract section 1.4, and the act has taken effect only when that transaction commits.
+C7. Once per request, as many cycles as a build needs. A request is answered by at most one T7 act. An act that names a request already answered, a request of another room, or a request that is not the room's open one is refused and writes nothing. Nothing limits how many T6 and T7 cycles a build has.
+C8. What reaches the Gateway. The Gateway acts on a T7 act only after the control plane has committed it and delivered it over the signed channel. A marked action runs only after command.approved for its exact subject_digest has been committed and delivered that way. After command.denied the action never runs, the room returns to BUILDING, and the Builder command continues without it. The Gateway's signed evidence records which happened.
+C9. The verifier. For the decisions bound to a Builder command: the command's journaled row precedes them; no two T7 acts in the chain name the same request; and no decision for a room follows that room's founder.cancel. The rule that a plan is decided once stands for plan decisions.
+
+Part D: T8, folded as already ruled
+D1. B3 step 5 of the Phase 5 authorization stands. The contract states it: the T8 lifecycle entry commits in one transaction with the completed row of the Builder command that reports the build ready, and that row's evidence_refs name the Gateway-signed, redacted evidence at head, verified and persisted before the commit. G8 is not changed.
+
+Part E: My credential (B7, carried into contract section 8.2)
+E1. Section 8.2 no longer scopes the credential to Phase 4. PHASE3_ADJUDICATION_TOKEN is my control-plane credential for T4, T5, T7 and T22 through Phase 5, under the section's existing rules: required and present, at least 32 characters, distinct from CONTROL_PLANE_TOKEN, never echoed, and fail closed when unset. No new secret is created. Step-up stays bound for T15 in Phase 6.
+
+Part F: The generic event route
+F1. The generic event route refuses runtime_room.bound, the three T6 events, the four T7 events and the T8 event, as it refuses the planner path's five today: before the ledger, unrecorded, as an authorization refusal.
+F2. Refusal first. That refusal is the first Phase 5 code change, and it may merge before the governed paths of Parts B and C exist. Until they exist, those events cannot be recorded at all. I directed it in session on 2026-11-17, for the T6, T7 and T8 events, ahead of this ruling. runtime_room.bound joins the refused set in the change that adds it to the code's vocabulary.
+
+Part G: Schema, encoder and verifier (B6(c))
+G1. One migration, the next in sequence. It admits the binding record class and its one event; admits the four T7 events to the decision class; gives the lifecycle log the recorded outcome of B4; and adds the constraints of B5. It changes no database role and no grant, and it does not touch the owner-class path. It is applied only as a merge authorization of mine states.
+G2. Three specifications, each written with golden vectors generated by the implementation before the corresponding hashing: BRJ:d:2 (decision rows), BRJ:e:1 (binding rows) and BRJ:f:1 (typed subjects and answers).
+G3. The verifier gains the rules of B5, B7 and C9, and reads each decision row by the specification version its bytes name.
+G4. Housekeeping the contract carries. Section 2 says command_id does not apply to the decision class; under my direction of 2026-10-15 the stored command_id column of a decision row names the planner command whose plan it decides (packages/journal/src/sequence.ts). The contract states that column binding, for decision and binding records alike; it stays outside the row's canonical bytes. Sections 7, 9, 10 and 11 are brought to Phase 5: the lifecycle events used, what stays out of scope (Phase 6), the test map to Part E of the Phase 5 authorization, and the citations.
+
+Part H: The push wording of the Phase 5 authorization
+H1. Three reviews of the record of FOUNDER-AUTHORIZATION-20261116-BR-PHASE5 found its Part D unclear on pushes. I clarify it. In Part D of that authorization, "isolated branches, commits and pushes to them, and draft pull requests carrying the work" are the build lane's own, made by the builder to carry the implementation under F1. "The push to GitHub" in its NOT AUTHORIZED list is the runtime's push at T9. Nothing in Phase 5 lets the runtime, the Gateway or the Builder executor push to GitHub. This clarifies that authorization and changes nothing else in it.
+
+Part I: What this does not change, and what it does not authorize
+I1. Unchanged: the contract's eleven elements; the command events and their ordering rules; the completion test of section 5.3; sections 3 and 4; DEC-20260815-11; the evidence custody rules; every exclusion of the Phase 5 authorization's Part D.
+I2. Not authorized by this ruling: any Builder executor, provider binding, credential or Gateway change (the ruling of B4 of the Phase 5 authorization); any target repository (B5); a counted run; a migration apply, deployment or merge except as its own authorization states; Phase 6.
+
+Part J: Effect and recording
+J1. This ruling is in force from my signature. From then, steps 1 and 3 of B3 of the Phase 5 authorization may be built on their branch; their code merges only after the Build Room pull request of J3 has merged. The refusal of Part F may merge before it.
+J2. The builder records this ruling verbatim, with its SHA-256, in FounderOS in one pull request: a new section of DEC-20260827-01, a dated note in DEC-20260815-17, and a decision-log entry. No identifier is allocated. Because 07-decisions/ is a DEC-20260814-02 trigger surface, that pull request needs independent Tier-2 review of its exact final head and my SHA-named merge authorization.
+J3. The builder folds this ruling into docs/command-journal-contract.md as v0.19 in one Build Room pull request, each ruled clause marked as ruled and this ruling's text and SHA-256 quoted in it, with independent Tier-2 review of its exact final head and my SHA-named merge authorization.
+
+Part K: Signature
+Signed: Michael Daley
+Date: 2026-11-17 (UTC)
+Actor-Id: founder
+```
+
+(The block is the signed copy byte for byte; its SHA-256 is over that
+file, ending in one LF.)
+
+**Where each clause lands.**
+
+- Part A, the basis: not folded.
+- B1: §1.2. B2: §2 (binding), §5.2, §6.2(e). B3: §1.4, §2. B4: §1.4.
+  B5: §2, §4.1, §4.5. B6, B8: §2. B7: §2, §4.5.
+- C1: §5.7. C2 to C4: §7.7, §6.2(f). C5: §2, §6.2, §12's note. C6 to
+  C8: §8.3. C9: §4.5.
+- D1: §1.4, §7.8.
+- E1: §8.2.
+- F1, F2: §8.4.
+- G1, the migration: built in the implementation under its own merge
+  authorization; nothing in this document. G2: §6.2. G3: §4.5, §6.2.
+  G4: §2, §7, §9, §10, §11.
+- H1 clarifies the Phase 5 authorization, not this contract. It is
+  recorded in FounderOS, `DEC-20260815-17`.
+- I1: §5.7 and this list. I2: §9.
+- J1 to J3: the preamble and this section.
+
+**One point the ruling leaves open.** C9 binds each T7 decision to a
+Builder command, and G4 states what the stored `command_id` column
+holds on a plan decision (the planner command) and on a binding row (the
+first Builder command). It does not say what that column holds on a T7
+decision row, and §2 does not supply it. The `BRJ:d:2` work needs the
+answer; it is the Founder's.
+
 ## Changelog
 
+- **v0.19 (2026-11-17):** the Phase 5 amendment,
+  `FOUNDER-RULING-20261117-BR-JOURNAL-PHASE5`, which the Founder signed
+  in the builder's session on 2026-11-17 under B6 of the Phase 5
+  authorization, quoted with its SHA-256 in new §13 and folded as its J3
+  directs, each ruled clause marked **[RULED, §13 <clause>]**. The preamble
+  names the ruling and the Phase 5 authorization. §1.2: three record
+  classes. §1.4: the lifecycle log's `recorded` outcome, and the three
+  Phase 5 acts that commit under the one-transaction boundary. §2: the
+  decision class's four T7 events and their added elements; the stored
+  `command_id` column; the new `binding` class. §4.1: the binding
+  constraints; new §4.5, Phase 5 verification. §5.2: binding records
+  stand outside the command vocabulary; new §5.7, Builder commands.
+  §6.2: specifications (e) and (f), and `BRJ:d:2`. §7: retitled; §7.3
+  now says it describes Phase 4; new §7.6 to §7.8, the Phase 5 events,
+  T6 requests and T8. §8: retitled; §8.2's credential through Phase 5;
+  new §8.3, the Founder's T7 acts, and §8.4, the generic event route.
+  §9: Phase 5's out-of-scope list, with Phase 4's kept beneath it. §10:
+  the Phase 5 test map, as a list beside the unchanged Phase 4 table.
+  §11: the Phase 5 authorization, `DEC-20260827-01` Sections 13 and 14,
+  and `DEC-20260815-11` row 30 and T6 to T8. §12: a one-line note. The
+  eleven elements, the closed command vocabulary and its ordering rules,
+  the completion test of §5.3, §3, and `DEC-20260815-11` are unchanged
+  (§13 I1). §13 states one point the ruling leaves open.
 - **v0.18 (2026-10-28):** the init model and conversation id in the
   journal, under FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR Amendment 5
   B1 and FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS with its
