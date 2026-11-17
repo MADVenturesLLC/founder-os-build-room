@@ -391,6 +391,13 @@ export type JournalCommandValidation =
   | { readonly ok: true; readonly value: GovernedCommandRequest }
   | { readonly ok: false; readonly reason: string };
 
+/**
+ * The command kind of a Builder command: one dispatch of the Builder
+ * executor (journal ruling C1). The kind, not the role, marks it: the role
+ * id `builder` also appears on ordinary journaled commands.
+ */
+export const BUILDER_COMMAND_KIND = 'builder.invoke';
+
 const REQUIRED_STRING_FIELDS = [
   'commandKind',
   'actorId',
@@ -428,6 +435,12 @@ export function validateJournalCommandBody(body: unknown): JournalCommandValidat
   }
   for (const field of REQUIRED_STRING_FIELDS) {
     if (!isNonEmptyString(body[field])) return { ok: false, reason: `${field} is required and must be a non-empty string` };
+  }
+  // A Builder command is journaled only through the governed binding path,
+  // which names the room's runtime_room.bound entry (journal ruling B6;
+  // contract §2, "Binding-class records"). This route carries no binding.
+  if (body['commandKind'] === BUILDER_COMMAND_KIND) {
+    return { ok: false, reason: `${BUILDER_COMMAND_KIND} is journaled only through the governed Builder path` };
   }
   const argv = body['argv'];
   if (!Array.isArray(argv) || !argv.every((entry) => typeof entry === 'string')) {
