@@ -434,6 +434,14 @@ export class PostgresLedgerStore {
       };
     }
 
+    if (result.kind === 'recorded') {
+      // `runtime_room.bound` triggers no transition. This store has no
+      // `recorded` outcome to persist it under yet (Phase 5 step 1, Part C),
+      // so it fails closed: the throw aborts the transaction and nothing is
+      // written, rather than a transition row with no transition.
+      throw new Error(`${result.event} is a recorded event, which this store cannot persist yet`);
+    }
+
     await insertEvent(client, {
       roomId,
       seq,

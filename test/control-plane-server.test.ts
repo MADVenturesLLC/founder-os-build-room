@@ -731,7 +731,7 @@ describe('control plane — the Builder\'s T6, T7 and T8 events are not the gene
   const passed = EVENTS.filter((name) => !GOVERNED_PATH_EVENTS.has(name));
 
   it('leaves sixteen canonical events to the generic route', () => {
-    assert.equal(EVENTS.length, 29);
+    assert.equal(EVENTS.length, 30);
     assert.equal(passed.length, 16);
   });
 

@@ -1,16 +1,24 @@
 /**
  * The T1-T22 transition table and the G1-G22 guards.
  *
- * Source of truth: `DEC-20260815-11` v0.10, `## Reproduced Lifecycle Artifacts`
+ * Source of truth: `DEC-20260815-11` v0.12, `## Reproduced Lifecycle Artifacts`
  * → "The T1-T22 transition table". Guard identifiers G1-G22 correspond
  * POSITIONALLY to T1-T22 (the decision states this explicitly; the table itself
  * carries no G-column, so the correspondence is derived, not transcribed).
  *
  * Every row's `guardText` below is the decision's "Guard (beyond schema/actor)"
  * cell verbatim, so a reader can diff code against spec without leaving the
- * file. T20 is the ONE row that is not the pinned Fable package verbatim: its
- * guard carries the Founder amendment of 2026-08-15 (`manual_required` blocks
- * resume), and the decision marks that divergence inline at the point of use.
+ * file. TWO rows are not the pinned Fable package verbatim, and the decision
+ * marks each divergence inline at the point of use:
+ *
+ *  - T20, whose guard carries the Founder amendment of 2026-08-15
+ *    (`manual_required` blocks resume);
+ *  - T17, whose guard carries the amendment of 2026-10-27
+ *    (`FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING`, Part C: the bound
+ *    runtime room's occupancy must be CLOSED).
+ *
+ * One canonical event, `runtime_room.bound`, triggers no transition at all and
+ * so appears in no row's `triggers` (see `RECORDED_EVENTS` in `events.ts`).
  *
  * This module is PURE. Guards never perform I/O; they decide over a supplied
  * `LifecycleSnapshot` plus caller-asserted `GuardFacts`. Establishing those
@@ -18,7 +26,7 @@
  * layers that are NOT part of Slice 1.
  */
 
-import type { EventName, Actor } from './events.js';
+import type { EventName, Actor, RuntimeRoomBinding } from './events.js';
 import type { OverlayFlag } from './overlays.js';
 import {
   anyNonTerminalExcluding,
@@ -49,6 +57,17 @@ export interface AuthorizationRecord {
   readonly round: number;
 }
 
+/**
+ * The room's one runtime-room binding, as the ledger recorded it from an
+ * accepted `runtime_room.bound`: the event's three ids and its event id.
+ * A lifecycle room has at most one, ever
+ * (FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING, B4).
+ */
+export interface RuntimeRoomBindingRecord extends RuntimeRoomBinding {
+  /** The `runtime_room.bound` event that recorded the binding. */
+  readonly eventId: string;
+}
+
 /** The lifecycle facts a guard may read. Immutable snapshot, no I/O. */
 export interface LifecycleSnapshot {
   readonly state: State;
@@ -60,6 +79,8 @@ export interface LifecycleSnapshot {
   readonly authorization: AuthorizationRecord | null;
   readonly reviewedSha: string | null;
   readonly headSha: string | null;
+  /** Set once by `runtime_room.bound`; null until then and never cleared. */
+  readonly binding: RuntimeRoomBindingRecord | null;
 }
 
 /**
@@ -102,6 +123,16 @@ export interface GuardFacts {
   readonly pollCorroborated?: boolean;
   readonly mergedHeadSha?: string;
   readonly allEvidenceVerified?: boolean;
+  /**
+   * G17's occupancy limb: true only when the bound runtime room's occupancy is
+   * CLOSED, as the Gateway named in the binding reports it over its signed
+   * channel (FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING, C1).
+   *
+   * The control plane DERIVES this from the room's binding and that Gateway's
+   * signed occupancy report. A client never supplies it: a caller asserting
+   * that the room it built in is closed would be marking its own homework.
+   */
+  readonly boundRuntimeRoomClosed?: boolean;
   readonly typedCause?: string;
   readonly stateVerifiedConsistent?: boolean;
   readonly boundedRetriesSpent?: boolean;
@@ -259,10 +290,25 @@ export const GUARDS: Readonly<Record<GuardId, GuardFn>> = {
     if (f.mergedHeadSha !== auth.authorizedSha) return fail('merged head != authorized_sha');
     return PASS;
   },
-  // T17 — evidence all verified or founder waiver
-  G17: (_s, f) => {
-    if (f.allEvidenceVerified === true || f.founderWaivers === true) return PASS;
-    return fail('evidence incomplete and no founder waiver');
+  // T17 — evidence all verified or founder waiver; and the bound runtime
+  //       room's occupancy is CLOSED, as the Gateway named in the binding
+  //       reports it over its signed channel
+  //       *(amended by `FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING`
+  //       (2026-10-27), Part C, C1 — not the package's text. C1 also says "A
+  //       room with no binding cannot take T17", which the ledger checks
+  //       against its own record of the binding rather than taking on trust
+  //       from the caller's occupancy fact.)*
+  G17: (s, f) => {
+    if (f.allEvidenceVerified !== true && f.founderWaivers !== true) {
+      return fail('evidence incomplete and no founder waiver');
+    }
+    if (s.binding === null) {
+      return fail('no runtime room binding — a room with no binding cannot take T17');
+    }
+    if (f.boundRuntimeRoomClosed !== true) {
+      return fail('the bound runtime room is not reported CLOSED by the Gateway named in the binding');
+    }
+    return PASS;
   },
   // T18 — unconditional voiding of stale review/auth (VOIDED records retained)
   //
@@ -404,7 +450,12 @@ export const TRANSITIONS: readonly TransitionSpec[] = [
     id: 'T17', guard: 'G17', from: ['MERGE_CONFIRMED'], target: state('CLOSED_DELIVERED'),
     triggers: ['build.closed'], conjunction: null, actors: ['system'],
     setsOverlay: null, incrementsRound: false,
-    guardText: 'evidence all verified or founder waiver',
+    // The decision's v0.12 cell, byte for byte (ASCII apostrophes), its inline
+    // amendment marker included, as T20's is.
+    guardText:
+      "evidence all verified or founder waiver; and the bound runtime room's occupancy is CLOSED, " +
+      'as the Gateway named in the binding reports it over its signed channel ' +
+      "*(guard amended by `FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING` below — not the package's text)*",
   },
   {
     // `{PUSHED..AUTHORIZED}` resolved through canonical declaration order —

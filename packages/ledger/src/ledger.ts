@@ -6,22 +6,30 @@
  * timestamp arrives on the event. The reducer is a total function of
  * (state, event) -> result, which is what makes replay deterministic.
  *
- * Authority: `DEC-20260815-11` v0.10 clause 3 — the four core invariants are
+ * Authority: `DEC-20260815-11` v0.12 clause 3 — the four core invariants are
  * enforced BY THE LEDGER:
  *
  *   INV-1  no MERGE_CONFIRMED without a consumed Founder authorization
  *   INV-2  SHA-stale verdicts rejected
  *   INV-3  push-voids cascade (T18)
  *   INV-4  replay idempotency
+ *
+ * v0.12 adds one event that triggers no transition, `runtime_room.bound`
+ * (`FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING`). The reducer RECORDS it:
+ * the room stays in `BUILDING`, no `LedgerEntry` is created, and the binding
+ * it carries is kept on the ledger state for G17 to read.
  */
 
 import {
   GUARDS,
+  RECORDED_EVENTS,
   TRANSITIONS,
   eventSpec,
   isAttributionShapeValid,
   isEventName,
   isTerminal,
+  recordedEventSpec,
+  runtimeRoomBindingDefect,
   transition,
   type Actor,
   type Attribution,
@@ -32,6 +40,9 @@ import {
   type GuardId,
   type LifecycleSnapshot,
   type OverlayFlag,
+  type RecordedEventSpec,
+  type RuntimeRoomBinding,
+  type RuntimeRoomBindingRecord,
   type Scope,
   type State,
   type TransitionId,
@@ -69,6 +80,13 @@ export interface LedgerState {
   readonly headSha: string | null;
   /** Companion events seen in the CURRENT state occupancy (T9, T13). */
   readonly observedCompanions: readonly EventName[];
+  /**
+   * The room's runtime-room binding: null until an accepted
+   * `runtime_room.bound` sets it, then fixed for good — there is no
+   * rebinding (FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING, B4).
+   */
+  readonly binding: RuntimeRoomBindingRecord | null;
+  /** Every accepted event id, transitioned, pending or recorded (INV-4). */
   readonly appliedEventIds: readonly string[];
   readonly entries: readonly LedgerEntry[];
 }
@@ -84,6 +102,12 @@ export interface LifecycleEvent {
   /** Supplied by the caller — the pure core reads no clock. */
   readonly occurredAt: string;
   readonly facts?: GuardFacts;
+  /**
+   * The payload of `runtime_room.bound`: required there, with exactly its
+   * three well-formed ids, and refused on every other event (B2: "No other
+   * field is carried"; no other event carries this one).
+   */
+  readonly binding?: RuntimeRoomBinding;
 }
 
 export type RejectionCode =
@@ -93,12 +117,32 @@ export type RejectionCode =
   | 'state_not_in_from_set'
   | 'attribution_invalid'
   | 'guard_failed'
-  | 'no_prior_state';
+  | 'no_prior_state'
+  /**
+   * `runtime_room.bound` without a well-formed binding, or any other event
+   * carrying a binding member.
+   */
+  | 'binding_invalid'
+  /** A second `runtime_room.bound` for a room that already has a binding (B4). */
+  | 'binding_exists';
 
 export type ApplyResult =
   | { readonly ok: true; readonly kind: 'transition'; readonly state: LedgerState; readonly entry: LedgerEntry }
   | { readonly ok: true; readonly kind: 'replay'; readonly state: LedgerState; readonly entry: LedgerEntry | null }
   | { readonly ok: true; readonly kind: 'conjunction_pending'; readonly state: LedgerState; readonly awaiting: readonly EventName[] }
+  /**
+   * An event that triggers no transition was accepted and recorded: the room
+   * stays in its state, no `LedgerEntry` is created, and `state` differs from
+   * the input only in `appliedEventIds` and (for `runtime_room.bound`)
+   * `binding`.
+   */
+  | {
+      readonly ok: true;
+      readonly kind: 'recorded';
+      readonly state: LedgerState;
+      readonly event: EventName;
+      readonly eventId: string;
+    }
   | { readonly ok: false; readonly kind: 'rejected'; readonly code: RejectionCode; readonly reason: string };
 
 /**
@@ -119,6 +163,7 @@ export function initialLedger(): LedgerState {
     reviewedSha: null,
     headSha: null,
     observedCompanions: [],
+    binding: null,
     appliedEventIds: [],
     entries: [],
   };
@@ -133,6 +178,7 @@ export function snapshot(state: LedgerState): LifecycleSnapshot {
     authorization: state.authorization,
     reviewedSha: state.reviewedSha,
     headSha: state.headSha,
+    binding: state.binding,
   };
 }
 
@@ -143,9 +189,17 @@ const reject = (code: RejectionCode, reason: string): ApplyResult => ({
   reason,
 });
 
-/** Resolve the transition an event triggers. Every event maps to exactly one. */
+/**
+ * Resolve the transition an event triggers. Every event but a recorded one
+ * maps to exactly one; `apply` routes recorded events away before calling
+ * this, so the throw is unreachable through the public API.
+ */
 function transitionFor(event: EventName): TransitionSpec {
-  return transition(eventSpec(event).transition);
+  const id = eventSpec(event).transition;
+  if (id === null) {
+    throw new Error(`${event} triggers no transition — it is recorded, not transitioned`);
+  }
+  return transition(id);
 }
 
 /** Where the transition lands, resolving T20's dynamic `prior_state` target. */
@@ -161,12 +215,17 @@ function resolveTarget(spec: TransitionSpec, current: LedgerState): State | null
  *
  * Order of checks is deliberate: identity (replay) first so a duplicate is
  * never re-validated against changed facts, then vocabulary, then terminality,
- * then actor, then the from-set, then attribution, then the conjunction limb,
- * then the guard.
+ * then actor, then the from-set, then attribution, then the binding member,
+ * then the conjunction limb, then the guard. An event that triggers no
+ * transition (`runtime_room.bound`) leaves the common path after the actor
+ * check and takes `applyRecorded`, which keeps the same order for the checks
+ * that apply to it.
  */
 export function apply(current: LedgerState, event: LifecycleEvent): ApplyResult {
   // INV-4 — replay idempotency. A repeated eventId yields the same state and
-  // adds no second entry.
+  // adds no second entry. An event that created no entry (`conjunction_pending`
+  // or `recorded`) replays with `entry: null`; a replayed `runtime_room.bound`
+  // therefore creates no second binding (B6).
   if (current.appliedEventIds.includes(event.eventId)) {
     const existing = current.entries.find((e) => e.eventId === event.eventId) ?? null;
     return { ok: true, kind: 'replay', state: current, entry: existing };
@@ -183,8 +242,6 @@ export function apply(current: LedgerState, event: LifecycleEvent): ApplyResult 
     return reject('terminal_state', `${current.state} is terminal — the terminal set is closed`);
   }
 
-  const spec = transitionFor(event.event);
-
   // The event table names exactly one authorized actor per event, which is
   // tighter than the transition's actor column for multi-actor rows like T6.
   const expectedActor = eventSpec(event.event).actor;
@@ -195,6 +252,13 @@ export function apply(current: LedgerState, event: LifecycleEvent): ApplyResult 
     );
   }
 
+  const recorded = recordedEventSpec(event.event);
+  if (recorded !== null) {
+    return applyRecorded(current, event, recorded);
+  }
+
+  const spec = transitionFor(event.event);
+
   if (!spec.from.includes(current.state)) {
     return reject(
       'state_not_in_from_set',
@@ -204,6 +268,16 @@ export function apply(current: LedgerState, event: LifecycleEvent): ApplyResult 
 
   if (!isAttributionShapeValid(event.attribution)) {
     return reject('attribution_invalid', 'attribution block is not shape-valid');
+  }
+
+  // Only `runtime_room.bound` carries a binding. On any other event the member
+  // is refused rather than ignored: a stored payload holding a binding no
+  // ledger state reflects would be a second, unreducible record of one.
+  if (event.binding !== undefined) {
+    return reject(
+      'binding_invalid',
+      `${event.event} carries a binding member — only runtime_room.bound may`,
+    );
   }
 
   // Conjunction limb of G9/G13. The decision splits compound `+` triggers into
@@ -242,6 +316,72 @@ export function apply(current: LedgerState, event: LifecycleEvent): ApplyResult 
   }
 
   return { ok: true, kind: 'transition', ...commit(current, event, spec, resulting, facts) };
+}
+
+/**
+ * Record an event that triggers no transition. `runtime_room.bound` is the
+ * only one (FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING, B1), so the
+ * payload checks below are its own. Reached after replay, vocabulary,
+ * terminality and actor (`system`) have passed in `apply`.
+ *
+ * The one-to-one rule in the other direction — a runtime room bound to at
+ * most one lifecycle room, ever (B4) — spans rooms, which a per-room reducer
+ * cannot see; it belongs to the store. So does B2's "lifecycle room id": the
+ * reducer does not know the room's own id, so it checks only that one is
+ * well-formed, and the store compares it with the room it appends to.
+ */
+function applyRecorded(
+  current: LedgerState,
+  event: LifecycleEvent,
+  recorded: RecordedEventSpec,
+): ApplyResult {
+  // "recorded in BUILDING and leaves the room in BUILDING" (B1); B3/B5: "the
+  // room is in BUILDING".
+  if (current.state !== recorded.recordedIn) {
+    return reject(
+      'state_not_in_from_set',
+      `${event.event} is recorded only in ${recorded.recordedIn}, not from ${current.state}`,
+    );
+  }
+
+  if (!isAttributionShapeValid(event.attribution)) {
+    return reject('attribution_invalid', 'attribution block is not shape-valid');
+  }
+
+  if (event.binding === undefined) {
+    return reject('binding_invalid', `${event.event} carries no binding`);
+  }
+  const defect = runtimeRoomBindingDefect(event.binding);
+  if (defect !== null) {
+    return reject('binding_invalid', `${event.event}: ${defect}`);
+  }
+
+  // B4: "A lifecycle room has at most one binding ... A second
+  // runtime_room.bound for the same lifecycle room ... is refused and writes
+  // nothing. There is no rebinding."
+  if (current.binding !== null) {
+    return reject(
+      'binding_exists',
+      `the room is already bound to runtime room ${current.binding.runtimeRoomId} ` +
+        `by event ${current.binding.eventId} — there is no rebinding`,
+    );
+  }
+
+  const binding: RuntimeRoomBindingRecord = {
+    lifecycleRoomId: event.binding.lifecycleRoomId,
+    runtimeRoomId: event.binding.runtimeRoomId,
+    gatewayId: event.binding.gatewayId,
+    eventId: event.eventId,
+  };
+  // The state, its overlays, the round, the head, the authorization and the
+  // companions of the current occupancy are all unchanged: no transition ran.
+  const next: LedgerState = {
+    ...current,
+    binding,
+    appliedEventIds: [...current.appliedEventIds, event.eventId],
+  };
+  assertInvariants(next);
+  return { ok: true, kind: 'recorded', state: next, event: event.event, eventId: event.eventId };
 }
 
 function commit(
@@ -364,6 +504,8 @@ function commit(
     headSha,
     // Companions are scoped to a state occupancy; a transition clears them.
     observedCompanions: [],
+    // A binding outlives every transition, T19/T20 and T22 included (B4).
+    binding: current.binding,
     appliedEventIds: [...current.appliedEventIds, event.eventId],
     entries: [...current.entries, entry],
   };
@@ -393,7 +535,11 @@ function assertInvariants(next: LedgerState): void {
   }
 }
 
-/** Fold a sequence of events. Stops and reports at the first rejection. */
+/**
+ * Fold a sequence of events. Stops and reports at the first rejection. Every
+ * accepted kind — `transition`, `conjunction_pending`, `recorded`, `replay` —
+ * carries the next state forward.
+ */
 export function applyAll(
   start: LedgerState,
   events: readonly LifecycleEvent[],
@@ -412,7 +558,13 @@ export function applyAll(
   return { state, results };
 }
 
-/** Every (state, event) pair the table accepts, derived from the table itself. */
+/**
+ * Every (state, event) pair the ledger accepts, derived from the contracts
+ * themselves: each transition's from-set against its triggers, plus each
+ * recorded event in the one state it is recorded in (`BUILDING|runtime_room.bound`).
+ * A transition pair yields `transition` (or `conjunction_pending`); a recorded
+ * pair yields `recorded`.
+ */
 export function acceptedPairs(): ReadonlySet<string> {
   const pairs = new Set<string>();
   for (const spec of TRANSITIONS) {
@@ -421,6 +573,9 @@ export function acceptedPairs(): ReadonlySet<string> {
         pairs.add(`${from}|${trigger}`);
       }
     }
+  }
+  for (const recorded of RECORDED_EVENTS) {
+    pairs.add(`${recorded.recordedIn}|${recorded.event}`);
   }
   return pairs;
 }
