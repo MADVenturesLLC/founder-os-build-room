@@ -3,8 +3,8 @@
  * two conforming implementations must produce byte-identical canonical
  * forms and identical hashes for the same events.
  *
- * The second implementation below is written against the four spec
- * documents (`packages/journal/specs/`) alone. It imports nothing from
+ * The second implementation below is written against the spec documents
+ * (`packages/journal/specs/`, (a) to (e)) alone. It imports nothing from
  * `packages/journal/src` — only `node:` builtins and the shared vector
  * INPUT data — and is deliberately structured differently (Buffer-based,
  * validation-free) so agreement is evidence about the byte grammar, not
@@ -19,18 +19,24 @@ import { Buffer } from 'node:buffer';
 import {
   GENESIS_CHAIN_HASH,
   chainHash,
+  encodeBindingRecordRow,
   encodeCommandEventRow,
+  encodeCommandEventRowV2,
   encodeDecisionRecordRow,
   encodeEnvelope,
   encodePlanDoc,
   envelopeDigest,
+  type BindingRecordRow,
   type CommandEventRow,
   type DecisionRecordRow,
   type NormalizedCommandEnvelope,
 } from '../packages/journal/src/index.js';
 import {
+  BINDING_CHAIN_ROWS,
+  BINDING_VECTOR_ROWS,
   CHAIN_ROWS,
   DECISION_VECTOR_ROWS,
+  ENVELOPE_BUILDER,
   ENVELOPE_FULL,
   ENVELOPE_MINIMAL,
   PLANDOC_EXAMPLE,
@@ -111,9 +117,9 @@ function value2(value: TreeValue): Buffer {
 const plandoc2 = (root: { readonly [key: string]: TreeValue }): Buffer =>
   Buffer.concat([lp('BRJ:b:1'), value2(root)]);
 
-function commandRow2(row: CommandEventRow): Buffer {
+function commandRow2(row: CommandEventRow, specId = 'BRJ:c:1'): Buffer {
   return Buffer.concat([
-    lp('BRJ:c:1'),
+    lp(specId),
     strF(0x01, 'command'),
     strF(0x02, row.seq),
     strF(0x03, row.eventType),
@@ -164,6 +170,34 @@ function decisionRow2(row: DecisionRecordRow): Buffer {
       second: row.lifecycleEventRef.eventId,
     }),
     strF(0x0a, row.recordedAt),
+  ]);
+}
+
+/** Spec (c) v2: version 1's fields under `BRJ:c:2`, then `init_model` (0x1b) and `provider_conversation_id` (0x1c). */
+const commandRowV2_2 = (row: CommandEventRow): Buffer =>
+  Buffer.concat([commandRow2(row, 'BRJ:c:2'), strF(0x1b, row.initModel), strF(0x1c, row.providerConversationId)]);
+
+/**
+ * Spec (e) v1, from `serialization-e-binding-row.md`: `lp("BRJ:e:1")`, then
+ * eleven fields 0x01–0x0b, every one present. Written out byte by byte rather
+ * than through the string-field helper, so the presence byte of a required
+ * field is spelled here as the spec states it.
+ */
+function bindingRow2(row: BindingRecordRow): Buffer {
+  const required = (tag: number, value: string): Buffer => Buffer.concat([Buffer.of(tag), Buffer.of(0x01), lp(value)]);
+  return Buffer.concat([
+    lp('BRJ:e:1'),
+    required(0x01, 'binding'),
+    required(0x02, row.seq),
+    required(0x03, row.event),
+    required(0x04, row.actorId),
+    required(0x05, row.lifecycleRoomId),
+    required(0x06, row.runtimeRoomId),
+    required(0x07, row.gatewayId),
+    required(0x08, row.recordedState),
+    required(0x09, row.planHash),
+    Buffer.concat([Buffer.of(0x0a, 0x01), lp(row.lifecycleEventRef.roomId), lp(row.lifecycleEventRef.eventId)]),
+    required(0x0b, row.recordedAt),
   ]);
 }
 
@@ -218,6 +252,41 @@ describe('two-implementation determinism (contract §6.2)', () => {
         decisionRow2(row).toString('hex'),
         name,
       );
+    }
+  });
+
+  it('spec (e) standalone binding rows: identical bytes and identical hashes', () => {
+    for (const { name, row } of BINDING_VECTOR_ROWS) {
+      const first = encodeBindingRecordRow(row);
+      const second = bindingRow2(row);
+      assert.equal(hexOf(first), second.toString('hex'), name);
+      assert.equal(sha256(Buffer.from(first)), sha256(second), `${name}: row hash`);
+    }
+  });
+
+  it('specs (c) v2, (d) and (e) with chain framing: the binding chain hashes identically', () => {
+    assert.equal(hexOf(encodeEnvelope(ENVELOPE_BUILDER)), envelope2(ENVELOPE_BUILDER).toString('hex'));
+    let priorFirst = GENESIS_CHAIN_HASH;
+    let priorSecond = GENESIS_CHAIN_HASH;
+    for (const entry of BINDING_CHAIN_ROWS) {
+      const first =
+        entry.recordClass === 'command'
+          ? encodeCommandEventRowV2(entry.row)
+          : entry.recordClass === 'decision'
+            ? encodeDecisionRecordRow(entry.row)
+            : encodeBindingRecordRow(entry.row);
+      const second =
+        entry.recordClass === 'command'
+          ? commandRowV2_2(entry.row)
+          : entry.recordClass === 'decision'
+            ? decisionRow2(entry.row)
+            : bindingRow2(entry.row);
+      assert.equal(hexOf(first), second.toString('hex'), entry.name);
+      const firstChain = chainHash(priorFirst, first);
+      const secondChain = chain2(priorSecond, second);
+      assert.equal(firstChain, secondChain, `${entry.name}: chain hash`);
+      priorFirst = firstChain;
+      priorSecond = secondChain;
     }
   });
 });

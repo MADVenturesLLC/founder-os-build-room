@@ -3,8 +3,9 @@
  *
  * `chain_hash` = SHA-256 over the prior row's chain hash rendered as its 64
  * lowercase-hex ASCII bytes (the 64-ASCII-zero genesis constant for the
- * first row) followed by the row's canonical byte sequence per the (c) or
- * (d) specification as the row's record class determines.
+ * first row) followed by the row's canonical byte sequence per the (c),
+ * (d) or (e) specification as the row's record class determines: command,
+ * decision or binding (contract §6.2, v0.19).
  *
  * This pure framing function rides in 2a because the §6.2 chain vectors
  * cannot be generated without it. The production hashing path — append

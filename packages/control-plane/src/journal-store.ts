@@ -1085,7 +1085,10 @@ function decodeStored(stored: StoredRow): { record: JournalRecord } | { defect: 
     if (error instanceof JournalDecodeError) return { defect: `row at seq ${stored.seq} does not decode: ${error.message}` };
     throw error;
   }
-  const eventType = decoded.recordClass === RECORD_CLASS_COMMAND ? decoded.row.eventType : decoded.row.decision;
+  const eventType =
+    decoded.recordClass === RECORD_CLASS_COMMAND ? decoded.row.eventType
+    : decoded.recordClass === RECORD_CLASS_DECISION ? decoded.row.decision
+    : decoded.row.event;
   if (decoded.recordClass !== stored.record_class) return { defect: `row at seq ${stored.seq}: record_class column disagrees with its bytes` };
   if (eventType !== stored.event_type) return { defect: `row at seq ${stored.seq}: event_type column disagrees with its bytes` };
   if (decoded.row.seq !== String(stored.seq)) return { defect: `row at seq ${stored.seq}: its bytes carry seq ${decoded.row.seq}` };
