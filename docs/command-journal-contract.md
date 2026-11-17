@@ -10,16 +10,18 @@ unblocked by those rulings once this contract merges. Everything else
 binds the implementation once this contract merges under the repository's
 gates and the Founder's SHA-named merge authorization.
 
-**v0.19, the Phase 5 amendment — [RULED].** The Founder's ruling of
-2026-11-17, `FOUNDER-RULING-20261117-BR-JOURNAL-PHASE5`, amends this
-contract from v0.18 to v0.19, as B6 of the Phase 5 authorization
-requires. Its text and SHA-256 are quoted in §13, and each clause it
-rules is marked **[RULED, §13 <clause>]** where it lands, naming the clause.
-The ruling has been in force since the Founder's signature (its J1):
-from then, Phase 5 build steps 1 and 3 may be built on their branch,
-and their code merges only after the pull request that brings this
-document to v0.19 has merged. This document carries the ruling from
-that merge.
+**v0.19, the Phase 5 amendment — [RULED, §13 J1].** The Founder's
+ruling of 2026-11-17, `FOUNDER-RULING-20261117-BR-JOURNAL-PHASE5`,
+amends this contract from v0.18 to v0.19, as B6 of the Phase 5
+authorization requires. Its text and SHA-256 are quoted in §13, and
+each clause it rules is marked **[RULED, §13 <clause>]** where it
+lands, naming the clause. The ruling has been in force since the
+Founder's signature (its J1): from then, Phase 5 build steps 1 and 3
+may be built on their branch, and their code merges only after the
+pull request that brings this document to v0.19 has merged. The
+refusal of the generic event route (§8.4, the ruling's Part F) may
+merge before it, and for the T6, T7 and T8 events it has. This
+document carries the ruling from that merge.
 
 **Authority derivation — this document is an implementation contract, not
 governance doctrine.** Its entire authority derives from the FounderOS
@@ -697,14 +699,15 @@ as written.
    or invalidated plan cannot progress; identity, role, provider, model,
    surface, scope, authorization, journal, and evidence stay bound through
    every transition (stop-gate §7.6–7.8).
-6. **Phase 5 events — [RULED, §13 G4].** Phase 5 uses, from
-   `BUILDING`: `runtime_room.bound`, recorded with no transition (§1.4,
-   §2); T6 `decision.requested`, `command.queued` and `ceiling.exceeded`
-   (`BUILDING` to `BLOCKED_ON_FOUNDER`; guard: typed subject bound); T7
-   `decision.answered`, `command.approved`, `command.denied` and
-   `ceiling.raised` (`BLOCKED_ON_FOUNDER` to `BUILDING`; guard: bound to
-   request id); and T8 `build.ready_for_evidence` (`BUILDING` to
-   `EVIDENCE_CAPTURE`; guard: local commits exist). T19 to T22 stay as
+6. **Phase 5 events — [RULED, §13 G4].** Phase 5 uses
+   `runtime_room.bound`, recorded in `BUILDING` with no transition
+   (§1.4, §2); T6 `decision.requested`, `command.queued` and
+   `ceiling.exceeded` (`BUILDING` to `BLOCKED_ON_FOUNDER`; guard: typed
+   subject bound); T7 `decision.answered`, `command.approved`,
+   `command.denied` and `ceiling.raised` (`BLOCKED_ON_FOUNDER` to
+   `BUILDING`; guard: bound to request id); and T8
+   `build.ready_for_evidence` (`BUILDING` to `EVIDENCE_CAPTURE`; guard:
+   local commits exist). T19 to T22 stay as
    `DEC-20260815-11` sets them and are available in Phase 5: T22 for the
    Founder's cancellation (Part C of the Phase 5 authorization), and T19
    or T22 when a bound runtime room or its Gateway is lost (B4 of
@@ -765,6 +768,11 @@ as written.
    the credential's pre-existing optionality; this contract states only
    the requirement. `DEC-20260815-07`'s step-up authentication
    remains an unbound proposal and is not activated by this contract.
+   (That was so when this clause was ruled, on 2026-09-01. From
+   2026-10-15, B4 of `FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE`,
+   noted in `DEC-20260815-07`, binds step-up by TOTP for T15, which is
+   Phase 6 work; this contract still does not activate it, and E1
+   below keeps it in Phase 6.)
    **Alternative considered, not adopted:** a dedicated Founder Ed25519
    keypair signing each decision payload — recorded as considered; the
    Founder ruled the credential binding above.
@@ -792,8 +800,9 @@ as written.
    before it checks whether the request is open and unanswered; two acts
    for one request therefore serialize, and the second finds the first
    committed and is refused before it writes. `verify()` (§2, Phase 5
-   verification) remains the after-the-fact check. The Gateway acts on a T7 act only after the control plane has committed
-   it and delivered it over the signed channel; a marked action runs
+   verification) remains the after-the-fact check. The Gateway acts on
+   a T7 act only after the control plane has committed it and delivered
+   it over the signed channel; a marked action runs
    only after `command.approved` for its exact `subject_digest` has been
    committed and delivered that way. After `command.denied` the action
    never runs, the room returns to `BUILDING`, and the Builder command
@@ -803,10 +812,11 @@ as written.
    plane's generic event route refuses `runtime_room.bound`, the three
    T6 events, the four T7 events and the T8 event, as it refuses the
    planner path's five: before the ledger, unrecorded, as an
-   authorization refusal. The refusal could merge before the governed
-   paths of §§2, 7 and 8.3, and until they exist those events cannot be
-   recorded at all. For the T6, T7 and T8 events it merged in Build Room
-   pull request 162, at `b13c1a0778e699bca1bd19d3a880f9e6b312e0c8`
+   authorization refusal. The refusal is the first Phase 5 code
+   change, and it could merge before the governed paths of §§2, 7 and
+   8.3; until they exist those events cannot be recorded at all. For
+   the T6, T7 and T8 events it merged in Build Room pull request 162,
+   at `b13c1a0778e699bca1bd19d3a880f9e6b312e0c8`
    (`packages/control-plane/src/governed-events.ts`);
    `runtime_room.bound` joins the refused set in the change that adds it
    to the code's vocabulary.
@@ -899,7 +909,12 @@ above stays exactly as `test/phase4-stop-gate-map.test.ts` holds it.
 - Item 6, fail-closed interruption and rebuild without duplicate
   commands, approvals, dispatch or binding — §4, §5, §2 (binding
   rebuild), §8.3 (one act per request).
-- Item 7, no secret persisted — §6, with redaction before (f)'s bytes.
+- Item 7, no secret or credential in the journal, evidence or logs —
+  for the journal, §6, with redaction before (f)'s bytes, and §8.2
+  (the credential is never echoed). Redaction of the evidence and the
+  logs is the Gateway's, on every sink (step 4 of B3 of the Phase 5
+  authorization), with the evidence under `DEC-20260827-01` §§3.3 and
+  3.5; both are outside this contract.
 - Item 8, identity, scope, authorization, journal and evidence bound
   through the build — §2, §7.
 - Items 9 to 11 (repository gates, exact-head Tier-2, counted runs) bind
@@ -911,8 +926,9 @@ above stays exactly as `test/phase4-stop-gate-map.test.ts` holds it.
   nothing (§8.3); `verify()` fails a chain in which two T7 acts name one
   request, a decision follows its room's `founder.cancel`, or a decision
   bound to a Builder command precedes that command's `journaled` row
-  (§2, Phase 5 verification); a `BRJ:d:1` decision row after a `BRJ:d:2` one fails (§6.2);
-  and the generic event route refuses all nine events of §8.4.
+  (§2, Phase 5 verification); a `BRJ:d:1` decision row after a
+  `BRJ:d:2` one fails (§6.2); and the generic event route refuses all
+  nine events of §8.4.
 
 ## 11. Citation basis
 
@@ -947,18 +963,40 @@ full, with the exact clauses relied on:
   authority-bearing act), relied on in §8.1.
 - `DEC-20260815-07` — authentication proposals unbound; step-up not
   activated by this contract, relied on in §8.2.
-- From v0.19, **[RULED, §13 G4]**: `DEC-20260815-17` — `## Founder Authorization — Phase 5
-  (Builder) (2026-11-17)`: B1 (base), B2a (Phase 5 ends at T8; Phase 6
-  scope), B3 (the build order, step 5 on T8), B6 (this amendment), B7
-  (the credential), Part D (scope) and Part E (stop gate) — relied on in
-  the preamble and §§7, 8.2, 9, 10.
-- From v0.19, **[RULED, §13 G4]**: `DEC-20260827-01` — Section 13, the ruling quoted in §13,
-  relied on throughout v0.19; Section 14,
+  (Unbound as read on 2026-08-31; clause 2's step-up bound by TOTP from
+  2026-10-15, in the v0.19 entries below.)
+- From v0.19, **[RULED, §13 G4]**: `DEC-20260815-17` — `## Founder
+  Authorization — Phase 5 (Builder) (2026-11-17)`: B1 (base), B2a
+  (Phase 5 ends at T8; Phase 6 scope), B3 (the build order, step 4 on
+  redaction, step 5 on T8), B6 (this amendment), B7 (the credential),
+  Part C (requirements: the plan-hash check, the build stop, and the
+  Founder's cancellation through T22), Part D (scope) and Part E (stop
+  gate) — relied on in the preamble and §§7, 8.2, 9, 10.
+- From v0.19, **[RULED, §13 G4]**: `DEC-20260815-17` — `## Note —
+  Founder Ruling: Build Room to Done (2026-10-15)`, B4 of
+  `FOUNDER-RULING-20261015-BUILD-ROOM-TO-DONE` (step-up by TOTP for
+  T15, Phase 6 work), also noted in `DEC-20260815-07` as `## Note —
+  Step-Up Mechanism Bound (2026-10-15)` — relied on in §8.2.
+- From v0.19, **[RULED, §13 G4]**: `DEC-20260827-01` — Section 13, the
+  ruling quoted in §13, relied on throughout v0.19; Section 14,
   `FOUNDER-RULING-20261117-BR-BUILDER-EXECUTOR`, relied on in §9.
-- From v0.19, **[RULED, §13 G4]**: `DEC-20260815-11` — row 30, `runtime_room.bound`, and the
-  T17 guard, added by `FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING`
-  (its B1 to B6 and D3), relied on in §§1.4, 2, 7; and T6 to T8 with
-  guards G6 to G8, relied on in §7.6.
+- From v0.19, **[RULED, §13 G4]**: `DEC-20260815-11` — row 30,
+  `runtime_room.bound`, and the T17 guard, added by
+  `FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING` (its B1 to B6 and
+  D3), relied on in §§1.4, 2, 7; and T6 to T8 with guards G6 to G8,
+  relied on in §7.6.
+- From v0.19, **[RULED, §13 G4]**: `DEC-20260814-02` — its Tier-2
+  trigger surfaces, `/07-decisions/` among them, named in J2 of the
+  ruling quoted in §13; and `DEC-20261020-01` clause 4 (on a Build Room
+  lane, a review served by a model off the lane's allowlist is not a
+  Tier-2 pass), cited in the v0.19 changelog entry.
+- From v0.19, completing this inventory (the builder's addition, not a
+  ruled clause), two citations made before v0.19 and not listed here
+  until it: `DEC-20260801-02` (a push after authorization voids it, and
+  the earlier authorization comment stays unedited as the audit
+  record), cited in the v0.11 changelog entry; and `DEC-20260827-01`
+  Section 12, `FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR` Amendment 5
+  B1, cited in the v0.18 changelog entry.
 
 All but the v0.19 entries were read at the pinned controlling FounderOS head
 `6f5f4405da40c90028df0c1efefed2f44da65b1c` on 2026-08-31, and the §3/§8
@@ -1146,8 +1184,8 @@ file, ending in one LF.)
 - Part A, the basis: not folded.
 - B1: §1.2. B2: §2 (binding), §5.2, §6.2(e). B3: §1.4, §2. B4: §1.4.
   B5, B7: §2 (binding; Phase 5 schema and verification). B6, B8: §2.
-- C1: §5.7. C2 to C4: §7.7, §6.2(f). C5: §2, §6.2, §12's note. C6 to
-  C8: §8.3. C9: §2 (Phase 5 verification).
+- C1: §5.7. C2 to C4: §7.7, §6.2(f). C5: §2, §6.2, §12's note. C6: §8.3,
+  §1.4. C7, C8: §8.3. C9: §2 (Phase 5 verification).
 - D1: §1.4, §7.8.
 - E1: §8.2.
 - F1, F2: §8.4.
@@ -1213,6 +1251,16 @@ answer; it is the Founder's.
   T9 to T18 in Phase 6; the Phase 5 test map's items 2, 4 and 5 say
   what lies outside this contract; §11 dates its inventories and read
   pins; and §§11 and 12 and the J1 sentence carry their markers.
+  Codex, third head `d4c4fd8`, FAIL, again on a model off that
+  allowlist and so again not a Tier-2 pass; its findings were taken:
+  §8.2 dates v0.18's sentence that step-up is unbound (TOTP has been
+  bound for T15 since 2026-10-15); the Phase 5 test map's item 7 covers
+  the evidence and the logs; the preamble carries J1's own marker and
+  its exception for the Part F refusal, and §8.4 states F2's first code
+  change; §11 lists Part C, the 2026-10-15 step-up ruling,
+  `DEC-20260814-02`, `DEC-20261020-01` clause 4 and two earlier
+  citations it lacked; §7.6's lead-in no longer places T7 in
+  `BUILDING`; and §13's list gives C6's landing in §1.4.
 - **v0.18 (2026-10-28):** the init model and conversation id in the
   journal, under FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR Amendment 5
   B1 and FOUNDER-ACT-20261028-BR-PLANNER-JOURNAL-FIELDS with its
