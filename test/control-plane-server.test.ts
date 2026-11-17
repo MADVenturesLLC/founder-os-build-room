@@ -24,6 +24,8 @@ import { createGatewaySurface, type GatewaySurface } from '../packages/control-p
 import type { PostgresLedgerStore } from '../packages/control-plane/src/store.js';
 import { loadConfig } from '../packages/control-plane/src/config.js';
 import { initialLedger } from '../packages/ledger/src/index.js';
+import { EVENTS } from '../packages/contracts/src/index.js';
+import { GOVERNED_PATH_EVENTS } from '../packages/control-plane/src/governed-events.js';
 import { makeEvent } from './helpers.js';
 import { closeServer } from './support/close-server.js';
 
@@ -433,7 +435,7 @@ describe('control plane — room surface', () => {
         ok: false as const,
         outcome: 'rejected' as const,
         code: 'guard_failed' as const,
-        reason: 'G7 (T7): no decision is pending',
+        reason: 'G10 (T10): reviewed_sha is not the remote head',
         state: initialLedger(),
       }),
     } as unknown as PostgresLedgerStore;
@@ -442,14 +444,16 @@ describe('control plane — room surface', () => {
     const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
-      body: JSON.stringify(makeEvent('decision.answered')),
+      // An event the route still passes: T7's `decision.answered` is refused
+      // before the ledger since FOUNDER-RULING-20261117-BR-JOURNAL-PHASE5.
+      body: JSON.stringify(makeEvent('review.opened')),
     });
     const body = await json(response);
 
     // A refusal is a recorded outcome, not a server fault.
     assert.equal(response.status, 409);
     assert.equal(body.code, 'guard_failed');
-    assert.equal(body.reason, 'G7 (T7): no decision is pending');
+    assert.equal(body.reason, 'G10 (T10): reviewed_sha is not the remote head');
     await harness.close();
   });
 
@@ -655,6 +659,110 @@ describe('control plane — the planner path is not the generic route', () => {
     assert.equal(seen, 'scope.captured');
     await harness.close();
   });
+});
+
+describe('control plane — the Builder\'s T6, T7 and T8 events are not the generic route', () => {
+  /*
+   * FOUNDER-RULING-20261117-BR-JOURNAL-PHASE5 (Parts C, D and F): a T6
+   * request is proposed by the Gateway or recorded by the control plane, a
+   * T7 act is the Founder's, authenticated at the control plane and bound to
+   * the request it answers, and T8 commits with the Builder command that
+   * reports the build ready. The generic route takes the actor and the guard
+   * facts (`boundRequestId`, `localCommitsExist`) from its body, so a token
+   * holder could otherwise post `command.approved` as `founder`. Each of the
+   * eight is refused before the store is reached. Their governed paths are
+   * Phase 5 work; until they exist, these events cannot be recorded at all.
+   */
+  const builderEvents = [
+    'decision.requested',
+    'command.queued',
+    'ceiling.exceeded',
+    'decision.answered',
+    'command.approved',
+    'command.denied',
+    'ceiling.raised',
+    'build.ready_for_evidence',
+  ] as const;
+
+  for (const name of builderEvents) {
+    it(`refuses ${name} with 403 and never reaches the store`, async () => {
+      let reached = false;
+      const store = {
+        append: async () => {
+          reached = true;
+          throw new Error('should not be reached');
+        },
+      } as unknown as PostgresLedgerStore;
+
+      const harness = await start(reachablePool, store);
+      const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+        // Each event carries its table actor, `founder` for the four T7 acts.
+        body: JSON.stringify(makeEvent(name)),
+      });
+      const body = await json(response);
+
+      assert.equal(response.status, 403);
+      assert.equal(body.error, 'governed_path_required');
+      assert.equal(body.event, name);
+      assert.equal(reached, false);
+      await harness.close();
+    });
+  }
+
+  it('refuses exactly the five planner-path events and these eight, no more', () => {
+    assert.deepEqual(
+      [...GOVERNED_PATH_EVENTS].sort(),
+      [
+        'task.dispatched.planner',
+        'plan.submitted',
+        'plan.revision_requested',
+        'plan.approved',
+        'founder.cancel',
+        ...builderEvents,
+      ].sort(),
+    );
+  });
+
+  // Every other canonical event still reaches the ledger, so the refusal
+  // cannot widen silently: a new entry in the set fails the test above, and
+  // an event dropped from the vocabulary fails this one's count.
+  const passed = EVENTS.filter((name) => !GOVERNED_PATH_EVENTS.has(name));
+
+  it('leaves sixteen canonical events to the generic route', () => {
+    assert.equal(EVENTS.length, 29);
+    assert.equal(passed.length, 16);
+  });
+
+  for (const name of passed) {
+    it(`still passes ${name} to the ledger`, async () => {
+      let seen: string | null = null;
+      const store = {
+        append: async (_room: string, event: { event: string }) => {
+          seen = event.event;
+          return {
+            ok: false as const,
+            outcome: 'rejected' as const,
+            code: 'state_not_in_from_set' as const,
+            reason: 'not from this state',
+            state: initialLedger(),
+          };
+        },
+      } as unknown as PostgresLedgerStore;
+
+      const harness = await start(reachablePool, store);
+      const response = await fetch(`${harness.url}/rooms/${ROOM}/events`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+        body: JSON.stringify(makeEvent(name)),
+      });
+
+      assert.equal(response.status, 409, `${name}: ${response.status}`);
+      assert.equal(seen, name);
+      await harness.close();
+    });
+  }
 });
 
 describe('control plane — the Founder goal rides on scope capture (plan r1 Q7c)', () => {
