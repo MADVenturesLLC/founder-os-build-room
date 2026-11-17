@@ -19,6 +19,7 @@ import { NO_HOOKS, type GatewayHooks } from './hooks.js';
 import { GatewayLeadership } from './leadership.js';
 import { GatewayPlannerChannel } from './planner-channel.js';
 import { RateLimiter } from './rate-limit.js';
+import { GatewayRoomChannel } from './room-channel.js';
 import { GatewayRoomAppendFence } from './room-append.js';
 import { GatewaySessionService } from './session.js';
 import { GatewaySessionState } from './session-state.js';
@@ -50,6 +51,14 @@ export interface GatewaySurface {
    * loop asks through a port it hands out; a poll then collects nothing.
    */
   readonly planner: GatewayPlannerChannel;
+  /**
+   * The runtime-room mailbox (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2).
+   * Empty until the binding path asks a Gateway to mint through
+   * `requestMint`; a poll's `room` member is then `null`. Leader-local and in
+   * memory: lost on restart and dropped on any demotion, so what reads it
+   * refuses until the Gateway reports again.
+   */
+  readonly roomChannel: GatewayRoomChannel;
   /** Start the supervisor, the limiter sweep, and the retention cadence. */
   start(): void;
   stop(): Promise<void>;
@@ -81,7 +90,20 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
     reconciler: async (context) => service.reconcile(context),
   });
 
-  service = new GatewaySessionService({ pool, config, clock, session, leadership, store, phase3Runs, planner });
+  // Dropped on any demotion: the leadership's demotion counter is the channel's term.
+  const roomChannel = new GatewayRoomChannel(clock, { leaderTerm: () => leadership.demotionVersion });
+
+  service = new GatewaySessionService({
+    pool,
+    config,
+    clock,
+    session,
+    leadership,
+    store,
+    phase3Runs,
+    planner,
+    roomChannel,
+  });
 
   const roomAppendFence = new GatewayRoomAppendFence({ config, clock, session, leadership });
   /*
@@ -103,6 +125,7 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
     sweeps,
     phase3Runs,
     planner,
+    roomChannel,
     start(): void {
       leadership.start();
       limiter.start();
@@ -126,6 +149,13 @@ export {
   type PlannerChannelClock,
   type PlannerChannelTimings,
 } from './planner-channel.js';
+export {
+  GatewayRoomChannel,
+  RoomChannelInputError,
+  type RoomChannelClock,
+  type RoomChannelOptions,
+  type RoomOccupancyReading,
+} from './room-channel.js';
 export { GatewayRegistryStore } from './store.js';
 export { GatewaySessionService } from './session.js';
 export { GatewaySessionState } from './session-state.js';

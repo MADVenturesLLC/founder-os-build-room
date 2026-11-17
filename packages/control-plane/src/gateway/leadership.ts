@@ -89,7 +89,10 @@ export type PipelineName =
   | 'roomAppend'
   | 'phase3Run'
   | 'plannerPoll'
-  | 'plannerReport';
+  | 'plannerReport'
+  /** The runtime-room reports (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2): the planner pair's locks. */
+  | 'roomMinted'
+  | 'roomOccupancy';
 
 export interface FencedOptions {
   readonly pipeline: PipelineName;

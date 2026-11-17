@@ -1,6 +1,7 @@
 /**
  * The signed routes: session-challenge, session-start, heartbeat, the
- * planner pull channel's poll and report — and promotion reconciliation,
+ * planner pull channel's poll and report, the two runtime-room reports
+ * (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2) — and promotion reconciliation,
  * which shares their availability machinery (contract §7, §9, §12).
  *
  * The ordering in each handler is not stylistic. Reading down `sessionStart`
@@ -27,17 +28,24 @@ import {
   heartbeatSignedBytes,
   plannerPollSignedBytes,
   plannerReportSignedBytes,
+  runtimeRoomMintedSignedBytes,
+  runtimeRoomOccupancySignedBytes,
   sessionStartSignedBytes,
   timestampWithinWindow,
   validateHeartbeat,
   validatePlannerPoll,
   validatePlannerReport,
   validatePlannerReportPayload,
+  validateRuntimeRoomMinted,
+  validateRuntimeRoomMintedPayload,
+  validateRuntimeRoomOccupancy,
+  validateRuntimeRoomOccupancyPayload,
   validateSessionStart,
   type HeartbeatEnvelope,
-  type PlannerPollEnvelope,
-  type PlannerReportEnvelope,
   type PlannerReportPayload,
+  type RuntimeRoomMintedPayload,
+  type RuntimeRoomOccupancyPayload,
+  type SessionBoundEnvelope,
   type SessionStartEnvelope,
 } from '../../../gateway-protocol/src/index.js';
 import type { GatewayState } from '../../../gateway-registry/src/index.js';
@@ -47,6 +55,7 @@ import type { ClockGate } from './clock.js';
 import { readLease } from './fence.js';
 import type { GatewayLeadership } from './leadership.js';
 import type { GatewayPlannerChannel } from './planner-channel.js';
+import type { GatewayRoomChannel } from './room-channel.js';
 import type { GatewayRegistryStore } from './store.js';
 import {
   insertTransition,
@@ -69,6 +78,8 @@ export interface SessionServiceDeps {
   readonly store: GatewayRegistryStore;
   readonly phase3Runs: Phase3RunStore;
   readonly planner: GatewayPlannerChannel;
+  /** The runtime-room mailbox (act B2): the poll answer's `room` member, and the two room reports. */
+  readonly roomChannel: GatewayRoomChannel;
 }
 
 interface ResolvedKey {
@@ -87,6 +98,7 @@ export class GatewaySessionService {
   private readonly store: GatewayRegistryStore;
   private readonly phase3Runs: Phase3RunStore;
   private readonly planner: GatewayPlannerChannel;
+  private readonly roomChannel: GatewayRoomChannel;
 
   /**
    * Set when reconciliation could not write its edges because the clock was
@@ -104,6 +116,7 @@ export class GatewaySessionService {
     this.store = deps.store;
     this.phase3Runs = deps.phase3Runs;
     this.planner = deps.planner;
+    this.roomChannel = deps.roomChannel;
   }
 
   get hasDeferredReconciliation(): boolean {
@@ -408,6 +421,13 @@ export class GatewaySessionService {
    * inside the fence, so a refused poll collects nothing; one collected in a
    * transaction that then fails to publish stays marked delivered, which is
    * the conservative direction (it can no longer be reported `not_sent`).
+   *
+   * The answer also carries `room`, the control plane's one open request
+   * that this Gateway mint a runtime room, or `null`
+   * (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2: "carried in its answer to a
+   * Gateway poll as planner work is carried today"). It is collected in the
+   * same fence and the same synchronous step, and re-delivered until a
+   * minted report answers it.
    */
   async plannerPoll(body: unknown, sourceIp: string): Promise<RouteResult> {
     if (!this.clock.reliable) return this.refuse(503, 'clock_unreliable', null, sourceIp);
@@ -430,8 +450,9 @@ export class GatewaySessionService {
         const checked = await this.sessionBoundChecks(ctx.client, envelope);
         if (checked.refusal !== null) return rollback(checked.refusal);
         const request = this.planner.collect(envelope.gatewayId);
+        const room = this.roomChannel.collect(envelope.gatewayId);
         return {
-          value: { status: 200, body: { ok: true, state: 'enrolled', epoch: checked.cursor.epoch, request } },
+          value: { status: 200, body: { ok: true, state: 'enrolled', epoch: checked.cursor.epoch, request, room } },
           commit: true,
           staged: this.advanceCursor(envelope, checked.cursor, ctx.leaseRow.generation),
         };
@@ -509,10 +530,130 @@ export class GatewaySessionService {
     return this.finishSigned(outcome, resolved.keyId, sourceIp);
   }
 
-  /** The heartbeat's fenced checks, shared by the planner routes: enrolled, epoch, sequence, timestamp. */
+  /* ---- POST /gateway/room/minted and /gateway/room/occupancy ---------- */
+
+  /**
+   * The Gateway reports the runtime room it minted for one mint request
+   * (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2).
+   *
+   * Verified exactly as a planner report is, in the same order: clock;
+   * parse; resolve the registry key; the signature against the registry's
+   * key over the purpose's own signed bytes; the digest over the exact
+   * payload text received; the payload against its closed shape, naming the
+   * request the envelope signed; then, in the leadership fence, enrolled,
+   * epoch, sequence and timestamp window. Every refusal is recorded as the
+   * planner report's are. A well-formed report for no open request
+   * (answered, never asked, or lost with a restart or a leader change) is
+   * accepted as traffic and answered `accepted: false`.
+   */
+  async roomMinted(body: unknown, sourceIp: string): Promise<RouteResult> {
+    if (!this.clock.reliable) return this.refuse(503, 'clock_unreliable', null, sourceIp);
+
+    const parsed = validateRuntimeRoomMinted(body);
+    if (!parsed.ok) {
+      return this.refuse(parsed.error === 'purpose_mismatch' ? 401 : 400, parsed.error, null, sourceIp);
+    }
+    const envelope = parsed.envelope;
+
+    const resolved = await this.resolveKey(envelope.gatewayId, envelope.keyId);
+    if (resolved === null) return this.refuse(401, 'unknown_key', null, sourceIp);
+    const signedBytes = runtimeRoomMintedSignedBytes({
+      ...sessionBoundCanonical(envelope),
+      requestId: envelope.requestId,
+      payloadDigest: envelope.payloadDigest,
+    });
+    if (!this.verify(resolved, signedBytes, envelope.signature)) {
+      return this.refuse(401, 'bad_signature', resolved.keyId, sourceIp);
+    }
+
+    const payload = parseVerifiedPayload(envelope.payload, envelope.payloadDigest, validateRuntimeRoomMintedPayload);
+    // The payload names the request the envelope signed, or it is not this report.
+    if (payload === null || payload.requestId !== envelope.requestId) {
+      return this.refuse(400, 'invalid_request', resolved.keyId, sourceIp);
+    }
+    const report: RuntimeRoomMintedPayload = payload;
+
+    const outcome = await this.leadership.runFenced<RouteResult>(
+      { pipeline: 'roomMinted', takeL0: true, takeRegistryLock: true, verifyServingGeneration: true },
+      async (ctx) => {
+        const checked = await this.sessionBoundChecks(ctx.client, envelope);
+        if (checked.refusal !== null) return rollback(checked.refusal);
+        return {
+          value: { status: 200, body: { ok: true, state: 'enrolled', epoch: checked.cursor.epoch } },
+          commit: true,
+          staged: this.advanceCursor(envelope, checked.cursor, ctx.leaseRow.generation),
+        };
+      },
+    );
+    // Recorded only once the report's sequence is published, as a planner answer is.
+    if (outcome.status === 'published') {
+      const result = outcome.value as RouteResult;
+      if (result.status === 200) {
+        const accepted = this.roomChannel.recordMinted(envelope.gatewayId, report);
+        return { status: 200, body: { ...result.body, accepted } };
+      }
+    }
+    return this.finishSigned(outcome, resolved.keyId, sourceIp);
+  }
+
+  /**
+   * The Gateway reports a minted runtime room's occupancy (act B2). Verified
+   * exactly as `roomMinted` is; the payload must name the runtime room the
+   * envelope signed. Accepted as traffic and answered `accepted: false` for
+   * a room this Gateway has not reported minted for that lifecycle room.
+   */
+  async roomOccupancy(body: unknown, sourceIp: string): Promise<RouteResult> {
+    if (!this.clock.reliable) return this.refuse(503, 'clock_unreliable', null, sourceIp);
+
+    const parsed = validateRuntimeRoomOccupancy(body);
+    if (!parsed.ok) {
+      return this.refuse(parsed.error === 'purpose_mismatch' ? 401 : 400, parsed.error, null, sourceIp);
+    }
+    const envelope = parsed.envelope;
+
+    const resolved = await this.resolveKey(envelope.gatewayId, envelope.keyId);
+    if (resolved === null) return this.refuse(401, 'unknown_key', null, sourceIp);
+    const signedBytes = runtimeRoomOccupancySignedBytes({
+      ...sessionBoundCanonical(envelope),
+      runtimeRoomId: envelope.runtimeRoomId,
+      payloadDigest: envelope.payloadDigest,
+    });
+    if (!this.verify(resolved, signedBytes, envelope.signature)) {
+      return this.refuse(401, 'bad_signature', resolved.keyId, sourceIp);
+    }
+
+    const payload = parseVerifiedPayload(envelope.payload, envelope.payloadDigest, validateRuntimeRoomOccupancyPayload);
+    if (payload === null || payload.runtimeRoomId !== envelope.runtimeRoomId) {
+      return this.refuse(400, 'invalid_request', resolved.keyId, sourceIp);
+    }
+    const report: RuntimeRoomOccupancyPayload = payload;
+
+    const outcome = await this.leadership.runFenced<RouteResult>(
+      { pipeline: 'roomOccupancy', takeL0: true, takeRegistryLock: true, verifyServingGeneration: true },
+      async (ctx) => {
+        const checked = await this.sessionBoundChecks(ctx.client, envelope);
+        if (checked.refusal !== null) return rollback(checked.refusal);
+        return {
+          value: { status: 200, body: { ok: true, state: 'enrolled', epoch: checked.cursor.epoch } },
+          commit: true,
+          staged: this.advanceCursor(envelope, checked.cursor, ctx.leaseRow.generation),
+        };
+      },
+    );
+    if (outcome.status === 'published') {
+      const result = outcome.value as RouteResult;
+      if (result.status === 200) {
+        const accepted = this.roomChannel.recordOccupancy(envelope.gatewayId, report);
+        return { status: 200, body: { ...result.body, accepted } };
+      }
+    }
+    return this.finishSigned(outcome, resolved.keyId, sourceIp);
+  }
+
+  /** The heartbeat's fenced checks, shared by the session-bound routes: enrolled, epoch, sequence, timestamp. */
   private async sessionBoundChecks(
     client: PoolClient,
-    envelope: PlannerPollEnvelope | PlannerReportEnvelope,
+    envelope: SessionBoundEnvelope,
   ): Promise<
     | { readonly refusal: RouteResult; readonly cursor?: undefined }
     | { readonly refusal: null; readonly cursor: SessionCursor }
@@ -534,7 +675,7 @@ export class GatewaySessionService {
 
   /** The staged cursor advance for an accepted session-bound message; liveness untouched. */
   private advanceCursor(
-    envelope: PlannerPollEnvelope | PlannerReportEnvelope,
+    envelope: SessionBoundEnvelope,
     cursor: SessionCursor,
     generation: number,
   ): StagedEffects {
@@ -743,7 +884,22 @@ function canonicalOf(envelope: SessionStartEnvelope | HeartbeatEnvelope): Record
   return canonical;
 }
 
-function sessionBoundCanonical(envelope: PlannerPollEnvelope | PlannerReportEnvelope): {
+/**
+ * A payload text believed only over its exact bytes: the SHA-256 of the text
+ * received must be the signed digest, and the parsed text must be the closed
+ * shape, or `null`.
+ */
+function parseVerifiedPayload<T>(text: string, signedDigest: string, validate: (value: unknown) => T | null): T | null {
+  const digest = createHash('sha256').update(text, 'utf8').digest('hex');
+  if (digest !== signedDigest) return null;
+  try {
+    return validate(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+
+function sessionBoundCanonical(envelope: SessionBoundEnvelope): {
   gatewayId: string;
   keyId: string;
   epoch: string;
