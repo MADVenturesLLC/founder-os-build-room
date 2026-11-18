@@ -78,6 +78,8 @@ export const RUNTIME_ROLE_EXCLUDED: Readonly<Record<string, string>> = {
     'already drives planner-command recovery end to end on a genuine br_app_runtime login on its own owned instance — every reconciliation append and the T3 a recovered round commits — and destroys that instance at teardown',
   'room-runtime-phase1-c2':
     'uses no database: its storage suffix marks the proof-runtime gate (Bun worker over a supervised transport), not a data-access identity',
+  'runtime-room-binding':
+    'already drives the room binding end to end on a genuine br_app_runtime login on its own owned instance — the runtime_room.bound lifecycle row, the first Builder command and the binding record in one transaction, every refusal, the unique-index backstop and the real leader fence — and destroys that instance at teardown',
   'schema-preflight':
     'builds role fixtures (forbidden attributes, memberships) and runs the audit against them; role management is its subject. Its schema cases and its passing control already connect as br_app_runtime in every run, and runtime-role-boot covers the audit on the real runtime login',
   'worker-supervisor.prereq-c':
