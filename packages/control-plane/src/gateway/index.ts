@@ -105,7 +105,7 @@ export function createGatewaySurface(deps: GatewaySurfaceDeps): GatewaySurface {
     roomChannel,
   });
 
-  const roomAppendFence = new GatewayRoomAppendFence({ config, clock, session, leadership });
+  const roomAppendFence = new GatewayRoomAppendFence({ config, clock, session, leadership, rooms: roomChannel });
   /*
    * `log` is passed through (correction 5, finding #2): the containment of a
    * failed deferred reconciliation must be VISIBLE, not merely non-fatal —

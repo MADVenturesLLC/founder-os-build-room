@@ -109,13 +109,19 @@
 import { randomBytes } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import {
+  BINDING_ACTOR,
+  BINDING_EVENT,
+  BINDING_RECORDED_STATE,
+  BUILDER_COMMAND_KIND,
   COMMAND_ID_PREFIX,
   DECISION_ACTOR,
   DispatchError,
   GENESIS_CHAIN_HASH,
   JournalDecodeError,
+  RECORD_CLASS_BINDING,
   RECORD_CLASS_COMMAND,
   RECORD_CLASS_DECISION,
+  bindingChainDefect,
   boundDecisionDefect,
   chainHash,
   commandSequenceDefect,
@@ -123,6 +129,7 @@ import {
   containsCredentialMaterial,
   decodeJournalRow,
   deriveCommandState,
+  encodeBindingRecordRow,
   encodeCommandEventRowV2,
   encodeDecisionRecordRow,
   envelopeDigest,
@@ -130,6 +137,7 @@ import {
   isCanonicalSeq,
   journalRowSpec,
   normalizeForJournal,
+  type BindingRecordRow,
   type BoundEntry,
   type CommandEventRow,
   type CommandEventType,
@@ -225,8 +233,18 @@ export type DecisionInput = Omit<DecisionRecordRow, 'seq' | 'recordedAt' | 'acto
   readonly commandId: string;
 };
 
+/**
+ * A binding record (journal ruling B2, spec (e)). `commandId` is the first
+ * Builder command's: it fills the row's `command_id` column, outside the
+ * row's bytes (B3). The event, the actor, the recorded state and the
+ * timestamp are this module's.
+ */
+export type BindingInput = Omit<BindingRecordRow, 'seq' | 'recordedAt' | 'actorId' | 'event' | 'recordedState'> & {
+  readonly commandId: string;
+};
+
 export interface AppendedRecord {
-  readonly recordClass: typeof RECORD_CLASS_COMMAND | typeof RECORD_CLASS_DECISION;
+  readonly recordClass: typeof RECORD_CLASS_COMMAND | typeof RECORD_CLASS_DECISION | typeof RECORD_CLASS_BINDING;
   readonly commandId: string;
   readonly eventType: string;
   readonly seq: string;
@@ -392,11 +410,12 @@ export type JournalCommandValidation =
   | { readonly ok: false; readonly reason: string };
 
 /**
- * The command kind of a Builder command: one dispatch of the Builder
- * executor (journal ruling C1). The kind, not the role, marks it: the role
- * id `builder` also appears on ordinary journaled commands.
+ * The command kind of a Builder command, one dispatch of the Builder
+ * executor (journal ruling C1), as `packages/journal` defines it. The kind,
+ * not the role, marks it: the role id `builder` also appears on ordinary
+ * journaled commands.
  */
-export const BUILDER_COMMAND_KIND = 'builder.invoke';
+export { BUILDER_COMMAND_KIND };
 
 const REQUIRED_STRING_FIELDS = [
   'commandKind',
@@ -553,6 +572,10 @@ export class JournalStore {
         const prepared = this.decisionRow(decision);
         return this.joined(client, () => this.appendDecisionRow(client, prepared));
       },
+      appendBinding: async (binding) => {
+        const prepared = this.bindingRow(binding);
+        return this.joined(client, () => this.appendBindingRow(client, prepared));
+      },
     };
   }
 
@@ -666,6 +689,38 @@ export class JournalStore {
     return { commandId, row };
   }
 
+  private bindingRow(binding: BindingInput): PreparedBinding {
+    const { commandId, ...rest } = binding;
+    if (typeof commandId !== 'string' || !commandId.startsWith(COMMAND_ID_PREFIX) || commandId === COMMAND_ID_PREFIX) {
+      throw new RangeError(`a binding is bound to the first Builder command, in the ${COMMAND_ID_PREFIX} namespace`);
+    }
+    const row: Omit<BindingRecordRow, 'seq'> = {
+      event: BINDING_EVENT,
+      actorId: BINDING_ACTOR,
+      lifecycleRoomId: rest.lifecycleRoomId,
+      runtimeRoomId: rest.runtimeRoomId,
+      gatewayId: rest.gatewayId,
+      recordedState: BINDING_RECORDED_STATE,
+      planHash: rest.planHash,
+      lifecycleEventRef: { ...rest.lifecycleEventRef },
+      recordedAt: canonicalRecordedAt(this.now()),
+    };
+    if (
+      containsCredentialMaterial([
+        commandId,
+        row.lifecycleRoomId,
+        row.runtimeRoomId,
+        row.gatewayId,
+        row.lifecycleEventRef.roomId,
+        row.lifecycleEventRef.eventId,
+      ])
+    ) {
+      throw new JournalCredentialMaterialError();
+    }
+    encodeBindingRecordRow({ ...row, seq: '1' });
+    return { commandId, row };
+  }
+
   // ---- the appends ---------------------------------------------------------
 
   private async appendCommandRow(client: PoolClient, rowInput: Omit<CommandEventRow, 'seq'>): Promise<AppendedRecord> {
@@ -697,6 +752,30 @@ export class JournalStore {
       check: async () => {
         await requireLifecycleEvent(client, row.lifecycleEventRef, row);
         requireSound(commandId, await readBound(client, commandId));
+      },
+    });
+  }
+
+  /**
+   * The binding record (journal ruling B3): its lifecycle entry must be the
+   * `runtime_room.bound` this transaction recorded, with the same three ids,
+   * and the row must sit directly after its Builder command's `journaled`
+   * row, which names that entry. The B5 uniqueness is the database's, on the
+   * lifecycle entry this transaction already wrote.
+   */
+  private async appendBindingRow(client: PoolClient, prepared: PreparedBinding): Promise<AppendedRecord> {
+    const { commandId, row } = prepared;
+    return this.appendWithin(client, {
+      recordClass: RECORD_CLASS_BINDING,
+      commandId,
+      eventType: BINDING_EVENT,
+      encodeAt: (seq) => encodeBindingRecordRow({ ...row, seq }),
+      check: async () => {
+        await requireLifecycleEvent(client, row.lifecycleEventRef, null, row);
+        const entries = await readBound(client, commandId);
+        requireSound(commandId, entries);
+        const defect = bindingChainDefect(entries);
+        if (defect !== null) throw new JournalSequenceError(commandId, defect.reason);
       },
     });
   }
@@ -847,10 +926,16 @@ export interface JournalTransaction {
   commandHistory(commandId: string): Promise<CommandHistory>;
   appendCommandEvent(event: LaterCommandEvent): Promise<AppendedRecord>;
   appendDecision(decision: DecisionInput): Promise<AppendedRecord>;
+  /**
+   * The binding record, next in seq after the first Builder command's
+   * `journaled` row, in the transaction that wrote both it and the
+   * `runtime_room.bound` lifecycle entry (journal ruling B3).
+   */
+  appendBinding(binding: BindingInput): Promise<AppendedRecord>;
 }
 
 interface AppendPlan {
-  readonly recordClass: typeof RECORD_CLASS_COMMAND | typeof RECORD_CLASS_DECISION;
+  readonly recordClass: typeof RECORD_CLASS_COMMAND | typeof RECORD_CLASS_DECISION | typeof RECORD_CLASS_BINDING;
   readonly commandId: string;
   readonly eventType: string;
   readonly encodeAt: (seq: string) => Uint8Array;
@@ -860,6 +945,11 @@ interface AppendPlan {
 interface PreparedDecision {
   readonly commandId: string;
   readonly row: Omit<DecisionRecordRow, 'seq'>;
+}
+
+interface PreparedBinding {
+  readonly commandId: string;
+  readonly row: Omit<BindingRecordRow, 'seq'>;
 }
 
 /** A deep copy, so a caller mutating its own object after the call cannot reach the encoded row. */
@@ -1190,6 +1280,10 @@ async function scanChain(client: PoolClient): Promise<{ result: JournalVerifyRes
     const reason = soundnessDefect(entries);
     if (reason !== null) return fail(`command ${commandId}: ${reason}`, entries[entries.length - 1]?.seq ?? null);
   }
+  // The binding rules run over the whole chain, since they span commands
+  // and rooms (journal ruling B3, B5 both directions, B6).
+  const binding = bindingChainDefect(records);
+  if (binding !== null) return fail(`binding: ${binding.reason}`, binding.atSeq);
   return { result: { ok: true, headSeq: tailSeq, headChainHash: prior, commands: byCommand.size }, records };
 }
 
@@ -1198,7 +1292,10 @@ async function scanChain(client: PoolClient): Promise<{ result: JournalVerifyRes
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-const LIFECYCLE_SQL = `SELECT event, outcome, from_state, (xmin = pg_current_xact_id()::xid) AS this_transaction
+const LIFECYCLE_SQL = `SELECT event, outcome, from_state, (xmin = pg_current_xact_id()::xid) AS this_transaction,
+    payload->'binding'->>'lifecycleRoomId' AS binding_lifecycle_room_id,
+    payload->'binding'->>'runtimeRoomId' AS binding_runtime_room_id,
+    payload->'binding'->>'gatewayId' AS binding_gateway_id
   FROM public.build_room_events WHERE room_id = $1::uuid AND event_id = $2`;
 
 /**
@@ -1215,16 +1312,44 @@ async function requireLifecycleEvent(
   client: PoolClient,
   ref: { readonly roomId: string; readonly eventId: string },
   decision: Omit<DecisionRecordRow, 'seq'> | null,
+  binding: Omit<BindingRecordRow, 'seq'> | null = null,
 ): Promise<void> {
   if (!UUID_PATTERN.test(ref.roomId)) {
     throw new JournalLifecycleReferenceError('room_id is not a room identifier');
   }
-  const { rows } = await client.query<{ event: string; outcome: string; from_state: string | null; this_transaction: boolean }>(
-    LIFECYCLE_SQL,
-    [ref.roomId, ref.eventId],
-  );
+  const { rows } = await client.query<{
+    event: string;
+    outcome: string;
+    from_state: string | null;
+    this_transaction: boolean;
+    binding_lifecycle_room_id: string | null;
+    binding_runtime_room_id: string | null;
+    binding_gateway_id: string | null;
+  }>(LIFECYCLE_SQL, [ref.roomId, ref.eventId]);
   const event = rows[0];
   if (event === undefined) throw new JournalLifecycleReferenceError('no such lifecycle event');
+  if (binding !== null) {
+    // The binding record and its lifecycle entry are one act (B3): the
+    // recorded `runtime_room.bound`, written by this transaction, carrying
+    // the same three ids the record does.
+    if (event.outcome !== 'recorded' || event.event !== binding.event) {
+      throw new JournalLifecycleReferenceError('the lifecycle event is not a recorded runtime_room.bound');
+    }
+    if (event.from_state !== binding.recordedState) {
+      throw new JournalLifecycleReferenceError('the lifecycle event was recorded in a different state than the binding records');
+    }
+    if (
+      event.binding_lifecycle_room_id !== binding.lifecycleRoomId
+      || event.binding_runtime_room_id !== binding.runtimeRoomId
+      || event.binding_gateway_id !== binding.gatewayId
+    ) {
+      throw new JournalLifecycleReferenceError('the lifecycle event binds different ids than the binding record');
+    }
+    if (event.this_transaction !== true) {
+      throw new JournalLifecycleReferenceError('the lifecycle event was not written by this transaction');
+    }
+    return;
+  }
   if (decision === null) return;
   if (event.outcome !== 'transition') throw new JournalLifecycleReferenceError('the lifecycle event is not a committed transition');
   if (event.event !== decision.decision) throw new JournalLifecycleReferenceError('the lifecycle event is a different act');
