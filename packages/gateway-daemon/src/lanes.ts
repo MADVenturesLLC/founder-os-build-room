@@ -18,8 +18,19 @@ import type { Clock } from '../../gateway-protocol/src/index.js';
 import type { ControlPlaneClient, ControlPlaneResponse } from './client.js';
 import { disposition, vocabularyKey, type Disposition } from './disposition.js';
 import type { GatewayIdentity } from './signing.js';
-import { buildHeartbeat, buildPlannerPoll, buildPlannerReport, buildSessionStart } from './signing.js';
-import type { PlannerReportPayload } from '../../gateway-protocol/src/index.js';
+import {
+  buildHeartbeat,
+  buildPlannerPoll,
+  buildPlannerReport,
+  buildRuntimeRoomMinted,
+  buildRuntimeRoomOccupancy,
+  buildSessionStart,
+} from './signing.js';
+import type {
+  PlannerReportPayload,
+  RuntimeRoomMintedPayload,
+  RuntimeRoomOccupancyPayload,
+} from '../../gateway-protocol/src/index.js';
 import type { PrimaryLaneState, StagingLaneState } from './state.js';
 
 /** The bounded retry horizon for a redemption (contract §14, §15). */
@@ -35,6 +46,29 @@ export const MAX_PLANNER_EXCHANGES_PER_TICK = 4;
 /** What the lane needs of the planner worker: an answer per request, or `null`. */
 export interface PlannerRequestHandler {
   handle(request: unknown): Promise<PlannerReportPayload | null>;
+}
+
+/** Occupancy reports per tick at most (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2); the rest wait a tick. */
+export const MAX_ROOM_OCCUPANCY_REPORTS_PER_TICK = 8;
+
+/**
+ * What the lane needs of the room worker (act B2). Every payload it hands
+ * over is one the control plane's validator accepts; anything it cannot read
+ * or could not send, it answers `null` or leaves out.
+ */
+export interface RoomRequestHandler {
+  /** A poll answer's `room` member: the minted report to send, or `null`. Never throws on bad input. */
+  handleRoom(room: unknown): RuntimeRoomMintedPayload | null;
+  mintedSent(payload: RuntimeRoomMintedPayload): void;
+  /** The occupancy reports due now, most urgent first. */
+  dueOccupancy(): readonly RuntimeRoomOccupancyPayload[];
+  occupancySent(payload: RuntimeRoomOccupancyPayload): void;
+}
+
+/** How many polls of one tick's exchange carried work for each worker. */
+export interface ExchangeCounts {
+  readonly planner: number;
+  readonly room: number;
 }
 
 export interface LaneObservation {
@@ -143,40 +177,138 @@ export class PrimaryLane {
    * heartbeat for a sequence. Every response goes through the primary
    * table, exactly as a heartbeat's: a resync drops the session, a
    * protocol-integrity refusal halts the lane. Returns the requests handled.
+   *
+   * Planner work only: a `room` member the poll answer carries is not read.
    */
   async exchangePlanner(
     worker: PlannerRequestHandler,
     maxExchanges: number = MAX_PLANNER_EXCHANGES_PER_TICK,
   ): Promise<number> {
-    let handled = 0;
-    while (handled < maxExchanges) {
-      if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return handled;
-      if (this.clock.monotonicNow() < this.nextAttemptAt) return handled;
+    return (await this.exchange(worker, null, maxExchanges)).planner;
+  }
+
+  /**
+   * One tick's poll exchanges for both workers. The poll answer carries
+   * planner work as `request` and the control plane's mint request as `room`
+   * (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2), so one poll serves both; each
+   * member goes to its worker only when that worker exists. A poll that
+   * carried work for neither ends the exchange, as a poll with no planner
+   * request did before. A mint request is answered first, with a signed
+   * `runtime_room_minted` report; planner work is then handled and reported
+   * exactly as `exchangePlanner` always has. An absent, unknown or malformed
+   * `room` member sends nothing and never halts the lane.
+   */
+  async exchange(
+    planner: PlannerRequestHandler | null,
+    rooms: RoomRequestHandler | null,
+    maxExchanges: number = MAX_PLANNER_EXCHANGES_PER_TICK,
+  ): Promise<ExchangeCounts> {
+    let polls = 0;
+    let plannerHandled = 0;
+    let roomHandled = 0;
+    const counts = (): ExchangeCounts => ({ planner: plannerHandled, room: roomHandled });
+    if (planner === null && rooms === null) return counts();
+    while (polls < maxExchanges) {
+      if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return counts();
+      if (this.clock.monotonicNow() < this.nextAttemptAt) return counts();
 
       let request: unknown = null;
+      let room: unknown = null;
       const poll = buildPlannerPoll(this.identity, this.epoch, this.sequence + 1, this.clock);
       const polled = this.apply(await this.client.plannerPoll(poll), (response) => {
         this.sequence += 1;
         request = response.body?.['request'] ?? null;
+        room = response.body?.['room'] ?? null;
         return true;
       });
-      if (polled !== 'retain_and_continue' || request === null) return handled;
-      handled += 1;
+      if (polled !== 'retain_and_continue') return counts();
+      const plannerWork = planner !== null && request !== null;
+      const roomWork = rooms !== null && room !== null;
+      if (!plannerWork && !roomWork) return counts();
+      polls += 1;
 
-      const payload = await worker.handle(request);
+      if (rooms !== null && room !== null) {
+        roomHandled += 1;
+        if (!(await this.reportMinted(rooms, room))) return counts();
+      }
+
+      if (planner === null || request === null) continue;
+      plannerHandled += 1;
+      const payload = await planner.handle(request);
       if (payload === null) continue;
       const requestId = (request as Record<string, unknown>)['requestId'];
       if (typeof requestId !== 'string') continue;
-      if (this.epoch === null || this.state !== 'HEARTBEATING') return handled;
+      if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return counts();
 
       const report = buildPlannerReport(this.identity, this.epoch, this.sequence + 1, requestId, JSON.stringify(payload), this.clock);
       const reported = this.apply(await this.client.plannerReport(report), () => {
         this.sequence += 1;
         return true;
       });
-      if (reported !== 'retain_and_continue') return handled;
+      if (reported !== 'retain_and_continue') return counts();
     }
-    return handled;
+    return counts();
+  }
+
+  /**
+   * Answer one `room` member. `false` only when a minted report was sent and
+   * its response ends this tick's exchange (a resync, a halt, a retry); an
+   * unreadable member, or one with nothing to send, is `true` and sends nothing.
+   */
+  private async reportMinted(rooms: RoomRequestHandler, room: unknown): Promise<boolean> {
+    const payload = rooms.handleRoom(room);
+    if (payload === null) return true;
+    if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return false;
+    const report = buildRuntimeRoomMinted(
+      this.identity,
+      this.epoch,
+      this.sequence + 1,
+      payload.requestId,
+      JSON.stringify(payload),
+      this.clock,
+    );
+    const reported = this.apply(await this.client.roomMinted(report), () => {
+      this.sequence += 1;
+      return true;
+    });
+    if (reported !== 'retain_and_continue') return false;
+    rooms.mintedSent(payload);
+    return true;
+  }
+
+  /**
+   * This tick's `runtime_room_occupancy` reports (act B2): each minted room
+   * the worker says is due, up to `maxReports`, while the session holds. Each
+   * takes the session's next sequence and goes through the primary table like
+   * every other session-bound message. Returns the reports the control plane
+   * took.
+   */
+  async reportRoomOccupancy(
+    rooms: RoomRequestHandler,
+    maxReports: number = MAX_ROOM_OCCUPANCY_REPORTS_PER_TICK,
+  ): Promise<number> {
+    let sent = 0;
+    for (const payload of rooms.dueOccupancy()) {
+      if (sent >= maxReports) return sent;
+      if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return sent;
+      if (this.clock.monotonicNow() < this.nextAttemptAt) return sent;
+      const report = buildRuntimeRoomOccupancy(
+        this.identity,
+        this.epoch,
+        this.sequence + 1,
+        payload.runtimeRoomId,
+        JSON.stringify(payload),
+        this.clock,
+      );
+      const reported = this.apply(await this.client.roomOccupancy(report), () => {
+        this.sequence += 1;
+        return true;
+      });
+      if (reported !== 'retain_and_continue') return sent;
+      rooms.occupancySent(payload);
+      sent += 1;
+    }
+    return sent;
   }
 
   private apply(
