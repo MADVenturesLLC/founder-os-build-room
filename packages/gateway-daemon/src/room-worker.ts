@@ -67,6 +67,8 @@ interface MintedRoom {
   lastSent: OccupancyState | null;
   /** Ticks since that report. */
   ticksSinceSent: number;
+  /** An occupancy the control plane refused, held back until the next refresh; `null` when none. */
+  refused: OccupancyState | null;
 }
 
 export class GatewayRoomWorker implements RoomRequestHandler {
@@ -117,7 +119,7 @@ export class GatewayRoomWorker implements RoomRequestHandler {
         this.log('error', 'room.mint_conflict', { runtimeRoomId });
         return null;
       }
-      room = { lifecycleRoomId: request.lifecycleRoomId, runtimeRoomId, lastSent: null, ticksSinceSent: 0 };
+      room = { lifecycleRoomId: request.lifecycleRoomId, runtimeRoomId, lastSent: null, ticksSinceSent: 0, refused: null };
       this.byLifecycle.set(room.lifecycleRoomId, room);
       this.byRuntime.set(runtimeRoomId, room.lifecycleRoomId);
       this.log('info', 'room.minted', { runtimeRoomId });
@@ -154,7 +156,8 @@ export class GatewayRoomWorker implements RoomRequestHandler {
       const occupancy = this.occupancyOf(room);
       if (occupancy === null) continue;
       const changed = occupancy !== room.lastSent;
-      if (!changed && room.ticksSinceSent < OCCUPANCY_REFRESH_TICKS) continue;
+      const heldBack = occupancy === room.refused && room.ticksSinceSent < OCCUPANCY_REFRESH_TICKS;
+      if (heldBack || (!changed && room.ticksSinceSent < OCCUPANCY_REFRESH_TICKS)) continue;
       const payload: RuntimeRoomOccupancyPayload = {
         lifecycleRoomId: room.lifecycleRoomId,
         runtimeRoomId: room.runtimeRoomId,
@@ -175,10 +178,19 @@ export class GatewayRoomWorker implements RoomRequestHandler {
     this.markSent(payload.lifecycleRoomId, payload.runtimeRoomId, payload.occupancy);
   }
 
+  /** An occupancy report the control plane refused: not delivered, and due again at the next refresh. */
+  occupancyRefused(payload: RuntimeRoomOccupancyPayload): void {
+    const room = this.byLifecycle.get(payload.lifecycleRoomId);
+    if (room === undefined || room.runtimeRoomId !== payload.runtimeRoomId) return;
+    room.refused = payload.occupancy;
+    room.ticksSinceSent = 0;
+  }
+
   private markSent(lifecycleRoomId: string, runtimeRoomId: string, occupancy: OccupancyState): void {
     const room = this.byLifecycle.get(lifecycleRoomId);
     if (room === undefined || room.runtimeRoomId !== runtimeRoomId) return;
     room.lastSent = occupancy;
+    room.refused = null;
     room.ticksSinceSent = 0;
   }
 

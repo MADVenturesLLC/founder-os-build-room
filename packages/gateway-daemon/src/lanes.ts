@@ -63,6 +63,13 @@ export interface RoomRequestHandler {
   /** The occupancy reports due now, most urgent first. */
   dueOccupancy(): readonly RuntimeRoomOccupancyPayload[];
   occupancySent(payload: RuntimeRoomOccupancyPayload): void;
+  /** An occupancy report the control plane answered with `accepted: false`: due again at the next refresh. */
+  occupancyRefused(payload: RuntimeRoomOccupancyPayload): void;
+}
+
+/** Whether the control plane took a room report: it answers 200 with `accepted`. */
+function reportAccepted(response: ControlPlaneResponse): boolean {
+  return response.body !== null && response.body['accepted'] === true;
 }
 
 /** How many polls of one tick's exchange carried work for each worker. */
@@ -267,12 +274,16 @@ export class PrimaryLane {
       JSON.stringify(payload),
       this.clock,
     );
-    const reported = this.apply(await this.client.roomMinted(report), () => {
+    const response = await this.client.roomMinted(report);
+    const reported = this.apply(response, () => {
       this.sequence += 1;
       return true;
     });
     if (reported !== 'retain_and_continue') return false;
-    rooms.mintedSent(payload);
+    // Counted as reported only when the control plane took it; a refused
+    // report (no open request, say after a leader change) is not, and the
+    // control plane's next request is answered with the same room.
+    if (reportAccepted(response)) rooms.mintedSent(payload);
     return true;
   }
 
@@ -300,12 +311,17 @@ export class PrimaryLane {
         JSON.stringify(payload),
         this.clock,
       );
-      const reported = this.apply(await this.client.roomOccupancy(report), () => {
+      const response = await this.client.roomOccupancy(report);
+      const reported = this.apply(response, () => {
         this.sequence += 1;
         return true;
       });
       if (reported !== 'retain_and_continue') return sent;
-      rooms.occupancySent(payload);
+      // A report the control plane answered `accepted: false` (it holds no
+      // mint for the room, say after a leader change) is not delivered: it
+      // stays due, at the refresh pace rather than every tick.
+      if (reportAccepted(response)) rooms.occupancySent(payload);
+      else rooms.occupancyRefused(payload);
       sent += 1;
     }
     return sent;

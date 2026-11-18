@@ -186,6 +186,31 @@ describe('gateway-daemon-room · occupancy is due on change and every sixth tick
     assert.deepEqual(worker.dueOccupancy().map((p) => p.occupancy), ['OCCUPIED'], 'a change is due at once');
   });
 
+  it('holds a refused occupancy back until the next refresh, then offers it again; a change goes at once', () => {
+    const { runtime } = countedRooms();
+    const worker = new GatewayRoomWorker({ rooms: runtime });
+    const minted = worker.handleRoom(mintRequest());
+    assert.ok(minted);
+    const [first] = worker.dueOccupancy();
+    assert.ok(first);
+
+    // The control plane answered accepted: false (it holds no mint for the
+    // room, say after a leader change): not delivered, and not every tick.
+    worker.occupancyRefused(first);
+    for (let tick = 1; tick < OCCUPANCY_REFRESH_TICKS; tick += 1) {
+      worker.tick();
+      assert.deepEqual(worker.dueOccupancy(), [], `held back at tick ${tick}`);
+    }
+    worker.tick();
+    assert.deepEqual(worker.dueOccupancy(), [first], 'due again at the refresh');
+
+    worker.occupancyRefused(first);
+    runtime.occupyFixtureRoom(minted.runtimeRoomId);
+    assert.deepEqual(worker.dueOccupancy().map((p) => p.occupancy), ['OCCUPIED'], 'a change is not held back');
+    worker.occupancySent(worker.dueOccupancy()[0]!);
+    assert.deepEqual(worker.dueOccupancy(), [], 'taken: nothing due');
+  });
+
   it('puts changed rooms first, then the longest waiting', () => {
     const { runtime } = countedRooms();
     const worker = new GatewayRoomWorker({ rooms: runtime });
@@ -440,6 +465,34 @@ describe('gateway-daemon-room · occupancy reports from the tick', () => {
     daemon.rooms.closeFixtureRoom(runtimeRoomId);
     await daemon.tick();
     assert.equal(JSON.parse(plane.of('/gateway/room/occupancy').at(-1)!['payload'] as string)['occupancy'], 'CLOSED');
+  });
+});
+
+describe('gateway-daemon-room · a report the control plane did not accept is not delivered', () => {
+  it('keeps an occupancy report answered accepted: false due, at the refresh pace', async () => {
+    const id = identity();
+    const plane = scriptedPlane(id.gatewayId);
+    const daemon = daemonOver(plane.fetchImpl, id);
+    const request = mintRequest();
+    plane.polls.push({ room: request });
+    await daemon.tick();
+    const runtimeRoomId = daemon.roomWorker.minted().get(request.lifecycleRoomId)!;
+    const epoch = plane.of('/gateway/room/minted')[0]!['epoch'] as string;
+
+    daemon.rooms.occupyFixtureRoom(runtimeRoomId);
+    plane.queue('/gateway/room/occupancy', json(200, { ok: true, state: 'enrolled', epoch, accepted: false }));
+    await daemon.tick();
+    assert.equal(plane.of('/gateway/room/occupancy').length, 1, 'sent once, refused');
+
+    const sentAt: number[] = [];
+    for (let tick = 1; tick <= OCCUPANCY_REFRESH_TICKS; tick += 1) {
+      const before = plane.of('/gateway/room/occupancy').length;
+      await daemon.tick();
+      if (plane.of('/gateway/room/occupancy').length > before) sentAt.push(tick);
+    }
+    assert.deepEqual(sentAt, [OCCUPANCY_REFRESH_TICKS], 'not resent every tick; resent at the refresh');
+    const resent = JSON.parse(plane.of('/gateway/room/occupancy').at(-1)!['payload'] as string);
+    assert.equal(resent['occupancy'], 'OCCUPIED');
   });
 });
 
