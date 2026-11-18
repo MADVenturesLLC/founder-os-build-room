@@ -40,6 +40,7 @@ import {
   COMMAND_ID_PREFIX,
   type GovernedCommandRequest,
 } from '../../journal/src/index.js';
+import { isCanonicalUuid, isRuntimeRoomId } from '../../contracts/src/index.js';
 import type { LedgerState, LifecycleEvent } from '../../ledger/src/index.js';
 import { RecordedEventRefusedError, type PostgresLedgerStore } from './store.js';
 import type { AppendedRecord, JournaledAppendResult, JournalTransaction } from './journal-store.js';
@@ -47,6 +48,7 @@ import type { DispatcherAttribution } from './planner-loop.js';
 
 /** Why a binding, or a later Builder command, was refused. */
 export type BindingRefusalCode =
+  | 'invalid_request'
   | 'not_building'
   | 'already_bound'
   | 'not_bound'
@@ -119,7 +121,10 @@ export function approvedPlanHash(state: LedgerState): string | null {
     const entry = state.entries[i];
     if (entry === undefined || entry.transition !== 'T5') continue;
     const plandoc = entry.evidence.find((ref) => ref.kind === 'plandoc');
-    return plandoc?.digest ?? null;
+    // A digest that is not a plan hash binds nothing (spec (e) needs 64
+    // lowercase hex): the room has no usable plan, and the binding refuses.
+    const digest = plandoc?.digest;
+    return typeof digest === 'string' && /^[0-9a-f]{64}$/.test(digest) ? digest : null;
   }
   return null;
 }
@@ -167,6 +172,13 @@ export async function bindFirstBuilderCommand(
   const { roomId, gatewayId, runtimeRoomId, command } = request;
   const eventId = deps.mintEventId();
   try {
+    // Formats first, before the room lock: a malformed id refuses as a typed
+    // refusal rather than surfacing as a database or encoder error.
+    if (!isCanonicalUuid(roomId)) throw new RuntimeRoomBindingRefusedError('invalid_request', 'the room id is not a canonical UUID');
+    if (!isCanonicalUuid(gatewayId)) throw new RuntimeRoomBindingRefusedError('invalid_request', 'the Gateway id is not a canonical UUID');
+    if (!isRuntimeRoomId(runtimeRoomId)) {
+      throw new RuntimeRoomBindingRefusedError('invalid_request', 'the runtime room id is not room- and a canonical UUID');
+    }
     requireBuilderCommand(command);
     const appended = await deps.ledger.appendRecorded(roomId, {
       build: async (client, current): Promise<LifecycleEvent> => {

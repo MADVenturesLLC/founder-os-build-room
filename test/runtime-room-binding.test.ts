@@ -389,9 +389,21 @@ describe('bindFirstBuilderCommand — refusals the store and the database raise'
     }
   });
 
-  it('a reducer refusal of the event as built is ledger_refused (the real reducer, a malformed runtime room id)', async () => {
+  it('a malformed runtime room id is invalid_request, refused before the room lock is taken', async () => {
     const h = harness({ minted: { [`${GATEWAY} ${ROOM}`]: ['room-1'] } });
-    assert.match(refusedWith(await bind(h, builderCommand(), 'room-1'), 'ledger_refused'), /binding\.runtimeRoomId/);
+    assert.match(refusedWith(await bind(h, builderCommand(), 'room-1'), 'invalid_request'), /runtime room id/);
+    assert.equal(h.ledger.calls, 0);
+    assert.deepEqual(h.journal.calls, []);
+  });
+
+  it('a malformed room id or Gateway id is invalid_request, refused before the room lock is taken', async () => {
+    const h = harness();
+    const command = builderCommand();
+    const badRoom = await bindFirstBuilderCommand(h.deps, { roomId: 'room_1', gatewayId: GATEWAY, runtimeRoomId: RUNTIME_ROOM, command });
+    assert.match(refusedWith(badRoom, 'invalid_request'), /room id/);
+    const badGateway = await bindFirstBuilderCommand(h.deps, { roomId: ROOM, gatewayId: 'GATEWAY-1', runtimeRoomId: RUNTIME_ROOM, command });
+    assert.match(refusedWith(badGateway, 'invalid_request'), /Gateway id/);
+    assert.equal(h.ledger.calls, 0);
     assert.deepEqual(h.journal.calls, []);
   });
 
@@ -507,6 +519,12 @@ describe('approvedPlanHash — the PlanDoc digest on the latest T5 entry', () =>
   }
   const state = (...entries: LedgerEntry[]): LedgerState => ({ ...initialLedger(), entries });
   const other = 'e'.repeat(64);
+
+  it('is null when the T5 PlanDoc digest is not a plan hash, so the binding refuses no_approved_plan rather than failing in the encoder', () => {
+    assert.equal(approvedPlanHash(state(entry('T5', plandoc('not-a-hash'), 1))), null);
+    assert.equal(approvedPlanHash(state(entry('T5', plandoc('A'.repeat(64)), 1))), null);
+    assert.equal(approvedPlanHash(state(entry('T5', plandoc('a'.repeat(63)), 1))), null);
+  });
 
   it('is null with no entries, and with no T5 entry even when another entry carries a PlanDoc', () => {
     assert.equal(approvedPlanHash(initialLedger()), null);

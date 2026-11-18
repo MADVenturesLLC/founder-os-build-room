@@ -483,23 +483,25 @@ describe('room binding — the three writes commit together (journal ruling B3)'
   });
 
   it('a failure in the third write rolls the lifecycle entry and the journaled row back with it', async () => {
-    // A T5 digest that is not 64 hex passes every B5 check and the reducer,
-    // and is refused by the binding record's encoder after the lifecycle row
-    // and the journaled row are written in the transaction.
-    const world = newWorld();
-    const roomId = randomUUID();
-    await ledger!.createRoom(roomId);
-    await drive(ledger!, roomId, TO_BUILDING, [{ kind: 'plandoc', ref: 'cmd_plan_fixture', digest: 'sha256:not-a-hex-digest' }]);
-    const gatewayId = randomUUID();
+    // The real journal, except that the binding record's append throws after
+    // the lifecycle row and the journaled row are written in the transaction.
+    const { world, roomId, gatewayId } = await readyToBind();
     const runtimeRoomId = newRuntimeRoomId();
-    world.live.add(gatewayId);
     reportMinted(world, gatewayId, roomId, runtimeRoomId);
     const command = builderCommand();
     const before = await footprint(roomId);
+    const failingJournal = {
+      inTransaction: (client: PoolClient) => ({
+        ...journal!.inTransaction(client),
+        appendBinding: async () => {
+          throw new Error('the third write failed');
+        },
+      }),
+    };
 
     await assert.rejects(
-      bindFirstBuilderCommand(deps(world), { roomId, gatewayId, runtimeRoomId, command }),
-      (error: unknown) => error instanceof RangeError && /plan_hash/.test(error.message),
+      bindFirstBuilderCommand(deps(world, { journal: failingJournal }), { roomId, gatewayId, runtimeRoomId, command }),
+      /the third write failed/,
     );
     assert.deepEqual(await footprint(roomId), before);
     assert.equal(await journalRowsFor(command.commandId), 0);
@@ -618,6 +620,24 @@ describe('room binding — every refusal writes nothing (lifecycle ruling B4, B5
     );
   });
 
+  it('refuses a room whose T5 PlanDoc digest is not a plan hash, as no_approved_plan, writing nothing', async () => {
+    const world = newWorld();
+    const roomId = randomUUID();
+    await ledger!.createRoom(roomId);
+    await drive(ledger!, roomId, TO_BUILDING, [{ kind: 'plandoc', ref: 'cmd_plan_fixture', digest: 'sha256:not-a-hex-digest' }]);
+    const gatewayId = randomUUID();
+    const runtimeRoomId = newRuntimeRoomId();
+    world.live.add(gatewayId);
+    reportMinted(world, gatewayId, roomId, runtimeRoomId);
+    const command = builderCommand();
+    await refusedAndUnwritten(
+      roomId,
+      () => bindFirstBuilderCommand(deps(world), { roomId, gatewayId, runtimeRoomId, command }),
+      'no_approved_plan',
+      command.commandId,
+    );
+  });
+
   it('refuses a command that is not builder.invoke, or whose id is outside cmd_, before the ledger is touched', async () => {
     const { world, roomId, gatewayId, runtimeRoomId } = await readyToBind();
     const commands: BuilderCommandRequest[] = [
@@ -640,17 +660,17 @@ describe('room binding — every refusal writes nothing (lifecycle ruling B4, B5
     boundOutcome(await bindFirstBuilderCommand(deps(world), { roomId, gatewayId, runtimeRoomId, command: builderCommand() }));
   });
 
-  it('refuses a binding the reducer refuses (a malformed runtime room id), with no rejection row', async () => {
+  it('refuses a malformed runtime room id as invalid_request, with nothing written', async () => {
     const { world, roomId, gatewayId } = await readyToBind();
     reportMinted(world, gatewayId, roomId, 'room-1');
     const command = builderCommand();
     const reason = await refusedAndUnwritten(
       roomId,
       () => bindFirstBuilderCommand(deps(world), { roomId, gatewayId, runtimeRoomId: 'room-1', command }),
-      'ledger_refused',
+      'invalid_request',
       command.commandId,
     );
-    assert.match(reason, /runtimeRoomId/);
+    assert.match(reason, /runtime room id/);
   });
 
   it('a room that does not exist is not a refusal: RoomNotFoundError, and nothing is journaled', async () => {
