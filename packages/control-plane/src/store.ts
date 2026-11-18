@@ -22,6 +22,7 @@
 
 import type { Pool, PoolClient } from 'pg';
 import { isCanonicalUuid } from '../../gateway-protocol/src/index.js';
+import { TRANSITIONS } from '../../contracts/src/index.js';
 import {
   apply,
   applyAll,
@@ -32,6 +33,9 @@ import {
   type LifecycleEvent,
   type RejectionCode,
 } from '../../ledger/src/index.js';
+
+/** T17's triggers, read from the transition table rather than restated. */
+const T17_TRIGGERS: ReadonlySet<string> = new Set(TRANSITIONS.find((row) => row.id === 'T17')?.triggers ?? []);
 
 export type AppendOutcome =
   | 'transition'
@@ -360,6 +364,26 @@ export class PostgresLedgerStore {
     return { status: 'ok', ...outcome.value };
   }
 
+  /**
+   * The facts a fenced append decides over: the caller's, with the derived
+   * ones overwritten. `gatewayOnline` is derived for every event, as it
+   * always has been. G17's occupancy limb, `boundRuntimeRoomClosed`, is
+   * derived only for T17's trigger, the one event whose guard reads it,
+   * from the room's own binding and the bound Gateway's signed report
+   * (FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING, C1); on every other
+   * event a caller's value is dropped, so it is never persisted.
+   */
+  private async derivedFacts(
+    event: LifecycleEvent,
+    current: LedgerState,
+    deriveGatewayOnline: () => Promise<boolean>,
+  ): Promise<NonNullable<LifecycleEvent['facts']>> {
+    const { boundRuntimeRoomClosed: _claimed, ...rest } = event.facts ?? {};
+    const facts = { ...rest, gatewayOnline: await deriveGatewayOnline() };
+    if (!T17_TRIGGERS.has(event.event)) return facts;
+    return { ...facts, boundRuntimeRoomClosed: this.fence?.deriveBoundRuntimeRoomClosed?.(current.binding) ?? false };
+  }
+
   /** Whether appends run inside the leader fence with `gatewayOnline` derived. */
   isFenced(): boolean {
     return this.fence !== undefined;
@@ -506,13 +530,7 @@ export class PostgresLedgerStore {
         ? event
         : {
             ...event,
-            facts: {
-              ...event.facts,
-              gatewayOnline: await deriveGatewayOnline(),
-              // G17's occupancy limb is derived the same way, from the
-              // room's own binding and the bound Gateway's signed report.
-              boundRuntimeRoomClosed: this.fence?.deriveBoundRuntimeRoomClosed?.(current.binding) ?? false,
-            },
+            facts: await this.derivedFacts(event, current, deriveGatewayOnline),
           };
 
     const result: ApplyResult = apply(current, offered);
