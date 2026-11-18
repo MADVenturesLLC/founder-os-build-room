@@ -9,7 +9,9 @@
  * `ledger_refused`; a unique violation on either of migration 0011's B5
  * indexes as `binding_conflict`; anything else rethrown as itself); the
  * transaction's shape (the event built, then the journaled row naming it,
- * then the binding record bound to that command); `approvedPlanHash` over
+ * then the binding record bound to that command); the mint request's checks
+ * (`requestRuntimeRoomMint`: BUILDING, unbound, Gateway live, nothing written);
+ * `approvedPlanHash` over
  * entries with and without a T5 PlanDoc digest; and the leader fence's two
  * derived facts, `deriveBoundRuntimeRoomClosed` (lifecycle ruling C1) and
  * `deriveGatewayEnrolledAndLive` (lifecycle ruling B5). The storage suite,
@@ -25,10 +27,12 @@ import {
   approvedPlanHash,
   bindFirstBuilderCommand,
   journalLaterBuilderCommand,
+  requestRuntimeRoomMint,
   type BindingOutcome,
   type BindingRefusalCode,
   type BuilderCommandRequest,
   type LaterCommandOutcome,
+  type MintRequestOutcome,
   type RuntimeRoomBindingDeps,
 } from '../packages/control-plane/src/runtime-room-binding.js';
 import { RecordedEventRefusedError, RoomNotFoundError, type RecordedAppend } from '../packages/control-plane/src/store.js';
@@ -248,7 +252,7 @@ function bind(h: Harness, command: BuilderCommandRequest = builderCommand(), run
   return bindFirstBuilderCommand(h.deps, { roomId: ROOM, gatewayId: GATEWAY, runtimeRoomId, command });
 }
 
-function refusedWith(outcome: BindingOutcome | LaterCommandOutcome, code: BindingRefusalCode): string {
+function refusedWith(outcome: BindingOutcome | LaterCommandOutcome | MintRequestOutcome, code: BindingRefusalCode): string {
   assert.equal(outcome.kind, 'refused', JSON.stringify(outcome));
   if (outcome.kind !== 'refused') throw new Error('unreachable');
   assert.equal(outcome.code, code, outcome.reason);
@@ -493,6 +497,68 @@ describe('journalLaterBuilderCommand — later Builder commands name the binding
     }
     const duplicate = new JournalDuplicateEventError('cmd_0123456789abcdef01234567');
     await assert.rejects(later(harness({ state: BOUND, journal: new FakeJournal({ failJournaled: duplicate }) })), (caught: unknown) => caught === duplicate);
+  });
+});
+
+describe('requestRuntimeRoomMint — the control plane\'s mint request (step-1 act B2, first message)', () => {
+  function mintHarness(options: Parameters<typeof harness>[0] = {}): {
+    readonly h: Harness;
+    readonly requested: Array<readonly [string, string]>;
+    readonly mint: (request?: { readonly roomId: string; readonly gatewayId: string }) => Promise<MintRequestOutcome>;
+  } {
+    const h = harness(options);
+    const requested: Array<readonly [string, string]> = [];
+    const deps = {
+      ledger: h.deps.ledger,
+      gateways: h.deps.gateways,
+      rooms: {
+        requestMint: (gatewayId: string, lifecycleRoomId: string) => {
+          requested.push([gatewayId, lifecycleRoomId]);
+          return { requestId: 'req-unit-1' };
+        },
+      },
+    };
+    return { h, requested, mint: (request = { roomId: ROOM, gatewayId: GATEWAY }) => requestRuntimeRoomMint(deps, request) };
+  }
+
+  it('opens the request for an unbound room in BUILDING and a live Gateway, under the room lock, writing nothing', async () => {
+    const { h, requested, mint } = mintHarness();
+    assert.deepEqual(await mint(), { kind: 'requested', requestId: 'req-unit-1' });
+    assert.deepEqual(requested, [[GATEWAY, ROOM]]);
+    assert.equal(h.ledger.calls, 1);
+    assert.deepEqual(h.gatewayChecks, [{ client: CLIENT, gatewayId: GATEWAY }], 'the Gateway is checked on the locked client');
+    assert.deepEqual(h.journal.calls, [], 'a mint request journals nothing');
+    assert.equal(h.ledger.built, null, 'a mint request records no lifecycle event');
+  });
+
+  it('refuses a room not in BUILDING, a bound room, and a Gateway not enrolled and live, opening no request', async () => {
+    const reviewing = mintHarness({ state: ledgerThrough(TO_BUILDING.slice(0, 3)) });
+    assert.match(refusedWith(await reviewing.mint(), 'not_building'), /not BUILDING/);
+    assert.deepEqual(reviewing.h.gatewayChecks, [], 'the state is checked before the Gateway');
+    const bound = mintHarness({ state: BOUND });
+    refusedWith(await bound.mint(), 'already_bound');
+    assert.deepEqual(bound.h.gatewayChecks, []);
+    const offline = mintHarness({ live: false });
+    refusedWith(await offline.mint(), 'gateway_not_live');
+    for (const { requested } of [reviewing, bound, offline]) assert.deepEqual(requested, []);
+  });
+
+  it('a malformed room id or Gateway id is invalid_request, refused before the room lock is taken', async () => {
+    const { h, requested, mint } = mintHarness();
+    assert.match(refusedWith(await mint({ roomId: 'room_1', gatewayId: GATEWAY }), 'invalid_request'), /room id/);
+    assert.match(refusedWith(await mint({ roomId: ROOM, gatewayId: 'GATEWAY-1' }), 'invalid_request'), /Gateway id/);
+    assert.equal(h.ledger.calls, 0);
+    assert.deepEqual(requested, []);
+  });
+
+  it('answers interrupted when leadership is lost, and rethrows anything else as itself', async () => {
+    for (const committed of [false, true]) {
+      const { mint } = mintHarness({ ledger: new FakeLedger(BUILDING, { notLeader: true, committed }) });
+      assert.deepEqual(await mint(), { kind: 'interrupted', committed });
+    }
+    const missing = new RoomNotFoundError(ROOM);
+    const { mint } = mintHarness({ ledger: new FakeLedger(BUILDING, { fail: missing }) });
+    await assert.rejects(mint(), (caught: unknown) => caught === missing);
   });
 });
 

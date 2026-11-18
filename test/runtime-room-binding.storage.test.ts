@@ -44,7 +44,7 @@
  *  - with the leader fence: the binding through the real
  *    `GatewayRoomAppendFence`, whose `deriveGatewayEnrolledAndLive` reads an
  *    enrolled Gateway's row and its accepted heartbeat, and the real room
- *    channel; and, under a fence whose occupancy derivation the suite
+ *    channel, whose minted rooms a Gateway's session-start forgets; and, under a fence whose occupancy derivation the suite
  *    controls, the G17 limb is derived for T17's trigger alone, a caller's
  *    `boundRuntimeRoomClosed` is never persisted on any other event, and
  *    T17 is decided by the derived value and the ledger's binding, never by
@@ -932,17 +932,27 @@ describe('room binding — through the real leader fence and room channel', { sk
     };
 
     const { roomId } = await buildingRoom();
-    // The Gateway reports a runtime room minted for this lifecycle room, as its signed report would record it.
-    const { requestId } = channel.requestMint(gateway.gatewayId, roomId);
-    assert.equal(channel.collect(gateway.gatewayId)?.requestId, requestId);
     const runtimeRoomId = newRuntimeRoomId();
-    assert.equal(
-      channel.recordMinted(gateway.gatewayId, { requestId, lifecycleRoomId: roomId, runtimeRoomId, occupancy: 'PREPARED' }),
-      true,
-    );
+    // The Gateway reports a runtime room minted for this lifecycle room, as its signed report would record it.
+    const reportMinted = (): void => {
+      const { requestId } = channel.requestMint(gateway.gatewayId, roomId);
+      assert.equal(channel.collect(gateway.gatewayId)?.requestId, requestId);
+      assert.equal(
+        channel.recordMinted(gateway.gatewayId, { requestId, lifecycleRoomId: roomId, runtimeRoomId, occupancy: 'PREPARED' }),
+        true,
+      );
+    };
     const realDeps = deps(newWorld(), { ledger: fenced, gateways: fence, rooms: channel });
 
-    // Enrolled, but no heartbeat accepted: not live.
+    // A room reported before the Gateway's session started is forgotten by that session-start,
+    // since the daemon may have restarted and lost it; the Gateway reports it again in the new session.
+    reportMinted();
+    assert.deepEqual(channel.mintedFor(gateway.gatewayId, roomId), [runtimeRoomId]);
+    const epoch = await openSession(node, gateway);
+    assert.deepEqual(channel.mintedFor(gateway.gatewayId, roomId), []);
+    reportMinted();
+
+    // Enrolled, in session, but no heartbeat accepted: not live.
     assert.equal(await derive(gateway.gatewayId), false);
     const early = builderCommand();
     const before = await footprint(roomId);
@@ -957,7 +967,6 @@ describe('room binding — through the real leader fence and room channel', { sk
     assert.equal(await derive(randomUUID()), false);
 
     // An accepted heartbeat makes it live, and the binding commits through the fence.
-    const epoch = await openSession(node, gateway);
     assert.equal((await node.service.heartbeat(signedBeat(node, gateway, epoch, 1), TEST_IP)).status, 200);
     assert.equal(await derive(gateway.gatewayId), true);
     const command = builderCommand();

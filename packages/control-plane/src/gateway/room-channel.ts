@@ -212,6 +212,27 @@ export class GatewayRoomChannel {
     return reading === undefined ? null : { ...reading };
   }
 
+  /**
+   * Drop everything held for one Gateway: its open requests, the rooms it
+   * reported minted and their occupancy. Called when that Gateway starts a
+   * new session, because a daemon restart loses the rooms it minted, and a
+   * runtime room id it reported before the restart may name a room it no
+   * longer holds; a binding must not name one (lifecycle ruling B5). A
+   * session that resynchronized without a restart loses nothing it cannot
+   * re-establish: the next mint request for the same lifecycle room is
+   * answered with the same runtime room.
+   */
+  forgetGateway(gatewayId: string): void {
+    this.syncTerm();
+    for (const [requestId, entry] of this.open) {
+      if (entry.gatewayId === gatewayId) this.open.delete(requestId);
+    }
+    const prefix = `${gatewayId} `;
+    for (const key of [...this.minted.keys()]) if (key.startsWith(prefix)) this.minted.delete(key);
+    for (const key of [...this.mintedRooms.keys()]) if (key.startsWith(prefix)) this.mintedRooms.delete(key);
+    for (const key of [...this.occupancy.keys()]) if (key.startsWith(prefix)) this.occupancy.delete(key);
+  }
+
   /** Drop everything held when the leadership term has moved since it was recorded. */
   private syncTerm(): void {
     const now = this.leaderTerm();

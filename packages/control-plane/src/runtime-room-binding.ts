@@ -160,6 +160,52 @@ function refusalOf(error: unknown): { readonly code: BindingRefusalCode; readonl
   return null;
 }
 
+export type MintRequestOutcome =
+  | { readonly kind: 'requested'; readonly requestId: string }
+  | { readonly kind: 'refused'; readonly code: BindingRefusalCode; readonly reason: string }
+  | { readonly kind: 'interrupted'; readonly committed: boolean };
+
+/**
+ * Ask a Gateway to mint a runtime room for a lifecycle room: the first of
+ * the three messages of the step-1 act's B2, "the control plane's request
+ * that an enrolled Gateway mint a runtime room for a named lifecycle room
+ * in BUILDING". Under the room lock it checks what that names: the room is
+ * in BUILDING, has no binding (there is no rebinding, lifecycle ruling B4),
+ * and the Gateway is enrolled and live; then it opens the request, which
+ * the Gateway collects in its next poll answer. It writes nothing. The
+ * Gateway's minted report is what `bindFirstBuilderCommand` then checks.
+ */
+export async function requestRuntimeRoomMint(
+  deps: Pick<RuntimeRoomBindingDeps, 'ledger' | 'gateways'> & {
+    readonly rooms: { requestMint(gatewayId: string, lifecycleRoomId: string): { readonly requestId: string } };
+  },
+  request: { readonly roomId: string; readonly gatewayId: string },
+): Promise<MintRequestOutcome> {
+  const { roomId, gatewayId } = request;
+  try {
+    if (!isCanonicalUuid(roomId)) throw new RuntimeRoomBindingRefusedError('invalid_request', 'the room id is not a canonical UUID');
+    if (!isCanonicalUuid(gatewayId)) throw new RuntimeRoomBindingRefusedError('invalid_request', 'the Gateway id is not a canonical UUID');
+    const locked = await deps.ledger.underRoomLock(roomId, async (client, current) => {
+      if (current.state !== 'BUILDING') {
+        throw new RuntimeRoomBindingRefusedError('not_building', `the room is in ${current.state}, not BUILDING`);
+      }
+      if (current.binding !== null) {
+        throw new RuntimeRoomBindingRefusedError('already_bound', 'the room already has a runtime room binding; there is no rebinding');
+      }
+      if (!(await deps.gateways.deriveGatewayEnrolledAndLive(client, gatewayId))) {
+        throw new RuntimeRoomBindingRefusedError('gateway_not_live', 'the Gateway named is not enrolled and live');
+      }
+      return deps.rooms.requestMint(gatewayId, roomId);
+    });
+    if (locked.status === 'not_leader') return { kind: 'interrupted', committed: locked.committed };
+    return { kind: 'requested', requestId: locked.value.requestId };
+  } catch (error) {
+    const refusal = refusalOf(error);
+    if (refusal !== null) return { kind: 'refused', ...refusal };
+    throw error;
+  }
+}
+
 /**
  * Bind the room to a runtime room, journaling its first Builder command in
  * the same transaction (journal ruling B3). Returns `refused` with nothing
