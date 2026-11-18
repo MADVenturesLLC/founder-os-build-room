@@ -17,8 +17,10 @@
  *   - an accepted report takes the session's next sequence and never touches
  *     liveness; a report for no open request, or occupancy for a room never
  *     reported minted, is traffic answered `accepted: false`;
- *   - an accepted session-start forgets that Gateway's minted rooms, occupancy
- *     and open requests, and no other Gateway's;
+ *   - after an accepted session-start, that Gateway's earlier minted rooms
+ *     and readings are not believed until it reports again, open requests stay
+ *     open, occupancy of a room minted earlier is accepted as the new
+ *     session's reading, and no other Gateway's reports change;
  *   - a cross-purpose envelope is `401 purpose_mismatch` on every route, both
  *     ways; the routes keep the 16 KB gateway body limit and their own rate
  *     limits.
@@ -263,8 +265,8 @@ describe('gateway-room-routes · accepted reports', () => {
   });
 });
 
-describe('gateway-room-routes · a new session forgets the Gateway\'s room reports', () => {
-  it('drops the Gateway\'s minted rooms, occupancy and open requests on an accepted session-start, keeping every other Gateway\'s', async () => {
+describe('gateway-room-routes · a new session believes only what the Gateway reports in it', () => {
+  it('stops believing the Gateway\'s earlier reports on an accepted session-start until it reports again, keeping every other Gateway\'s', async () => {
     const { stub, surface, gateway, epoch, lifecycleRoomId, requestId } = await delivered();
     try {
       const channel = surface.gateway.roomChannel;
@@ -276,7 +278,7 @@ describe('gateway-room-routes · a new session forgets the Gateway\'s room repor
       );
       assert.equal(report.body['accepted'], true);
       const pendingRoom = uuid();
-      channel.requestMint(gateway.gatewayId, pendingRoom);
+      const pending = channel.requestMint(gateway.gatewayId, pendingRoom);
 
       const other = enroll(stub);
       const otherEpoch = await openSession(surface, other);
@@ -300,10 +302,19 @@ describe('gateway-room-routes · a new session forgets the Gateway\'s room repor
       assert.notEqual(renewed, epoch);
       assert.deepEqual(channel.mintedFor(gateway.gatewayId, lifecycleRoomId), [], 'a room minted in the old session is not believed');
       assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId), null);
-      const polled = await post(surface, '/gateway/planner/poll', poll(gateway, renewed, 1));
-      assert.equal(polled.body['room'], null, 'a request opened before the new session is dropped with it');
       assert.deepEqual(channel.mintedFor(other.gatewayId, lifecycleRoomId), [otherRuntimeRoomId], 'another Gateway keeps its reports');
       assert.equal(channel.occupancyOf(other.gatewayId, otherRuntimeRoomId)?.occupancy, 'PREPARED');
+
+      const polled = await post(surface, '/gateway/planner/poll', poll(gateway, renewed, 1));
+      assert.deepEqual(polled.body['room'], { kind: 'mint', requestId: pending.requestId, lifecycleRoomId: pendingRoom }, 'an open request stays open');
+      const occupied = await post(
+        surface,
+        '/gateway/room/occupancy',
+        occupancy(gateway, renewed, 2, runtimeRoomId, { lifecycleRoomId, runtimeRoomId, occupancy: 'OCCUPIED' }),
+      );
+      assert.equal(occupied.body['accepted'], true, 'a Gateway that kept the room reports its occupancy in the new session');
+      assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId)?.occupancy, 'OCCUPIED');
+      assert.deepEqual(channel.mintedFor(gateway.gatewayId, lifecycleRoomId), [], 'only a fresh mint report lists it for a binding');
     } finally {
       await surface.close();
     }

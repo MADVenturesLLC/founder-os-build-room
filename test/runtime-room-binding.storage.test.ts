@@ -44,7 +44,8 @@
  *  - with the leader fence: the binding through the real
  *    `GatewayRoomAppendFence`, whose `deriveGatewayEnrolledAndLive` reads an
  *    enrolled Gateway's row and its accepted heartbeat, and the real room
- *    channel, whose minted rooms a Gateway's session-start forgets; and, under a fence whose occupancy derivation the suite
+ *    channel, which believes a minted room only once the Gateway has
+ *    reported it in its current session; and, under a fence whose occupancy derivation the suite
  *    controls, the G17 limb is derived for T17's trigger alone, a caller's
  *    `boundRuntimeRoomClosed` is never persisted on any other event, and
  *    T17 is decided by the derived value and the ledger's binding, never by
@@ -944,7 +945,7 @@ describe('room binding — through the real leader fence and room channel', { sk
     };
     const realDeps = deps(newWorld(), { ledger: fenced, gateways: fence, rooms: channel });
 
-    // A room reported before the Gateway's session started is forgotten by that session-start,
+    // A room reported before the Gateway's session started is not believed after that session-start,
     // since the daemon may have restarted and lost it; the Gateway reports it again in the new session.
     reportMinted();
     assert.deepEqual(channel.mintedFor(gateway.gatewayId, roomId), [runtimeRoomId]);

@@ -171,8 +171,9 @@ export type MintRequestOutcome =
  * that an enrolled Gateway mint a runtime room for a named lifecycle room
  * in BUILDING". Under the room lock it checks what that names: the room is
  * in BUILDING, has no binding (there is no rebinding, lifecycle ruling B4),
- * and the Gateway is enrolled and live; then it opens the request, which
- * the Gateway collects in its next poll answer. It writes nothing. The
+ * and the Gateway is enrolled and live. Only after that transaction has
+ * ended as this leader's does it open the request, which the Gateway
+ * collects in its next poll answer. It writes nothing. The
  * Gateway's minted report is what `bindFirstBuilderCommand` then checks.
  */
 export async function requestRuntimeRoomMint(
@@ -195,10 +196,13 @@ export async function requestRuntimeRoomMint(
       if (!(await deps.gateways.deriveGatewayEnrolledAndLive(client, gatewayId))) {
         throw new RuntimeRoomBindingRefusedError('gateway_not_live', 'the Gateway named is not enrolled and live');
       }
-      return deps.rooms.requestMint(gatewayId, roomId);
     });
     if (locked.status === 'not_leader') return { kind: 'interrupted', committed: locked.committed };
-    return { kind: 'requested', requestId: locked.value.requestId };
+    // Opened only once the checks' transaction has ended as this leader's: an
+    // operation that reports a failure or an interruption leaves no request
+    // for a Gateway to collect.
+    const { requestId } = deps.rooms.requestMint(gatewayId, roomId);
+    return { kind: 'requested', requestId };
   } catch (error) {
     const refusal = refusalOf(error);
     if (refusal !== null) return { kind: 'refused', ...refusal };

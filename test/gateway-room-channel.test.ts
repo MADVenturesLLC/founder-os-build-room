@@ -267,39 +267,68 @@ describe('gateway-room-channel · leader-local: dropped on a leadership change',
   });
 });
 
-describe('gateway-room-channel · forgetGateway (a new session may follow a daemon restart)', () => {
-  it("drops one Gateway's open requests, minted rooms and occupancy, and nothing of another Gateway's", () => {
+describe('gateway-room-channel · sessionStarted (a new session may follow a daemon restart)', () => {
+  it("stops believing one Gateway's earlier minted rooms and readings, and nothing of another Gateway's", () => {
     const channel = new GatewayRoomChannel(scriptedClock());
     const restarted = uuid();
     const other = uuid();
     const lifecycleRoomId = uuid();
-    const lost = mint(channel, restarted, lifecycleRoomId);
+    const earlier = mint(channel, restarted, lifecycleRoomId);
     const kept = mint(channel, other, lifecycleRoomId);
-    const pending = channel.requestMint(restarted, uuid());
 
-    channel.forgetGateway(restarted);
+    channel.sessionStarted(restarted);
 
-    assert.deepEqual(channel.mintedFor(restarted, lifecycleRoomId), []);
-    assert.equal(channel.occupancyOf(restarted, lost.runtimeRoomId), null);
-    assert.equal(channel.collect(restarted), null, 'its open request is gone');
-    assert.equal(
-      channel.recordOccupancy(restarted, { lifecycleRoomId, runtimeRoomId: lost.runtimeRoomId, occupancy: 'CLOSED' }),
-      false,
-      'a report for a forgotten room is refused',
-    );
-    assert.notEqual(pending.requestId, channel.requestMint(restarted, uuid()).requestId);
-
+    assert.deepEqual(channel.mintedFor(restarted, lifecycleRoomId), [], 'a binding needs a mint report from this session');
+    assert.equal(channel.occupancyOf(restarted, earlier.runtimeRoomId), null, 'T17 reads no reading from an earlier session');
     assert.deepEqual(channel.mintedFor(other, lifecycleRoomId), [kept.runtimeRoomId]);
     assert.equal(channel.occupancyOf(other, kept.runtimeRoomId)?.occupancy, 'PREPARED');
   });
 
-  it('lets the same Gateway report the same room again after a fresh request', () => {
+  it('keeps open requests open, and accepts occupancy of a room minted in an earlier session as this session\'s reading', () => {
+    const channel = new GatewayRoomChannel(scriptedClock());
+    const gatewayId = uuid();
+    const lifecycleRoomId = uuid();
+    const bound = mint(channel, gatewayId, lifecycleRoomId);
+    const pending = channel.requestMint(gatewayId, uuid());
+
+    channel.sessionStarted(gatewayId);
+
+    assert.equal(channel.collect(gatewayId)?.requestId, pending.requestId, 'the open request is still delivered');
+    assert.equal(
+      channel.recordOccupancy(gatewayId, { lifecycleRoomId, runtimeRoomId: bound.runtimeRoomId, occupancy: 'CLOSED' }),
+      true,
+      'a Gateway that kept the room re-establishes its reading',
+    );
+    assert.equal(channel.occupancyOf(gatewayId, bound.runtimeRoomId)?.occupancy, 'CLOSED');
+    assert.deepEqual(channel.mintedFor(gatewayId, lifecycleRoomId), [], 'occupancy alone does not re-list the room for a binding');
+    assert.equal(
+      channel.recordOccupancy(gatewayId, { lifecycleRoomId: uuid(), runtimeRoomId: bound.runtimeRoomId, occupancy: 'CLOSED' }),
+      false,
+      'occupancy is still accepted only for the lifecycle room the room was minted for',
+    );
+  });
+
+  it('lists the same room again once the Gateway reports it minted in the new session', () => {
     const channel = new GatewayRoomChannel(scriptedClock());
     const gatewayId = uuid();
     const lifecycleRoomId = uuid();
     const first = mint(channel, gatewayId, lifecycleRoomId);
-    channel.forgetGateway(gatewayId);
+    channel.sessionStarted(gatewayId);
     mint(channel, gatewayId, lifecycleRoomId, first.runtimeRoomId);
     assert.deepEqual(channel.mintedFor(gatewayId, lifecycleRoomId), [first.runtimeRoomId]);
+    assert.equal(channel.occupancyOf(gatewayId, first.runtimeRoomId)?.occupancy, 'PREPARED');
+  });
+
+  it('a leadership change drops the session counts with everything else', () => {
+    let term = 1;
+    const channel = new GatewayRoomChannel(scriptedClock(), { leaderTerm: () => term });
+    const gatewayId = uuid();
+    const lifecycleRoomId = uuid();
+    channel.sessionStarted(gatewayId);
+    mint(channel, gatewayId, lifecycleRoomId);
+    term = 2;
+    assert.deepEqual(channel.mintedFor(gatewayId, lifecycleRoomId), []);
+    const again = mint(channel, gatewayId, lifecycleRoomId);
+    assert.deepEqual(channel.mintedFor(gatewayId, lifecycleRoomId), [again.runtimeRoomId]);
   });
 });

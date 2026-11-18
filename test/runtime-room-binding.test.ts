@@ -131,7 +131,13 @@ class FakeLedger {
 
   constructor(
     private readonly state: LedgerState,
-    private readonly options: { readonly fail?: unknown; readonly notLeader?: boolean; readonly committed?: boolean } = {},
+    private readonly options: {
+      readonly fail?: unknown;
+      readonly notLeader?: boolean;
+      readonly committed?: boolean;
+      /** Run the locked body, then answer `not_leader` (the commit was lost), or throw this (the commit failed). */
+      readonly afterBody?: { readonly lost: true } | { readonly fail: unknown };
+    } = {},
   ) {}
 
   async appendRecorded<T>(
@@ -161,7 +167,13 @@ class FakeLedger {
     this.calls += 1;
     if ('fail' in this.options) throw this.options.fail;
     if (this.options.notLeader === true) return { status: 'not_leader', committed: this.options.committed ?? false };
-    return { status: 'ok', value: await body(CLIENT, this.state) };
+    const value = await body(CLIENT, this.state);
+    const after = this.options.afterBody;
+    if (after !== undefined) {
+      if ('fail' in after) throw after.fail;
+      return { status: 'not_leader', committed: false };
+    }
+    return { status: 'ok', value };
   }
 }
 
@@ -559,6 +571,17 @@ describe('requestRuntimeRoomMint — the control plane\'s mint request (step-1 a
     const missing = new RoomNotFoundError(ROOM);
     const { mint } = mintHarness({ ledger: new FakeLedger(BUILDING, { fail: missing }) });
     await assert.rejects(mint(), (caught: unknown) => caught === missing);
+  });
+
+  it('opens the request only once the checks\' transaction has ended as this leader\'s: a lost or failed commit leaves none', async () => {
+    const lost = mintHarness({ ledger: new FakeLedger(BUILDING, { afterBody: { lost: true } }) });
+    assert.deepEqual(await lost.mint(), { kind: 'interrupted', committed: false });
+    assert.deepEqual(lost.h.gatewayChecks, [{ client: CLIENT, gatewayId: GATEWAY }], 'the checks ran');
+    assert.deepEqual(lost.requested, [], 'no request for a Gateway to collect');
+    const commitFailed = new Error('room lock commit failed: unit');
+    const failed = mintHarness({ ledger: new FakeLedger(BUILDING, { afterBody: { fail: commitFailed } }) });
+    await assert.rejects(failed.mint(), (caught: unknown) => caught === commitFailed);
+    assert.deepEqual(failed.requested, []);
   });
 });
 

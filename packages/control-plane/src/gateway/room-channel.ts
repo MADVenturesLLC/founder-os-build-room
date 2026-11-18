@@ -25,6 +25,20 @@
  * already minted, so a lost report costs a poll, not a second room. At most
  * one request is open per (Gateway, lifecycle room) pair.
  *
+ * BELIEVED PER SESSION. A Gateway's daemon loses the rooms it minted when it
+ * restarts, and every restart opens a new session, but so does a resync
+ * that keeps them; the control plane cannot tell the two apart. So each
+ * accepted session-start (`sessionStarted`) begins a new session for that
+ * Gateway, and two reads believe only what was reported in the current one:
+ * `mintedFor`, which a binding checks (lifecycle ruling B5), lists a runtime
+ * room only once the Gateway has reported it minted in this session, and
+ * `occupancyOf`, which the T17 guard reads (C1), answers only with a reading
+ * reported in this session. Occupancy of a room minted in an earlier session
+ * is still accepted, so a Gateway that kept the room re-establishes its
+ * reading with its next report, and a mint request for a lifecycle room is
+ * answered with the room the Gateway already holds. A Gateway that lost the
+ * room reports nothing for it, and both reads refuse.
+ *
  * IN MEMORY, LEADER-LOCAL, AND FAIL-CLOSED. Nothing here is durable and this
  * adds no migration. Everything is lost when the process restarts, and,
  * when the composition root passes `leaderTerm`, whenever this process loses
@@ -75,6 +89,18 @@ export class RoomChannelInputError extends Error {
   override readonly name = 'RoomChannelInputError';
 }
 
+/** A minted runtime room: the lifecycle room it was minted for, and the Gateway session that last reported it minted. */
+interface MintedRoom {
+  readonly lifecycleRoomId: string;
+  session: number;
+}
+
+/** A reading as held: the reading, and the Gateway session it was reported in. */
+interface HeldReading {
+  readonly reading: RoomOccupancyReading;
+  readonly session: number;
+}
+
 interface OpenMint {
   readonly gatewayId: string;
   readonly request: RoomRequestWire;
@@ -93,10 +119,12 @@ export class GatewayRoomChannel {
   private readonly open = new Map<string, OpenMint>();
   /** (Gateway, lifecycle room) -> runtime rooms that Gateway reported minted for it, in report order. */
   private readonly minted = new Map<string, string[]>();
-  /** (Gateway, runtime room) -> the lifecycle room it was reported minted for. */
-  private readonly mintedRooms = new Map<string, string>();
-  /** (Gateway, runtime room) -> the latest occupancy reported. */
-  private readonly occupancy = new Map<string, RoomOccupancyReading>();
+  /** (Gateway, runtime room) -> the lifecycle room it was reported minted for, and in which session. */
+  private readonly mintedRooms = new Map<string, MintedRoom>();
+  /** (Gateway, runtime room) -> the latest occupancy reported, and in which session. */
+  private readonly occupancy = new Map<string, HeldReading>();
+  /** Gateway -> its current session, counted from 0 by accepted session-starts. */
+  private readonly sessions = new Map<string, number>();
   private deliveries = 0;
   private readonly mintRequestId: () => string;
   private readonly leaderTerm: () => number;
@@ -174,63 +202,73 @@ export class GatewayRoomChannel {
     if (entry.request.lifecycleRoomId !== payload.lifecycleRoomId) return false;
     const roomKey = pairKey(gatewayId, payload.runtimeRoomId);
     const earlier = this.mintedRooms.get(roomKey);
-    if (earlier !== undefined && earlier !== payload.lifecycleRoomId) return false;
+    if (earlier !== undefined && earlier.lifecycleRoomId !== payload.lifecycleRoomId) return false;
 
+    const session = this.sessionOf(gatewayId);
     this.open.delete(payload.requestId);
     const lifecycleKey = pairKey(gatewayId, payload.lifecycleRoomId);
     const rooms = this.minted.get(lifecycleKey) ?? [];
     if (!rooms.includes(payload.runtimeRoomId)) rooms.push(payload.runtimeRoomId);
     this.minted.set(lifecycleKey, rooms);
-    this.mintedRooms.set(roomKey, payload.lifecycleRoomId);
-    this.occupancy.set(roomKey, { occupancy: payload.occupancy, receivedAtMono: this.clock.monotonicNow() });
+    this.mintedRooms.set(roomKey, { lifecycleRoomId: payload.lifecycleRoomId, session });
+    this.occupancy.set(roomKey, { reading: { occupancy: payload.occupancy, receivedAtMono: this.clock.monotonicNow() }, session });
     return true;
   }
 
-  /** The runtime rooms this Gateway reported minted for this lifecycle room, oldest first; empty when none. */
+  /**
+   * The runtime rooms this Gateway reported minted for this lifecycle room in
+   * its current session, oldest first; empty when none. A room reported in an
+   * earlier session is listed again once the Gateway reports it minted again.
+   */
   mintedFor(gatewayId: string, lifecycleRoomId: string): readonly string[] {
     this.syncTerm();
-    return [...(this.minted.get(pairKey(gatewayId, lifecycleRoomId)) ?? [])];
+    const session = this.sessionOf(gatewayId);
+    return (this.minted.get(pairKey(gatewayId, lifecycleRoomId)) ?? []).filter(
+      (runtimeRoomId) => this.mintedRooms.get(pairKey(gatewayId, runtimeRoomId))?.session === session,
+    );
   }
 
   /**
    * Record a verified `runtime_room_occupancy` report as the room's latest
-   * reading. `false`, changing nothing, unless this Gateway reported this
-   * runtime room minted for the payload's lifecycle room.
+   * reading, in the Gateway's current session. `false`, changing nothing,
+   * unless this Gateway reported this runtime room minted for the payload's
+   * lifecycle room, in this session or an earlier one.
    */
   recordOccupancy(gatewayId: string, payload: RuntimeRoomOccupancyPayload): boolean {
     this.syncTerm();
     const roomKey = pairKey(gatewayId, payload.runtimeRoomId);
-    if (this.mintedRooms.get(roomKey) !== payload.lifecycleRoomId) return false;
-    this.occupancy.set(roomKey, { occupancy: payload.occupancy, receivedAtMono: this.clock.monotonicNow() });
+    if (this.mintedRooms.get(roomKey)?.lifecycleRoomId !== payload.lifecycleRoomId) return false;
+    this.occupancy.set(roomKey, {
+      reading: { occupancy: payload.occupancy, receivedAtMono: this.clock.monotonicNow() },
+      session: this.sessionOf(gatewayId),
+    });
     return true;
   }
 
-  /** The latest occupancy this Gateway reported for this runtime room, or `null` when it reported none. */
+  /**
+   * The latest occupancy this Gateway reported for this runtime room in its
+   * current session, or `null` when it reported none in this session.
+   */
   occupancyOf(gatewayId: string, runtimeRoomId: string): RoomOccupancyReading | null {
     this.syncTerm();
-    const reading = this.occupancy.get(pairKey(gatewayId, runtimeRoomId));
-    return reading === undefined ? null : { ...reading };
+    const held = this.occupancy.get(pairKey(gatewayId, runtimeRoomId));
+    if (held === undefined || held.session !== this.sessionOf(gatewayId)) return null;
+    return { ...held.reading };
   }
 
   /**
-   * Drop everything held for one Gateway: its open requests, the rooms it
-   * reported minted and their occupancy. Called when that Gateway starts a
-   * new session, because a daemon restart loses the rooms it minted, and a
-   * runtime room id it reported before the restart may name a room it no
-   * longer holds; a binding must not name one (lifecycle ruling B5). A
-   * session that resynchronized without a restart loses nothing it cannot
-   * re-establish: the next mint request for the same lifecycle room is
-   * answered with the same runtime room.
+   * Begin a new session for one Gateway, on its accepted session-start. What
+   * it reported before stops being believed by `mintedFor` and `occupancyOf`
+   * until it reports again; nothing else changes, and open requests stay
+   * open. See "Believed per session" above.
    */
-  forgetGateway(gatewayId: string): void {
+  sessionStarted(gatewayId: string): void {
     this.syncTerm();
-    for (const [requestId, entry] of this.open) {
-      if (entry.gatewayId === gatewayId) this.open.delete(requestId);
-    }
-    const prefix = `${gatewayId} `;
-    for (const key of [...this.minted.keys()]) if (key.startsWith(prefix)) this.minted.delete(key);
-    for (const key of [...this.mintedRooms.keys()]) if (key.startsWith(prefix)) this.mintedRooms.delete(key);
-    for (const key of [...this.occupancy.keys()]) if (key.startsWith(prefix)) this.occupancy.delete(key);
+    this.sessions.set(gatewayId, this.sessionOf(gatewayId) + 1);
+  }
+
+  private sessionOf(gatewayId: string): number {
+    return this.sessions.get(gatewayId) ?? 0;
   }
 
   /** Drop everything held when the leadership term has moved since it was recorded. */
@@ -242,5 +280,6 @@ export class GatewayRoomChannel {
     this.minted.clear();
     this.mintedRooms.clear();
     this.occupancy.clear();
+    this.sessions.clear();
   }
 }

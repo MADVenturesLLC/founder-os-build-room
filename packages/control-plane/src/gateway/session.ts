@@ -286,10 +286,11 @@ export class GatewaySessionService {
     );
 
     // A new session may follow a daemon restart, which loses the rooms the
-    // daemon minted: forget what this Gateway reported before it, so no
-    // binding names a room it no longer holds (act B2; lifecycle ruling B5).
+    // daemon minted: what this Gateway reported before it is not believed
+    // until it reports again, so no binding names a room it no longer holds
+    // and T17 reads no occupancy of one (act B2; lifecycle ruling B5, C1).
     if (outcome.status === 'published' && outcome.value.status === 200) {
-      this.roomChannel.forgetGateway(envelope.gatewayId);
+      this.roomChannel.sessionStarted(envelope.gatewayId);
     }
     return this.finishSigned(outcome, resolved.keyId, sourceIp);
   }
