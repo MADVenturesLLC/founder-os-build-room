@@ -513,24 +513,30 @@ describe('journalLaterBuilderCommand — later Builder commands name the binding
 });
 
 describe('requestRuntimeRoomMint — the control plane\'s mint request (step-1 act B2, first message)', () => {
-  function mintHarness(options: Parameters<typeof harness>[0] = {}): {
+  function mintHarness(options: Parameters<typeof harness>[0] & { readonly alreadyOpen?: boolean } = {}): {
     readonly h: Harness;
     readonly requested: Array<readonly [string, string]>;
+    readonly cancelled: string[];
     readonly mint: (request?: { readonly roomId: string; readonly gatewayId: string }) => Promise<MintRequestOutcome>;
   } {
     const h = harness(options);
     const requested: Array<readonly [string, string]> = [];
+    const cancelled: string[] = [];
     const deps = {
       ledger: h.deps.ledger,
       gateways: h.deps.gateways,
       rooms: {
         requestMint: (gatewayId: string, lifecycleRoomId: string) => {
           requested.push([gatewayId, lifecycleRoomId]);
-          return { requestId: 'req-unit-1' };
+          return { requestId: 'req-unit-1', created: options.alreadyOpen !== true };
+        },
+        cancelMint: (requestId: string) => {
+          cancelled.push(requestId);
+          return true;
         },
       },
     };
-    return { h, requested, mint: (request = { roomId: ROOM, gatewayId: GATEWAY }) => requestRuntimeRoomMint(deps, request) };
+    return { h, requested, cancelled, mint: (request = { roomId: ROOM, gatewayId: GATEWAY }) => requestRuntimeRoomMint(deps, request) };
   }
 
   it('opens the request for an unbound room in BUILDING and a live Gateway, under the room lock, writing nothing', async () => {
@@ -573,15 +579,31 @@ describe('requestRuntimeRoomMint — the control plane\'s mint request (step-1 a
     await assert.rejects(mint(), (caught: unknown) => caught === missing);
   });
 
-  it('opens the request only once the checks\' transaction has ended as this leader\'s: a lost or failed commit leaves none', async () => {
+  it('opens the request under the room lock and withdraws it when the transaction does not end as this leader\'s', async () => {
     const lost = mintHarness({ ledger: new FakeLedger(BUILDING, { afterBody: { lost: true } }) });
     assert.deepEqual(await lost.mint(), { kind: 'interrupted', committed: false });
-    assert.deepEqual(lost.h.gatewayChecks, [{ client: CLIENT, gatewayId: GATEWAY }], 'the checks ran');
-    assert.deepEqual(lost.requested, [], 'no request for a Gateway to collect');
+    assert.deepEqual(lost.requested, [[GATEWAY, ROOM]], 'opened inside the locked body, so no binding can commit in between');
+    assert.deepEqual(lost.cancelled, ['req-unit-1'], 'withdrawn: no request left for a Gateway to collect');
     const commitFailed = new Error('room lock commit failed: unit');
     const failed = mintHarness({ ledger: new FakeLedger(BUILDING, { afterBody: { fail: commitFailed } }) });
     await assert.rejects(failed.mint(), (caught: unknown) => caught === commitFailed);
-    assert.deepEqual(failed.requested, []);
+    assert.deepEqual(failed.cancelled, ['req-unit-1']);
+    const ok = mintHarness();
+    await ok.mint();
+    assert.deepEqual(ok.cancelled, [], 'a request whose transaction committed stays open');
+  });
+
+  it('withdraws only a request it created: one already open for the pair stays open after a lost commit', async () => {
+    const { mint, cancelled } = mintHarness({ alreadyOpen: true, ledger: new FakeLedger(BUILDING, { afterBody: { lost: true } }) });
+    assert.deepEqual(await mint(), { kind: 'interrupted', committed: false });
+    assert.deepEqual(cancelled, []);
+  });
+
+  it('withdraws nothing when a check refuses before any request is opened', async () => {
+    const { mint, requested, cancelled } = mintHarness({ state: BOUND });
+    refusedWith(await mint(), 'already_bound');
+    assert.deepEqual(requested, []);
+    assert.deepEqual(cancelled, []);
   });
 });
 

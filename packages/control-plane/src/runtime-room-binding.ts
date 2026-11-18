@@ -171,18 +171,28 @@ export type MintRequestOutcome =
  * that an enrolled Gateway mint a runtime room for a named lifecycle room
  * in BUILDING". Under the room lock it checks what that names: the room is
  * in BUILDING, has no binding (there is no rebinding, lifecycle ruling B4),
- * and the Gateway is enrolled and live. Only after that transaction has
- * ended as this leader's does it open the request, which the Gateway
- * collects in its next poll answer. It writes nothing. The
+ * and the Gateway is enrolled and live; then, still under the lock, it
+ * opens the request, which the Gateway collects in its next poll answer,
+ * and withdraws it again if the transaction does not end as this leader's.
+ * It writes nothing. The
  * Gateway's minted report is what `bindFirstBuilderCommand` then checks.
  */
 export async function requestRuntimeRoomMint(
   deps: Pick<RuntimeRoomBindingDeps, 'ledger' | 'gateways'> & {
-    readonly rooms: { requestMint(gatewayId: string, lifecycleRoomId: string): { readonly requestId: string } };
+    readonly rooms: {
+      requestMint(gatewayId: string, lifecycleRoomId: string): { readonly requestId: string; readonly created: boolean };
+      cancelMint(requestId: string): boolean;
+    };
   },
   request: { readonly roomId: string; readonly gatewayId: string },
 ): Promise<MintRequestOutcome> {
   const { roomId, gatewayId } = request;
+  let opened: { readonly requestId: string; readonly created: boolean } | null = null;
+  // Only a request this call created is withdrawn: one already open for the
+  // pair belongs to an earlier call that succeeded.
+  const withdraw = (): void => {
+    if (opened?.created === true) deps.rooms.cancelMint(opened.requestId);
+  };
   try {
     if (!isCanonicalUuid(roomId)) throw new RuntimeRoomBindingRefusedError('invalid_request', 'the room id is not a canonical UUID');
     if (!isCanonicalUuid(gatewayId)) throw new RuntimeRoomBindingRefusedError('invalid_request', 'the Gateway id is not a canonical UUID');
@@ -196,14 +206,20 @@ export async function requestRuntimeRoomMint(
       if (!(await deps.gateways.deriveGatewayEnrolledAndLive(client, gatewayId))) {
         throw new RuntimeRoomBindingRefusedError('gateway_not_live', 'the Gateway named is not enrolled and live');
       }
+      // Opened while the room lock is held, so no binding can commit between
+      // the check that the room is unbound and the request (a binding takes
+      // the same lock); withdrawn below if the transaction does not end as
+      // this leader's.
+      opened = deps.rooms.requestMint(gatewayId, roomId);
+      return opened.requestId;
     });
-    if (locked.status === 'not_leader') return { kind: 'interrupted', committed: locked.committed };
-    // Opened only once the checks' transaction has ended as this leader's: an
-    // operation that reports a failure or an interruption leaves no request
-    // for a Gateway to collect.
-    const { requestId } = deps.rooms.requestMint(gatewayId, roomId);
-    return { kind: 'requested', requestId };
+    if (locked.status === 'not_leader') {
+      withdraw();
+      return { kind: 'interrupted', committed: locked.committed };
+    }
+    return { kind: 'requested', requestId: locked.value };
   } catch (error) {
+    withdraw();
     const refusal = refusalOf(error);
     if (refusal !== null) return { kind: 'refused', ...refusal };
     throw error;

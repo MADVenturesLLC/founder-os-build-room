@@ -291,18 +291,19 @@ export class PrimaryLane {
    * This tick's `runtime_room_occupancy` reports (act B2): each minted room
    * the worker says is due, up to `maxReports`, while the session holds. Each
    * takes the session's next sequence and goes through the primary table like
-   * every other session-bound message. Returns the reports the control plane
-   * took.
+   * every other session-bound message. `maxReports` bounds the reports sent;
+   * the count returned is of those the control plane took (`accepted: true`).
    */
   async reportRoomOccupancy(
     rooms: RoomRequestHandler,
     maxReports: number = MAX_ROOM_OCCUPANCY_REPORTS_PER_TICK,
   ): Promise<number> {
     let sent = 0;
+    let accepted = 0;
     for (const payload of rooms.dueOccupancy()) {
-      if (sent >= maxReports) return sent;
-      if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return sent;
-      if (this.clock.monotonicNow() < this.nextAttemptAt) return sent;
+      if (sent >= maxReports) return accepted;
+      if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return accepted;
+      if (this.clock.monotonicNow() < this.nextAttemptAt) return accepted;
       const report = buildRuntimeRoomOccupancy(
         this.identity,
         this.epoch,
@@ -316,15 +317,19 @@ export class PrimaryLane {
         this.sequence += 1;
         return true;
       });
-      if (reported !== 'retain_and_continue') return sent;
+      if (reported !== 'retain_and_continue') return accepted;
+      sent += 1;
       // A report the control plane answered `accepted: false` (it holds no
       // mint for the room, say after a leader change) is not delivered: it
       // stays due, at the refresh pace rather than every tick.
-      if (reportAccepted(response)) rooms.occupancySent(payload);
-      else rooms.occupancyRefused(payload);
-      sent += 1;
+      if (reportAccepted(response)) {
+        rooms.occupancySent(payload);
+        accepted += 1;
+      } else {
+        rooms.occupancyRefused(payload);
+      }
     }
-    return sent;
+    return accepted;
   }
 
   private apply(

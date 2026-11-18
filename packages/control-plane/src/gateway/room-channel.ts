@@ -142,10 +142,11 @@ export class GatewayRoomChannel {
   /**
    * Ask `gatewayId` to mint a runtime room for `lifecycleRoomId`. At most one
    * request is open per pair: asking again while one is open returns that
-   * request's id and opens nothing. Malformed ids throw, because the caller is
-   * this control plane's own binding path and a malformed id is its defect.
+   * request's id with `created: false` and opens nothing. Malformed ids
+   * throw, because the caller is this control plane's own binding path and a
+   * malformed id is its defect.
    */
-  requestMint(gatewayId: string, lifecycleRoomId: string): { readonly requestId: string } {
+  requestMint(gatewayId: string, lifecycleRoomId: string): { readonly requestId: string; readonly created: boolean } {
     this.syncTerm();
     if (!isValidGatewayId(gatewayId)) throw new RoomChannelInputError('gatewayId is not a canonical UUID');
     if (!isValidLifecycleRoomId(lifecycleRoomId)) {
@@ -153,7 +154,7 @@ export class GatewayRoomChannel {
     }
     for (const entry of this.open.values()) {
       if (entry.gatewayId === gatewayId && entry.request.lifecycleRoomId === lifecycleRoomId) {
-        return { requestId: entry.request.requestId };
+        return { requestId: entry.request.requestId, created: false };
       }
     }
     const requestId = this.mintRequestId();
@@ -164,7 +165,18 @@ export class GatewayRoomChannel {
       delivered: false,
       lastDelivery: 0,
     });
-    return { requestId };
+    return { requestId, created: true };
+  }
+
+  /**
+   * Withdraw an open request, delivered or not: no Gateway collects it again,
+   * and a minted report answering it is refused. `false` when no request
+   * with that id is open. The binding path calls it for a request it opened
+   * under a room lock whose transaction then did not end as this leader's.
+   */
+  cancelMint(requestId: string): boolean {
+    this.syncTerm();
+    return this.open.delete(requestId);
   }
 
   /**

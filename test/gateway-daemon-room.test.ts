@@ -40,6 +40,7 @@ import {
   type FetchLike,
   type GatewayIdentity,
   type PlannerRequestHandler,
+  type RoomRequestHandler,
 } from '../packages/gateway-daemon/src/index.js';
 import {
   runtimeRoomMintedSignedBytes,
@@ -49,6 +50,7 @@ import {
   validateRuntimeRoomOccupancy,
   validateRuntimeRoomOccupancyPayload,
   type PlannerReportPayload,
+  type RuntimeRoomOccupancyPayload,
 } from '../packages/gateway-protocol/src/index.js';
 import { FIXED_WALL_MS, hex32, publicKeyFromRaw, uuid } from './gateway-helpers.js';
 import { FileKeychainRunner } from './fake-keychain.js';
@@ -493,6 +495,36 @@ describe('gateway-daemon-room · a report the control plane did not accept is no
     assert.deepEqual(sentAt, [OCCUPANCY_REFRESH_TICKS], 'not resent every tick; resent at the refresh');
     const resent = JSON.parse(plane.of('/gateway/room/occupancy').at(-1)!['payload'] as string);
     assert.equal(resent['occupancy'], 'OCCUPIED');
+  });
+
+  it('reportRoomOccupancy counts only the reports taken, and its cap bounds the reports sent', async () => {
+    const id = identity();
+    const plane = scriptedPlane(id.gatewayId);
+    const lane = new PrimaryLane(new ControlPlaneClient('http://control-plane.invalid', plane.fetchImpl), { wallNow: () => FIXED_WALL_MS, monotonicNow: () => 1_000 }, id);
+    assert.equal(await lane.step(), 'retain_and_continue');
+    const epoch = lane.currentEpoch!;
+    const due: RuntimeRoomOccupancyPayload[] = [
+      { lifecycleRoomId: uuid(), runtimeRoomId: `room-${uuid()}`, occupancy: 'OCCUPIED' },
+      { lifecycleRoomId: uuid(), runtimeRoomId: `room-${uuid()}`, occupancy: 'CLOSED' },
+    ];
+    const sent: RuntimeRoomOccupancyPayload[] = [];
+    const refused: RuntimeRoomOccupancyPayload[] = [];
+    const rooms: RoomRequestHandler = {
+      handleRoom: () => null,
+      mintedSent: () => undefined,
+      dueOccupancy: () => due,
+      occupancySent: (payload) => void sent.push(payload),
+      occupancyRefused: (payload) => void refused.push(payload),
+    };
+    plane.queue('/gateway/room/occupancy', json(200, { ok: true, state: 'enrolled', epoch, accepted: false }));
+    assert.equal(await lane.reportRoomOccupancy(rooms), 1, 'one of the two was taken');
+    assert.deepEqual(refused, [due[0]]);
+    assert.deepEqual(sent, [due[1]]);
+
+    plane.clear();
+    plane.queue('/gateway/room/occupancy', json(200, { ok: true, state: 'enrolled', epoch, accepted: false }));
+    assert.equal(await lane.reportRoomOccupancy(rooms, 1), 0, 'the one sent was refused');
+    assert.equal(plane.of('/gateway/room/occupancy').length, 1, 'the cap counts reports sent, refused ones included');
   });
 });
 

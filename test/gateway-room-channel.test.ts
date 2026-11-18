@@ -267,6 +267,29 @@ describe('gateway-room-channel · leader-local: dropped on a leadership change',
   });
 });
 
+describe('gateway-room-channel · cancelMint and the created flag', () => {
+  it('says whether requestMint opened a request, and cancelMint withdraws an open one, delivered or not', () => {
+    const channel = new GatewayRoomChannel(scriptedClock());
+    const gatewayId = uuid();
+    const lifecycleRoomId = uuid();
+    const first = channel.requestMint(gatewayId, lifecycleRoomId);
+    assert.equal(first.created, true);
+    assert.equal(channel.requestMint(gatewayId, lifecycleRoomId).created, false, 'the pair already has one open');
+    assert.equal(channel.collect(gatewayId)?.requestId, first.requestId);
+
+    assert.equal(channel.cancelMint(first.requestId), true);
+    assert.equal(channel.collect(gatewayId), null, 'no longer delivered');
+    assert.equal(
+      channel.recordMinted(gatewayId, { requestId: first.requestId, lifecycleRoomId, runtimeRoomId: roomId(), occupancy: 'PREPARED' }),
+      false,
+      'a minted report answering a withdrawn request is refused',
+    );
+    assert.deepEqual(channel.mintedFor(gatewayId, lifecycleRoomId), []);
+    assert.equal(channel.cancelMint(first.requestId), false, 'nothing open by that id any more');
+    assert.equal(channel.requestMint(gatewayId, lifecycleRoomId).created, true, 'the pair can be asked again');
+  });
+});
+
 describe('gateway-room-channel · sessionStarted (a new session may follow a daemon restart)', () => {
   it("stops believing one Gateway's earlier minted rooms and readings, and nothing of another Gateway's", () => {
     const channel = new GatewayRoomChannel(scriptedClock());
