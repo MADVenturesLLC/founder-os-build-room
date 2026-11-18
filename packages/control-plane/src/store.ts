@@ -378,8 +378,8 @@ export class PostgresLedgerStore {
     current: LedgerState,
     deriveGatewayOnline: () => Promise<boolean>,
   ): Promise<NonNullable<LifecycleEvent['facts']>> {
-    const { boundRuntimeRoomClosed: _claimed, ...rest } = event.facts ?? {};
-    const facts = { ...rest, gatewayOnline: await deriveGatewayOnline() };
+    const facts: NonNullable<LifecycleEvent['facts']> = { ...event.facts, gatewayOnline: await deriveGatewayOnline() };
+    delete (facts as { boundRuntimeRoomClosed?: boolean }).boundRuntimeRoomClosed;
     if (!T17_TRIGGERS.has(event.event)) return facts;
     return { ...facts, boundRuntimeRoomClosed: this.fence?.deriveBoundRuntimeRoomClosed?.(current.binding) ?? false };
   }
