@@ -286,7 +286,7 @@ export async function bindFirstBuilderCommand(
         if (planHash === null) throw new RuntimeRoomBindingRefusedError('no_approved_plan', 'the plan hash vanished under the lock');
         const tx = deps.journal.inTransaction(client);
         const lifecycleEventRef = { roomId, eventId };
-        const journaled = await tx.appendJournaled(command, { roomId, lifecycleEventRef });
+        const journaled = await tx.appendBuilderJournaled(command, { roomId, lifecycleEventRef });
         const binding = await tx.appendBinding({
           commandId: journaled.commandId,
           lifecycleRoomId: roomId,
@@ -341,7 +341,7 @@ export async function journalLaterBuilderCommand(
       }
       return deps.journal
         .inTransaction(client)
-        .appendJournaled(command, { roomId, lifecycleEventRef: { roomId, eventId: current.binding.eventId } });
+        .appendBuilderJournaled(command, { roomId, lifecycleEventRef: { roomId, eventId: current.binding.eventId } });
     });
     if (locked.status === 'not_leader') return { kind: 'interrupted', committed: locked.committed };
     return { kind: 'journaled', journaled: locked.value };

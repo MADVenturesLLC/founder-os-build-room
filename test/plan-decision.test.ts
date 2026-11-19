@@ -243,6 +243,9 @@ function stubDeps(
         appendJournaled: async () => {
           throw new Error('unused');
         },
+        appendBuilderJournaled: async () => {
+          throw new Error('a plan decision journals no Builder command');
+        },
         commandHistory: async (commandId: string): Promise<CommandHistory> => {
           const outcome = outcomes[commandId];
           return {

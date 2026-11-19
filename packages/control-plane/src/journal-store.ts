@@ -536,10 +536,10 @@ export class JournalStore {
     if (request.commandKind === BUILDER_COMMAND_KIND) {
       // A Builder command commits with its room's binding (journal ruling B3)
       // or names that binding (B6); neither is possible in a transaction of
-      // its own, so it is journaled only through `inTransaction`.
+      // its own, so it is journaled only by the joined appendBuilderJournaled.
       throw new JournalSequenceError(
         request.commandId ?? '(unassigned)',
-        `B6: a ${BUILDER_COMMAND_KIND} command is journaled only in the transaction that binds its room or naming that binding`,
+        `B6: a ${BUILDER_COMMAND_KIND} command is journaled only through appendBuilderJournaled, in the transaction that binds its room or naming that binding`,
       );
     }
     const { rowInput, envelopeDigest: digest } = buildJournaledRow(request, this.now);
@@ -562,8 +562,25 @@ export class JournalStore {
   inTransaction(client: PoolClient): JournalTransaction {
     return {
       appendJournaled: async (request, binding = {}) => {
+        // A Builder command has its own append, below, which only the
+        // governed path calls (FOUNDER-ACT-20261119-BR-PHASE5-STEP1-BOUNDARY
+        // B2); here it is refused whoever forwards it.
+        if (request.commandKind === BUILDER_COMMAND_KIND) {
+          throw new JournalSequenceError(
+            request.commandId ?? '(unassigned)',
+            `B6: a ${BUILDER_COMMAND_KIND} command is journaled only through appendBuilderJournaled`,
+          );
+        }
         const { rowInput, envelopeDigest: digest } = buildJournaledRow(request, this.now, binding);
-        if (request.commandKind === BUILDER_COMMAND_KIND) await requireNamesBinding(client, rowInput, binding);
+        const appended = await this.joined(client, () => this.appendCommandRow(client, rowInput));
+        return { commandId: appended.commandId, seq: appended.seq, chainHash: appended.chainHash, envelopeDigest: digest };
+      },
+      appendBuilderJournaled: async (request, binding) => {
+        if (request.commandKind !== BUILDER_COMMAND_KIND) {
+          throw new RangeError(`appendBuilderJournaled journals a ${BUILDER_COMMAND_KIND} command only, not ${request.commandKind}`);
+        }
+        const { rowInput, envelopeDigest: digest } = buildJournaledRow(request, this.now, binding);
+        await requireNamesBinding(client, rowInput, binding);
         const appended = await this.joined(client, () => this.appendCommandRow(client, rowInput));
         return { commandId: appended.commandId, seq: appended.seq, chainHash: appended.chainHash, envelopeDigest: digest };
       },
@@ -930,8 +947,19 @@ export class JournalStore {
 
 /** The appends, and the one read, available inside a caller's transaction. */
 export interface JournalTransaction {
-  /** A `journaled` row bound to its room and transition; commits with the caller's transaction. */
+  /**
+   * A `journaled` row bound to its room and transition; commits with the
+   * caller's transaction. Refuses a Builder command (`builder.invoke`).
+   */
   appendJournaled(request: GovernedCommandRequest, binding?: JournaledBinding): Promise<JournaledAppendResult>;
+  /**
+   * A Builder command's `journaled` row, and nothing else: it must name its
+   * room's recorded `runtime_room.bound` (journal ruling B6), and before that
+   * entry's binding record exists only the room's first Builder command may,
+   * in the transaction that wrote the entry (B3). The governed path alone
+   * calls it (FOUNDER-ACT-20261119-BR-PHASE5-STEP1-BOUNDARY B2).
+   */
+  appendBuilderJournaled(request: GovernedCommandRequest, binding: JournaledBinding): Promise<JournaledAppendResult>;
   /** The command's rows as this transaction sees them. */
   commandHistory(commandId: string): Promise<CommandHistory>;
   appendCommandEvent(event: LaterCommandEvent): Promise<AppendedRecord>;

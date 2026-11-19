@@ -919,7 +919,7 @@ describe('room binding — verify() finds a Builder command outside the binding 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await assert.rejects(store.inTransaction(client).appendJournaled(builderCommand(), { roomId }), JournalSequenceError);
+      await assert.rejects(store.inTransaction(client).appendBuilderJournaled(builderCommand(), { roomId }), JournalSequenceError);
       await client.query('COMMIT');
     } finally {
       client.release();
@@ -1244,14 +1244,44 @@ describe('room binding — the store refuses a Builder command outside its bindi
     const before = await footprint(roomId);
     await assert.rejects(
       journal!.appendJournaled(command),
-      (error: unknown) => error instanceof JournalSequenceError && /B6: a builder\.invoke command is journaled only in the transaction/.test(error.message),
+      (error: unknown) => error instanceof JournalSequenceError && /B6: a builder\.invoke command is journaled only through appendBuilderJournaled/.test(error.message),
     );
     assert.deepEqual(await footprint(roomId), before);
     assert.equal(await journalRowsFor(command.commandId), 0);
     await assertVerified();
   });
 
-  it('a joined appendJournaled refuses builder.invoke that does not name its own room\'s recorded runtime_room.bound, writing nothing', async () => {
+  it('the joined appendJournaled refuses every builder.invoke, its room\'s own recorded binding named or not: a caller that forwards one cannot write it (boundary act B2)', async () => {
+    const bound = await readyToBind();
+    const boundEventId = boundOutcome(
+      await bindFirstBuilderCommand(deps(bound.world), { roomId: bound.roomId, gatewayId: bound.gatewayId, runtimeRoomId: bound.runtimeRoomId, command: builderCommand() }),
+    ).eventId;
+    const before = await footprint(bound.roomId);
+    for (const binding of [{}, { roomId: bound.roomId, lifecycleEventRef: { roomId: bound.roomId, eventId: boundEventId } }] as JournaledBinding[]) {
+      const command = builderCommand();
+      await inOwnTransaction(async (client) => {
+        await assert.rejects(
+          journal!.inTransaction(client).appendJournaled(command, binding),
+          (error: unknown) => error instanceof JournalSequenceError && /only through appendBuilderJournaled/.test(error.message),
+        );
+      });
+      assert.equal(await journalRowsFor(command.commandId), 0);
+    }
+    assert.deepEqual(await footprint(bound.roomId), before);
+    // And the Builder append journals nothing else.
+    await inOwnTransaction(async (client) => {
+      await assert.rejects(
+        journal!.inTransaction(client).appendBuilderJournaled(
+          { ...builderCommand(), commandKind: 'planner.invoke' },
+          { roomId: bound.roomId, lifecycleEventRef: { roomId: bound.roomId, eventId: boundEventId } },
+        ),
+        RangeError,
+      );
+    });
+    await assertVerified();
+  });
+
+  it('the joined appendBuilderJournaled refuses builder.invoke that does not name its own room\'s recorded runtime_room.bound, writing nothing', async () => {
     const bound = await readyToBind();
     const boundEventId = boundOutcome(
       await bindFirstBuilderCommand(deps(bound.world), { roomId: bound.roomId, gatewayId: bound.gatewayId, runtimeRoomId: bound.runtimeRoomId, command: builderCommand() }),
@@ -1276,7 +1306,7 @@ describe('room binding — the store refuses a Builder command outside its bindi
       const command = builderCommand();
       await inOwnTransaction(async (client) => {
         await assert.rejects(
-          journal!.inTransaction(client).appendJournaled(command, binding),
+          journal!.inTransaction(client).appendBuilderJournaled(command, binding),
           (error: unknown) => error instanceof JournalSequenceError && reason.test(error.message),
           label,
         );
@@ -1289,7 +1319,7 @@ describe('room binding — the store refuses a Builder command outside its bindi
     // Control: naming its own room's recorded binding is accepted (a later Builder command, B6).
     const later = builderCommand();
     await inOwnTransaction((client) =>
-      journal!.inTransaction(client).appendJournaled(later, { roomId: bound.roomId, lifecycleEventRef: { roomId: bound.roomId, eventId: boundEventId } }),
+      journal!.inTransaction(client).appendBuilderJournaled(later, { roomId: bound.roomId, lifecycleEventRef: { roomId: bound.roomId, eventId: boundEventId } }),
     );
     assert.equal(await journalRowsFor(later.commandId), 1);
     await assertVerified();
@@ -1320,7 +1350,7 @@ describe('room binding — the store refuses a Builder command outside its bindi
       ledger!.appendRecorded(roomId, {
         build: async () => boundEvent(roomId, gatewayId, runtimeRoomId),
         afterRecorded: async (client, { event }) => {
-          journaledSeq = (await journal!.inTransaction(client).appendJournaled(command, { roomId, lifecycleEventRef: { roomId, eventId: event.eventId } })).seq;
+          journaledSeq = (await journal!.inTransaction(client).appendBuilderJournaled(command, { roomId, lifecycleEventRef: { roomId, eventId: event.eventId } })).seq;
         },
       }),
       bindingNotJournaled,
@@ -1385,8 +1415,8 @@ describe('room binding — the store holds B3, B4 and B6 against its own callers
         afterRecorded: async (client, { event }) => {
           const tx = journal!.inTransaction(client);
           const lifecycleEventRef = { roomId, eventId: event.eventId };
-          firstSeq = (await tx.appendJournaled(first, { roomId, lifecycleEventRef })).seq;
-          const journaled = await tx.appendJournaled(second, { roomId, lifecycleEventRef });
+          firstSeq = (await tx.appendBuilderJournaled(first, { roomId, lifecycleEventRef })).seq;
+          const journaled = await tx.appendBuilderJournaled(second, { roomId, lifecycleEventRef });
           reachedBinding = true;
           await tx.appendBinding({ commandId: journaled.commandId, lifecycleRoomId: roomId, runtimeRoomId, gatewayId, planHash, lifecycleEventRef });
         },
@@ -1426,7 +1456,7 @@ describe('room binding — the store holds B3, B4 and B6 against its own callers
     const command = builderCommand();
     await assert.rejects(
       inOwnTransaction((client) =>
-        journal!.inTransaction(client).appendJournaled(command, { roomId, lifecycleEventRef: { roomId, eventId: orphan.eventId } }),
+        journal!.inTransaction(client).appendBuilderJournaled(command, { roomId, lifecycleEventRef: { roomId, eventId: orphan.eventId } }),
       ),
       (error: unknown) =>
         error instanceof JournalSequenceError

@@ -192,8 +192,8 @@ class FakeJournal {
       throw new Error('the binding path uses no other journal append');
     };
     return {
-      appendJournaled: async (request, binding): Promise<JournaledAppendResult> => {
-        this.calls.push('appendJournaled');
+      appendBuilderJournaled: async (request, binding): Promise<JournaledAppendResult> => {
+        this.calls.push('appendBuilderJournaled');
         if ('failJournaled' in this.options) throw this.options.failJournaled;
         this.journaled.push({ request, binding });
         return { commandId: request.commandId ?? 'cmd_minted', seq: '41', chainHash: 'a'.repeat(64), envelopeDigest: 'b'.repeat(64) };
@@ -204,6 +204,7 @@ class FakeJournal {
         this.bindings.push(binding);
         return { recordClass: 'binding', commandId: binding.commandId, eventType: 'runtime_room.bound', seq: '42', chainHash: 'c'.repeat(64) };
       },
+      appendJournaled: unexpected,
       commandHistory: unexpected,
       appendCommandEvent: unexpected,
       appendDecision: unexpected,
@@ -309,7 +310,7 @@ describe('bindFirstBuilderCommand — the one transaction it asks for (journal r
       binding: { lifecycleRoomId: ROOM, runtimeRoomId: RUNTIME_ROOM, gatewayId: GATEWAY },
     });
     assert.notEqual(h.ledger.built?.attribution, DISPATCHER, 'the attribution is a copy');
-    assert.deepEqual(h.journal.calls, ['appendJournaled', 'appendBinding']);
+    assert.deepEqual(h.journal.calls, ['appendBuilderJournaled', 'appendBinding']);
     assert.deepEqual(h.journal.clients, [CLIENT], 'the journal joins the ledger transaction');
     const ref = { roomId: ROOM, eventId: EVENT_ID };
     assert.deepEqual(h.journal.journaled, [{ request: command, binding: { roomId: ROOM, lifecycleEventRef: ref } }]);
@@ -355,7 +356,7 @@ describe('bindFirstBuilderCommand — once bound, no Gateway is asked to mint fo
     const outcome = await bindFirstBuilderCommand(deps, { roomId: ROOM, gatewayId: GATEWAY, runtimeRoomId: RUNTIME_ROOM, command: builderCommand() });
     assert.equal(outcome.kind, 'bound');
     assert.deepEqual(h.mintsCancelled, [ROOM]);
-    assert.deepEqual(order, ['cancel after appendJournaled,appendBinding']);
+    assert.deepEqual(order, ['cancel after appendBuilderJournaled,appendBinding']);
   });
 
   it('withdraws them when leadership is lost after the commit, and not when nothing committed', async () => {
@@ -483,7 +484,7 @@ describe('bindFirstBuilderCommand — refusals the store and the database raise'
       assert.equal(refusedWith(await bind(fromLedger), 'binding_conflict'), `the database refused the binding (${index})`);
       const fromJournal = harness({ journal: new FakeJournal({ failBinding: pgError('23505', index) }) });
       assert.equal(refusedWith(await bind(fromJournal), 'binding_conflict'), `the database refused the binding (${index})`);
-      assert.deepEqual(fromJournal.journal.calls, ['appendJournaled', 'appendBinding']);
+      assert.deepEqual(fromJournal.journal.calls, ['appendBuilderJournaled', 'appendBinding']);
     });
   }
 
@@ -535,7 +536,7 @@ describe('journalLaterBuilderCommand — later Builder commands name the binding
     assert.deepEqual(h.journal.journaled, [
       { request: command, binding: { roomId: ROOM, lifecycleEventRef: { roomId: ROOM, eventId: BINDING_RECORD.eventId } } },
     ]);
-    assert.deepEqual(h.journal.calls, ['appendJournaled']);
+    assert.deepEqual(h.journal.calls, ['appendBuilderJournaled']);
     assert.deepEqual(h.journal.clients, [CLIENT]);
     assert.deepEqual(h.gatewayChecks, [], 'a later command re-checks no Gateway');
   });
