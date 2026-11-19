@@ -1305,11 +1305,14 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 /**
  * B6 at the moment of writing: a Builder command's `journaled` row names its
  * room and that room's `runtime_room.bound` entry, which must exist as this
- * transaction sees it. The first Builder command is written in the
- * transaction that records that entry, and the binding record follows it
- * there (`LifecycleStore.appendRecorded` refuses to commit without it); a
- * later one names an entry already committed with its binding. Refuses
- * before anything is written.
+ * transaction sees it. A later command names an entry whose binding record
+ * is already journaled. Otherwise this is the room's first Builder command:
+ * the entry must have been written by this transaction, which journals the
+ * binding record directly after the command (`LifecycleStore.appendRecorded`
+ * refuses to commit without it), and no other Builder command of the room
+ * may be journaled already, since only the first precedes its binding
+ * (`bindingChainDefect`, as `verify()` checks it). Refuses before anything
+ * is written.
  */
 async function requireNamesBinding(
   client: PoolClient,
@@ -1326,14 +1329,51 @@ async function requireNamesBinding(
   }
   if (binding.roomId !== ref.roomId) refuse('a Builder command names the binding of its own room');
   if (!UUID_PATTERN.test(ref.roomId)) throw new JournalLifecycleReferenceError('room_id is not a room identifier');
-  const { rows } = await client.query<{ event: string; outcome: string }>(LIFECYCLE_SQL, [ref.roomId, ref.eventId]);
+  const { rows } = await client.query<{ event: string; outcome: string; this_transaction: boolean }>(LIFECYCLE_SQL, [
+    ref.roomId,
+    ref.eventId,
+  ]);
   const event = rows[0];
   if (event === undefined || event.event !== BINDING_EVENT || event.outcome !== 'recorded') {
     refuse('the lifecycle event a Builder command names is not its room\'s recorded runtime_room.bound');
+    return;
+  }
+  if (await bindingRecordedFor(client, ref)) return;
+  if (event.this_transaction !== true) {
+    refuse('a room\'s first Builder command is journaled in the transaction that records its runtime_room.bound');
+  }
+  if (await builderCommandJournaledFor(client, ref.roomId)) {
+    refuse('only a room\'s first Builder command precedes its binding record, and one is already journaled');
   }
 }
 
 const BINDINGS_SQL = `SELECT ${ROW_COLUMNS} FROM public.command_journal_events AS e WHERE e.record_class = 'binding' ORDER BY e.seq`;
+const JOURNALED_SQL = `SELECT ${ROW_COLUMNS} FROM public.command_journal_events AS e
+  WHERE e.record_class = 'command' AND e.event_type = 'journaled' ORDER BY e.seq`;
+
+/** Every row a query returns, decoded; an undecodable or mismatched row throws. */
+async function decodedRows(client: PoolClient, sql: string): Promise<DecodedJournalRow[]> {
+  const { rows } = await client.query<StoredRow>(sql);
+  return rows.map((stored) => {
+    const outcome = decodeStored(stored);
+    if ('defect' in outcome) {
+      throw new JournalIntegrityError(
+        /does not decode/.test(outcome.defect) ? 'row_undecodable' : 'column_mismatch',
+        outcome.defect,
+      );
+    }
+    return outcome.record.decoded;
+  });
+}
+
+/** Whether any Builder command of this room is journaled, as this transaction sees it. */
+async function builderCommandJournaledFor(client: PoolClient, roomId: string): Promise<boolean> {
+  for (const decoded of await decodedRows(client, JOURNALED_SQL)) {
+    if (decoded.recordClass !== RECORD_CLASS_COMMAND) continue;
+    if (decoded.row.commandEnvelope?.commandKind === BUILDER_COMMAND_KIND && decoded.row.roomId === roomId) return true;
+  }
+  return false;
+}
 
 /**
  * Whether a binding record naming this `runtime_room.bound` entry exists as
@@ -1347,16 +1387,7 @@ export async function bindingRecordedFor(
   client: PoolClient,
   ref: { readonly roomId: string; readonly eventId: string },
 ): Promise<boolean> {
-  const { rows } = await client.query<StoredRow>(BINDINGS_SQL);
-  for (const stored of rows) {
-    const outcome = decodeStored(stored);
-    if ('defect' in outcome) {
-      throw new JournalIntegrityError(
-        /does not decode/.test(outcome.defect) ? 'row_undecodable' : 'column_mismatch',
-        outcome.defect,
-      );
-    }
-    const decoded = outcome.record.decoded;
+  for (const decoded of await decodedRows(client, BINDINGS_SQL)) {
     if (decoded.recordClass !== RECORD_CLASS_BINDING) continue;
     const named = decoded.row.lifecycleEventRef;
     if (named.roomId === ref.roomId && named.eventId === ref.eventId) return true;

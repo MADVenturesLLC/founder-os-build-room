@@ -14,7 +14,8 @@
  *     protocol's validator is never offered;
  *   - the minted report carries exactly requestId, lifecycleRoomId and
  *     runtimeRoomId, no occupancy; a room's occupancy goes only in its own
- *     occupancy report, due from the moment it is minted;
+ *     occupancy report, and only once `roomBound` marks the room bound (act
+ *     B2: a bound runtime room's occupancy); an unbound room's never goes;
  *   - occupancy is reported when it changes and at least every sixth tick;
  *   - the daemon polls with no planner executor, and a planner request a poll
  *     carries is then not read; `exchangePlanner` is unchanged, reading only
@@ -22,7 +23,8 @@
  *   - end to end, a real daemon against the real control-plane routes over a
  *     stubbed database: the control plane asks, the daemon mints and reports,
  *     and the control plane's room channel records the room; it takes the
- *     room's occupancy only once the lifecycle log binds the room to it.
+ *     room's occupancy only once the lifecycle log binds the room to it;
+ *   - the mint exchange count is of minted reports the control plane took.
  */
 
 import { after, describe, it } from 'node:test';
@@ -168,13 +170,36 @@ describe('gateway-daemon-room · the worker mints once per lifecycle room', () =
 });
 
 describe('gateway-daemon-room · occupancy is due on change and every sixth tick', () => {
-  it('is due before any report, then not until it changes or six ticks pass', () => {
+  it('is never due for a room not marked bound, and roomBound marks only a room this worker minted for that lifecycle room', () => {
     const { runtime } = countedRooms();
     const worker = new GatewayRoomWorker({ rooms: runtime });
     const minted = worker.handleRoom(mintRequest());
     assert.ok(minted);
+    assert.deepEqual(worker.dueOccupancy(), [], 'minted, not bound: no occupancy is due (act B2)');
+    for (let tick = 1; tick <= 2 * OCCUPANCY_REFRESH_TICKS; tick += 1) {
+      worker.tick();
+      assert.deepEqual(worker.dueOccupancy(), [], `unbound at tick ${tick}`);
+    }
+    runtime.occupyFixtureRoom(minted.runtimeRoomId);
+    assert.deepEqual(worker.dueOccupancy(), [], 'a change of an unbound room is not due either');
+
+    const other = worker.handleRoom(mintRequest());
+    assert.ok(other);
+    assert.equal(worker.roomBound(minted.lifecycleRoomId, other.runtimeRoomId), false, 'another lifecycle room\'s runtime room');
+    assert.equal(worker.roomBound(uuid(), minted.runtimeRoomId), false, 'a lifecycle room it minted nothing for');
+    assert.deepEqual(worker.dueOccupancy(), [], 'nothing marked');
+    assert.equal(worker.roomBound(minted.lifecycleRoomId, minted.runtimeRoomId), true);
+    assert.deepEqual(worker.dueOccupancy(), [{ lifecycleRoomId: minted.lifecycleRoomId, runtimeRoomId: minted.runtimeRoomId, occupancy: 'OCCUPIED' }], 'only the bound room');
+  });
+
+  it('is due once bound, then not until it changes or six ticks pass', () => {
+    const { runtime } = countedRooms();
+    const worker = new GatewayRoomWorker({ rooms: runtime });
+    const minted = worker.handleRoom(mintRequest());
+    assert.ok(minted);
+    assert.equal(worker.roomBound(minted.lifecycleRoomId, minted.runtimeRoomId), true);
     const [first] = worker.dueOccupancy();
-    assert.deepEqual(first, { lifecycleRoomId: minted.lifecycleRoomId, runtimeRoomId: minted.runtimeRoomId, occupancy: 'PREPARED' }, 'never reported: due, the minted report carrying none');
+    assert.deepEqual(first, { lifecycleRoomId: minted.lifecycleRoomId, runtimeRoomId: minted.runtimeRoomId, occupancy: 'PREPARED' }, 'bound, never reported: due, the minted report carrying none');
     worker.occupancySent(first!);
     assert.deepEqual(worker.dueOccupancy(), [], 'taken: not due again');
 
@@ -198,6 +223,7 @@ describe('gateway-daemon-room · occupancy is due on change and every sixth tick
     const worker = new GatewayRoomWorker({ rooms: runtime });
     const minted = worker.handleRoom(mintRequest());
     assert.ok(minted);
+    worker.roomBound(minted.lifecycleRoomId, minted.runtimeRoomId);
     const [first] = worker.dueOccupancy();
     assert.ok(first);
 
@@ -223,13 +249,18 @@ describe('gateway-daemon-room · occupancy is due on change and every sixth tick
     const worker = new GatewayRoomWorker({ rooms: runtime });
     const taken = (room: { lifecycleRoomId: string; runtimeRoomId: string }): void =>
       worker.occupancySent({ lifecycleRoomId: room.lifecycleRoomId, runtimeRoomId: room.runtimeRoomId, occupancy: 'PREPARED' });
+    const bound = (room: { lifecycleRoomId: string; runtimeRoomId: string }): void =>
+      void worker.roomBound(room.lifecycleRoomId, room.runtimeRoomId);
     const a = worker.handleRoom(mintRequest())!;
+    bound(a);
     taken(a);
     worker.tick();
     const b = worker.handleRoom(mintRequest())!;
+    bound(b);
     taken(b);
     for (let i = 0; i < OCCUPANCY_REFRESH_TICKS; i += 1) worker.tick();
     const c = worker.handleRoom(mintRequest())!;
+    bound(c);
     taken(c);
     runtime.occupyFixtureRoom(c.runtimeRoomId);
     assert.deepEqual(
@@ -331,7 +362,7 @@ function sessionMembers(envelope: Record<string, unknown>) {
 }
 
 describe('gateway-daemon-room · the tick answers a mint request', () => {
-  it('polls with no planner executor, mints, and sends one signed runtime_room_minted report, then the room\'s occupancy on its own', async () => {
+  it('polls with no planner executor, mints, and sends one signed runtime_room_minted report; occupancy only once the room is bound', async () => {
     const id = identity();
     const plane = scriptedPlane(id.gatewayId);
     const daemon = daemonOver(plane.fetchImpl, id);
@@ -346,8 +377,7 @@ describe('gateway-daemon-room · the tick answers a mint request', () => {
       '/gateway/planner/poll',
       '/gateway/room/minted',
       '/gateway/planner/poll',
-      '/gateway/room/occupancy',
-    ]);
+    ], 'no occupancy report: the room is not bound');
     const [report] = plane.of('/gateway/room/minted');
     const parsed = validateRuntimeRoomMinted(report);
     assert.ok(parsed.ok, 'the control plane would parse it');
@@ -364,11 +394,18 @@ describe('gateway-daemon-room · the tick answers a mint request', () => {
     assert.ok(signedBy(id, signed, report!['signature']));
     assert.deepEqual(
       plane.calls.filter((call) => call.body !== null && 'sequence' in call.body).map((call) => call.body!['sequence']),
-      [1, 2, 3, 4],
-      'poll, report, poll and the occupancy report take the session sequence in order',
+      [1, 2, 3],
+      'poll, report and poll take the session sequence in order',
     );
-    const [occupancy] = plane.of('/gateway/room/occupancy');
-    assert.deepEqual(JSON.parse(occupancy!['payload'] as string), { lifecycleRoomId: request.lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' });
+
+    // Marked bound (nothing in step 1 does this; a later step will), the
+    // next tick reports the room's occupancy on its own.
+    assert.equal(daemon.roomWorker.roomBound(request.lifecycleRoomId, runtimeRoomId!), true);
+    await daemon.tick();
+    const reports = plane.of('/gateway/room/occupancy');
+    assert.equal(reports.length, 1);
+    assert.ok(validateRuntimeRoomOccupancy(reports[0]).ok);
+    assert.deepEqual(JSON.parse(reports[0]!['payload'] as string), { lifecycleRoomId: request.lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' });
     assert.equal(daemon.rooms.snapshot(runtimeRoomId!)?.occupancy, 'PREPARED');
     assert.equal(daemon.primary.laneState, 'HEARTBEATING');
   });
@@ -399,7 +436,7 @@ describe('gateway-daemon-room · the tick answers a mint request', () => {
     plane.queue('/gateway/room/minted', json(503, { error: 'not_leader' }));
     await daemon.tick();
     assert.equal(plane.of('/gateway/room/minted').length, 1);
-    assert.deepEqual(daemon.roomWorker.dueOccupancy().map((p) => p.occupancy), ['PREPARED'], 'not reported: the lane backed off before any occupancy report');
+    assert.deepEqual(daemon.roomWorker.dueOccupancy(), [], 'not bound: no occupancy is due');
     assert.equal(plane.of('/gateway/room/occupancy').length, 0);
 
     mono += 60_000;
@@ -442,7 +479,7 @@ describe('gateway-daemon-room · a malformed room member never halts the lane', 
 });
 
 describe('gateway-daemon-room · occupancy reports from the tick', () => {
-  it('reports a minted room on change at once, and unchanged every sixth tick', async () => {
+  it('reports a bound room once bound, on change at once, and unchanged every sixth tick', async () => {
     const id = identity();
     const plane = scriptedPlane(id.gatewayId);
     const daemon = daemonOver(plane.fetchImpl, id);
@@ -450,6 +487,10 @@ describe('gateway-daemon-room · occupancy reports from the tick', () => {
     plane.polls.push({ room: request });
     await daemon.tick();
     const runtimeRoomId = daemon.roomWorker.minted().get(request.lifecycleRoomId)!;
+    assert.equal(plane.of('/gateway/room/occupancy').length, 0, 'minted, not bound: nothing reported');
+    daemon.roomWorker.roomBound(request.lifecycleRoomId, runtimeRoomId);
+    await daemon.tick();
+    assert.equal(plane.of('/gateway/room/occupancy').length, 1, 'bound: reported on the next tick');
 
     const sentAt: number[] = [];
     for (let tick = 1; tick <= 2 * OCCUPANCY_REFRESH_TICKS; tick += 1) {
@@ -463,7 +504,7 @@ describe('gateway-daemon-room · occupancy reports from the tick', () => {
     await daemon.tick();
     const reports = plane.of('/gateway/room/occupancy');
     const last = reports.at(-1)!;
-    assert.equal(reports.length, 4, 'once as minted, at each refresh, and a change on the next tick');
+    assert.equal(reports.length, 4, 'once on being bound, at each refresh, and a change on the next tick');
     assert.ok(validateRuntimeRoomOccupancy(last).ok);
     assert.equal(last['runtimeRoomId'], runtimeRoomId);
     assert.deepEqual(JSON.parse(last['payload'] as string), { lifecycleRoomId: request.lifecycleRoomId, runtimeRoomId, occupancy: 'OCCUPIED' });
@@ -490,6 +531,7 @@ describe('gateway-daemon-room · a report the control plane did not accept is no
     plane.polls.push({ room: request });
     await daemon.tick();
     const runtimeRoomId = daemon.roomWorker.minted().get(request.lifecycleRoomId)!;
+    daemon.roomWorker.roomBound(request.lifecycleRoomId, runtimeRoomId);
     const epoch = plane.of('/gateway/room/minted')[0]!['epoch'] as string;
 
     const before = plane.of('/gateway/room/occupancy').length;
@@ -584,6 +626,26 @@ describe('gateway-daemon-room · the planner path is unchanged', () => {
     assert.deepEqual(worker.handled, [request]);
   });
 
+  it('exchange counts only the minted reports the control plane took: not a malformed member, not one answered accepted: false', async () => {
+    const id = identity();
+    const plane = scriptedPlane(id.gatewayId);
+    const lane = await heartbeatingLane(plane, id);
+    const rooms = new GatewayRoomWorker({ rooms: new RoomRuntime({ newId: uuid }) });
+
+    plane.polls.push({ room: { kind: 'mint' } });
+    assert.deepEqual(await lane.exchange(null, rooms), { planner: 0, room: 0 }, 'a malformed member: nothing sent, nothing counted');
+    assert.equal(plane.of('/gateway/room/minted').length, 0);
+
+    const epoch = plane.of('/gateway/planner/poll')[0]!['epoch'] as string;
+    plane.polls.push({ room: mintRequest() });
+    plane.queue('/gateway/room/minted', json(200, { ok: true, state: 'enrolled', epoch, accepted: false }));
+    assert.deepEqual(await lane.exchange(null, rooms), { planner: 0, room: 0 }, 'sent, but answered accepted: false');
+    assert.equal(plane.of('/gateway/room/minted').length, 1);
+
+    plane.polls.push({ room: mintRequest() });
+    assert.deepEqual(await lane.exchange(null, rooms), { planner: 0, room: 1 }, 'taken');
+  });
+
   it('a daemon with no planner executor does not read planner work a poll carries', async () => {
     const id = identity();
     const plane = scriptedPlane(id.gatewayId);
@@ -625,9 +687,13 @@ describe('gateway-daemon-room · end to end against the real control-plane route
       assert.ok(runtimeRoomId, 'the daemon minted');
       assert.deepEqual(channel.mintedFor(id.gatewayId, lifecycleRoomId), [runtimeRoomId], 'the control plane recorded it');
       assert.equal(channel.occupancyOf(id.gatewayId, runtimeRoomId), null, 'minted but unbound: no occupancy is taken');
+      assert.deepEqual(daemon.roomWorker.dueOccupancy(), [], 'nor sent: the daemon reports only a bound room');
 
-      // The lifecycle log binds the room to that runtime room on that Gateway.
+      // The lifecycle log binds the room to that runtime room on that
+      // Gateway, and the daemon is told so (no step-1 message does that; a
+      // later step will).
       stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: { runtimeRoomId, gatewayId: id.gatewayId } });
+      assert.equal(daemon.roomWorker.roomBound(lifecycleRoomId, runtimeRoomId), true);
       daemon.rooms.occupyFixtureRoom(runtimeRoomId);
       await daemon.tick();
       assert.equal(channel.occupancyOf(id.gatewayId, runtimeRoomId)?.occupancy, 'OCCUPIED', 'bound: the next report is taken');

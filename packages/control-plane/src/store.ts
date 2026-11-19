@@ -22,7 +22,7 @@
 
 import type { Pool, PoolClient } from 'pg';
 import { isCanonicalUuid } from '../../gateway-protocol/src/index.js';
-import { TRANSITIONS } from '../../contracts/src/index.js';
+import { TRANSITIONS, recordedEventSpec } from '../../contracts/src/index.js';
 import {
   apply,
   applyAll,
@@ -34,6 +34,7 @@ import {
   type RejectionCode,
 } from '../../ledger/src/index.js';
 import { bindingRecordedFor } from './journal-store.js';
+import { transactionBoundClient } from './transaction-client.js';
 
 /** T17's triggers, read from the transition table rather than restated. */
 const T17_TRIGGERS: ReadonlySet<string> = new Set(TRANSITIONS.find((row) => row.id === 'T17')?.triggers ?? []);
@@ -142,8 +143,10 @@ export interface DerivedAppend<T> {
  * (`runtime_room.bound`, the lifecycle ruling's B1; journal ruling B4).
  *
  * `build` reads the room's state under the room lock and either returns the
- * event or throws to refuse it; `afterRecorded` runs on the same client
- * after the lifecycle row is written, before COMMIT. Unlike a transition,
+ * event or throws to refuse it; `afterRecorded` runs on the same connection
+ * after the lifecycle row is written, before COMMIT. Both get that connection
+ * without the means to end the transaction (`transactionBoundClient`): the
+ * store alone commits, and only once its own checks hold. Unlike a transition,
  * a refusal here writes nothing at all, not even a rejection row: the
  * lifecycle ruling's B4 says a refused binding "is refused and writes
  * nothing". A throw from either step, or a reducer refusal, rolls back the
@@ -313,7 +316,11 @@ export class PostgresLedgerStore {
   > {
     const body = async (client: PoolClient) => {
       const { current, logLength } = await lockAndReplay(client, roomId);
-      const event = withoutCallerOccupancy(await spec.build(client, current));
+      // The caller's steps share this transaction but cannot end it: a COMMIT
+      // from either would make the lifecycle row durable before the binding
+      // check below ran.
+      const stepClient = transactionBoundClient(client);
+      const event = withoutCallerOccupancy(await spec.build(stepClient, current));
       const result: ApplyResult = apply(current, event);
       if (!result.ok) throw new RecordedEventRefusedError(result.code, result.reason);
       if (result.kind !== 'recorded') {
@@ -329,7 +336,7 @@ export class PostgresLedgerStore {
         state: result.state,
         recordedState: result.state.state,
       });
-      const value = await spec.afterRecorded(client, { event, seq, state: result.state });
+      const value = await spec.afterRecorded(stepClient, { event, seq, state: result.state });
       // The recorded entry commits only with its binding record, and through
       // that record's own check with the first Builder command's journaled
       // row (journal ruling B3), whatever the callback did.
@@ -548,6 +555,16 @@ export class PostgresLedgerStore {
 
     const result: ApplyResult = apply(current, offered);
 
+    // A recorded event (`runtime_room.bound`) is appended only through
+    // `appendRecorded`. Here, short of a replay of one already recorded
+    // (INV-4: answered, nothing written), it is refused by a throw before
+    // anything is written, not even a rejection row, whatever the reducer
+    // said: the lifecycle ruling's B4 says a refused binding "is refused and
+    // writes nothing". The throw aborts the transaction.
+    if (recordedEventSpec(event.event) !== null && !(result.ok && result.kind === 'replay')) {
+      throw new Error(`${event.event} is a recorded event, appended only through its governed path`);
+    }
+
     if (!result.ok) {
       await recordRejection(client, roomId, event, result.code, result.reason);
       return { ok: false, outcome: 'rejected', code: result.code, reason: result.reason, state: current };
@@ -579,10 +596,8 @@ export class PostgresLedgerStore {
     }
 
     if (result.kind === 'recorded') {
-      // `runtime_room.bound` triggers no transition and is recorded only by
-      // its governed path, `appendRecorded` (the generic route refuses it
-      // before the store). Reaching it here fails closed: the throw aborts
-      // the transaction and nothing is written.
+      // Unreachable: a recorded event is refused above. Kept so a reducer
+      // result of this kind for any other event still fails closed.
       throw new Error(`${result.event} is a recorded event, appended only through its governed path`);
     }
 

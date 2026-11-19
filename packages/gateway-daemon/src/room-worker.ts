@@ -10,12 +10,16 @@
  *     lifecycle room: `RoomRuntime.createRoom(requestId)` mints it, born
  *     PREPARED, and the worker keeps lifecycle room -> runtime room so the
  *     daemon can send `runtime_room_minted`;
- *   - says which minted rooms' occupancy is due to be reported as
+ *   - says which bound rooms' occupancy is due to be reported as
  *     `runtime_room_occupancy`: a room whose occupancy changed since it was
  *     last reported, and every room at least every `OCCUPANCY_REFRESH_TICKS`
- *     ticks. The control plane takes a room's occupancy only once the room
- *     is bound (act B2), so a report it refuses before then waits for the
- *     next refresh. The `runtime_room_minted` report carries no occupancy.
+ *     ticks. Act B2 authorizes the report of a BOUND runtime room's
+ *     occupancy, so a minted room is reported only once `roomBound` has
+ *     marked it. No message in step 1 tells the daemon that a room is bound
+ *     (B2 adds none), so nothing calls `roomBound` yet and the daemon sends
+ *     no occupancy report; the control plane would refuse one for an unbound
+ *     room in any case. The `runtime_room_minted` report carries no
+ *     occupancy.
  *
  * It never changes a room's occupancy and starts nothing in one: Builder
  * execution in a bound runtime room is step 4.
@@ -71,6 +75,8 @@ interface MintedRoom {
   ticksSinceSent: number;
   /** An occupancy the control plane refused, held back until the next refresh; `null` when none. */
   refused: OccupancyState | null;
+  /** Whether the room is known to be bound (`roomBound`); only a bound room's occupancy is reported. */
+  bound: boolean;
 }
 
 export class GatewayRoomWorker implements RoomRequestHandler {
@@ -121,7 +127,14 @@ export class GatewayRoomWorker implements RoomRequestHandler {
         this.log('error', 'room.mint_conflict', { runtimeRoomId });
         return null;
       }
-      room = { lifecycleRoomId: request.lifecycleRoomId, runtimeRoomId, lastSent: null, ticksSinceSent: 0, refused: null };
+      room = {
+        lifecycleRoomId: request.lifecycleRoomId,
+        runtimeRoomId,
+        lastSent: null,
+        ticksSinceSent: 0,
+        refused: null,
+        bound: false,
+      };
       this.byLifecycle.set(room.lifecycleRoomId, room);
       this.byRuntime.set(runtimeRoomId, room.lifecycleRoomId);
       this.log('info', 'room.minted', { runtimeRoomId });
@@ -144,13 +157,29 @@ export class GatewayRoomWorker implements RoomRequestHandler {
   }
 
   /**
-   * The occupancy reports due now: each minted room whose occupancy differs
+   * Mark a minted room as bound to its lifecycle room, so its occupancy is
+   * reported from the next tick on (act B2). `false`, marking nothing, when
+   * this worker did not mint that runtime room for that lifecycle room.
+   * Nothing in step 1 calls this: no message yet tells the daemon of a
+   * binding.
+   */
+  roomBound(lifecycleRoomId: string, runtimeRoomId: string): boolean {
+    const room = this.byLifecycle.get(lifecycleRoomId);
+    if (room === undefined || room.runtimeRoomId !== runtimeRoomId) return false;
+    room.bound = true;
+    return true;
+  }
+
+  /**
+   * The occupancy reports due now: each bound room whose occupancy differs
    * from the one last reported, then each not reported for
-   * `OCCUPANCY_REFRESH_TICKS` ticks, longest waiting first.
+   * `OCCUPANCY_REFRESH_TICKS` ticks, longest waiting first. A minted room
+   * that is not known to be bound is never reported.
    */
   dueOccupancy(): readonly RuntimeRoomOccupancyPayload[] {
     const due: { payload: RuntimeRoomOccupancyPayload; changed: boolean; waited: number }[] = [];
     for (const room of this.byLifecycle.values()) {
+      if (!room.bound) continue;
       const occupancy = this.occupancyOf(room);
       if (occupancy === null) continue;
       const changed = occupancy !== room.lastSent;

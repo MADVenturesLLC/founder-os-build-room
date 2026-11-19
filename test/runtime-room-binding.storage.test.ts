@@ -73,6 +73,7 @@ import {
 } from '../packages/control-plane/src/journal-store.js';
 import type { GatewayRoomChannel } from '../packages/control-plane/src/gateway/room-channel.js';
 import { roomOpenForMint } from '../packages/control-plane/src/gateway/room-state.js';
+import { TransactionControlRefusedError } from '../packages/control-plane/src/transaction-client.js';
 import {
   PostgresLedgerStore,
   RecordedEventRefusedError,
@@ -1331,6 +1332,164 @@ describe('room binding — the store refuses a Builder command outside its bindi
     await assertVerified();
 
     // The room still binds through the governed path.
+    boundOutcome(await bindFirstBuilderCommand(deps(world), { roomId, gatewayId, runtimeRoomId, command: builderCommand() }));
+    await assertVerified();
+  });
+});
+
+describe('room binding — the store holds B3, B4 and B6 against its own callers (review of ba9d10a)', { skip: SKIP_REASON }, () => {
+  const governedOnly = /recorded event, appended only through its governed path/;
+
+  it('refuses a runtime_room.bound offered to append or appendDerived, fenced or not, a duplicate included, writing nothing, not even a rejection row (lifecycle ruling B4)', async () => {
+    const { world, roomId, gatewayId, runtimeRoomId } = await readyToBind();
+    const bound = boundOutcome(await bindFirstBuilderCommand(deps(world), { roomId, gatewayId, runtimeRoomId, command: builderCommand() }));
+    const before = await footprint(roomId);
+    const fenced = new PostgresLedgerStore(appPool!, new ControlledFence());
+    for (const store of [ledger!, fenced]) {
+      await assert.rejects(store.append(roomId, boundEvent(roomId, gatewayId, runtimeRoomId)), governedOnly);
+      await assert.rejects(
+        store.appendDerived(roomId, {
+          build: async () => boundEvent(roomId, gatewayId, runtimeRoomId),
+          afterTransition: async () => assert.fail('a recorded event triggers no transition'),
+        }),
+        governedOnly,
+      );
+    }
+    // Before any binding, a first one offered here is refused the same way.
+    const { roomId: unbound, gatewayId: g2, runtimeRoomId: r2 } = await readyToBind();
+    const unboundBefore = await footprint(unbound);
+    await assert.rejects(ledger!.append(unbound, boundEvent(unbound, g2, r2)), governedOnly);
+    assert.deepEqual(await footprint(unbound), unboundBefore);
+    // The original event again, by its own id, is a replay (INV-4), answered
+    // with nothing written.
+    const { rows } = await admin!.query<{ payload: LifecycleEvent }>(
+      'SELECT payload FROM build_room_events WHERE room_id = $1 AND event_id = $2',
+      [roomId, bound.eventId],
+    );
+    const replay = await ledger!.append(roomId, rows[0]!.payload);
+    assert.equal(replay.ok && replay.outcome, 'replay');
+    assert.deepEqual(await footprint(roomId), before, 'no lifecycle row, no rejection row, no journal row');
+    await assertVerified();
+  });
+
+  it('refuses a callback that journals a second Builder command before the binding, at that command, and nothing commits (B6)', async () => {
+    const { world, roomId, planHash, gatewayId, runtimeRoomId } = await readyToBind();
+    const before = await footprint(roomId);
+    const first = builderCommand();
+    const second = builderCommand();
+    let firstSeq: string | null = null;
+    let reachedBinding = false;
+    await assert.rejects(
+      ledger!.appendRecorded(roomId, {
+        build: async () => boundEvent(roomId, gatewayId, runtimeRoomId),
+        afterRecorded: async (client, { event }) => {
+          const tx = journal!.inTransaction(client);
+          const lifecycleEventRef = { roomId, eventId: event.eventId };
+          firstSeq = (await tx.appendJournaled(first, { roomId, lifecycleEventRef })).seq;
+          const journaled = await tx.appendJournaled(second, { roomId, lifecycleEventRef });
+          reachedBinding = true;
+          await tx.appendBinding({ commandId: journaled.commandId, lifecycleRoomId: roomId, runtimeRoomId, gatewayId, planHash, lifecycleEventRef });
+        },
+      }),
+      (error: unknown) =>
+        error instanceof JournalSequenceError
+        && error.commandId === second.commandId
+        && /only a room's first Builder command precedes its binding record/.test(error.reason),
+    );
+    assert.ok(firstSeq !== null, 'the first command was written before the refusal');
+    assert.equal(reachedBinding, false, 'refused at the second command');
+    assert.deepEqual(await footprint(roomId), before);
+    assert.equal(await journalRowsFor(first.commandId), 0);
+    assert.equal(await journalRowsFor(second.commandId), 0);
+    assert.equal((await ledger!.loadRoom(roomId)).state.binding, null);
+    await assertVerified();
+
+    boundOutcome(await bindFirstBuilderCommand(deps(world), { roomId, gatewayId, runtimeRoomId, command: builderCommand() }));
+    await assertVerified();
+  });
+
+  it('refuses a first Builder command naming a runtime_room.bound another transaction recorded with no binding record', async () => {
+    const { roomId, gatewayId, runtimeRoomId } = await readyToBind();
+    // No store path commits a recorded entry without its binding record; the
+    // test writes one directly, as the database owner, to stand for one.
+    const orphan = boundEvent(roomId, gatewayId, runtimeRoomId);
+    await admin!.query(
+      `INSERT INTO build_room_events (
+         room_id, seq, event_id, event, outcome, entry_seq, transition_id, guard_id,
+         from_state, resulting_state, actor, attribution, scope, evidence, overlays, round, occurred_at, payload)
+       SELECT $1, last.seq + 1, $2, 'runtime_room.bound', 'recorded', NULL, NULL, NULL,
+              'BUILDING', 'BUILDING', '"system"', $3::jsonb, $4::jsonb, '[]'::jsonb, last.overlays, last.round, $5, $6::jsonb
+         FROM (SELECT seq, overlays, round FROM build_room_events WHERE room_id = $1 ORDER BY seq DESC LIMIT 1) AS last`,
+      [roomId, orphan.eventId, JSON.stringify(orphan.attribution), JSON.stringify(orphan.scope), orphan.occurredAt, JSON.stringify(orphan)],
+    );
+    const before = await footprint(roomId);
+    const command = builderCommand();
+    await assert.rejects(
+      inOwnTransaction((client) =>
+        journal!.inTransaction(client).appendJournaled(command, { roomId, lifecycleEventRef: { roomId, eventId: orphan.eventId } }),
+      ),
+      (error: unknown) =>
+        error instanceof JournalSequenceError
+        && /first Builder command is journaled in the transaction that records its runtime_room\.bound/.test(error.reason),
+    );
+    assert.deepEqual(await footprint(roomId), before);
+    assert.equal(await journalRowsFor(command.commandId), 0);
+    await assertVerified();
+  });
+
+  it('gives its steps a connection that cannot end the transaction: an early COMMIT, in any form, makes nothing durable', async () => {
+    const { world, roomId, gatewayId, runtimeRoomId } = await readyToBind();
+    const before = await footprint(roomId);
+    const statements = ['COMMIT', 'commit and chain', 'END', 'ROLLBACK', 'ABORT', '/* x */ COMMIT', ';COMMIT', "PREPARE TRANSACTION 'early'"];
+    for (const statement of statements) {
+      await assert.rejects(
+        ledger!.appendRecorded(roomId, {
+          build: async () => boundEvent(roomId, gatewayId, runtimeRoomId),
+          afterRecorded: async (client) => {
+            await client.query(statement);
+          },
+        }),
+        TransactionControlRefusedError,
+        statement,
+      );
+      await assert.rejects(
+        ledger!.appendRecorded(roomId, {
+          build: async (client) => {
+            await client.query(statement);
+            return boundEvent(roomId, gatewayId, runtimeRoomId);
+          },
+          afterRecorded: async () => assert.fail('build was refused'),
+        }),
+        TransactionControlRefusedError,
+        `${statement} in build`,
+      );
+    }
+    // A second statement in one call: PostgreSQL itself refuses it under the
+    // extended protocol, before either runs.
+    await assert.rejects(
+      ledger!.appendRecorded(roomId, {
+        build: async () => boundEvent(roomId, gatewayId, runtimeRoomId),
+        afterRecorded: async (client) => {
+          await client.query('SELECT 1; COMMIT');
+        },
+      }),
+      /cannot insert multiple commands into a prepared statement/,
+    );
+    await assert.rejects(
+      ledger!.appendRecorded(roomId, {
+        build: async () => boundEvent(roomId, gatewayId, runtimeRoomId),
+        afterRecorded: async (client) => {
+          client.release();
+        },
+      }),
+      TransactionControlRefusedError,
+    );
+    assert.deepEqual(await footprint(roomId), before, 'nothing durable from any attempt');
+    assert.equal((await ledger!.loadRoom(roomId)).state.binding, null);
+    await assertVerified();
+
+    // The governed path, whose journal appends use savepoints through the
+    // same wrapped connection, still binds.
     boundOutcome(await bindFirstBuilderCommand(deps(world), { roomId, gatewayId, runtimeRoomId, command: builderCommand() }));
     await assertVerified();
   });

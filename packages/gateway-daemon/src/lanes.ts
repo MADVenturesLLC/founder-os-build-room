@@ -71,7 +71,11 @@ function reportAccepted(response: ControlPlaneResponse): boolean {
   return response.body !== null && response.body['accepted'] === true;
 }
 
-/** How many polls of one tick's exchange carried work for each worker. */
+/**
+ * One tick's exchange: `planner` is the polls that carried planner work for
+ * the planner worker; `room` is the minted reports the control plane took
+ * (`accepted: true`), as the occupancy count is.
+ */
 export interface ExchangeCounts {
   readonly planner: number;
   readonly room: number;
@@ -234,8 +238,9 @@ export class PrimaryLane {
       polls += 1;
 
       if (rooms !== null && room !== null) {
-        roomHandled += 1;
-        if (!(await this.reportMinted(rooms, room))) return counts();
+        const minted = await this.reportMinted(rooms, room);
+        if (minted.taken) roomHandled += 1;
+        if (!minted.proceed) return counts();
       }
 
       if (planner === null || request === null) continue;
@@ -257,14 +262,19 @@ export class PrimaryLane {
   }
 
   /**
-   * Answer one `room` member. `false` only when a minted report was sent and
-   * its response ends this tick's exchange (a resync, a halt, a retry); an
-   * unreadable member, or one with nothing to send, is `true` and sends nothing.
+   * Answer one `room` member. `proceed` is `false` only when a minted report
+   * was sent and its response ends this tick's exchange (a resync, a halt, a
+   * retry); an unreadable member, or one with nothing to send, proceeds and
+   * sends nothing. `taken` is `true` only when the control plane answered the
+   * report `accepted: true`.
    */
-  private async reportMinted(rooms: RoomRequestHandler, room: unknown): Promise<boolean> {
+  private async reportMinted(
+    rooms: RoomRequestHandler,
+    room: unknown,
+  ): Promise<{ readonly proceed: boolean; readonly taken: boolean }> {
     const payload = rooms.handleRoom(room);
-    if (payload === null) return true;
-    if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return false;
+    if (payload === null) return { proceed: true, taken: false };
+    if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return { proceed: false, taken: false };
     const report = buildRuntimeRoomMinted(
       this.identity,
       this.epoch,
@@ -278,16 +288,16 @@ export class PrimaryLane {
       this.sequence += 1;
       return true;
     });
-    if (reported !== 'retain_and_continue') return false;
+    if (reported !== 'retain_and_continue') return { proceed: false, taken: false };
     // A refused report (no open request, say after a leader change) changes
     // nothing here: the control plane's next request is answered with the
-    // same room. The report carries no occupancy, so the room's occupancy is
-    // reported separately, and taken only once the room is bound.
-    return true;
+    // same room. The report carries no occupancy; a room's occupancy is
+    // reported separately, and only once the room is bound.
+    return { proceed: true, taken: reportAccepted(response) };
   }
 
   /**
-   * This tick's `runtime_room_occupancy` reports (act B2): each minted room
+   * This tick's `runtime_room_occupancy` reports (act B2): each bound room
    * the worker says is due, up to `maxReports`, while the session holds. Each
    * takes the session's next sequence and goes through the primary table like
    * every other session-bound message. `maxReports` bounds the reports sent;
@@ -318,9 +328,9 @@ export class PrimaryLane {
       });
       if (reported !== 'retain_and_continue') return accepted;
       sent += 1;
-      // A report the control plane answered `accepted: false` (it holds no
-      // mint for the room, say after a leader change) is not delivered: it
-      // stays due, at the refresh pace rather than every tick.
+      // A report the control plane answered `accepted: false` (it finds no
+      // binding, or holds no mint, say after a leader change) is not
+      // delivered: it stays due, at the refresh pace rather than every tick.
       if (reportAccepted(response)) {
         rooms.occupancySent(payload);
         accepted += 1;

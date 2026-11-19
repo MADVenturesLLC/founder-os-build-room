@@ -74,7 +74,8 @@ export class GatewayDaemon {
    * The runtime-room worker (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2), on
    * every daemon because every daemon has a room runtime: it mints a runtime
    * room when the control plane asks through the poll answer, and says which
-   * minted rooms' occupancy is due to be reported.
+   * bound rooms' occupancy is due to be reported (none in step 1: nothing
+   * yet tells the daemon a room is bound).
    */
   readonly roomWorker: GatewayRoomWorker;
   private readonly state: GatewayStateStore;
