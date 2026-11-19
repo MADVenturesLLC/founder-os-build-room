@@ -12,13 +12,17 @@
  *     minted, nothing is sent, the lane keeps heartbeating;
  *   - nothing the control plane would refuse is sent: a payload that fails the
  *     protocol's validator is never offered;
+ *   - the minted report carries exactly requestId, lifecycleRoomId and
+ *     runtimeRoomId, no occupancy; a room's occupancy goes only in its own
+ *     occupancy report, due from the moment it is minted;
  *   - occupancy is reported when it changes and at least every sixth tick;
  *   - the daemon polls with no planner executor, and a planner request a poll
  *     carries is then not read; `exchangePlanner` is unchanged, reading only
  *     planner work; a refused minted report is retried by re-delivery;
  *   - end to end, a real daemon against the real control-plane routes over a
  *     stubbed database: the control plane asks, the daemon mints and reports,
- *     and the control plane's room channel records the room and its occupancy.
+ *     and the control plane's room channel records the room; it takes the
+ *     room's occupancy only once the lifecycle log binds the room to it.
  */
 
 import { after, describe, it } from 'node:test';
@@ -86,7 +90,7 @@ function countedRooms(newId: () => string = uuid): { runtime: RoomRuntime; creat
 }
 
 describe('gateway-daemon-room · the worker mints once per lifecycle room', () => {
-  it('mints through createRoom(requestId), born PREPARED, and reports exactly the closed payload', () => {
+  it('mints through createRoom(requestId), born PREPARED, and reports exactly the closed payload, with no occupancy', () => {
     const { runtime, creates } = countedRooms();
     const worker = new GatewayRoomWorker({ rooms: runtime });
     const request = mintRequest();
@@ -97,7 +101,7 @@ describe('gateway-daemon-room · the worker mints once per lifecycle room', () =
     assert.equal(payload.requestId, request.requestId);
     assert.equal(payload.lifecycleRoomId, request.lifecycleRoomId);
     assert.match(payload.runtimeRoomId, /^room-[0-9a-f-]{36}$/);
-    assert.equal(payload.occupancy, 'PREPARED');
+    assert.deepEqual(Object.keys(payload).sort(), ['lifecycleRoomId', 'requestId', 'runtimeRoomId'], 'exactly three members, no occupancy');
     assert.equal(runtime.snapshot(payload.runtimeRoomId)?.occupancy, 'PREPARED');
     assert.deepEqual([...worker.minted()], [[request.lifecycleRoomId, payload.runtimeRoomId]]);
   });
@@ -169,9 +173,10 @@ describe('gateway-daemon-room · occupancy is due on change and every sixth tick
     const worker = new GatewayRoomWorker({ rooms: runtime });
     const minted = worker.handleRoom(mintRequest());
     assert.ok(minted);
-    assert.deepEqual(worker.dueOccupancy().map((p) => p.occupancy), ['PREPARED'], 'never reported: due');
-    worker.mintedSent(minted);
-    assert.deepEqual(worker.dueOccupancy(), [], 'the minted report carried it');
+    const [first] = worker.dueOccupancy();
+    assert.deepEqual(first, { lifecycleRoomId: minted.lifecycleRoomId, runtimeRoomId: minted.runtimeRoomId, occupancy: 'PREPARED' }, 'never reported: due, the minted report carrying none');
+    worker.occupancySent(first!);
+    assert.deepEqual(worker.dueOccupancy(), [], 'taken: not due again');
 
     for (let tick = 1; tick < OCCUPANCY_REFRESH_TICKS; tick += 1) {
       worker.tick();
@@ -216,14 +221,16 @@ describe('gateway-daemon-room · occupancy is due on change and every sixth tick
   it('puts changed rooms first, then the longest waiting', () => {
     const { runtime } = countedRooms();
     const worker = new GatewayRoomWorker({ rooms: runtime });
+    const taken = (room: { lifecycleRoomId: string; runtimeRoomId: string }): void =>
+      worker.occupancySent({ lifecycleRoomId: room.lifecycleRoomId, runtimeRoomId: room.runtimeRoomId, occupancy: 'PREPARED' });
     const a = worker.handleRoom(mintRequest())!;
-    worker.mintedSent(a);
+    taken(a);
     worker.tick();
     const b = worker.handleRoom(mintRequest())!;
-    worker.mintedSent(b);
+    taken(b);
     for (let i = 0; i < OCCUPANCY_REFRESH_TICKS; i += 1) worker.tick();
     const c = worker.handleRoom(mintRequest())!;
-    worker.mintedSent(c);
+    taken(c);
     runtime.occupyFixtureRoom(c.runtimeRoomId);
     assert.deepEqual(
       worker.dueOccupancy().map((p) => p.runtimeRoomId),
@@ -324,7 +331,7 @@ function sessionMembers(envelope: Record<string, unknown>) {
 }
 
 describe('gateway-daemon-room · the tick answers a mint request', () => {
-  it('polls with no planner executor, mints, and sends one signed runtime_room_minted report', async () => {
+  it('polls with no planner executor, mints, and sends one signed runtime_room_minted report, then the room\'s occupancy on its own', async () => {
     const id = identity();
     const plane = scriptedPlane(id.gatewayId);
     const daemon = daemonOver(plane.fetchImpl, id);
@@ -339,13 +346,14 @@ describe('gateway-daemon-room · the tick answers a mint request', () => {
       '/gateway/planner/poll',
       '/gateway/room/minted',
       '/gateway/planner/poll',
+      '/gateway/room/occupancy',
     ]);
     const [report] = plane.of('/gateway/room/minted');
     const parsed = validateRuntimeRoomMinted(report);
     assert.ok(parsed.ok, 'the control plane would parse it');
     const payload = JSON.parse(report!['payload'] as string) as Record<string, unknown>;
     const runtimeRoomId = daemon.roomWorker.minted().get(request.lifecycleRoomId);
-    assert.deepEqual(payload, { requestId: request.requestId, lifecycleRoomId: request.lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' });
+    assert.deepEqual(payload, { requestId: request.requestId, lifecycleRoomId: request.lifecycleRoomId, runtimeRoomId }, 'exactly three members, no occupancy');
     assert.equal(report!['requestId'], request.requestId);
     assert.equal(report!['payloadDigest'], createHash('sha256').update(report!['payload'] as string, 'utf8').digest('hex'));
     const signed = runtimeRoomMintedSignedBytes({
@@ -356,9 +364,11 @@ describe('gateway-daemon-room · the tick answers a mint request', () => {
     assert.ok(signedBy(id, signed, report!['signature']));
     assert.deepEqual(
       plane.calls.filter((call) => call.body !== null && 'sequence' in call.body).map((call) => call.body!['sequence']),
-      [1, 2, 3],
-      'poll, report and poll take the session sequence in order',
+      [1, 2, 3, 4],
+      'poll, report, poll and the occupancy report take the session sequence in order',
     );
+    const [occupancy] = plane.of('/gateway/room/occupancy');
+    assert.deepEqual(JSON.parse(occupancy!['payload'] as string), { lifecycleRoomId: request.lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' });
     assert.equal(daemon.rooms.snapshot(runtimeRoomId!)?.occupancy, 'PREPARED');
     assert.equal(daemon.primary.laneState, 'HEARTBEATING');
   });
@@ -389,7 +399,8 @@ describe('gateway-daemon-room · the tick answers a mint request', () => {
     plane.queue('/gateway/room/minted', json(503, { error: 'not_leader' }));
     await daemon.tick();
     assert.equal(plane.of('/gateway/room/minted').length, 1);
-    assert.deepEqual(daemon.roomWorker.dueOccupancy().map((p) => p.occupancy), ['PREPARED'], 'not marked reported');
+    assert.deepEqual(daemon.roomWorker.dueOccupancy().map((p) => p.occupancy), ['PREPARED'], 'not reported: the lane backed off before any occupancy report');
+    assert.equal(plane.of('/gateway/room/occupancy').length, 0);
 
     mono += 60_000;
     plane.polls.push({ room: request });
@@ -452,7 +463,7 @@ describe('gateway-daemon-room · occupancy reports from the tick', () => {
     await daemon.tick();
     const reports = plane.of('/gateway/room/occupancy');
     const last = reports.at(-1)!;
-    assert.equal(reports.length, 3, 'a change is reported on the next tick');
+    assert.equal(reports.length, 4, 'once as minted, at each refresh, and a change on the next tick');
     assert.ok(validateRuntimeRoomOccupancy(last).ok);
     assert.equal(last['runtimeRoomId'], runtimeRoomId);
     assert.deepEqual(JSON.parse(last['payload'] as string), { lifecycleRoomId: request.lifecycleRoomId, runtimeRoomId, occupancy: 'OCCUPIED' });
@@ -481,10 +492,11 @@ describe('gateway-daemon-room · a report the control plane did not accept is no
     const runtimeRoomId = daemon.roomWorker.minted().get(request.lifecycleRoomId)!;
     const epoch = plane.of('/gateway/room/minted')[0]!['epoch'] as string;
 
+    const before = plane.of('/gateway/room/occupancy').length;
     daemon.rooms.occupyFixtureRoom(runtimeRoomId);
     plane.queue('/gateway/room/occupancy', json(200, { ok: true, state: 'enrolled', epoch, accepted: false }));
     await daemon.tick();
-    assert.equal(plane.of('/gateway/room/occupancy').length, 1, 'sent once, refused');
+    assert.equal(plane.of('/gateway/room/occupancy').length, before + 1, 'sent once, refused');
 
     const sentAt: number[] = [];
     for (let tick = 1; tick <= OCCUPANCY_REFRESH_TICKS; tick += 1) {
@@ -511,7 +523,6 @@ describe('gateway-daemon-room · a report the control plane did not accept is no
     const refused: RuntimeRoomOccupancyPayload[] = [];
     const rooms: RoomRequestHandler = {
       handleRoom: () => null,
-      mintedSent: () => undefined,
       dueOccupancy: () => due,
       occupancySent: (payload) => void sent.push(payload),
       occupancyRefused: (payload) => void refused.push(payload),
@@ -586,7 +597,7 @@ describe('gateway-daemon-room · the planner path is unchanged', () => {
 });
 
 describe('gateway-daemon-room · end to end against the real control-plane routes', () => {
-  it('the control plane asks, the daemon mints and reports, and the room channel records room and occupancy', async () => {
+  it('the control plane asks, the daemon mints and reports, and the room channel records the room, and its occupancy once bound', async () => {
     const stub = roomStub();
     const surface = await startSurface({}, stub.pool);
     const id = identity();
@@ -607,16 +618,19 @@ describe('gateway-daemon-room · end to end against the real control-plane route
 
       const channel = surface.gateway.roomChannel;
       const lifecycleRoomId = uuid();
+      stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: null });
       channel.requestMint(id.gatewayId, lifecycleRoomId);
       await daemon.tick();
       const runtimeRoomId = daemon.roomWorker.minted().get(lifecycleRoomId);
       assert.ok(runtimeRoomId, 'the daemon minted');
       assert.deepEqual(channel.mintedFor(id.gatewayId, lifecycleRoomId), [runtimeRoomId], 'the control plane recorded it');
-      assert.equal(channel.occupancyOf(id.gatewayId, runtimeRoomId)?.occupancy, 'PREPARED');
+      assert.equal(channel.occupancyOf(id.gatewayId, runtimeRoomId), null, 'minted but unbound: no occupancy is taken');
 
+      // The lifecycle log binds the room to that runtime room on that Gateway.
+      stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: { runtimeRoomId, gatewayId: id.gatewayId } });
       daemon.rooms.occupyFixtureRoom(runtimeRoomId);
       await daemon.tick();
-      assert.equal(channel.occupancyOf(id.gatewayId, runtimeRoomId)?.occupancy, 'OCCUPIED');
+      assert.equal(channel.occupancyOf(id.gatewayId, runtimeRoomId)?.occupancy, 'OCCUPIED', 'bound: the next report is taken');
       assert.equal(daemon.primary.laneState, 'HEARTBEATING');
       assert.deepEqual(stub.rejections, [], 'nothing the daemon sent was refused');
       assert.equal(surface.gateway.session.cursorFor(id.gatewayId)?.lastSequence, daemon.primary.lastSequence);

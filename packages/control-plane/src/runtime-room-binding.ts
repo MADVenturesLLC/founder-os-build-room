@@ -75,7 +75,11 @@ export interface RuntimeRoomBindingDeps {
   /** Lifecycle ruling B5: "The Gateway named is enrolled and live". Read on the fenced client. */
   readonly gateways: { deriveGatewayEnrolledAndLive(client: PoolClient, gatewayId: string): Promise<boolean> };
   /** The runtime room ids each Gateway reported as minted for a lifecycle room (act B2). */
-  readonly rooms: { mintedFor(gatewayId: string, lifecycleRoomId: string): readonly string[] };
+  readonly rooms: {
+    mintedFor(gatewayId: string, lifecycleRoomId: string): readonly string[];
+    /** Withdraw every open mint request for the room, on any Gateway, once its binding commits. */
+    cancelMintsFor(lifecycleRoomId: string): number;
+  };
   /** The control plane's own attribution for the events it records as `system`. */
   readonly dispatcher: DispatcherAttribution;
   readonly mintEventId: () => string;
@@ -294,7 +298,14 @@ export async function bindFirstBuilderCommand(
         return { journaled, binding };
       },
     });
-    if (appended.status === 'not_leader') return { kind: 'interrupted', committed: appended.committed };
+    if (appended.status === 'not_leader') {
+      if (appended.committed) deps.rooms.cancelMintsFor(roomId);
+      return { kind: 'interrupted', committed: appended.committed };
+    }
+    // The room is bound: withdraw what is still open for it. The poll route
+    // refuses to deliver a request once the binding is committed in any
+    // case, so no request reaches a Gateway after the bind.
+    deps.rooms.cancelMintsFor(roomId);
     return {
       kind: 'bound',
       eventId,

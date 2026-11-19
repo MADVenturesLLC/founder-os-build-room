@@ -54,7 +54,7 @@
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import pgDefault from 'pg';
 import type { Pool as PgPool, PoolClient } from 'pg';
 import {
@@ -65,11 +65,19 @@ import {
 } from './support/owned-postgres.js';
 import { loadConfig, type Config } from '../packages/control-plane/src/config.js';
 import { createPool } from '../packages/control-plane/src/db.js';
-import { JournalStore } from '../packages/control-plane/src/journal-store.js';
+import {
+  JOURNAL_APPEND_LOCK_KEY,
+  JournalSequenceError,
+  JournalStore,
+  type JournaledBinding,
+} from '../packages/control-plane/src/journal-store.js';
+import type { GatewayRoomChannel } from '../packages/control-plane/src/gateway/room-channel.js';
+import { roomOpenForMint } from '../packages/control-plane/src/gateway/room-state.js';
 import {
   PostgresLedgerStore,
   RecordedEventRefusedError,
   RoomNotFoundError,
+  type RecordedAppend,
   type RoomAppendFence,
   type RoomAppendOutcome,
 } from '../packages/control-plane/src/store.js';
@@ -82,7 +90,13 @@ import {
   type LaterCommandOutcome,
   type RuntimeRoomBindingDeps,
 } from '../packages/control-plane/src/runtime-room-binding.js';
-import { BUILDER_COMMAND_KIND } from '../packages/journal/src/index.js';
+import {
+  BUILDER_COMMAND_KIND,
+  encodeCommandEventRowV2,
+  envelopeDigest,
+  normalizeForJournal,
+  type GovernedCommandRequest,
+} from '../packages/journal/src/index.js';
 import type { EventName, EvidenceRef } from '../packages/contracts/src/index.js';
 import { applyAll, initialLedger, type LedgerState, type LifecycleEvent } from '../packages/ledger/src/index.js';
 import { EVIDENCE, PERMISSIVE_FACTS, makeEvent } from './helpers.js';
@@ -94,7 +108,16 @@ import {
   openSession,
   promoteNode,
   signedBeat,
+  type EnrolledGateway,
+  type SessionNode,
 } from './gateway-session-helpers.js';
+import { hex32, signBytes } from './gateway-helpers.js';
+import {
+  plannerPollSignedBytes,
+  runtimeRoomMintedSignedBytes,
+  runtimeRoomOccupancySignedBytes,
+  type HeartbeatCanonicalInput,
+} from '../packages/gateway-protocol/src/index.js';
 import { settleAllNodes } from './gateway-leadership-helpers.js';
 
 const { Pool } = pgDefault;
@@ -264,11 +287,13 @@ interface World {
   readonly minted: Map<string, string[]>;
   readonly gatewayChecks: string[];
   readonly lockProbes: boolean[];
+  /** Each lifecycle room whose open mint requests the binding withdrew. */
+  readonly cancelled: string[];
   probeRoomLock: string | null;
 }
 
 function newWorld(): World {
-  return { live: new Set(), minted: new Map(), gatewayChecks: [], lockProbes: [], probeRoomLock: null };
+  return { live: new Set(), minted: new Map(), gatewayChecks: [], lockProbes: [], cancelled: [], probeRoomLock: null };
 }
 
 function reportMinted(world: World, gatewayId: string, lifecycleRoomId: string, runtimeRoomId: string): void {
@@ -298,7 +323,13 @@ function deps(world: World, overrides: Partial<RuntimeRoomBindingDeps> = {}): Ru
         return world.live.has(gatewayId);
       },
     },
-    rooms: { mintedFor: (gatewayId, lifecycleRoomId) => world.minted.get(`${gatewayId} ${lifecycleRoomId}`) ?? [] },
+    rooms: {
+      mintedFor: (gatewayId, lifecycleRoomId) => world.minted.get(`${gatewayId} ${lifecycleRoomId}`) ?? [],
+      cancelMintsFor: (lifecycleRoomId) => {
+        world.cancelled.push(lifecycleRoomId);
+        return 0;
+      },
+    },
     dispatcher: { ...DISPATCHER },
     mintEventId: newBindingEventId,
     now: () => NOW,
@@ -370,6 +401,71 @@ async function assertVerified(store: JournalStore = journal!): Promise<void> {
   assert.ok(verdict.ok, `verify() failed: ${JSON.stringify(verdict)}`);
 }
 
+/**
+ * A `journaled` row written by the append routine directly, as the runtime
+ * login, past every check `JournalStore` makes: the row the store refuses
+ * to write (journal ruling B6 at write time), for proving that `verify()`
+ * still finds one a writer other than this store left in the chain. The
+ * routine itself enforces chain and shape, not the binding rules. Returns
+ * the row's seq.
+ */
+async function appendJournaledPastTheStore(
+  pool: PgPool,
+  request: GovernedCommandRequest & { readonly commandId: string },
+  binding: JournaledBinding,
+): Promise<string> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [JOURNAL_APPEND_LOCK_KEY]);
+    const { rows: head } = await client.query<{ seq: string }>(
+      'SELECT seq::text AS seq FROM public.command_journal_chain_head WHERE head_id = 1',
+    );
+    const seq = String(BigInt(head[0]!.seq) + 1n);
+    const envelope = normalizeForJournal(request);
+    const bytes = encodeCommandEventRowV2({
+      seq,
+      eventType: 'journaled',
+      commandId: request.commandId,
+      actorId: request.actorId,
+      roleId: request.roleId,
+      repository: request.repository,
+      scopeRef: request.scopeRef,
+      commandEnvelope: envelope,
+      envelopeDigest: envelopeDigest(envelope),
+      authorizationRef: request.authorizationRef,
+      intendedProvider: request.intendedProvider,
+      intendedModel: request.intendedModel,
+      intendedSurface: request.intendedSurface,
+      ...(binding.roomId === undefined ? {} : { roomId: binding.roomId }),
+      ...(binding.lifecycleEventRef === undefined ? {} : { lifecycleEventRef: { ...binding.lifecycleEventRef } }),
+      evidenceRefs: [],
+      recordedAt: new Date().toISOString().replace(/\.(\d{3})Z$/, '.$1000Z'),
+    });
+    const { rows } = await client.query<{ seq: string }>(
+      'SELECT seq::text AS seq FROM public.command_journal_append($1, $2, $3, $4, $5)',
+      ['command', request.commandId, 'journaled', seq, Buffer.from(bytes)],
+    );
+    await client.query('COMMIT');
+    return rows[0]!.seq;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/** One poll's collect, asking the lifecycle log as the poll route does (`roomOpenForMint`), on a client of its own. */
+async function collectOpen(channel: GatewayRoomChannel, gatewayId: string): ReturnType<GatewayRoomChannel['collect']> {
+  const client = await appPool!.connect();
+  try {
+    return await channel.collect(gatewayId, (lifecycleRoomId) => roomOpenForMint(client, lifecycleRoomId));
+  } finally {
+    client.release();
+  }
+}
+
 /* ---------------- the suite ---------------- */
 
 describe('room binding — the three writes commit together (journal ruling B3)', { skip: SKIP_REASON }, () => {
@@ -383,6 +479,7 @@ describe('room binding — the three writes commit together (journal ruling B3)'
 
     // The B5 checks ran while the room row was locked by the binding's own transaction.
     assert.deepEqual(world.gatewayChecks, [gatewayId]);
+    assert.deepEqual(world.cancelled, [roomId], 'the room\'s open mint requests are withdrawn once it is bound');
     assert.deepEqual(world.lockProbes, [true]);
     assert.equal(await roomRowLocked(roomId), false, 'the lock is released with the commit');
 
@@ -791,21 +888,25 @@ describe('room binding — later Builder commands name the binding (journal ruli
 });
 
 describe('room binding — verify() finds a Builder command outside the binding (B6, B3)', { skip: SKIP_REASON }, () => {
-  it('a builder.invoke journaled through the plain path with no room is a binding defect', async () => {
+  // The store refuses to write either row (see "the store refuses ... at write
+  // time" below), so each is written past it, by the append routine directly,
+  // as a writer that is not this store could: verify() still finds it.
+  it('a builder.invoke in the chain with no room is a binding defect', async () => {
     const pool = await runtimePool(DEFECT_NO_ROOM);
     extraPools.push(pool);
     const store = new JournalStore(pool);
     await assertVerified(store);
-    // The plain path appends it: nothing at append time reads the binding rules.
-    const appended = await store.appendJournaled(builderCommand());
+    await assert.rejects(store.appendJournaled(builderCommand()), JournalSequenceError, 'the store refuses it');
+    await assertVerified(store);
+    const appended = await appendJournaledPastTheStore(pool, builderCommand(), {});
     const verdict = await store.verify();
     assert.equal(verdict.ok, false);
     if (verdict.ok) return;
     assert.match(verdict.reason, /^binding: B6: a Builder command is journaled with no room_id/);
-    assert.equal(verdict.atSeq, appended.seq);
+    assert.equal(verdict.atSeq, appended);
   });
 
-  it('a builder.invoke journaled for a room with no binding is a binding defect', async () => {
+  it('a builder.invoke in the chain for a room with no binding is a binding defect', async () => {
     const pool = await runtimePool(DEFECT_UNBOUND_ROOM);
     extraPools.push(pool);
     const store = new JournalStore(pool);
@@ -813,19 +914,17 @@ describe('room binding — verify() finds a Builder command outside the binding 
     const roomId = randomUUID();
     await rooms.createRoom(roomId);
     await drive(rooms, roomId, TO_BUILDING, plandoc(hex64()));
-    // Journaled in a transaction of its own, bound to the room but to no binding.
+    // The store refuses it in a transaction of its own, bound to the room but to no binding.
     const client = await pool.connect();
-    let seq = '';
     try {
       await client.query('BEGIN');
-      seq = (await store.inTransaction(client).appendJournaled(builderCommand(), { roomId })).seq;
+      await assert.rejects(store.inTransaction(client).appendJournaled(builderCommand(), { roomId }), JournalSequenceError);
       await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
     } finally {
       client.release();
     }
+    await assertVerified(store);
+    const seq = await appendJournaledPastTheStore(pool, builderCommand(), { roomId });
     const verdict = await store.verify();
     assert.equal(verdict.ok, false);
     if (verdict.ok) return;
@@ -914,11 +1013,20 @@ describe('room binding — replay reproduces it, once (lifecycle ruling B6, jour
   });
 });
 
+/** The one serving control plane over MAIN: a second node could not take the lease this one holds. */
+let serving: SessionNode | undefined;
+async function servingNode(): Promise<SessionNode> {
+  if (serving !== undefined) return serving;
+  const harness: GatewayHarness = { pool: admin!, appPool: appPool!, config: appConfig!, databaseName: MAIN };
+  const node = await makeSessionNode(harness);
+  await promoteNode(node);
+  serving = node;
+  return node;
+}
+
 describe('room binding — through the real leader fence and room channel', { skip: SKIP_REASON }, () => {
   it('binds only once the enrolled Gateway is live, as GatewayRoomAppendFence derives it', async () => {
-    const harness: GatewayHarness = { pool: admin!, appPool: appPool!, config: appConfig!, databaseName: MAIN };
-    const node = await makeSessionNode(harness);
-    await promoteNode(node);
+    const node = await servingNode();
     const gateway = await enrollGateway(node);
     const fence = node.surface.roomAppendFence;
     const channel = node.surface.roomChannel;
@@ -935,23 +1043,20 @@ describe('room binding — through the real leader fence and room channel', { sk
     const { roomId } = await buildingRoom();
     const runtimeRoomId = newRuntimeRoomId();
     // The Gateway reports a runtime room minted for this lifecycle room, as its signed report would record it.
-    const reportMinted = (): void => {
+    const reportMinted = async (): Promise<void> => {
       const { requestId } = channel.requestMint(gateway.gatewayId, roomId);
-      assert.equal(channel.collect(gateway.gatewayId)?.requestId, requestId);
-      assert.equal(
-        channel.recordMinted(gateway.gatewayId, { requestId, lifecycleRoomId: roomId, runtimeRoomId, occupancy: 'PREPARED' }),
-        true,
-      );
+      assert.equal((await collectOpen(channel, gateway.gatewayId))?.requestId, requestId);
+      assert.equal(channel.recordMinted(gateway.gatewayId, { requestId, lifecycleRoomId: roomId, runtimeRoomId }), true);
     };
     const realDeps = deps(newWorld(), { ledger: fenced, gateways: fence, rooms: channel });
 
     // A room reported before the Gateway's session started is not believed after that session-start,
     // since the daemon may have restarted and lost it; the Gateway reports it again in the new session.
-    reportMinted();
+    await reportMinted();
     assert.deepEqual(channel.mintedFor(gateway.gatewayId, roomId), [runtimeRoomId]);
     const epoch = await openSession(node, gateway);
     assert.deepEqual(channel.mintedFor(gateway.gatewayId, roomId), []);
-    reportMinted();
+    await reportMinted();
 
     // Enrolled, in session, but no heartbeat accepted: not live.
     assert.equal(await derive(gateway.gatewayId), false);
@@ -1018,17 +1123,17 @@ class ControlledFence implements RoomAppendFence {
   }
 }
 
-describe('room binding — G17 occupancy is derived for T17 alone (lifecycle ruling C1)', { skip: SKIP_REASON }, () => {
-  /** Stored payloads of the room that carry `facts.boundRuntimeRoomClosed`, by event. */
-  async function closedFactsStored(roomId: string): Promise<Array<{ event: string; value: string }>> {
-    const { rows } = await admin!.query<{ event: string; value: string }>(
-      `SELECT event, payload->'facts'->>'boundRuntimeRoomClosed' AS value FROM build_room_events
-        WHERE room_id = $1 AND payload->'facts' ? 'boundRuntimeRoomClosed' ORDER BY seq`,
-      [roomId],
-    );
-    return rows;
-  }
+/** Stored payloads of the room that carry `facts.boundRuntimeRoomClosed`, by event. */
+async function closedFactsStored(roomId: string): Promise<Array<{ event: string; value: string }>> {
+  const { rows } = await admin!.query<{ event: string; value: string }>(
+    `SELECT event, payload->'facts'->>'boundRuntimeRoomClosed' AS value FROM build_room_events
+      WHERE room_id = $1 AND payload->'facts' ? 'boundRuntimeRoomClosed' ORDER BY seq`,
+    [roomId],
+  );
+  return rows;
+}
 
+describe('room binding — G17 occupancy is derived for T17 alone (lifecycle ruling C1)', { skip: SKIP_REASON }, () => {
   it('never persists a caller-supplied boundRuntimeRoomClosed on a non-T17 event, and decides T17 by the derived value', async () => {
     const fence = new ControlledFence();
     const fenced = new PostgresLedgerStore(appPool!, fence);
@@ -1092,5 +1197,314 @@ describe('room binding — G17 occupancy is derived for T17 alone (lifecycle rul
     assert.match(result.reason, /^G17 \(T17\): no runtime room binding/);
     assert.deepEqual(fence.derivedFor, [null]);
     assert.deepEqual(await closedFactsStored(roomId), []);
+  });
+});
+
+/* ---------------- the review findings, as regressions ---------------- */
+
+/** A well-formed `runtime_room.bound` event for the room, as the binding path builds it. */
+function boundEvent(roomId: string, gatewayId: string, runtimeRoomId: string): LifecycleEvent {
+  return {
+    eventId: newBindingEventId(),
+    event: 'runtime_room.bound',
+    actor: 'system',
+    attribution: { ...DISPATCHER },
+    scope: { roomId, repo: REPO, paths: [] },
+    evidence: [],
+    occurredAt: NOW.toISOString(),
+    binding: { lifecycleRoomId: roomId, runtimeRoomId, gatewayId },
+  } as LifecycleEvent;
+}
+
+function bindingNotJournaled(error: unknown): boolean {
+  return error instanceof RecordedEventRefusedError && error.code === 'binding_not_journaled';
+}
+
+/** Run `body` in a transaction of its own on the runtime login, and COMMIT whatever it left. */
+async function inOwnTransaction<T>(body: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await appPool!.connect();
+  try {
+    await client.query('BEGIN');
+    const value = await body(client);
+    await client.query('COMMIT');
+    return value;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+describe('room binding — the store refuses a Builder command outside its binding at write time (journal ruling B3, B6)', { skip: SKIP_REASON }, () => {
+  it('the standalone appendJournaled refuses builder.invoke, writing nothing', async () => {
+    const { roomId } = await readyToBind();
+    const command = builderCommand();
+    const before = await footprint(roomId);
+    await assert.rejects(
+      journal!.appendJournaled(command),
+      (error: unknown) => error instanceof JournalSequenceError && /B6: a builder\.invoke command is journaled only in the transaction/.test(error.message),
+    );
+    assert.deepEqual(await footprint(roomId), before);
+    assert.equal(await journalRowsFor(command.commandId), 0);
+    await assertVerified();
+  });
+
+  it('a joined appendJournaled refuses builder.invoke that does not name its own room\'s recorded runtime_room.bound, writing nothing', async () => {
+    const bound = await readyToBind();
+    const boundEventId = boundOutcome(
+      await bindFirstBuilderCommand(deps(bound.world), { roomId: bound.roomId, gatewayId: bound.gatewayId, runtimeRoomId: bound.runtimeRoomId, command: builderCommand() }),
+    ).eventId;
+    const { roomId } = await readyToBind();
+    const { rows } = await admin!.query<{ event_id: string }>(
+      `SELECT event_id FROM build_room_events WHERE room_id = $1 AND event = 'plan.approved'`,
+      [roomId],
+    );
+    const planApproved = rows[0]!.event_id;
+
+    const cases: ReadonlyArray<readonly [string, JournaledBinding, RegExp]> = [
+      ['no binding at all', {}, /names its room and that room's runtime_room\.bound/],
+      ['a room and no lifecycle event', { roomId }, /names its room and that room's runtime_room\.bound/],
+      ['a lifecycle event and no room', { lifecycleEventRef: { roomId: bound.roomId, eventId: boundEventId } }, /names its room and that room's runtime_room\.bound/],
+      ['its room\'s T5 transition', { roomId, lifecycleEventRef: { roomId, eventId: planApproved } }, /is not its room's recorded runtime_room\.bound/],
+      ['an event its room does not have', { roomId, lifecycleEventRef: { roomId, eventId: 'evt-no-such-event' } }, /is not its room's recorded runtime_room\.bound/],
+      ['another room\'s binding', { roomId, lifecycleEventRef: { roomId: bound.roomId, eventId: boundEventId } }, /names the binding of its own room/],
+    ];
+    const before = [await footprint(roomId), await footprint(bound.roomId)];
+    for (const [label, binding, reason] of cases) {
+      const command = builderCommand();
+      await inOwnTransaction(async (client) => {
+        await assert.rejects(
+          journal!.inTransaction(client).appendJournaled(command, binding),
+          (error: unknown) => error instanceof JournalSequenceError && reason.test(error.message),
+          label,
+        );
+      });
+      assert.equal(await journalRowsFor(command.commandId), 0, label);
+    }
+    assert.deepEqual([await footprint(roomId), await footprint(bound.roomId)], before, 'nothing was written');
+    await assertVerified();
+
+    // Control: naming its own room's recorded binding is accepted (a later Builder command, B6).
+    const later = builderCommand();
+    await inOwnTransaction((client) =>
+      journal!.inTransaction(client).appendJournaled(later, { roomId: bound.roomId, lifecycleEventRef: { roomId: bound.roomId, eventId: boundEventId } }),
+    );
+    assert.equal(await journalRowsFor(later.commandId), 1);
+    await assertVerified();
+  });
+
+  it('appendRecorded refuses as binding_not_journaled when its callback journals nothing, or the Builder command without the binding record', async () => {
+    const { world, roomId, gatewayId, runtimeRoomId } = await readyToBind();
+    const before = await footprint(roomId);
+
+    // The callback journals nothing.
+    let ran = 0;
+    await assert.rejects(
+      ledger!.appendRecorded(roomId, {
+        build: async () => boundEvent(roomId, gatewayId, runtimeRoomId),
+        afterRecorded: async () => {
+          ran += 1;
+        },
+      }),
+      bindingNotJournaled,
+    );
+    assert.equal(ran, 1, 'refused after the callback, before COMMIT');
+    assert.deepEqual(await footprint(roomId), before, 'no lifecycle row, no journal row');
+
+    // The callback journals the first Builder command, naming the entry, and no binding record.
+    const command = builderCommand();
+    let journaledSeq: string | null = null;
+    await assert.rejects(
+      ledger!.appendRecorded(roomId, {
+        build: async () => boundEvent(roomId, gatewayId, runtimeRoomId),
+        afterRecorded: async (client, { event }) => {
+          journaledSeq = (await journal!.inTransaction(client).appendJournaled(command, { roomId, lifecycleEventRef: { roomId, eventId: event.eventId } })).seq;
+        },
+      }),
+      bindingNotJournaled,
+    );
+    assert.ok(journaledSeq !== null, 'the Builder command was written in the transaction before the refusal');
+    assert.deepEqual(await footprint(roomId), before, 'the lifecycle row and the journaled row both rolled back');
+    assert.equal(await journalRowsFor(command.commandId), 0);
+    assert.equal((await ledger!.loadRoom(roomId)).state.binding, null);
+    await assertVerified();
+
+    // The room still binds through the governed path.
+    boundOutcome(await bindFirstBuilderCommand(deps(world), { roomId, gatewayId, runtimeRoomId, command: builderCommand() }));
+    await assertVerified();
+  });
+});
+
+describe('room binding — a caller\'s boundRuntimeRoomClosed is never persisted, and an unfenced store cannot take T17 (lifecycle ruling C1)', { skip: SKIP_REASON }, () => {
+  it('an unfenced append persists the event without the caller\'s fact, and T17 on a bound room is refused', async () => {
+    const { world, roomId, gatewayId, runtimeRoomId } = await readyToBind();
+    assert.equal(PERMISSIVE_FACTS.boundRuntimeRoomClosed, true, 'every fixture event claims the room CLOSED');
+    boundOutcome(await bindFirstBuilderCommand(deps(world), { roomId, gatewayId, runtimeRoomId, command: builderCommand() }));
+    await drive(ledger!, roomId, BUILDING_TO_MERGE_CONFIRMED);
+    assert.equal((await ledger!.loadRoom(roomId)).state.state, 'MERGE_CONFIRMED');
+    assert.deepEqual(await closedFactsStored(roomId), [], 'no stored payload kept the caller\'s claim');
+    const { rows: kept } = await admin!.query<{ event: string; allowlisted: string | null }>(
+      `SELECT event, payload->'facts'->>'repoInAllowlist' AS allowlisted FROM build_room_events
+        WHERE room_id = $1 AND event <> 'runtime_room.bound' ORDER BY seq`,
+      [roomId],
+    );
+    assert.ok(kept.length > 0 && kept.every((row) => row.allowlisted === 'true'), 'only that one fact is dropped');
+
+    const claimed = makeEvent('build.closed', { facts: { ...PERMISSIVE_FACTS, boundRuntimeRoomClosed: true } });
+    const refused = await ledger!.append(roomId, claimed);
+    assert.equal(refused.ok, false);
+    if (refused.ok || refused.outcome !== 'rejected') throw new Error(`expected a rejection, got ${JSON.stringify(refused)}`);
+    assert.equal(refused.code, 'guard_failed');
+    assert.match(refused.reason, /^G17 \(T17\): the bound runtime room is not reported CLOSED/);
+    assert.equal((await ledger!.loadRoom(roomId)).state.state, 'MERGE_CONFIRMED');
+    assert.deepEqual(await closedFactsStored(roomId), []);
+  });
+
+  it('appendRecorded persists no boundRuntimeRoomClosed even when build returns it, fenced or not', async () => {
+    for (const [label, store] of [
+      ['unfenced', ledger!],
+      ['fenced', new PostgresLedgerStore(appPool!, new ControlledFence())],
+    ] as const) {
+      const { world, roomId, gatewayId, runtimeRoomId } = await readyToBind(store);
+      const claiming: RuntimeRoomBindingDeps['ledger'] = {
+        underRoomLock: (id, body) => store.underRoomLock(id, body),
+        appendRecorded: <T>(id: string, spec: RecordedAppend<T>) =>
+          store.appendRecorded(id, {
+            ...spec,
+            build: async (client, current) => ({ ...(await spec.build(client, current)), facts: { boundRuntimeRoomClosed: true } }),
+          }),
+      };
+      const bound = boundOutcome(
+        await bindFirstBuilderCommand(deps(world, { ledger: claiming }), { roomId, gatewayId, runtimeRoomId, command: builderCommand() }),
+      );
+      const { rows } = await admin!.query<{ payload: LifecycleEvent }>(
+        'SELECT payload FROM build_room_events WHERE room_id = $1 AND event_id = $2',
+        [roomId, bound.eventId],
+      );
+      assert.equal(rows.length, 1, label);
+      assert.equal(Object.prototype.hasOwnProperty.call(rows[0]!.payload.facts ?? {}, 'boundRuntimeRoomClosed'), false, label);
+      assert.deepEqual(await closedFactsStored(roomId), [], label);
+    }
+    await assertVerified();
+  });
+});
+
+/* ---- signed Gateway messages, as the daemon builds them, for the session routes ---- */
+
+function frame(purpose: string) {
+  return { protocol: 'founder-os.gateway-protocol', version: 1, purpose };
+}
+
+function sessionBase(node: SessionNode, gateway: EnrolledGateway, epoch: string, sequence: number): HeartbeatCanonicalInput {
+  return { gatewayId: gateway.gatewayId, keyId: gateway.keyId, epoch, sequence, nonce: hex32(), timestampMs: node.clock.wallNow() };
+}
+
+function signedPoll(node: SessionNode, gateway: EnrolledGateway, epoch: string, sequence: number): Record<string, unknown> {
+  const canonical = sessionBase(node, gateway, epoch, sequence);
+  return { ...frame('planner_poll'), ...canonical, pubkey: gateway.key.pubkeyBase64, signature: signBytes(gateway.key.privateKey, plannerPollSignedBytes(canonical)) };
+}
+
+function signedMinted(node: SessionNode, gateway: EnrolledGateway, epoch: string, sequence: number, payload: Record<string, unknown>): Record<string, unknown> {
+  const text = JSON.stringify(payload);
+  const canonical = {
+    ...sessionBase(node, gateway, epoch, sequence),
+    requestId: String(payload['requestId']),
+    payloadDigest: createHash('sha256').update(text, 'utf8').digest('hex'),
+  };
+  return { ...frame('runtime_room_minted'), ...canonical, payload: text, pubkey: gateway.key.pubkeyBase64, signature: signBytes(gateway.key.privateKey, runtimeRoomMintedSignedBytes(canonical)) };
+}
+
+function signedOccupancy(node: SessionNode, gateway: EnrolledGateway, epoch: string, sequence: number, payload: Record<string, unknown>): Record<string, unknown> {
+  const text = JSON.stringify(payload);
+  const canonical = {
+    ...sessionBase(node, gateway, epoch, sequence),
+    runtimeRoomId: String(payload['runtimeRoomId']),
+    payloadDigest: createHash('sha256').update(text, 'utf8').digest('hex'),
+  };
+  return { ...frame('runtime_room_occupancy'), ...canonical, payload: text, pubkey: gateway.key.pubkeyBase64, signature: signBytes(gateway.key.privateKey, runtimeRoomOccupancySignedBytes(canonical)) };
+}
+
+describe('room binding — the Gateway room routes read the lifecycle log in their fenced transaction (act B2)', { skip: SKIP_REASON }, () => {
+  it('delivers a mint only for an open room, takes occupancy only once bound, and a binding withdraws the room\'s requests on every Gateway', async () => {
+    const node = await servingNode();
+    const fence = node.surface.roomAppendFence;
+    const channel = node.surface.roomChannel;
+    const fenced = new PostgresLedgerStore(appPool!, fence);
+    const gateway = await enrollGateway(node);
+    // Another Gateway's id: the channel keys requests by it; nothing here needs it enrolled (the registry holds two).
+    const otherGateway = { gatewayId: randomUUID() };
+    const epoch = await openSession(node, gateway);
+    let sequence = 0;
+    const next = (): number => (sequence += 1);
+    assert.equal((await node.service.heartbeat(signedBeat(node, gateway, epoch, next()), TEST_IP)).status, 200);
+
+    const { roomId } = await buildingRoom();
+    const reviewing = randomUUID();
+    await ledger!.createRoom(reviewing);
+    await drive(ledger!, reviewing, TO_PLAN_REVIEW);
+
+    // A room not in BUILDING: its request is withdrawn by the poll, not delivered.
+    const notBuilding = channel.requestMint(gateway.gatewayId, reviewing);
+    // A room in BUILDING with no binding: delivered.
+    const { requestId } = channel.requestMint(gateway.gatewayId, roomId);
+    const polled = await node.service.plannerPoll(signedPoll(node, gateway, epoch, next()), TEST_IP);
+    assert.equal(polled.status, 200, JSON.stringify(polled.body));
+    assert.deepEqual(polled.body['room'], { kind: 'mint', requestId, lifecycleRoomId: roomId });
+    assert.equal(channel.cancelMint(notBuilding.requestId), false, 'the PLAN_REVIEW room\'s request was withdrawn');
+
+    const runtimeRoomId = newRuntimeRoomId();
+    const minted = await node.service.roomMinted(
+      signedMinted(node, gateway, epoch, next(), { requestId, lifecycleRoomId: roomId, runtimeRoomId }),
+      TEST_IP,
+    );
+    assert.deepEqual([minted.status, minted.body['accepted']], [200, true]);
+    assert.deepEqual(channel.mintedFor(gateway.gatewayId, roomId), [runtimeRoomId]);
+    assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId), null, 'the minted report carries no occupancy');
+
+    // Minted, not bound: the occupancy report is traffic, accepted: false, recording nothing.
+    const early = await node.service.roomOccupancy(
+      signedOccupancy(node, gateway, epoch, next(), { lifecycleRoomId: roomId, runtimeRoomId, occupancy: 'PREPARED' }),
+      TEST_IP,
+    );
+    assert.deepEqual([early.status, early.body['accepted']], [200, false]);
+    assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId), null);
+    assert.equal(fence.deriveBoundRuntimeRoomClosed({ lifecycleRoomId: roomId, runtimeRoomId, gatewayId: gateway.gatewayId, eventId: 'evt-x' }), false);
+
+    // Requests still open for the room, on this Gateway and another, when it binds.
+    const mine = channel.requestMint(gateway.gatewayId, roomId);
+    const theirs = channel.requestMint(otherGateway.gatewayId, roomId);
+    const { roomId: elsewhere } = await buildingRoom();
+    const unrelated = channel.requestMint(otherGateway.gatewayId, elsewhere);
+    const bound = boundOutcome(
+      await bindFirstBuilderCommand(deps(newWorld(), { ledger: fenced, gateways: fence, rooms: channel }), {
+        roomId,
+        gatewayId: gateway.gatewayId,
+        runtimeRoomId,
+        command: builderCommand(),
+      }),
+    );
+    assert.equal(channel.cancelMint(mine.requestId), false, 'withdrawn on the bound Gateway');
+    assert.equal(channel.cancelMint(theirs.requestId), false, 'withdrawn on another Gateway');
+    assert.equal(channel.cancelMint(unrelated.requestId), true, 'another room\'s request stays open');
+
+    // Bound: occupancy of that runtime room on that Gateway is taken; of any other room it is not.
+    const taken = await node.service.roomOccupancy(
+      signedOccupancy(node, gateway, epoch, next(), { lifecycleRoomId: roomId, runtimeRoomId, occupancy: 'CLOSED' }),
+      TEST_IP,
+    );
+    assert.deepEqual([taken.status, taken.body['accepted']], [200, true]);
+    assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId)?.occupancy, 'CLOSED');
+    const binding = (await ledger!.loadRoom(roomId)).state.binding;
+    assert.deepEqual(binding, { lifecycleRoomId: roomId, runtimeRoomId, gatewayId: gateway.gatewayId, eventId: bound.eventId });
+    assert.equal(fence.deriveBoundRuntimeRoomClosed(binding), true);
+
+    // A request for the bound room that reaches the channel anyway is withdrawn by the poll, not delivered.
+    const stray = channel.requestMint(gateway.gatewayId, roomId);
+    const after = await node.service.plannerPoll(signedPoll(node, gateway, epoch, next()), TEST_IP);
+    assert.equal(after.status, 200);
+    assert.equal(after.body['room'], null);
+    assert.equal(channel.cancelMint(stray.requestId), false);
+    await assertVerified();
   });
 });

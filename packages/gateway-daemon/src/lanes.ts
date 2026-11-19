@@ -59,7 +59,6 @@ export const MAX_ROOM_OCCUPANCY_REPORTS_PER_TICK = 8;
 export interface RoomRequestHandler {
   /** A poll answer's `room` member: the minted report to send, or `null`. Never throws on bad input. */
   handleRoom(room: unknown): RuntimeRoomMintedPayload | null;
-  mintedSent(payload: RuntimeRoomMintedPayload): void;
   /** The occupancy reports due now, most urgent first. */
   dueOccupancy(): readonly RuntimeRoomOccupancyPayload[];
   occupancySent(payload: RuntimeRoomOccupancyPayload): void;
@@ -280,10 +279,10 @@ export class PrimaryLane {
       return true;
     });
     if (reported !== 'retain_and_continue') return false;
-    // Counted as reported only when the control plane took it; a refused
-    // report (no open request, say after a leader change) is not, and the
-    // control plane's next request is answered with the same room.
-    if (reportAccepted(response)) rooms.mintedSent(payload);
+    // A refused report (no open request, say after a leader change) changes
+    // nothing here: the control plane's next request is answered with the
+    // same room. The report carries no occupancy, so the room's occupancy is
+    // reported separately, and taken only once the room is bound.
     return true;
   }
 

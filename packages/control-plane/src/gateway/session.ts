@@ -56,6 +56,7 @@ import { readLease } from './fence.js';
 import type { GatewayLeadership } from './leadership.js';
 import type { GatewayPlannerChannel } from './planner-channel.js';
 import type { GatewayRoomChannel } from './room-channel.js';
+import { isBoundRuntimeRoom, roomOpenForMint } from './room-state.js';
 import type { GatewayRegistryStore } from './store.js';
 import {
   insertTransition,
@@ -433,8 +434,10 @@ export class GatewaySessionService {
    * that this Gateway mint a runtime room, or `null`
    * (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2: "carried in its answer to a
    * Gateway poll as planner work is carried today"). It is collected in the
-   * same fence and the same synchronous step, and re-delivered until a
-   * minted report answers it.
+   * same fence, and re-delivered until a minted report answers it, but only
+   * while the lifecycle log, read in this fenced transaction, still has its
+   * room in BUILDING with no binding; a request for a room that has bound or
+   * left BUILDING is withdrawn instead of delivered.
    */
   async plannerPoll(body: unknown, sourceIp: string): Promise<RouteResult> {
     if (!this.clock.reliable) return this.refuse(503, 'clock_unreliable', null, sourceIp);
@@ -457,7 +460,9 @@ export class GatewaySessionService {
         const checked = await this.sessionBoundChecks(ctx.client, envelope);
         if (checked.refusal !== null) return rollback(checked.refusal);
         const request = this.planner.collect(envelope.gatewayId);
-        const room = this.roomChannel.collect(envelope.gatewayId);
+        const room = await this.roomChannel.collect(envelope.gatewayId, (lifecycleRoomId) =>
+          roomOpenForMint(ctx.client, lifecycleRoomId),
+        );
         return {
           value: { status: 200, body: { ok: true, state: 'enrolled', epoch: checked.cursor.epoch, request, room } },
           commit: true,
@@ -604,10 +609,12 @@ export class GatewaySessionService {
   }
 
   /**
-   * The Gateway reports a minted runtime room's occupancy (act B2). Verified
+   * The Gateway reports a bound runtime room's occupancy (act B2). Verified
    * exactly as `roomMinted` is; the payload must name the runtime room the
-   * envelope signed. Accepted as traffic and answered `accepted: false` for
-   * a room this Gateway has not reported minted for that lifecycle room.
+   * envelope signed. Accepted as traffic and answered `accepted: false`
+   * unless the lifecycle log, read in the fenced transaction, binds that
+   * lifecycle room to that runtime room on this Gateway, and this Gateway
+   * reported the room minted for it.
    */
   async roomOccupancy(body: unknown, sourceIp: string): Promise<RouteResult> {
     if (!this.clock.reliable) return this.refuse(503, 'clock_unreliable', null, sourceIp);
@@ -635,11 +642,13 @@ export class GatewaySessionService {
     }
     const report: RuntimeRoomOccupancyPayload = payload;
 
+    let bound = false;
     const outcome = await this.leadership.runFenced<RouteResult>(
       { pipeline: 'roomOccupancy', takeL0: true, takeRegistryLock: true, verifyServingGeneration: true },
       async (ctx) => {
         const checked = await this.sessionBoundChecks(ctx.client, envelope);
         if (checked.refusal !== null) return rollback(checked.refusal);
+        bound = await isBoundRuntimeRoom(ctx.client, report.lifecycleRoomId, report.runtimeRoomId, envelope.gatewayId);
         return {
           value: { status: 200, body: { ok: true, state: 'enrolled', epoch: checked.cursor.epoch } },
           commit: true,
@@ -650,7 +659,7 @@ export class GatewaySessionService {
     if (outcome.status === 'published') {
       const result = outcome.value as RouteResult;
       if (result.status === 200) {
-        const accepted = this.roomChannel.recordOccupancy(envelope.gatewayId, report);
+        const accepted = bound && this.roomChannel.recordOccupancy(envelope.gatewayId, report);
         return { status: 200, body: { ...result.body, accepted } };
       }
     }

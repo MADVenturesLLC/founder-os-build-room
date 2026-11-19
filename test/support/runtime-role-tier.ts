@@ -62,6 +62,8 @@ export const RUNTIME_ROLE_EXCLUDED: Readonly<Record<string, string>> = {
     'proves the canonical sequence applies for a plain non-superuser administrative login on three throwaway clusters; it never runs the application',
   'journal-store':
     'already builds the journal store on a genuine br_app_runtime login on its own owned instance, and manages the cluster-wide roles itself',
+  'migration-0011-applier':
+    'proves 0011\'s applier loan for a plain non-superuser administrative login, and its recorded-row CHECK by inserts as the superuser, on throwaway clusters of its own; it never runs the application',
   'journal-writer':
     'already builds the complete journal writer on a genuine br_app_runtime login on its own owned instance, including the decision path\'s lifecycle insert, and destroys that instance at teardown',
   'plan-decision':

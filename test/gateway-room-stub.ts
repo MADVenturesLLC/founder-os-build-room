@@ -6,9 +6,13 @@
  * session-bound routes need, and nothing else: the lease row (holding the
  * challenge acquisition minted, so the session store's epoch and the lease
  * agree), the registry rows of the Gateways a suite registers, and the
- * message-rejection aggregate, which it records instead of storing. Every
- * other statement answers no rows. Lives outside `packages/*​/src` like the
- * other gateway helpers: nothing here ships.
+ * message-rejection aggregate, which it records instead of storing; and the
+ * two lifecycle-log reads the room routes make (`gateway/room-state.ts`),
+ * answered from `lifecycle`, a suite's stand-in for `build_room_events`: a
+ * room absent from it has no rows, so it is neither open for a mint nor
+ * bound, as the real reads fail closed. Every other statement answers no
+ * rows. Lives outside `packages/*​/src` like the other gateway helpers:
+ * nothing here ships.
  */
 
 import type { Pool } from 'pg';
@@ -21,10 +25,18 @@ export interface RegistryRow {
   readonly pubkey: Buffer;
 }
 
+/** What the lifecycle log says of one lifecycle room: its latest state and its `runtime_room.bound` row, if any. */
+export interface LifecycleRow {
+  state: string;
+  binding: { readonly runtimeRoomId: string; readonly gatewayId: string } | null;
+}
+
 export interface RoomStub {
   readonly pool: Pool;
   readonly registry: Map<string, RegistryRow>;
   readonly rejections: { resolvedKeyId: unknown; errorCode: unknown }[];
+  /** Lifecycle room id -> what its log holds. */
+  readonly lifecycle: Map<string, LifecycleRow>;
 }
 
 export function roomStub(): RoomStub {
@@ -32,6 +44,7 @@ export function roomStub(): RoomStub {
   let challenge: string | null = null;
   const registry = new Map<string, RegistryRow>();
   const rejections: { resolvedKeyId: unknown; errorCode: unknown }[] = [];
+  const lifecycle = new Map<string, LifecycleRow>();
   const leaseRow = () => ({
     id: 1,
     owner_id: ownerId,
@@ -64,6 +77,17 @@ export function roomStub(): RoomStub {
       rejections.push({ resolvedKeyId: params[0], errorCode: params[2] });
       return { rows: [], rowCount: 1 };
     }
+    // `roomOpenForMint`: always one row, as the SELECT of two scalar subqueries is.
+    if (/^SELECT EXISTS \(SELECT 1 FROM build_room_events WHERE room_id = \$1::uuid AND event = 'runtime_room\.bound'\) AS bound/.test(text)) {
+      const row = lifecycle.get(String(params[0]));
+      return { rows: [{ bound: row?.binding != null, state: row?.state ?? null }], rowCount: 1 };
+    }
+    // `isBoundRuntimeRoom`: a row only for that room's binding to that runtime room on that Gateway.
+    if (/^SELECT 1 FROM build_room_events WHERE room_id = \$1::uuid AND event = 'runtime_room\.bound'/.test(text)) {
+      const binding = lifecycle.get(String(params[0]))?.binding;
+      const match = binding != null && binding.runtimeRoomId === params[1] && binding.gatewayId === params[2];
+      return match ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+    }
     if (/RETURNING seq/.test(text)) return { rows: [{ seq: '1' }], rowCount: 1 };
     return { rows: [], rowCount: 0 };
   };
@@ -75,5 +99,5 @@ export function roomStub(): RoomStub {
     on: () => undefined,
     end: async () => undefined,
   } as unknown as Pool;
-  return { pool, registry, rejections };
+  return { pool, registry, rejections, lifecycle };
 }

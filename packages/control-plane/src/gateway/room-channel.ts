@@ -10,13 +10,17 @@
  *     (the poll answer's `room` member);
  *   - the Gateway's signed `runtime_room_minted` report of the runtime room it
  *     minted for that request (`recordMinted`);
- *   - the Gateway's signed `runtime_room_occupancy` report of a minted runtime
- *     room's occupancy (`recordOccupancy`).
+ *   - the Gateway's signed `runtime_room_occupancy` report of a bound runtime
+ *     room's occupancy (`recordOccupancy`). The minted report carries no
+ *     occupancy, so a reading exists only once a room is bound.
  *
  * The routes call `collect`, `recordMinted` and `recordOccupancy` only after
  * the message's signature, digest, payload, session and leadership fence all
- * hold (`session.ts`). Nothing here verifies anything; it only remembers what
- * verified traffic said. Nothing in production calls `requestMint` yet: the
+ * hold (`session.ts`), and `recordOccupancy` only once the route has found,
+ * in the same fenced transaction, that the room is bound to that runtime
+ * room on that Gateway; `collect` delivers a request only once the route has
+ * found its lifecycle room still in BUILDING with no binding. Nothing here
+ * verifies anything; it only remembers what verified traffic said. Nothing in production calls `requestMint` yet: the
  * lifecycle-room binding path does, and `mintedFor` and `occupancyOf` are what
  * it and the T17 guard read.
  *
@@ -33,9 +37,9 @@
  * `mintedFor`, which a binding checks (lifecycle ruling B5), lists a runtime
  * room only once the Gateway has reported it minted in this session, and
  * `occupancyOf`, which the T17 guard reads (C1), answers only with a reading
- * reported in this session. Occupancy of a room minted in an earlier session
- * is still accepted, so a Gateway that kept the room re-establishes its
- * reading with its next report, and a mint request for a lifecycle room is
+ * reported in this session. Occupancy of a bound room minted in an earlier
+ * session is still accepted, so a Gateway that kept the room re-establishes
+ * its reading with its next report, and a mint request for a lifecycle room is
  * answered with the room the Gateway already holds. A Gateway that lost the
  * room reports nothing for it, and both reads refuse.
  *
@@ -180,23 +184,53 @@ export class GatewayRoomChannel {
   }
 
   /**
-   * The request this Gateway's poll collects, marked delivered in the same
-   * synchronous step: undelivered first, then the least recently delivered,
-   * so one the Gateway cannot answer does not starve the others. Requests
-   * addressed to another Gateway are never visible here.
+   * Withdraw every open request for this lifecycle room, on any Gateway. The
+   * binding path calls it once a binding commits, so no Gateway mints for a
+   * room that is already bound. Returns how many it withdrew.
    */
-  collect(gatewayId: string): RoomRequestWire | null {
+  cancelMintsFor(lifecycleRoomId: string): number {
     this.syncTerm();
-    let chosen: OpenMint | null = null;
-    for (const entry of this.open.values()) {
-      if (entry.gatewayId !== gatewayId) continue;
-      if (chosen === null || entry.lastDelivery < chosen.lastDelivery) chosen = entry;
+    let withdrawn = 0;
+    for (const [requestId, entry] of this.open) {
+      if (entry.request.lifecycleRoomId !== lifecycleRoomId) continue;
+      this.open.delete(requestId);
+      withdrawn += 1;
     }
-    if (chosen === null) return null;
-    chosen.delivered = true;
-    this.deliveries += 1;
-    chosen.lastDelivery = this.deliveries;
-    return { ...chosen.request };
+    return withdrawn;
+  }
+
+  /**
+   * The request this Gateway's poll collects, marked delivered: undelivered
+   * first, then the least recently delivered, so one the Gateway cannot
+   * answer does not starve the others. Requests addressed to another Gateway
+   * are never visible here. `stillOpen` is asked, in that order, whether each
+   * candidate's lifecycle room may still be minted for (in BUILDING, no
+   * binding); a candidate it refuses is withdrawn and the next is tried, so
+   * a request opened before its room bound or left BUILDING is never
+   * delivered.
+   */
+  async collect(
+    gatewayId: string,
+    stillOpen: (lifecycleRoomId: string) => Promise<boolean>,
+  ): Promise<RoomRequestWire | null> {
+    this.syncTerm();
+    const candidates = [...this.open.values()]
+      .filter((entry) => entry.gatewayId === gatewayId)
+      .sort((a, b) => a.lastDelivery - b.lastDelivery);
+    for (const candidate of candidates) {
+      if (!(await stillOpen(candidate.request.lifecycleRoomId))) {
+        this.open.delete(candidate.request.requestId);
+        continue;
+      }
+      this.syncTerm();
+      const entry = this.open.get(candidate.request.requestId);
+      if (entry === undefined) continue;
+      entry.delivered = true;
+      this.deliveries += 1;
+      entry.lastDelivery = this.deliveries;
+      return { ...entry.request };
+    }
+    return null;
   }
 
   /**
@@ -204,8 +238,8 @@ export class GatewayRoomChannel {
    * answers. `false`, changing nothing, unless an open request with the
    * payload's request id was delivered to this Gateway and names the same
    * lifecycle room, and the runtime room is not one this Gateway already
-   * reported minted for a different lifecycle room. The occupancy the report
-   * carries is recorded as the room's first reading.
+   * reported minted for a different lifecycle room. The report carries no
+   * occupancy and records none.
    */
   recordMinted(gatewayId: string, payload: RuntimeRoomMintedPayload): boolean {
     this.syncTerm();
@@ -223,7 +257,6 @@ export class GatewayRoomChannel {
     if (!rooms.includes(payload.runtimeRoomId)) rooms.push(payload.runtimeRoomId);
     this.minted.set(lifecycleKey, rooms);
     this.mintedRooms.set(roomKey, { lifecycleRoomId: payload.lifecycleRoomId, session });
-    this.occupancy.set(roomKey, { reading: { occupancy: payload.occupancy, receivedAtMono: this.clock.monotonicNow() }, session });
     return true;
   }
 
@@ -242,9 +275,10 @@ export class GatewayRoomChannel {
 
   /**
    * Record a verified `runtime_room_occupancy` report as the room's latest
-   * reading, in the Gateway's current session. `false`, changing nothing,
-   * unless this Gateway reported this runtime room minted for the payload's
-   * lifecycle room, in this session or an earlier one.
+   * reading, in the Gateway's current session. The route calls it only for
+   * the runtime room bound to the payload's lifecycle room on this Gateway.
+   * `false`, changing nothing, unless this Gateway also reported this runtime
+   * room minted for that lifecycle room, in this session or an earlier one.
    */
   recordOccupancy(gatewayId: string, payload: RuntimeRoomOccupancyPayload): boolean {
     this.syncTerm();

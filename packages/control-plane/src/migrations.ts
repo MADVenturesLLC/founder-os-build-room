@@ -1948,6 +1948,19 @@ export const MIGRATIONS: readonly Migration[] = [
      * back before COMMIT, and only when the applier was not already a
      * member, so every role and grant ends as it began (G1: "It changes no
      * database role and no grant"). The owner-class path is not touched.
+     * The loan is made when the applier cannot use the owner's privileges
+     * (`USAGE`). On PostgreSQL 16 a membership is recorded per grantor: a
+     * login that created br_journal_owner under CREATEROLE keeps a grant
+     * from the bootstrap superuser with ADMIN only (no INHERIT, no SET),
+     * and the loan is a second grant, made by the applier itself, which
+     * the closing REVOKE removes and nothing else; the bootstrap grant is
+     * untouched. The marker that says a loan happened is set to `no` before
+     * anything else, so the return reads only what this transaction did,
+     * never a value left in the session. If the applier still cannot use
+     * the owner's privileges after the loan (a role without INHERIT, or its
+     * own earlier grant without INHERIT, which a GRANT does not change), the
+     * migration refuses before any DDL, and its transaction, the loan
+     * included, rolls back.
      *
      * The lifecycle-log CHECKs are re-added NOT VALID and then validated,
      * as 0002 does, so the strong lock is held only for the swap.
@@ -1960,9 +1973,13 @@ export const MIGRATIONS: readonly Migration[] = [
     statements: [
       `DO $$
        BEGIN
+         PERFORM pg_catalog.set_config('build_room.migration_0011_lent', 'no', true);
          IF NOT pg_catalog.pg_has_role(CURRENT_USER, 'br_journal_owner', 'USAGE') THEN
            GRANT br_journal_owner TO CURRENT_USER;
            PERFORM pg_catalog.set_config('build_room.migration_0011_lent', 'yes', true);
+         END IF;
+         IF NOT pg_catalog.pg_has_role(CURRENT_USER, 'br_journal_owner', 'USAGE') THEN
+           RAISE EXCEPTION '0011_phase5_binding: the applier cannot use br_journal_owner''s privileges even after the loan (no INHERIT); refusing rather than change its role or membership';
          END IF;
        END
        $$`,
@@ -2018,14 +2035,19 @@ export const MIGRATIONS: readonly Migration[] = [
            (outcome = 'conjunction_pending' AND transition_id IS NULL
                                             AND entry_seq IS NULL)
            OR
-           (outcome = 'recorded' AND transition_id IS NULL
-                                 AND guard_id IS NULL
-                                 AND entry_seq IS NULL
-                                 AND from_state = 'BUILDING'
-                                 AND resulting_state = 'BUILDING'
-                                 AND payload->'binding'->>'lifecycleRoomId' = room_id::text
-                                 AND payload->'binding'->>'runtimeRoomId' IS NOT NULL
-                                 AND payload->'binding'->>'gatewayId' IS NOT NULL)
+           (outcome = 'recorded' AND COALESCE(
+               transition_id IS NULL
+               AND guard_id IS NULL
+               AND entry_seq IS NULL
+               AND from_state IS NOT NULL AND from_state = 'BUILDING'
+               AND resulting_state IS NOT NULL AND resulting_state = 'BUILDING'
+               AND jsonb_typeof(payload->'binding') = 'object'
+               AND jsonb_typeof(payload->'binding'->'lifecycleRoomId') = 'string'
+               AND payload->'binding'->>'lifecycleRoomId' = room_id::text
+               AND jsonb_typeof(payload->'binding'->'runtimeRoomId') = 'string'
+               AND jsonb_typeof(payload->'binding'->'gatewayId') = 'string'
+               AND (payload->'binding') - 'lifecycleRoomId' - 'runtimeRoomId' - 'gatewayId' = '{}'::jsonb,
+               false))
          ) NOT VALID`,
       `ALTER TABLE build_room_events
          VALIDATE CONSTRAINT build_room_events_transition_complete`,

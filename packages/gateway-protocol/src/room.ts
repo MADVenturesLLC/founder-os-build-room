@@ -9,9 +9,13 @@
  *     lifecycle room. It is carried by the poll answer as planner work is
  *     carried today; it is not a purpose and nothing signs it.
  *   - `RuntimeRoomMintedPayload` is the `runtime_room_minted` report: the
- *     runtime room the Gateway minted for that request, and its occupancy.
+ *     runtime room the Gateway minted for that request. It carries no
+ *     occupancy: B2 authorizes reporting the minted id, and occupancy only of
+ *     a bound runtime room.
  *   - `RuntimeRoomOccupancyPayload` is the `runtime_room_occupancy` report:
- *     a minted runtime room's occupancy as the Gateway holds it now.
+ *     a runtime room's occupancy as the Gateway holds it now. The control
+ *     plane takes it only for the runtime room bound to that lifecycle room
+ *     on that Gateway.
  *
  * Both sides validate against this one implementation. Validation refuses
  * unknown members and any value outside its format, and returns `null` for
@@ -38,15 +42,14 @@ export interface RoomRequestWire {
   readonly lifecycleRoomId: string;
 }
 
-/** The Gateway minted `runtimeRoomId` for the request; its occupancy as minted. */
+/** The Gateway minted `runtimeRoomId` for the request. */
 export interface RuntimeRoomMintedPayload {
   readonly requestId: string;
   readonly lifecycleRoomId: string;
   readonly runtimeRoomId: string;
-  readonly occupancy: OccupancyState;
 }
 
-/** A runtime room the Gateway minted for `lifecycleRoomId`, and its occupancy now. */
+/** A runtime room bound to `lifecycleRoomId` on this Gateway, and its occupancy now. */
 export interface RuntimeRoomOccupancyPayload {
   readonly lifecycleRoomId: string;
   readonly runtimeRoomId: string;
@@ -101,13 +104,10 @@ export function validateRoomRequest(value: unknown): RoomRequestWire | null {
 /** A `runtime_room_minted` payload as the control plane reads it, after its digest and signature hold, or `null`. */
 export function validateRuntimeRoomMintedPayload(value: unknown): RuntimeRoomMintedPayload | null {
   const record = asRecord(value);
-  if (record === null || !exactKeys(record, ['requestId', 'lifecycleRoomId', 'runtimeRoomId', 'occupancy'])) {
-    return null;
-  }
+  if (record === null || !exactKeys(record, ['requestId', 'lifecycleRoomId', 'runtimeRoomId'])) return null;
   if (typeof record['requestId'] !== 'string' || !isCanonicalUuid(record['requestId'])) return null;
   if (!isValidLifecycleRoomId(record['lifecycleRoomId'])) return null;
   if (!isValidRuntimeRoomId(record['runtimeRoomId'])) return null;
-  if (!isOccupancyState(record['occupancy'])) return null;
   return record as unknown as RuntimeRoomMintedPayload;
 }
 

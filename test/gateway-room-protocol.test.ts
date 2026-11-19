@@ -17,7 +17,8 @@
  *     digest or payload; the payload bound is enforced in UTF-8 bytes;
  *   - the request and payload validators accept exactly their shapes and
  *     return null for anything else: extra or missing members, a malformed
- *     id, an occupancy outside IPC v2's set.
+ *     id, an occupancy outside IPC v2's set; the minted payload carries no
+ *     occupancy at all, and one that does is refused whatever its value.
  */
 
 import { describe, it } from 'node:test';
@@ -114,7 +115,7 @@ function occupancyEnvelope(s: Session, sequence: number, payload: Record<string,
 }
 
 function mintedPayload(): Record<string, unknown> {
-  return { requestId: uuid(), lifecycleRoomId: uuid(), runtimeRoomId: runtimeRoomId(), occupancy: 'PREPARED' };
+  return { requestId: uuid(), lifecycleRoomId: uuid(), runtimeRoomId: runtimeRoomId() };
 }
 
 function occupancyPayload(): Record<string, unknown> {
@@ -387,15 +388,27 @@ describe('gateway-room-protocol · the request and the payloads are closed shape
     for (const value of refused) assert.equal(validateRoomRequest(value), null, JSON.stringify(value));
   });
 
-  it('accepts a minted payload and an occupancy payload in every IPC v2 occupancy state, and no other', () => {
+  it('accepts an occupancy payload in every IPC v2 occupancy state, and no other', () => {
     for (const occupancy of OCCUPANCY_STATES) {
-      assert.ok(validateRuntimeRoomMintedPayload({ ...mintedPayload(), occupancy }), occupancy);
       assert.ok(validateRuntimeRoomOccupancyPayload({ ...occupancyPayload(), occupancy }), occupancy);
     }
     for (const occupancy of ['closed', 'OPEN', 'BOUND', '', null, 3]) {
-      assert.equal(validateRuntimeRoomMintedPayload({ ...mintedPayload(), occupancy }), null, String(occupancy));
       assert.equal(validateRuntimeRoomOccupancyPayload({ ...occupancyPayload(), occupancy }), null, String(occupancy));
     }
+  });
+
+  it('accepts a minted payload of exactly requestId, lifecycleRoomId and runtimeRoomId, and refuses one carrying any occupancy', () => {
+    const minted = mintedPayload();
+    assert.deepEqual(validateRuntimeRoomMintedPayload(minted), minted);
+    assert.deepEqual(Object.keys(minted).sort(), ['lifecycleRoomId', 'requestId', 'runtimeRoomId']);
+    for (const occupancy of [...OCCUPANCY_STATES, 'BOUND', null, undefined]) {
+      assert.equal(validateRuntimeRoomMintedPayload({ ...minted, occupancy }), null, `occupancy ${String(occupancy)}`);
+    }
+    assert.equal(
+      validateRuntimeRoomMintedPayload(JSON.parse(JSON.stringify({ ...minted, occupancy: 'PREPARED' }))),
+      null,
+      'as the control plane reads it off the wire',
+    );
   });
 
   it('returns null for a payload with an extra or missing member, or an id out of format', () => {
@@ -413,7 +426,9 @@ describe('gateway-room-protocol · the request and the payloads are closed shape
       { ...minted, extra: true },
       { ...minted, kind: 'minted' },
       without(minted, 'requestId'),
-      without(minted, 'occupancy'),
+      without(minted, 'lifecycleRoomId'),
+      without(minted, 'runtimeRoomId'),
+      { ...minted, occupancy: 'PREPARED' },
       { ...minted, requestId: 'r-1' },
       { ...minted, lifecycleRoomId: String(minted['lifecycleRoomId']).toUpperCase() },
       { ...minted, runtimeRoomId: String(minted['runtimeRoomId']).slice('room-'.length) },

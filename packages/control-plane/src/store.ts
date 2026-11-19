@@ -33,6 +33,7 @@ import {
   type LifecycleEvent,
   type RejectionCode,
 } from '../../ledger/src/index.js';
+import { bindingRecordedFor } from './journal-store.js';
 
 /** T17's triggers, read from the transition table rather than restated. */
 const T17_TRIGGERS: ReadonlySet<string> = new Set(TRANSITIONS.find((row) => row.id === 'T17')?.triggers ?? []);
@@ -159,7 +160,7 @@ export interface RecordedAppend<T> {
 /** The reducer refused a recorded event; the transaction wrote nothing. */
 export class RecordedEventRefusedError extends Error {
   constructor(
-    readonly code: RejectionCode | 'not_recorded',
+    readonly code: RejectionCode | 'not_recorded' | 'binding_not_journaled',
     readonly reason: string,
   ) {
     super(`recorded event refused (${code}): ${reason}`);
@@ -312,7 +313,7 @@ export class PostgresLedgerStore {
   > {
     const body = async (client: PoolClient) => {
       const { current, logLength } = await lockAndReplay(client, roomId);
-      const event = await spec.build(client, current);
+      const event = withoutCallerOccupancy(await spec.build(client, current));
       const result: ApplyResult = apply(current, event);
       if (!result.ok) throw new RecordedEventRefusedError(result.code, result.reason);
       if (result.kind !== 'recorded') {
@@ -329,6 +330,15 @@ export class PostgresLedgerStore {
         recordedState: result.state.state,
       });
       const value = await spec.afterRecorded(client, { event, seq, state: result.state });
+      // The recorded entry commits only with its binding record, and through
+      // that record's own check with the first Builder command's journaled
+      // row (journal ruling B3), whatever the callback did.
+      if (!(await bindingRecordedFor(client, { roomId, eventId: event.eventId }))) {
+        throw new RecordedEventRefusedError(
+          'binding_not_journaled',
+          `${event.event} commits only with its binding record and its first Builder command (journal ruling B3)`,
+        );
+      }
       return { value, seq, event, state: result.state };
     };
     if (this.fence === undefined) {
@@ -525,9 +535,12 @@ export class PostgresLedgerStore {
      * deliberately: it is evidence of what the caller sent, never an input
      * to a replay.
      */
+    // Without a fence nothing can derive G17's occupancy limb, so a caller's
+    // `boundRuntimeRoomClosed` is dropped here too: it is never reduced or
+    // persisted on any path, and T17 refuses on an unfenced store.
     const offered =
       deriveGatewayOnline === null
-        ? event
+        ? withoutCallerOccupancy(event)
         : {
             ...event,
             facts: await this.derivedFacts(event, current, deriveGatewayOnline),
@@ -1067,4 +1080,20 @@ async function recordRejection(
      VALUES ($1,$2,$3,$4,$5,$6,$7)`,
     [roomId, event.eventId, String(event.event), code, reason, JSON.stringify(event.actor), event.occurredAt],
   );
+}
+
+/**
+ * The event without `boundRuntimeRoomClosed`. Only a fenced append derives
+ * that fact, from the room's binding and the bound Gateway's report
+ * (FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING, C1); everywhere else a
+ * caller's value is dropped before the reducer sees the event and before it
+ * is persisted.
+ */
+function withoutCallerOccupancy(event: LifecycleEvent): LifecycleEvent {
+  if (event.facts === undefined || !Object.prototype.hasOwnProperty.call(event.facts, 'boundRuntimeRoomClosed')) {
+    return event;
+  }
+  const facts = { ...event.facts };
+  delete (facts as { boundRuntimeRoomClosed?: boolean }).boundRuntimeRoomClosed;
+  return { ...event, facts };
 }

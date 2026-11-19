@@ -7,7 +7,10 @@
  *
  * What is proven:
  *   - the poll answer carries `room`: `null` with nothing asked, the open mint
- *     request once the control plane asks, re-delivered until answered;
+ *     request once the control plane asks, re-delivered until answered, and
+ *     only while the lifecycle log has its room in BUILDING with no binding:
+ *     a request for a room that has bound, or left BUILDING, or that the log
+ *     does not know, is withdrawn instead of delivered;
  *   - `POST /gateway/room/minted` and `POST /gateway/room/occupancy` are
  *     verified as the planner report is: registry key, signature against the
  *     registry's key, enrolled, epoch, sequence, timestamp window, digest over
@@ -16,7 +19,10 @@
  *     records nothing in the room channel;
  *   - an accepted report takes the session's next sequence and never touches
  *     liveness; a report for no open request, or occupancy for a room never
- *     reported minted, is traffic answered `accepted: false`;
+ *     reported minted, is traffic answered `accepted: false`; the minted
+ *     report records no occupancy, and occupancy of a minted room is
+ *     `accepted: false` until the lifecycle log binds that lifecycle room to
+ *     that runtime room on that Gateway;
  *   - after an accepted session-start, that Gateway's earlier minted rooms
  *     and readings are not believed until it reports again, open requests stay
  *     open, occupancy of a room minted earlier is accepted as the new
@@ -163,6 +169,7 @@ async function delivered(): Promise<{
   const gateway = enroll(stub);
   const epoch = await openSession(surface, gateway);
   const lifecycleRoomId = uuid();
+  stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: null });
   const { requestId } = surface.gateway.roomChannel.requestMint(gateway.gatewayId, lifecycleRoomId);
   const polled = await post(surface, '/gateway/planner/poll', poll(gateway, epoch, 1));
   assert.equal(polled.status, 200);
@@ -183,6 +190,7 @@ describe('gateway-room-routes · the poll answer carries the mint request', () =
       assert.equal(empty.body['room'], null);
 
       const lifecycleRoomId = uuid();
+      stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: null });
       const { requestId } = surface.gateway.roomChannel.requestMint(gateway.gatewayId, lifecycleRoomId);
       const other = enroll(stub);
       const otherEpoch = await openSession(surface, other);
@@ -197,7 +205,7 @@ describe('gateway-room-routes · the poll answer carries the mint request', () =
       const answered = await post(
         surface,
         '/gateway/room/minted',
-        minted(gateway, epoch, 4, requestId, { requestId, lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' }),
+        minted(gateway, epoch, 4, requestId, { requestId, lifecycleRoomId, runtimeRoomId }),
       );
       assert.deepEqual(answered, { status: 200, body: { ok: true, state: 'enrolled', epoch, accepted: true } });
       const after = await post(surface, '/gateway/planner/poll', poll(gateway, epoch, 5));
@@ -208,32 +216,130 @@ describe('gateway-room-routes · the poll answer carries the mint request', () =
   });
 });
 
+describe('gateway-room-routes · the poll delivers a mint request only while its room is open for one', () => {
+  it('withdraws, instead of delivering, a request whose room has bound, has left BUILDING, or is unknown to the log', async () => {
+    const stub = roomStub();
+    const surface = await startSurface({}, stub.pool);
+    try {
+      const gateway = enroll(stub);
+      const epoch = await openSession(surface, gateway);
+      const channel = surface.gateway.roomChannel;
+      let sequence = 0;
+      const pollOnce = async (): Promise<unknown> => {
+        sequence += 1;
+        const polled = await post(surface, '/gateway/planner/poll', poll(gateway, epoch, sequence));
+        assert.equal(polled.status, 200);
+        return polled.body['room'];
+      };
+
+      const bound = uuid();
+      stub.lifecycle.set(bound, { state: 'BUILDING', binding: { runtimeRoomId: roomId(), gatewayId: uuid() } });
+      const reviewing = uuid();
+      stub.lifecycle.set(reviewing, { state: 'PLAN_REVIEW', binding: null });
+      const unknown = uuid();
+      const open = uuid();
+      stub.lifecycle.set(open, { state: 'BUILDING', binding: null });
+      const requests = [bound, reviewing, unknown, open].map((room) => channel.requestMint(gateway.gatewayId, room));
+
+      assert.deepEqual(await pollOnce(), { kind: 'mint', requestId: requests[3]!.requestId, lifecycleRoomId: open }, 'the open room\'s request is delivered');
+      for (const request of requests.slice(0, 3)) {
+        assert.equal(channel.cancelMint(request.requestId), false, 'withdrawn by the poll, not merely passed over');
+      }
+      assert.deepEqual(await pollOnce(), { kind: 'mint', requestId: requests[3]!.requestId, lifecycleRoomId: open }, 're-delivered until answered');
+
+      // The room binds after the request was delivered: the next poll withdraws it instead of delivering it again.
+      stub.lifecycle.set(open, { state: 'BUILDING', binding: { runtimeRoomId: roomId(), gatewayId: gateway.gatewayId } });
+      assert.equal(await pollOnce(), null);
+      assert.equal(channel.cancelMint(requests[3]!.requestId), false);
+      const runtimeRoomId = roomId();
+      const late = await post(
+        surface,
+        '/gateway/room/minted',
+        minted(gateway, epoch, sequence + 1, requests[3]!.requestId, { requestId: requests[3]!.requestId, lifecycleRoomId: open, runtimeRoomId }),
+      );
+      assert.deepEqual([late.status, late.body['accepted']], [200, false], 'a minted report for the withdrawn request is refused');
+      assert.deepEqual(channel.mintedFor(gateway.gatewayId, open), []);
+    } finally {
+      await surface.close();
+    }
+  });
+});
+
 describe('gateway-room-routes · accepted reports', () => {
-  it('records a minted room and its occupancy, takes the next sequence, and never touches liveness', async () => {
-    const { surface, gateway, epoch, lifecycleRoomId, requestId } = await delivered();
+  it('records a minted room with no occupancy, takes its occupancy only once bound, takes the next sequence, and never touches liveness', async () => {
+    const { stub, surface, gateway, epoch, lifecycleRoomId, requestId } = await delivered();
     try {
       const runtimeRoomId = roomId();
       const report = await post(
         surface,
         '/gateway/room/minted',
-        minted(gateway, epoch, 2, requestId, { requestId, lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' }),
+        minted(gateway, epoch, 2, requestId, { requestId, lifecycleRoomId, runtimeRoomId }),
       );
       assert.equal(report.status, 200);
       assert.equal(report.body['accepted'], true);
       const channel = surface.gateway.roomChannel;
       assert.deepEqual(channel.mintedFor(gateway.gatewayId, lifecycleRoomId), [runtimeRoomId]);
-      assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId)?.occupancy, 'PREPARED');
+      assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId), null, 'the minted report records no occupancy');
       assert.equal(surface.gateway.session.cursorFor(gateway.gatewayId)?.lastSequence, 2);
 
+      // Minted but not bound: traffic, answered accepted: false, recording nothing.
+      const early = await post(
+        surface,
+        '/gateway/room/occupancy',
+        occupancy(gateway, epoch, 3, runtimeRoomId, { lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' }),
+      );
+      assert.deepEqual(early, { status: 200, body: { ok: true, state: 'enrolled', epoch, accepted: false } });
+      assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId), null);
+      assert.equal(surface.gateway.session.cursorFor(gateway.gatewayId)?.lastSequence, 3, 'still traffic: the sequence moved');
+
+      // Bound to another runtime room, or on another Gateway: still not taken.
+      for (const binding of [
+        { runtimeRoomId: roomId(), gatewayId: gateway.gatewayId },
+        { runtimeRoomId, gatewayId: uuid() },
+      ]) {
+        stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding });
+        const elsewhere = await post(
+          surface,
+          '/gateway/room/occupancy',
+          occupancy(gateway, epoch, surface.gateway.session.cursorFor(gateway.gatewayId)!.lastSequence + 1, runtimeRoomId, {
+            lifecycleRoomId,
+            runtimeRoomId,
+            occupancy: 'OCCUPIED',
+          }),
+        );
+        assert.equal(elsewhere.body['accepted'], false, JSON.stringify(binding));
+        assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId), null);
+      }
+
+      // The lifecycle log binds that lifecycle room to that runtime room on that Gateway.
+      stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: { runtimeRoomId, gatewayId: gateway.gatewayId } });
+      const sequence = surface.gateway.session.cursorFor(gateway.gatewayId)!.lastSequence + 1;
       const occupied = await post(
         surface,
         '/gateway/room/occupancy',
-        occupancy(gateway, epoch, 3, runtimeRoomId, { lifecycleRoomId, runtimeRoomId, occupancy: 'OCCUPIED' }),
+        occupancy(gateway, epoch, sequence, runtimeRoomId, { lifecycleRoomId, runtimeRoomId, occupancy: 'OCCUPIED' }),
       );
       assert.deepEqual(occupied, { status: 200, body: { ok: true, state: 'enrolled', epoch, accepted: true } });
       assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId)?.occupancy, 'OCCUPIED');
-      assert.equal(surface.gateway.session.cursorFor(gateway.gatewayId)?.lastSequence, 3);
+      assert.equal(surface.gateway.session.cursorFor(gateway.gatewayId)?.lastSequence, sequence);
       assert.equal(surface.gateway.session.livenessFor(gateway.gatewayId), null, 'only an accepted heartbeat makes a Gateway live');
+    } finally {
+      await surface.close();
+    }
+  });
+
+  it('answers accepted: false to occupancy of a bound runtime room this Gateway never reported minted', async () => {
+    const { stub, surface, gateway, epoch, lifecycleRoomId } = await delivered();
+    try {
+      const runtimeRoomId = roomId();
+      stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: { runtimeRoomId, gatewayId: gateway.gatewayId } });
+      const report = await post(
+        surface,
+        '/gateway/room/occupancy',
+        occupancy(gateway, epoch, 2, runtimeRoomId, { lifecycleRoomId, runtimeRoomId, occupancy: 'CLOSED' }),
+      );
+      assert.deepEqual([report.status, report.body['accepted']], [200, false], 'the binding alone does not make a reading');
+      assert.equal(surface.gateway.roomChannel.occupancyOf(gateway.gatewayId, runtimeRoomId), null);
     } finally {
       await surface.close();
     }
@@ -247,7 +353,7 @@ describe('gateway-room-routes · accepted reports', () => {
       const unasked = await post(
         surface,
         '/gateway/room/minted',
-        minted(gateway, epoch, 2, stranger, { requestId: stranger, lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' }),
+        minted(gateway, epoch, 2, stranger, { requestId: stranger, lifecycleRoomId, runtimeRoomId }),
       );
       assert.deepEqual([unasked.status, unasked.body['accepted']], [200, false]);
       const unminted = await post(
@@ -274,35 +380,52 @@ describe('gateway-room-routes · a new session believes only what the Gateway re
       const report = await post(
         surface,
         '/gateway/room/minted',
-        minted(gateway, epoch, 2, requestId, { requestId, lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' }),
+        minted(gateway, epoch, 2, requestId, { requestId, lifecycleRoomId, runtimeRoomId }),
       );
       assert.equal(report.body['accepted'], true);
+      stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: { runtimeRoomId, gatewayId: gateway.gatewayId } });
+      const reading = await post(
+        surface,
+        '/gateway/room/occupancy',
+        occupancy(gateway, epoch, 3, runtimeRoomId, { lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' }),
+      );
+      assert.equal(reading.body['accepted'], true);
+      assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId)?.occupancy, 'PREPARED');
       const pendingRoom = uuid();
+      stub.lifecycle.set(pendingRoom, { state: 'BUILDING', binding: null });
       const pending = channel.requestMint(gateway.gatewayId, pendingRoom);
 
       const other = enroll(stub);
       const otherEpoch = await openSession(surface, other);
-      const otherRequest = channel.requestMint(other.gatewayId, lifecycleRoomId);
+      const otherRoom = uuid();
+      stub.lifecycle.set(otherRoom, { state: 'BUILDING', binding: null });
+      const otherRequest = channel.requestMint(other.gatewayId, otherRoom);
       const otherPolled = await post(surface, '/gateway/planner/poll', poll(other, otherEpoch, 1));
-      assert.deepEqual(otherPolled.body['room'], { kind: 'mint', requestId: otherRequest.requestId, lifecycleRoomId });
+      assert.deepEqual(otherPolled.body['room'], { kind: 'mint', requestId: otherRequest.requestId, lifecycleRoomId: otherRoom });
       const otherRuntimeRoomId = roomId();
       const otherReport = await post(
         surface,
         '/gateway/room/minted',
         minted(other, otherEpoch, 2, otherRequest.requestId, {
           requestId: otherRequest.requestId,
-          lifecycleRoomId,
+          lifecycleRoomId: otherRoom,
           runtimeRoomId: otherRuntimeRoomId,
-          occupancy: 'PREPARED',
         }),
       );
       assert.equal(otherReport.body['accepted'], true);
+      stub.lifecycle.set(otherRoom, { state: 'BUILDING', binding: { runtimeRoomId: otherRuntimeRoomId, gatewayId: other.gatewayId } });
+      const otherReading = await post(
+        surface,
+        '/gateway/room/occupancy',
+        occupancy(other, otherEpoch, 3, otherRuntimeRoomId, { lifecycleRoomId: otherRoom, runtimeRoomId: otherRuntimeRoomId, occupancy: 'PREPARED' }),
+      );
+      assert.equal(otherReading.body['accepted'], true);
 
       const renewed = await openSession(surface, gateway);
       assert.notEqual(renewed, epoch);
       assert.deepEqual(channel.mintedFor(gateway.gatewayId, lifecycleRoomId), [], 'a room minted in the old session is not believed');
       assert.equal(channel.occupancyOf(gateway.gatewayId, runtimeRoomId), null);
-      assert.deepEqual(channel.mintedFor(other.gatewayId, lifecycleRoomId), [otherRuntimeRoomId], 'another Gateway keeps its reports');
+      assert.deepEqual(channel.mintedFor(other.gatewayId, otherRoom), [otherRuntimeRoomId], 'another Gateway keeps its reports');
       assert.equal(channel.occupancyOf(other.gatewayId, otherRuntimeRoomId)?.occupancy, 'PREPARED');
 
       const polled = await post(surface, '/gateway/planner/poll', poll(gateway, renewed, 1));
@@ -326,7 +449,7 @@ describe('gateway-room-routes · refusals, each recorded, none recording anythin
     const { stub, surface, gateway, epoch, lifecycleRoomId, requestId } = await delivered();
     try {
       const runtimeRoomId = roomId();
-      const good = { requestId, lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' };
+      const good = { requestId, lifecycleRoomId, runtimeRoomId };
       const cases: readonly [string, unknown, number, string][] = [
         ['another key signed it', minted(gateway, epoch, 2, requestId, good, { signWith: generateTestKeypair() }), 401, 'bad_signature'],
         [
@@ -339,6 +462,7 @@ describe('gateway-room-routes · refusals, each recorded, none recording anythin
         ['the payload is not JSON', minted(gateway, epoch, 2, requestId, 'not json'), 400, 'invalid_request'],
         ['the payload names another request', minted(gateway, epoch, 2, requestId, { ...good, requestId: uuid() }), 400, 'invalid_request'],
         ['a malformed runtime room id', minted(gateway, epoch, 2, requestId, { ...good, runtimeRoomId: uuid() }), 400, 'invalid_request'],
+        ['a payload carrying an occupancy, even a valid one', minted(gateway, epoch, 2, requestId, { ...good, occupancy: 'PREPARED' }), 400, 'invalid_request'],
         ['an occupancy outside IPC v2', minted(gateway, epoch, 2, requestId, { ...good, occupancy: 'BOUND' }), 400, 'invalid_request'],
         ['an unknown envelope member', { ...minted(gateway, epoch, 2, requestId, good), room: null }, 400, 'invalid_request'],
         ['a foreign epoch', minted(gateway, hex32(), 2, requestId, good), 409, 'session_required'],
@@ -369,21 +493,28 @@ describe('gateway-room-routes · refusals, each recorded, none recording anythin
       const report = await post(
         surface,
         '/gateway/room/minted',
-        minted(gateway, epoch, 2, requestId, { requestId, lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' }),
+        minted(gateway, epoch, 2, requestId, { requestId, lifecycleRoomId, runtimeRoomId }),
       );
       assert.equal(report.body['accepted'], true);
+      stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: { runtimeRoomId, gatewayId: gateway.gatewayId } });
+      const taken = await post(
+        surface,
+        '/gateway/room/occupancy',
+        occupancy(gateway, epoch, 3, runtimeRoomId, { lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' }),
+      );
+      assert.equal(taken.body['accepted'], true, 'a reading is held before the refusals');
       const good = { lifecycleRoomId, runtimeRoomId, occupancy: 'CLOSED' };
       const cases: readonly [string, unknown, number, string][] = [
-        ['another key signed it', occupancy(gateway, epoch, 3, runtimeRoomId, good, { signWith: generateTestKeypair() }), 401, 'bad_signature'],
-        ['the payload names another room', occupancy(gateway, epoch, 3, runtimeRoomId, { ...good, runtimeRoomId: roomId() }), 400, 'invalid_request'],
+        ['another key signed it', occupancy(gateway, epoch, 4, runtimeRoomId, good, { signWith: generateTestKeypair() }), 401, 'bad_signature'],
+        ['the payload names another room', occupancy(gateway, epoch, 4, runtimeRoomId, { ...good, runtimeRoomId: roomId() }), 400, 'invalid_request'],
         [
           'the payload changed after signing',
-          occupancy(gateway, epoch, 3, runtimeRoomId, good, { sentText: JSON.stringify({ ...good, occupancy: 'OCCUPIED' }) }),
+          occupancy(gateway, epoch, 4, runtimeRoomId, good, { sentText: JSON.stringify({ ...good, occupancy: 'OCCUPIED' }) }),
           400,
           'invalid_request',
         ],
-        ['a payload with a request id', occupancy(gateway, epoch, 3, runtimeRoomId, { ...good, requestId }), 400, 'invalid_request'],
-        ['a replayed sequence', occupancy(gateway, epoch, 2, runtimeRoomId, good), 409, 'stale_sequence'],
+        ['a payload with a request id', occupancy(gateway, epoch, 4, runtimeRoomId, { ...good, requestId }), 400, 'invalid_request'],
+        ['a replayed sequence', occupancy(gateway, epoch, 3, runtimeRoomId, good), 409, 'stale_sequence'],
       ];
       for (const [name, envelope, status, error] of cases) {
         const before = stub.rejections.length;
@@ -416,7 +547,7 @@ describe('gateway-room-routes · refusals, each recorded, none recording anythin
       const revokedMint = await post(
         surface,
         '/gateway/room/minted',
-        minted(gateway, epoch, 1, requestId, { requestId, lifecycleRoomId: uuid(), runtimeRoomId, occupancy: 'PREPARED' }),
+        minted(gateway, epoch, 1, requestId, { requestId, lifecycleRoomId: uuid(), runtimeRoomId }),
       );
       assert.deepEqual([revokedMint.status, revokedMint.body['error']], [403, 'revoked']);
       assert.deepEqual(stub.rejections.map((row) => row.errorCode), ['unknown_key', 'revoked', 'revoked']);
@@ -433,8 +564,8 @@ describe('gateway-room-routes · cross-purpose refusal on every route, both ways
     const { surface, gateway, epoch, lifecycleRoomId, requestId } = await delivered();
     try {
       const runtimeRoomId = roomId();
-      const mintedReport = minted(gateway, epoch, 2, requestId, { requestId, lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' });
-      const occupancyReport = occupancy(gateway, epoch, 2, runtimeRoomId, { lifecycleRoomId, runtimeRoomId, occupancy: 'PREPARED' });
+      const mintedReport = minted(gateway, epoch, 2, requestId, { requestId, lifecycleRoomId, runtimeRoomId });
+      const occupancyReport = occupancy(gateway, epoch, 2, runtimeRoomId, { lifecycleRoomId, runtimeRoomId });
       const beat = makeHeartbeat(gateway.key, { ...base(gateway, epoch, 2) });
       const pollEnvelope = poll(gateway, epoch, 2);
       const cases: readonly [string, unknown][] = [

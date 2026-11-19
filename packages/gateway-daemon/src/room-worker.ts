@@ -13,7 +13,9 @@
  *   - says which minted rooms' occupancy is due to be reported as
  *     `runtime_room_occupancy`: a room whose occupancy changed since it was
  *     last reported, and every room at least every `OCCUPANCY_REFRESH_TICKS`
- *     ticks.
+ *     ticks. The control plane takes a room's occupancy only once the room
+ *     is bound (act B2), so a report it refuses before then waits for the
+ *     next refresh. The `runtime_room_minted` report carries no occupancy.
  *
  * It never changes a room's occupancy and starts nothing in one: Builder
  * execution in a bound runtime room is step 4.
@@ -125,24 +127,20 @@ export class GatewayRoomWorker implements RoomRequestHandler {
       this.log('info', 'room.minted', { runtimeRoomId });
     }
 
-    const occupancy = this.occupancyOf(room);
-    if (occupancy === null) return null;
+    // The runtime must still hold the room; the report carries no occupancy
+    // (act B2 reports occupancy only of a bound room, through
+    // `runtime_room_occupancy`).
+    if (this.occupancyOf(room) === null) return null;
     const payload: RuntimeRoomMintedPayload = {
       requestId: request.requestId,
       lifecycleRoomId: room.lifecycleRoomId,
       runtimeRoomId: room.runtimeRoomId,
-      occupancy,
     };
     if (!sendable(payload, validateRuntimeRoomMintedPayload)) {
       this.log('error', 'room.report_invalid', { kind: 'runtime_room_minted' });
       return null;
     }
     return payload;
-  }
-
-  /** A minted report the control plane took: it carried the room's occupancy, so that counts as reported. */
-  mintedSent(payload: RuntimeRoomMintedPayload): void {
-    this.markSent(payload.lifecycleRoomId, payload.runtimeRoomId, payload.occupancy);
   }
 
   /**

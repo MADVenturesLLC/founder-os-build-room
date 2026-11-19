@@ -217,6 +217,8 @@ interface Harness {
   readonly journal: FakeJournal;
   readonly gatewayChecks: Array<{ readonly client: PoolClient; readonly gatewayId: string }>;
   readonly mintedQueries: Array<readonly [string, string]>;
+  /** Each lifecycle room `cancelMintsFor` was asked to withdraw, in call order. */
+  readonly mintsCancelled: string[];
   readonly eventIdsMinted: { count: number };
 }
 
@@ -234,6 +236,7 @@ function harness(
   const minted = options.minted ?? { [`${GATEWAY} ${ROOM}`]: [RUNTIME_ROOM] };
   const gatewayChecks: Harness['gatewayChecks'] = [];
   const mintedQueries: Harness['mintedQueries'] = [];
+  const mintsCancelled: string[] = [];
   const eventIdsMinted = { count: 0 };
   const deps: RuntimeRoomBindingDeps = {
     ledger,
@@ -249,6 +252,10 @@ function harness(
         mintedQueries.push([gatewayId, lifecycleRoomId]);
         return minted[`${gatewayId} ${lifecycleRoomId}`] ?? [];
       },
+      cancelMintsFor: (lifecycleRoomId) => {
+        mintsCancelled.push(lifecycleRoomId);
+        return 0;
+      },
     },
     dispatcher: DISPATCHER,
     mintEventId: () => {
@@ -257,7 +264,7 @@ function harness(
     },
     now: () => NOW,
   };
-  return { deps, ledger, journal, gatewayChecks, mintedQueries, eventIdsMinted };
+  return { deps, ledger, journal, gatewayChecks, mintedQueries, mintsCancelled, eventIdsMinted };
 }
 
 function bind(h: Harness, command: BuilderCommandRequest = builderCommand(), runtimeRoomId = RUNTIME_ROOM): Promise<BindingOutcome> {
@@ -327,6 +334,53 @@ describe('bindFirstBuilderCommand — the one transaction it asks for (journal r
       const h = harness({ ledger: new FakeLedger(BUILDING, { notLeader: true, committed }) });
       assert.deepEqual(await bind(h), { kind: 'interrupted', committed });
     }
+  });
+});
+
+describe('bindFirstBuilderCommand — once bound, no Gateway is asked to mint for the room (act B2)', () => {
+  it('withdraws every open mint request for the room after the binding commits, once, after the journal writes', async () => {
+    const h = harness();
+    const order: string[] = [];
+    const cancel = h.deps.rooms.cancelMintsFor.bind(h.deps.rooms);
+    const deps: RuntimeRoomBindingDeps = {
+      ...h.deps,
+      rooms: {
+        mintedFor: h.deps.rooms.mintedFor.bind(h.deps.rooms),
+        cancelMintsFor: (lifecycleRoomId) => {
+          order.push(`cancel after ${h.journal.calls.join(',')}`);
+          return cancel(lifecycleRoomId);
+        },
+      },
+    };
+    const outcome = await bindFirstBuilderCommand(deps, { roomId: ROOM, gatewayId: GATEWAY, runtimeRoomId: RUNTIME_ROOM, command: builderCommand() });
+    assert.equal(outcome.kind, 'bound');
+    assert.deepEqual(h.mintsCancelled, [ROOM]);
+    assert.deepEqual(order, ['cancel after appendJournaled,appendBinding']);
+  });
+
+  it('withdraws them when leadership is lost after the commit, and not when nothing committed', async () => {
+    const committed = harness({ ledger: new FakeLedger(BUILDING, { notLeader: true, committed: true }) });
+    assert.deepEqual(await bind(committed), { kind: 'interrupted', committed: true });
+    assert.deepEqual(committed.mintsCancelled, [ROOM], 'the binding committed: the room is bound');
+    const lost = harness({ ledger: new FakeLedger(BUILDING, { notLeader: true, committed: false }) });
+    assert.deepEqual(await bind(lost), { kind: 'interrupted', committed: false });
+    assert.deepEqual(lost.mintsCancelled, [], 'nothing committed: the room is still unbound');
+  });
+
+  it('withdraws nothing on a refusal or a failure', async () => {
+    const refusals: Harness[] = [
+      harness({ live: false }),
+      harness({ minted: {} }),
+      harness({ state: BOUND }),
+      harness({ state: ledgerThrough(['scope.captured']) }),
+    ];
+    for (const h of refusals) {
+      assert.equal((await bind(h)).kind, 'refused');
+      assert.deepEqual(h.mintsCancelled, []);
+    }
+    const failing = harness({ journal: new FakeJournal({ failBinding: new Error('the third write failed') }) });
+    await assert.rejects(bind(failing), /the third write failed/);
+    assert.deepEqual(failing.mintsCancelled, []);
   });
 });
 
