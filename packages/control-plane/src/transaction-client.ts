@@ -76,8 +76,8 @@ export function transactionBoundClient(client: PoolClient): PoolClient {
 /**
  * The transaction-control statement `text` begins with, named, or `null`.
  * Reads the leading words only, past whitespace, empty statements (`;`) and
- * comments (`--` to the end of the line, and `/* *\/`, which PostgreSQL
- * nests).
+ * comments (`--` up to a line feed or a carriage return, as PostgreSQL's lexer
+ * ends one, and `/* *\/`, which PostgreSQL nests).
  */
 export function transactionControl(text: string): string | null {
   const words = leadingWords(text, 3);
@@ -115,8 +115,9 @@ function leadingWords(text: string, count: number): string[] {
       // so a leading `;` must not hide a `COMMIT`.
       i += 1;
     } else if (text.startsWith('--', i)) {
-      const end = text.indexOf('\n', i);
-      i = end === -1 ? text.length : end + 1;
+      // PostgreSQL's lexer ends a `--` comment at LF or CR, either one alone.
+      i += 2;
+      while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i += 1;
     } else if (text.startsWith('/*', i)) {
       let depth = 0;
       while (i < text.length) {

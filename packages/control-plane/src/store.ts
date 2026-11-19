@@ -28,6 +28,7 @@ import {
   applyAll,
   initialLedger,
   type ApplyResult,
+  type BindingRefusalCode,
   type LedgerEntry,
   type LedgerState,
   type LifecycleEvent,
@@ -163,7 +164,7 @@ export interface RecordedAppend<T> {
 /** The reducer refused a recorded event; the transaction wrote nothing. */
 export class RecordedEventRefusedError extends Error {
   constructor(
-    readonly code: RejectionCode | 'not_recorded' | 'binding_not_journaled',
+    readonly code: RejectionCode | BindingRefusalCode | 'not_recorded' | 'binding_not_journaled',
     readonly reason: string,
   ) {
     super(`recorded event refused (${code}): ${reason}`);
@@ -563,6 +564,13 @@ export class PostgresLedgerStore {
     // writes nothing". The throw aborts the transaction.
     if (recordedEventSpec(event.event) !== null && !(result.ok && result.kind === 'replay')) {
       throw new Error(`${event.event} is a recorded event, appended only through its governed path`);
+    }
+
+    // A binding member on any other event is a refused binding, not a
+    // rejection: written nowhere, as B4 says, and the rejection vocabulary
+    // stands (D1). The generic route refuses such a body before the store.
+    if (!result.ok && result.kind === 'binding_refused') {
+      throw new Error(`refused, nothing written (${result.code}): ${result.reason}`);
     }
 
     if (!result.ok) {

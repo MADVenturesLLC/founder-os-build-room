@@ -16,5 +16,6 @@ export {
   type LedgerEntry,
   type LedgerState,
   type LifecycleEvent,
+  type BindingRefusalCode,
   type RejectionCode,
 } from './ledger.js';

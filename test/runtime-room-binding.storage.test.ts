@@ -1440,7 +1440,18 @@ describe('room binding — the store holds B3, B4 and B6 against its own callers
   it('gives its steps a connection that cannot end the transaction: an early COMMIT, in any form, makes nothing durable', async () => {
     const { world, roomId, gatewayId, runtimeRoomId } = await readyToBind();
     const before = await footprint(roomId);
-    const statements = ['COMMIT', 'commit and chain', 'END', 'ROLLBACK', 'ABORT', '/* x */ COMMIT', ';COMMIT', "PREPARE TRANSACTION 'early'"];
+    const statements = [
+      'COMMIT',
+      'commit and chain',
+      'END',
+      'ROLLBACK',
+      'ABORT',
+      '/* x */ COMMIT',
+      ';COMMIT',
+      '-- a note\rCOMMIT',
+      '-- a note\r\nCOMMIT',
+      "PREPARE TRANSACTION 'early'",
+    ];
     for (const statement of statements) {
       await assert.rejects(
         ledger!.appendRecorded(roomId, {

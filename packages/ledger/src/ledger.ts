@@ -117,11 +117,16 @@ export type RejectionCode =
   | 'state_not_in_from_set'
   | 'attribution_invalid'
   | 'guard_failed'
-  | 'no_prior_state'
-  /**
-   * `runtime_room.bound` without a well-formed binding, or any other event
-   * carrying a binding member.
-   */
+  | 'no_prior_state';
+
+/**
+ * A refused binding, which is not a rejection: the lifecycle ruling's B4 says
+ * a refused binding "is refused and writes nothing", so it never enters the
+ * rejection log, and the rejection vocabulary stands as D1 of that ruling
+ * keeps it.
+ */
+export type BindingRefusalCode =
+  /** `runtime_room.bound` without a well-formed binding, or any other event carrying a binding member. */
   | 'binding_invalid'
   /** A second `runtime_room.bound` for a room that already has a binding (B4). */
   | 'binding_exists';
@@ -143,7 +148,9 @@ export type ApplyResult =
       readonly event: EventName;
       readonly eventId: string;
     }
-  | { readonly ok: false; readonly kind: 'rejected'; readonly code: RejectionCode; readonly reason: string };
+  | { readonly ok: false; readonly kind: 'rejected'; readonly code: RejectionCode; readonly reason: string }
+  /** A refused binding (B4): no rejection, and the store writes nothing for it. */
+  | { readonly ok: false; readonly kind: 'binding_refused'; readonly code: BindingRefusalCode; readonly reason: string };
 
 /**
  * The transitions that move the branch head, derived from the table's guards
@@ -185,6 +192,13 @@ export function snapshot(state: LedgerState): LifecycleSnapshot {
 const reject = (code: RejectionCode, reason: string): ApplyResult => ({
   ok: false,
   kind: 'rejected',
+  code,
+  reason,
+});
+
+const refuseBinding = (code: BindingRefusalCode, reason: string): ApplyResult => ({
+  ok: false,
+  kind: 'binding_refused',
   code,
   reason,
 });
@@ -274,7 +288,7 @@ export function apply(current: LedgerState, event: LifecycleEvent): ApplyResult 
   // is refused rather than ignored: a stored payload holding a binding no
   // ledger state reflects would be a second, unreducible record of one.
   if (event.binding !== undefined) {
-    return reject(
+    return refuseBinding(
       'binding_invalid',
       `${event.event} carries a binding member — only runtime_room.bound may`,
     );
@@ -349,18 +363,18 @@ function applyRecorded(
   }
 
   if (event.binding === undefined) {
-    return reject('binding_invalid', `${event.event} carries no binding`);
+    return refuseBinding('binding_invalid', `${event.event} carries no binding`);
   }
   const defect = runtimeRoomBindingDefect(event.binding);
   if (defect !== null) {
-    return reject('binding_invalid', `${event.event}: ${defect}`);
+    return refuseBinding('binding_invalid', `${event.event}: ${defect}`);
   }
 
   // B4: "A lifecycle room has at most one binding ... A second
   // runtime_room.bound for the same lifecycle room ... is refused and writes
   // nothing. There is no rebinding."
   if (current.binding !== null) {
-    return reject(
+    return refuseBinding(
       'binding_exists',
       `the room is already bound to runtime room ${current.binding.runtimeRoomId} ` +
         `by event ${current.binding.eventId} — there is no rebinding`,

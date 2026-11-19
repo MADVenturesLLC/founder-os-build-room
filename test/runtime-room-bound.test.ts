@@ -16,6 +16,11 @@
  *
  * Every acceptance and refusal path of the reducer's recorded branch is
  * driven here, as are G17's four combinations of its two limbs.
+ *
+ * D1: "the rejection vocabulary ... stand[s]". A refused binding is not a
+ * rejection: its kind is `binding_refused`, its code is outside
+ * `RejectionCode`, and the store writes nothing for it (B4). The vocabulary
+ * is pinned at compile time to the seven codes it had before this event.
  */
 
 import { describe, it } from 'node:test';
@@ -42,16 +47,49 @@ import {
   initialLedger,
   snapshot,
   type ApplyResult,
+  type BindingRefusalCode,
   type LedgerState,
   type LifecycleEvent,
+  type RejectionCode,
 } from '../packages/ledger/src/index.js';
 import { BINDING, BINDING_RECORD, PERMISSIVE_FACTS, ledgerAt, makeEvent } from './helpers.js';
 
+/** The rejection vocabulary, as it stood before runtime_room.bound (D1 keeps it). */
+const REJECTION_VOCABULARY = [
+  'unknown_event',
+  'terminal_state',
+  'actor_not_authorized',
+  'state_not_in_from_set',
+  'attribution_invalid',
+  'guard_failed',
+  'no_prior_state',
+] as const satisfies readonly RejectionCode[];
+// Fails to compile if RejectionCode gains a code the list lacks.
+const VOCABULARY_IS_CLOSED: Exclude<RejectionCode, (typeof REJECTION_VOCABULARY)[number]> extends never ? true : false = true;
+
+const BINDING_REFUSALS: readonly string[] = ['binding_invalid', 'binding_exists'] satisfies readonly BindingRefusalCode[];
+
+/**
+ * A refusal of either kind. A binding code must come as `binding_refused`,
+ * never as a rejection; every other code as `rejected`.
+ */
 function rejected(result: ApplyResult): { code: string; reason: string } {
-  assert.equal(result.ok, false, `expected a rejection, got ${result.ok ? result.kind : ''}`);
+  assert.equal(result.ok, false, `expected a refusal, got ${result.ok ? result.kind : ''}`);
   if (result.ok) throw new Error('unreachable');
+  assert.equal(result.kind, BINDING_REFUSALS.includes(result.code) ? 'binding_refused' : 'rejected', result.code);
   return { code: result.code, reason: result.reason };
 }
+
+describe('runtime_room.bound · the rejection vocabulary stands (D1)', () => {
+  it('keeps the seven rejection codes; a refused binding is its own kind, never a rejection', () => {
+    assert.equal(VOCABULARY_IS_CLOSED, true);
+    for (const code of BINDING_REFUSALS) {
+      assert.equal((REJECTION_VOCABULARY as readonly string[]).includes(code), false, code);
+    }
+    const refused = apply(ledgerAt('BUILDING'), makeEvent('decision.requested', { binding: BINDING }));
+    assert.ok(!refused.ok && refused.kind === 'binding_refused' && refused.code === 'binding_invalid');
+  });
+});
 
 function recorded(result: ApplyResult): LedgerState {
   assert.ok(result.ok && result.kind === 'recorded', `expected recorded, got ${JSON.stringify(result)}`);
