@@ -24,9 +24,16 @@
  * SQL. So a second writer must name one of those methods or helpers, or carry
  * SQL that writes the two tables or calls the journal's append routine.
  *
- * WHAT IS COUNTED. Every TypeScript file under packages/{name}/src is parsed
- * with the TypeScript compiler (comments never count). For each writer method
- * and helper, every occurrence of its name is counted per file and sorted into
+ * WHICH FILES. The production build's own file set, as the TypeScript
+ * compiler resolves it with the repository's options (NodeNext): every
+ * .ts, .mts or .cts file under packages/{name}/src, and every file those
+ * import, transitively, wherever it lives and whatever its extension (an
+ * .mjs import resolving to an .mts module included). Declaration files and
+ * node_modules are excluded. JavaScript is not compiled here (no allowJs).
+ *
+ * WHAT IS COUNTED. Each of those files is parsed with the TypeScript compiler
+ * (comments never count). For each writer method and helper, every
+ * occurrence of its name is counted per file and sorted into
  *
  *   - a DECLARATION: the name a method, function, property or interface
  *     member is declared under;
@@ -35,11 +42,16 @@
  *     export) or string or template text (bracket access, a key held in a
  *     variable, a `Pick` key).
  *
- * For SQL, every string or template part that writes the lifecycle log or the
- * journal's table (INSERT INTO, MERGE INTO, COPY or UPDATE, schema and name
- * quoted or not), or calls the journal's append routine outside DDL, counts as
- * one use, read after SQL comments are removed, so a comment between keywords
- * hides nothing.
+ * For SQL, every string or template part is read after its comments are
+ * removed, so a comment between keywords hides nothing, and each match in it
+ * counts as one use: each write to the lifecycle log or the journal's table
+ * (INSERT INTO, MERGE INTO, COPY or UPDATE, schema and name quoted or not),
+ * and each call of the journal's append routine (its name quoted or not,
+ * followed by an opening parenthesis), except where the keyword FUNCTION,
+ * ROUTINE or PROCEDURE names the routine as the object of DDL. No other text
+ * in the string exempts it, so a column alias such as "comment" or a GRANT
+ * earlier in the same string hides no call, and a call inside a function body
+ * a migration defines is counted.
  *
  * The counts must equal EXPECTED exactly, file by file. A second caller fails
  * the test wherever it is added, an allowed file included: a new use of
@@ -62,7 +74,8 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
@@ -146,19 +159,29 @@ export function withoutSqlComments(sql: string): string {
   return out;
 }
 
-/** A write to a table: INSERT INTO, MERGE INTO, COPY or UPDATE, schema and name quoted or not. */
-function writesTable(sql: string, table: string): boolean {
-  const pattern = new RegExp(
-    String.raw`\b(?:INSERT\s+INTO|MERGE\s+INTO|COPY|UPDATE)\s+(?:ONLY\s+)?(?:(?:"public"|public)\s*\.\s*)?(?:"${table}"|${table}\b)`,
-    'i',
+const matches = (pattern: RegExp, text: string): number => [...text.matchAll(pattern)].length;
+
+/** Writes to a table: INSERT INTO, MERGE INTO, COPY or UPDATE, schema and name quoted or not; one per match. */
+export function tableWrites(sql: string, table: string): number {
+  return matches(
+    new RegExp(
+      String.raw`\b(?:INSERT\s+INTO|MERGE\s+INTO|COPY|UPDATE)\s+(?:ONLY\s+)?(?:(?:"public"|public)\s*\.\s*)?(?:"${table}"|${table}\b)`,
+      'gi',
+    ),
+    sql,
   );
-  return pattern.test(sql);
 }
 
-/** A call of the journal's append routine, its name quoted or not, outside DDL. */
-function callsJournalRoutine(sql: string): boolean {
-  return /(?:"command_journal_append"|\bcommand_journal_append\b)\s*\(/i.test(sql)
-    && !/\b(?:CREATE|ALTER|REVOKE|GRANT|COMMENT|DROP)\b/i.test(sql);
+/**
+ * Calls of the journal's append routine, its name quoted or not and followed
+ * by an opening parenthesis; one per match. The one exclusion is the routine
+ * as the object of DDL, named right after FUNCTION, ROUTINE or PROCEDURE.
+ */
+export function routineCalls(sql: string): number {
+  return matches(
+    /(?<!\b(?:FUNCTION|ROUTINE|PROCEDURE)\s+(?:(?:"public"|public)\s*\.\s*)?)(?:"command_journal_append"|\bcommand_journal_append\b)\s*\(/gi,
+    sql,
+  );
 }
 
 const DECLARING = new Set<ts.SyntaxKind>([
@@ -187,10 +210,11 @@ interface FileFindings {
 export function findingsIn(file: string, text: string): FileFindings {
   const writers = new Map<WriterRule, { declarations: number; uses: number }>();
   const inventory = new Set<InventoryRule>();
-  const count = (rule: WriterRule, declaration: boolean): void => {
+  const count = (rule: WriterRule, declaration: boolean, times = 1): void => {
+    if (times === 0) return;
     const current = writers.get(rule) ?? { declarations: 0, uses: 0 };
-    if (declaration) current.declarations += 1;
-    else current.uses += 1;
+    if (declaration) current.declarations += times;
+    else current.uses += times;
     writers.set(rule, current);
   };
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -212,8 +236,8 @@ export function findingsIn(file: string, text: string): FileFindings {
       if (value === 'builder.invoke') inventory.add('builderKind');
       if (value === 'runtime_room.bound') inventory.add('boundEvent');
       const sql = withoutSqlComments(value);
-      if (writesTable(sql, 'build_room_events')) count('lifecycleSql', false);
-      if (writesTable(sql, 'command_journal_events') || callsJournalRoutine(sql)) count('journalSql', false);
+      count('lifecycleSql', false, tableWrites(sql, 'build_room_events'));
+      count('journalSql', false, tableWrites(sql, 'command_journal_events') + routineCalls(sql));
     }
     ts.forEachChild(node, visit);
   };
@@ -221,25 +245,59 @@ export function findingsIn(file: string, text: string): FileFindings {
   return { writers, inventory };
 }
 
-function sourceFiles(): string[] {
+const TS_SOURCE = /\.(?:ts|mts|cts)$/;
+const DECLARATION_FILE = /\.d\.(?:ts|mts|cts)$/;
+
+/** Every .ts, .mts and .cts file under each `src` directory below `packagesDir`, declaration files excluded. */
+export function rootSources(packagesDir: string): string[] {
   const files: string[] = [];
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
       if (statSync(path).isDirectory()) walk(path);
-      else if (name.endsWith('.ts') && !name.endsWith('.d.ts')) files.push(path);
+      else if (TS_SOURCE.test(name) && !DECLARATION_FILE.test(name)) files.push(path);
     }
   };
-  const packages = join(REPO_ROOT, 'packages');
-  for (const name of readdirSync(packages)) {
-    const src = join(packages, name, 'src');
+  for (const name of readdirSync(packagesDir)) {
+    const src = join(packagesDir, name, 'src');
     try {
       if (statSync(src).isDirectory()) walk(src);
     } catch {
       // A package with no src directory has no production code to check.
     }
   }
-  return files.map((path) => relative(REPO_ROOT, path).split(sep).join('/')).sort();
+  return files.sort();
+}
+
+/**
+ * The files a program built from `roots` compiles: the roots and everything
+ * they import, transitively, as the compiler resolves it, relative to `base`;
+ * declaration files and node_modules excluded.
+ */
+export function compiledFiles(roots: readonly string[], options: ts.CompilerOptions, base: string): string[] {
+  const program = ts.createProgram({ rootNames: [...roots], options: { ...options, noEmit: true } });
+  return program
+    .getSourceFiles()
+    .map((file) => file.fileName)
+    .filter((name) => !name.split('/').includes('node_modules') && !DECLARATION_FILE.test(name))
+    .map((name) => relative(base, name).split(sep).join('/'))
+    .sort();
+}
+
+function repositoryOptions(): ts.CompilerOptions {
+  const parsed = ts.getParsedCommandLineOfConfigFile(join(REPO_ROOT, 'tsconfig.json'), {}, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic: (diagnostic) => {
+      throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+    },
+  });
+  if (parsed === undefined) throw new Error('tsconfig.json did not parse');
+  return parsed.options;
+}
+
+/** The production build's file set: every package source root and everything it imports. */
+function sourceFiles(): string[] {
+  return compiledFiles(rootSources(join(REPO_ROOT, 'packages')), repositoryOptions(), REPO_ROOT);
 }
 
 const readSource = (file: string): string => readFileSync(join(REPO_ROOT, file), 'utf8');
@@ -304,9 +362,11 @@ describe('binding-one-writer · only the governed path writes the binding (bound
   const sources = productionSources();
   const { writers, inventory } = scan(sources);
 
-  it('scans every package\'s source, the governed path, both stores and the migrations included', () => {
+  it('scans the production build\'s whole file set: every source root, and nothing else the build needs is left out', () => {
     for (const file of [GOVERNED_PATH, LIFECYCLE_STORE, JOURNAL_STORE, MIGRATIONS]) assert.ok(sources.has(file), file);
-    assert.ok(sources.size > 50, `only ${sources.size} files found`);
+    const roots = rootSources(join(REPO_ROOT, 'packages')).map((path) => relative(REPO_ROOT, path).split(sep).join('/'));
+    for (const root of roots) assert.ok(sources.has(root), `root ${root} not scanned`);
+    assert.ok(sources.size >= roots.length && roots.length > 50, `${sources.size} files scanned, ${roots.length} roots`);
   });
 
   it('counts every writer\'s declarations and uses exactly, file by file', () => {
@@ -434,6 +494,56 @@ describe('binding-one-writer · every ordinary form is counted', () => {
     assert.ok(inventoried('boundEvent', `const event = { event: BINDING_EVENT };`));
     assert.ok(inventoried('boundEvent', `import { BINDING_EVENT as E } from '../../journal/src/index.js';`));
     assert.ok(inventoried('boundEvent', 'const event = { event: `runtime_room.bound` };'));
+  });
+
+  it('the routine: a call is counted whatever else the string holds; only the routine named as the object of DDL is not', () => {
+    const cases: ReadonlyArray<readonly [string, number]> = [
+      ['SELECT * FROM public.command_journal_append($1, $2, $3, $4, $5) AS "comment"', 1],
+      ['SELECT command_journal_append($1, $2, $3, $4, $5) AS grant_ok, 1 AS "create"', 1],
+      ['GRANT USAGE ON SCHEMA public TO r; SELECT * FROM command_journal_append($1, $2, $3, $4, $5)', 1],
+      ['SELECT command_journal_append($1, $2, $3, $4, $5); SELECT "command_journal_append"($1, $2, $3, $4, $5)', 2],
+      ['CREATE FUNCTION wrapper(a text) RETURNS void LANGUAGE sql AS $$ SELECT public.command_journal_append(a, a, a, 1, NULL) $$', 1],
+      ['DO $$ BEGIN PERFORM command_journal_append($1, $2, $3, $4, $5); END $$', 1],
+      ['CREATE FUNCTION public.command_journal_append(p text) RETURNS void LANGUAGE sql AS $$ SELECT 1 $$', 0],
+      ['ALTER FUNCTION public.command_journal_append(text) OWNER TO w', 0],
+      ['REVOKE ALL ON FUNCTION public.command_journal_append(text) FROM PUBLIC', 0],
+      ['GRANT EXECUTE ON ROUTINE "public"."command_journal_append"(text) TO r', 0],
+      ['COMMENT ON FUNCTION command_journal_append(text) IS $$x$$', 0],
+    ];
+    for (const [sql, expected] of cases) {
+      assert.equal(routineCalls(withoutSqlComments(sql)), expected, sql);
+      assert.equal(usesOf('journalSql', `const sql = ${JSON.stringify(sql)};`), expected, `in code: ${sql}`);
+    }
+  });
+
+  it('each write in one string counts, so a second one added to an existing string is caught', () => {
+    assert.equal(tableWrites('INSERT INTO build_room_events VALUES (1); INSERT INTO "build_room_events" VALUES (2)', 'build_room_events'), 2);
+    assert.equal(usesOf('lifecycleSql', `const sql = 'INSERT INTO build_room_events VALUES (1); INSERT INTO build_room_events VALUES (2)';`), 2);
+  });
+
+  it('a module reached only through an import is scanned: an .mjs import resolving to an .mts module, and a .cts root', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'binding-one-writer-'));
+    try {
+      const packages = join(dir, 'packages');
+      mkdirSync(join(packages, 'p', 'src', 'deep'), { recursive: true });
+      mkdirSync(join(dir, 'outside'), { recursive: true });
+      writeFileSync(join(dir, 'package.json'), '{"type":"module"}\n');
+      writeFileSync(join(packages, 'p', 'src', 'entry.ts'), "export { write } from '../../../outside/second.mjs';\n");
+      writeFileSync(
+        join(dir, 'outside', 'second.mts'),
+        'export async function write(s: { appendRecorded(r: string): Promise<void> }): Promise<void> {\n  await s.appendRecorded("r");\n}\n',
+      );
+      writeFileSync(join(packages, 'p', 'src', 'deep', 'legacy.cts'), "export const sql = 'COPY build_room_events FROM STDIN';\n");
+      const roots = rootSources(packages);
+      assert.deepEqual(roots.map((path) => relative(dir, path).split(sep).join('/')), ['packages/p/src/deep/legacy.cts', 'packages/p/src/entry.ts']);
+      const files = compiledFiles(roots, { module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, types: [] }, dir);
+      assert.ok(files.includes('outside/second.mts'), `the imported .mts module was not compiled in: ${files.join(', ')}`);
+      const found = new Map(files.map((file) => [file, findingsIn(file, readFileSync(join(dir, file), 'utf8'))]));
+      assert.equal(found.get('outside/second.mts')?.writers.get('appendRecorded')?.uses, 1);
+      assert.equal(found.get('packages/p/src/deep/legacy.cts')?.writers.get('lifecycleSql')?.uses, 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('ignores a comment, a read-only query, DDL, quoted text, and a longer name that merely contains a construct', () => {
