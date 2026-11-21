@@ -45,6 +45,7 @@ import {
   generateGatewayKeypair,
   type FetchLike,
   type GatewayIdentity,
+  type PlannerExecutor,
   type PlannerRequestHandler,
   type RoomRequestHandler,
 } from '../packages/gateway-daemon/src/index.js';
@@ -62,6 +63,7 @@ import { FIXED_WALL_MS, hex32, publicKeyFromRaw, uuid } from './gateway-helpers.
 import { FileKeychainRunner } from './fake-keychain.js';
 import { closeAllSurfaces, startSurface } from './gateway-surface-helpers.js';
 import { roomStub } from './gateway-room-stub.js';
+import type { PlannerWork } from '../packages/control-plane/src/planner-loop.js';
 
 after(closeAllSurfaces);
 
@@ -331,7 +333,24 @@ function scriptedPlane(gatewayId: string) {
   };
 }
 
-function daemonOver(fetchImpl: FetchLike, id: GatewayIdentity, clock = { wallNow: () => FIXED_WALL_MS, monotonicNow: () => 1_000 }): GatewayDaemon {
+/**
+ * A planner executor these tests never ask anything: only a daemon with a
+ * planner worker polls, so one is injected wherever a test needs the poll,
+ * and the polls scripted for it carry no planner work unless a test says so.
+ */
+function idleExecutor(): PlannerExecutor {
+  return {
+    attest: () => Promise.reject(new Error('not asked in these tests')),
+    start: () => Promise.reject(new Error('not asked in these tests')),
+  } as unknown as PlannerExecutor;
+}
+
+function daemonOver(
+  fetchImpl: FetchLike,
+  id: GatewayIdentity,
+  clock = { wallNow: () => FIXED_WALL_MS, monotonicNow: () => 1_000 },
+  plannerExecutor: PlannerExecutor | null = idleExecutor(),
+): GatewayDaemon {
   const root = mkdtempSync(join(tmpdir(), 'buildroom-room-'));
   roots.push(root);
   const daemon = new GatewayDaemon({
@@ -340,6 +359,7 @@ function daemonOver(fetchImpl: FetchLike, id: GatewayIdentity, clock = { wallNow
     custody: new Custody(new FileKeychainRunner(join(root, 'keychain'))),
     client: new ControlPlaneClient('http://control-plane.invalid', fetchImpl),
     heartbeatCadenceMs: 10_000,
+    ...(plannerExecutor === null ? {} : { plannerExecutor }),
   });
   daemon.primary.adopt(id);
   return daemon;
@@ -362,11 +382,11 @@ function sessionMembers(envelope: Record<string, unknown>) {
 }
 
 describe('gateway-daemon-room · the tick answers a mint request', () => {
-  it('polls with no planner executor, mints, and sends one signed runtime_room_minted report; occupancy only once the room is bound', async () => {
+  it('with a planner worker, polls, mints, and sends one signed runtime_room_minted report; occupancy only once the room is bound', async () => {
     const id = identity();
     const plane = scriptedPlane(id.gatewayId);
     const daemon = daemonOver(plane.fetchImpl, id);
-    assert.equal(daemon.planner, null, 'no planner executor on this daemon');
+    assert.notEqual(daemon.planner, null, 'a planner worker on this daemon: only such a daemon polls');
     const request = mintRequest();
     plane.polls.push({ room: request });
 
@@ -608,7 +628,7 @@ describe('gateway-daemon-room · the planner path is unchanged', () => {
     assert.equal(plane.of('/gateway/planner/report')[0]!['requestId'], request.requestId);
   });
 
-  it('exchange answers the room member first, then handles and reports planner work exactly as before', async () => {
+  it('exchange handles and reports planner work first, exactly as before, then answers the room member', async () => {
     const id = identity();
     const plane = scriptedPlane(id.gatewayId);
     const lane = await heartbeatingLane(plane, id);
@@ -619,11 +639,39 @@ describe('gateway-daemon-room · the planner path is unchanged', () => {
     assert.deepEqual(await lane.exchange(worker, rooms), { planner: 1, room: 1 });
     assert.deepEqual(plane.paths(), [
       '/gateway/planner/poll',
-      '/gateway/room/minted',
       '/gateway/planner/report',
+      '/gateway/room/minted',
       '/gateway/planner/poll',
     ]);
     assert.deepEqual(worker.handled, [request]);
+  });
+
+  it('a minted report whose response ends the exchange strands no planner work: the planner request was handled and reported before it', async () => {
+    const id = identity();
+    const plane = scriptedPlane(id.gatewayId);
+    const lane = await heartbeatingLane(plane, id);
+    const worker = plannerWorker();
+    const rooms = new GatewayRoomWorker({ rooms: new RoomRuntime({ newId: uuid }) });
+    const request = { requestId: uuid(), kind: 'status', commandId: 'cmd_1' };
+    plane.polls.push({ request, room: mintRequest() });
+    plane.queue('/gateway/room/minted', json(503, { error: 'not_leader' }));
+    assert.deepEqual(await lane.exchange(worker, rooms), { planner: 1, room: 0 });
+    assert.deepEqual(plane.paths(), ['/gateway/planner/poll', '/gateway/planner/report', '/gateway/room/minted']);
+    assert.deepEqual(worker.handled, [request]);
+    assert.equal(plane.of('/gateway/planner/report')[0]!['requestId'], request.requestId, 'the delivered planner work was answered');
+  });
+
+  it('a planner report whose response ends the exchange leaves the room member unanswered, for the next poll to deliver again', async () => {
+    const id = identity();
+    const plane = scriptedPlane(id.gatewayId);
+    const lane = await heartbeatingLane(plane, id);
+    const worker = plannerWorker();
+    const rooms = new GatewayRoomWorker({ rooms: new RoomRuntime({ newId: uuid }) });
+    plane.polls.push({ request: { requestId: uuid(), kind: 'status', commandId: 'cmd_1' }, room: mintRequest() });
+    plane.queue('/gateway/planner/report', json(503, { error: 'not_leader' }));
+    assert.deepEqual(await lane.exchange(worker, rooms), { planner: 1, room: 0 });
+    assert.deepEqual(plane.paths(), ['/gateway/planner/poll', '/gateway/planner/report']);
+    assert.equal(rooms.minted().size, 0, 'nothing minted: the request stays open on the control plane, delivered again by the next poll');
   });
 
   it('exchange counts only the minted reports the control plane took: not a malformed member, not one answered accepted: false', async () => {
@@ -632,28 +680,36 @@ describe('gateway-daemon-room · the planner path is unchanged', () => {
     const lane = await heartbeatingLane(plane, id);
     const rooms = new GatewayRoomWorker({ rooms: new RoomRuntime({ newId: uuid }) });
 
+    const worker = plannerWorker();
     plane.polls.push({ room: { kind: 'mint' } });
-    assert.deepEqual(await lane.exchange(null, rooms), { planner: 0, room: 0 }, 'a malformed member: nothing sent, nothing counted');
+    assert.deepEqual(await lane.exchange(worker, rooms), { planner: 0, room: 0 }, 'a malformed member: nothing sent, nothing counted');
     assert.equal(plane.of('/gateway/room/minted').length, 0);
 
     const epoch = plane.of('/gateway/planner/poll')[0]!['epoch'] as string;
     plane.polls.push({ room: mintRequest() });
     plane.queue('/gateway/room/minted', json(200, { ok: true, state: 'enrolled', epoch, accepted: false }));
-    assert.deepEqual(await lane.exchange(null, rooms), { planner: 0, room: 0 }, 'sent, but answered accepted: false');
+    assert.deepEqual(await lane.exchange(worker, rooms), { planner: 0, room: 0 }, 'sent, but answered accepted: false');
     assert.equal(plane.of('/gateway/room/minted').length, 1);
 
     plane.polls.push({ room: mintRequest() });
-    assert.deepEqual(await lane.exchange(null, rooms), { planner: 0, room: 1 }, 'taken');
+    assert.deepEqual(await lane.exchange(worker, rooms), { planner: 0, room: 1 }, 'taken');
+    assert.deepEqual(worker.handled, [], 'no planner work was carried');
   });
 
-  it('a daemon with no planner executor does not read planner work a poll carries', async () => {
+  it('a daemon with no planner executor never polls, so planner work waiting for it is never collected, and no mint request reaches it', async () => {
     const id = identity();
     const plane = scriptedPlane(id.gatewayId);
-    const daemon = daemonOver(plane.fetchImpl, id);
-    plane.polls.push({ request: { requestId: uuid(), kind: 'status', commandId: 'cmd_1' } });
+    const daemon = daemonOver(plane.fetchImpl, id, undefined, null);
+    assert.equal(daemon.planner, null);
+    plane.polls.push({ request: { requestId: uuid(), kind: 'status', commandId: 'cmd_1' }, room: mintRequest() });
     await daemon.tick();
+    await daemon.tick();
+    assert.equal(plane.of('/gateway/planner/poll').length, 0, 'no poll');
+    assert.equal(plane.polls.length, 1, 'the scripted answer was never collected');
     assert.equal(plane.of('/gateway/planner/report').length, 0);
-    assert.equal(plane.of('/gateway/planner/poll').length, 1, 'nothing for this daemon to do: the exchange ends');
+    assert.equal(plane.of('/gateway/room/minted').length, 0);
+    assert.equal(daemon.roomWorker.minted().size, 0);
+    assert.ok(plane.of('/gateway/heartbeat').length >= 1, 'the session still heartbeats');
     assert.equal(daemon.primary.laneState, 'HEARTBEATING');
   });
 });
@@ -672,6 +728,7 @@ describe('gateway-daemon-room · end to end against the real control-plane route
       custody: new Custody(new FileKeychainRunner(join(root, 'keychain'))),
       client: new ControlPlaneClient(surface.url),
       heartbeatCadenceMs: 10_000,
+      plannerExecutor: idleExecutor(),
     });
     daemon.primary.adopt(id);
     try {
@@ -700,6 +757,71 @@ describe('gateway-daemon-room · end to end against the real control-plane route
       assert.equal(daemon.primary.laneState, 'HEARTBEATING');
       assert.deepEqual(stub.rejections, [], 'nothing the daemon sent was refused');
       assert.equal(surface.gateway.session.cursorFor(id.gatewayId)?.lastSequence, daemon.primary.lastSequence);
+    } finally {
+      await daemon.stop().catch(() => undefined);
+      await surface.close();
+    }
+  });
+
+  it('a Gateway restarted without a planner worker after attestation: its daemon never polls, so the execute stays undelivered and the dispatch is not_sent', async () => {
+    const stub = roomStub();
+    const surface = await startSurface({}, stub.pool);
+    const id = identity();
+    stub.registry.set(id.gatewayId, { keyId: id.keyId, state: 'enrolled', pubkey: Buffer.from(id.pubkeyBase64, 'base64') });
+    const root = mkdtempSync(join(tmpdir(), 'buildroom-room-e2e-'));
+    roots.push(root);
+    const daemon = new GatewayDaemon({
+      paths: gatewayPaths(join(root, 'gateway')),
+      clock: { wallNow: () => FIXED_WALL_MS + 100, monotonicNow: () => 1_000 },
+      custody: new Custody(new FileKeychainRunner(join(root, 'keychain'))),
+      client: new ControlPlaneClient(surface.url),
+      heartbeatCadenceMs: 10_000,
+    });
+    daemon.primary.adopt(id);
+    try {
+      await daemon.tick();
+      assert.equal(daemon.primary.laneState, 'HEARTBEATING', 'the session opened');
+      assert.equal(daemon.planner, null, 'no planner worker on the restarted daemon');
+
+      // Attested before the restart, by the worker this daemon no longer runs.
+      const planner = surface.gateway.planner;
+      const port = planner.port({
+        gatewayId: id.gatewayId,
+        role: 'planner',
+        intended: { provider: 'provider', model: 'model', executionSurface: 'surface' },
+        timings: { answerTimeoutMs: 300 },
+      });
+      const attesting = port.attest('cmd_restarted');
+      const attest = planner.collect(id.gatewayId);
+      assert.ok(attest !== null);
+      const attested = {
+        kind: 'attested',
+        identity: { executionId: 'exec-1', role: 'planner', surface: 'surface', model: 'model', provider: 'provider', effort: 'high' },
+      } as unknown as PlannerReportPayload;
+      assert.equal(planner.answer(id.gatewayId, attest.requestId, attested), true);
+      await attesting;
+
+      // A mint request is open for this Gateway as well: it does not make the daemon poll.
+      const lifecycleRoomId = uuid();
+      stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: null });
+      surface.gateway.roomChannel.requestMint(id.gatewayId, lifecycleRoomId);
+
+      const dispatching = port.dispatch({
+        commandId: 'cmd_restarted',
+        roomId: uuid(),
+        repository: 'MADVenturesLLC/example',
+        baseSha: 'a'.repeat(40),
+        scopePaths: ['src'],
+        goalEventId: uuid(),
+        goal: 'a goal',
+        goalDigest: 'b'.repeat(64),
+      } as PlannerWork);
+      await daemon.tick();
+      await daemon.tick();
+      assert.deepEqual(await dispatching, { kind: 'not_sent' }, 'never delivered: the Planner loop may retry it');
+      assert.equal(daemon.roomWorker.minted().size, 0, 'and no mint request reached the daemon');
+      assert.equal(daemon.primary.laneState, 'HEARTBEATING');
+      assert.deepEqual(stub.rejections, []);
     } finally {
       await daemon.stop().catch(() => undefined);
       await surface.close();

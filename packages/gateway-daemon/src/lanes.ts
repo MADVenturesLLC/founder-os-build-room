@@ -198,18 +198,28 @@ export class PrimaryLane {
   }
 
   /**
-   * One tick's poll exchanges for both workers. The poll answer carries
-   * planner work as `request` and the control plane's mint request as `room`
-   * (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2), so one poll serves both; each
-   * member goes to its worker only when that worker exists. A poll that
-   * carried work for neither ends the exchange, as a poll with no planner
-   * request did before. A mint request is answered first, with a signed
-   * `runtime_room_minted` report; planner work is then handled and reported
-   * exactly as `exchangePlanner` always has. An absent, unknown or malformed
-   * `room` member sends nothing and never halts the lane.
+   * One tick's poll exchanges. The poll answer carries planner work as
+   * `request` and the control plane's mint request as `room`
+   * (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2: "carried in its answer to a
+   * Gateway poll as planner work is carried today"), so one poll serves both.
+   *
+   * Only a daemon with a planner worker polls, as before this step: a poll
+   * collects the planner work waiting for this Gateway and marks it
+   * delivered, after which the control plane can no longer report it
+   * `not_sent`, so a daemon that could not handle it must never poll. Hence
+   * `planner` is required; a daemon without one is never asked to mint.
+   *
+   * Within one answer, planner work is handled and reported first, exactly
+   * as `exchangePlanner` always has, and the `room` member is answered after
+   * it, only while the exchange still runs. A mint request left unanswered
+   * costs nothing: the control plane delivers an open one again with every
+   * poll until a minted report answers it. Planner work is never left
+   * unhandled for a room's sake. A poll that carried work for neither ends
+   * the exchange, as a poll with no planner request did before. An absent,
+   * unknown or malformed `room` member sends nothing and never halts the lane.
    */
   async exchange(
-    planner: PlannerRequestHandler | null,
+    planner: PlannerRequestHandler,
     rooms: RoomRequestHandler | null,
     maxExchanges: number = MAX_PLANNER_EXCHANGES_PER_TICK,
   ): Promise<ExchangeCounts> {
@@ -217,7 +227,6 @@ export class PrimaryLane {
     let plannerHandled = 0;
     let roomHandled = 0;
     const counts = (): ExchangeCounts => ({ planner: plannerHandled, room: roomHandled });
-    if (planner === null && rooms === null) return counts();
     while (polls < maxExchanges) {
       if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return counts();
       if (this.clock.monotonicNow() < this.nextAttemptAt) return counts();
@@ -232,33 +241,44 @@ export class PrimaryLane {
         return true;
       });
       if (polled !== 'retain_and_continue') return counts();
-      const plannerWork = planner !== null && request !== null;
       const roomWork = rooms !== null && room !== null;
-      if (!plannerWork && !roomWork) return counts();
+      if (request === null && !roomWork) return counts();
       polls += 1;
+
+      if (request !== null) {
+        plannerHandled += 1;
+        if (!(await this.reportPlanner(planner, request))) return counts();
+      }
 
       if (rooms !== null && room !== null) {
         const minted = await this.reportMinted(rooms, room);
         if (minted.taken) roomHandled += 1;
         if (!minted.proceed) return counts();
       }
-
-      if (planner === null || request === null) continue;
-      plannerHandled += 1;
-      const payload = await planner.handle(request);
-      if (payload === null) continue;
-      const requestId = (request as Record<string, unknown>)['requestId'];
-      if (typeof requestId !== 'string') continue;
-      if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return counts();
-
-      const report = buildPlannerReport(this.identity, this.epoch, this.sequence + 1, requestId, JSON.stringify(payload), this.clock);
-      const reported = this.apply(await this.client.plannerReport(report), () => {
-        this.sequence += 1;
-        return true;
-      });
-      if (reported !== 'retain_and_continue') return counts();
     }
     return counts();
+  }
+
+  /**
+   * Handle one planner request and report its answer, exactly as the
+   * exchange always has. `false` when the exchange must end: the session no
+   * longer holds, or the report's response ends the tick (a resync, a halt,
+   * a retry). A request the worker answers nothing to, or one without a
+   * request id, sends nothing and lets the exchange go on.
+   */
+  private async reportPlanner(planner: PlannerRequestHandler, request: unknown): Promise<boolean> {
+    const payload = await planner.handle(request);
+    if (payload === null) return true;
+    const requestId = (request as Record<string, unknown>)['requestId'];
+    if (typeof requestId !== 'string') return true;
+    if (this.identity === null || this.epoch === null || this.state !== 'HEARTBEATING') return false;
+
+    const report = buildPlannerReport(this.identity, this.epoch, this.sequence + 1, requestId, JSON.stringify(payload), this.clock);
+    const reported = this.apply(await this.client.plannerReport(report), () => {
+      this.sequence += 1;
+      return true;
+    });
+    return reported === 'retain_and_continue';
   }
 
   /**

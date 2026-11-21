@@ -7,7 +7,8 @@
  *
  *   - answers the control plane's request, carried as the poll answer's
  *     `room` member, that this Gateway mint a runtime room for a named
- *     lifecycle room: `RoomRuntime.createRoom(requestId)` mints it, born
+ *     lifecycle room (only a daemon with a planner worker polls, so only it
+ *     is asked): `RoomRuntime.createRoom(requestId)` mints it, born
  *     PREPARED, and the worker keeps lifecycle room -> runtime room so the
  *     daemon can send `runtime_room_minted`;
  *   - says which bound rooms' occupancy is due to be reported as

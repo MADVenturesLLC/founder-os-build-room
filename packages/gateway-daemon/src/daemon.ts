@@ -36,11 +36,11 @@ export interface GatewayDaemonDeps {
   readonly client: ControlPlaneClient;
   readonly heartbeatCadenceMs: number;
   /**
-   * The Planner's executor (plan r1 Q2b). Absent, the daemon never handles
-   * planner work: it still polls, for the room worker's mint requests
-   * (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2), and a planner request a poll
-   * carries is not read. `main.ts` injects one only where
-   * `planner-executor-factory.ts` selects it.
+   * The Planner's executor (plan r1 Q2b). Absent, the daemon never polls for
+   * planner work, and so is never asked to mint a runtime room either: the
+   * mint request rides the poll's answer (FOUNDER-ACT-20261117-BR-PHASE5-STEP1
+   * B2), and a poll would collect planner work this daemon could not handle.
+   * `main.ts` injects one only where `planner-executor-factory.ts` selects it.
    */
   readonly plannerExecutor?: PlannerExecutor;
   /**
@@ -73,9 +73,10 @@ export class GatewayDaemon {
   /**
    * The runtime-room worker (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2), on
    * every daemon because every daemon has a room runtime: it mints a runtime
-   * room when the control plane asks through the poll answer, and says which
-   * bound rooms' occupancy is due to be reported (none in step 1: nothing
-   * yet tells the daemon a room is bound).
+   * room when the control plane asks through the poll answer, which only a
+   * daemon with a planner worker polls for, and says which bound rooms'
+   * occupancy is due to be reported (none in step 1: nothing yet tells the
+   * daemon a room is bound).
    */
   readonly roomWorker: GatewayRoomWorker;
   private readonly state: GatewayStateStore;
@@ -240,14 +241,17 @@ export class GatewayDaemon {
     /*
      * The poll carries planner work and the control plane's mint requests
      * (act B2: "carried in its answer to a Gateway poll as planner work is
-     * carried today"), so the tick polls when a planner worker OR a room
-     * worker exists, and the room worker exists on every daemon. Planner work
-     * goes to the planner worker only, as before; with none, it is not read.
+     * carried today"). The tick polls only with a planner worker, as before:
+     * a poll marks the planner work it collects delivered, and a daemon
+     * without a worker could not handle it. Without one, no mint request
+     * reaches this daemon, and a binding on this Gateway waits.
      */
     this.roomWorker.tick();
-    const exchanged = await this.primary.exchange(this.planner, this.roomWorker);
-    if (exchanged.planner > 0) this.log('info', 'planner.exchanged', { handled: exchanged.planner });
-    if (exchanged.room > 0) this.log('info', 'room.exchanged', { handled: exchanged.room });
+    if (this.planner !== null) {
+      const exchanged = await this.primary.exchange(this.planner, this.roomWorker);
+      if (exchanged.planner > 0) this.log('info', 'planner.exchanged', { handled: exchanged.planner });
+      if (exchanged.room > 0) this.log('info', 'room.exchanged', { handled: exchanged.room });
+    }
     const reported = await this.primary.reportRoomOccupancy(this.roomWorker);
     if (reported > 0) this.log('info', 'room.occupancy_reported', { reported });
 

@@ -83,6 +83,12 @@
  * can take several values, the most writes any of them makes is counted. A
  * composed value that spells a writer's name counts as the literal would.
  *
+ * A value held in a declaration counts where it is declared AND at every
+ * reference to it, by name, property access or element access, through
+ * imports: a const holding SQL counts again wherever it is run, so a second
+ * `client.query(APPEND_SQL, values)` is a second use at its own site, and a
+ * const holding a writer's name counts wherever it is used as one.
+ *
  * A third SQL rule pins MENTIONS: every occurrence, in any whole string
  * expression and in any case, of the two tables' names and the append
  * routine's, whatever statement it is in or none. A write needs the table's
@@ -92,7 +98,8 @@
  *
  * Fixtures pin each ordinary form, a second caller added inside an allowed
  * file, a write moved into a shared helper, comments inside SQL, SQL built
- * from constants and declared values, and a table name handed to a helper.
+ * from constants and declared values, SQL held in a const and run again
+ * elsewhere, and a table name handed to a helper.
  * What the check cannot see: a name assembled at run time from parts none of
  * which spells it (input, a call other than join or concat, text appended
  * with `+=` or pushed into an array), and a closure created inside a governed
@@ -375,6 +382,10 @@ export function staticTexts(expr: ts.Expression, checker: ts.TypeChecker, depth 
  * is written.
  */
 function declaredInitializer(expr: ts.Expression, checker: ts.TypeChecker): ts.Expression | undefined {
+  if (ts.isElementAccessExpression(expr) && !ts.isStringLiteralLike(expr.argumentExpression) && !ts.isNumericLiteral(expr.argumentExpression)) {
+    // A computed key names a property only by its value; the key itself is a reference of its own.
+    return undefined;
+  }
   const at = ts.isPropertyAccessExpression(expr) ? expr.name : ts.isElementAccessExpression(expr) ? expr.argumentExpression : expr;
   let symbol = checker.getSymbolAtLocation(at);
   if (symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
@@ -408,6 +419,22 @@ function foldedInto(node: ts.Node): boolean {
   if (ts.isPropertyAccessExpression(parent) && parent.name.text === 'concat') return true;
   if (ts.isCallExpression(parent) && stringCall(parent)?.method === 'concat') return true;
   return false;
+}
+
+/**
+ * A reference to a value by name, property access or element access, in an
+ * expression: not the name a declaration declares (a shorthand property is
+ * both, and counts), not the name half of a property access (the access is
+ * the reference), not an import or export specifier's name.
+ */
+function isValueReference(node: ts.Node): node is ts.Expression {
+  if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) return true;
+  if (!ts.isIdentifier(node) || node.parent === undefined) return false;
+  const parent = node.parent;
+  if (ts.isPropertyAccessExpression(parent)) return parent.expression === node;
+  if (ts.isShorthandPropertyAssignment(parent)) return true;
+  const named = parent as { name?: ts.Node; propertyName?: ts.Node };
+  return named.name !== node && named.propertyName !== node;
 }
 
 /** A string expression to read whole: a literal, a template, tagged or not, a `+` chain or a join/concat call, not itself part of a larger one. */
@@ -458,14 +485,15 @@ export function findingsIn(source: ts.SourceFile, checker: ts.TypeChecker): File
       if (value === 'builder.invoke') inventory.add('builderKind');
       if (value === 'runtime_room.bound') inventory.add('boundEvent');
     }
-    if (isWholeString(node)) {
-      const plain = ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
+    // What a text this node carries counts here: SQL writes, mentions, and a
+    // composed value spelling a writer's or an inventoried name (a plain
+    // literal's own name was counted above).
+    const record = (values: readonly string[], composed: boolean): void => {
       let lifecycle = 0;
       let journal = 0;
       let mentions = 0;
-      for (const value of staticTexts(node, checker)) {
-        // A composed value that spells a writer's name, or an inventoried one, counts as the literal would.
-        if (!plain) {
+      for (const value of values) {
+        if (composed) {
           if (WRITER_NAMES.has(value)) count(value as WriterRule, false);
           if (value === 'builder.invoke') inventory.add('builderKind');
           if (value === 'runtime_room.bound') inventory.add('boundEvent');
@@ -478,6 +506,15 @@ export function findingsIn(source: ts.SourceFile, checker: ts.TypeChecker): File
       count('lifecycleSql', false, lifecycle);
       count('journalSql', false, journal);
       count('tableNames', false, mentions);
+    };
+    if (isWholeString(node)) {
+      record(staticTexts(node, checker), !(ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)));
+    } else if (isValueReference(node) && !foldedInto(node)) {
+      // A reference to a declared value (a const holding SQL, say) counts
+      // where it is used, every time, as well as where it is declared: a
+      // second `client.query(APPEND_SQL, values)` is a second use.
+      const initializer = declaredInitializer(node, checker);
+      if (initializer !== undefined) record(staticTexts(initializer, checker, 1), true);
     }
     ts.forEachChild(node, visit);
   };
@@ -647,10 +684,11 @@ const EXPECTED: Tallies = {
     [at(LIFECYCLE_STORE, 'insertEvent')]: '1/0',
   },
   lifecycleSql: { [at(LIFECYCLE_STORE, 'insertEvent')]: '0/1' },
-  // Every mention of the two tables and the routine: the two writes above,
-  // reads (SELECT … FROM), the journal's error message naming the routine,
-  // and the migrations' DDL and routine body. A new mention is reviewed as a
-  // possible write, a table name handed to a generic helper included.
+  // Every mention of the two tables and the routine, where SQL holding one
+  // is written and wherever it is used: the two writes above, reads
+  // (SELECT … FROM), the journal's error message naming the routine, and the
+  // migrations' DDL and routine body. A new mention is reviewed as a possible
+  // write, a table name handed to a generic helper included.
   tableNames: {
     [at(GATEWAY_ROOM_STATE, 'isBoundRuntimeRoom')]: '0/1',
     [at(GATEWAY_ROOM_STATE, 'roomOpenForMint')]: '0/2',
@@ -658,19 +696,34 @@ const EXPECTED: Tallies = {
     [at(JOURNAL_STORE, 'BINDINGS_SQL')]: '0/1',
     [at(JOURNAL_STORE, 'BOUND_SQL')]: '0/1',
     [at(JOURNAL_STORE, 'JOURNALED_SQL')]: '0/1',
-    [at(JOURNAL_STORE, 'JournalStore.appendWithin')]: '0/1',
+    // APPEND_SQL run, and the error message naming the routine.
+    [at(JOURNAL_STORE, 'JournalStore.appendWithin')]: '0/2',
     [at(JOURNAL_STORE, 'LIFECYCLE_SQL')]: '0/1',
     [at(JOURNAL_STORE, 'PAGE_SQL')]: '0/1',
+    // Where each read constant is run.
+    [at(JOURNAL_STORE, 'bindingRecordedFor')]: '0/1',
+    [at(JOURNAL_STORE, 'builderCommandJournaledFor')]: '0/1',
+    [at(JOURNAL_STORE, 'readBound')]: '0/1',
+    [at(JOURNAL_STORE, 'requireLifecycleEvent')]: '0/1',
+    [at(JOURNAL_STORE, 'requireNamesBinding')]: '0/1',
+    [at(JOURNAL_STORE, 'scanChain')]: '0/1',
     [at(MIGRATIONS, 'MIGRATIONS')]: '0/44',
     [at(PLAN_STORE, 'LIFECYCLE_SQL')]: '0/1',
+    [at(PLAN_STORE, 'recordPlan')]: '0/1',
     [at(PLANNER_LOOP, 'T1_FACTS_SQL')]: '0/1',
     [at(PLANNER_LOOP, 'T4_PAYLOAD_SQL')]: '0/1',
+    [at(PLANNER_LOOP, 'roundInputs')]: '0/2',
     [at(LIFECYCLE_STORE, 'PostgresLedgerStore.exportRoom')]: '0/1',
     [at(LIFECYCLE_STORE, 'insertEvent')]: '0/1',
     [at(LIFECYCLE_STORE, 'replay')]: '0/1',
   },
-  // The journal store's routine call, and the routine's own body in migration 0006.
-  journalSql: { [at(JOURNAL_STORE, 'APPEND_SQL')]: '0/1', [at(MIGRATIONS, 'MIGRATIONS')]: '0/1' },
+  // The journal store's routine call, where it is written and where it is
+  // run, and the routine's own body in migration 0006.
+  journalSql: {
+    [at(JOURNAL_STORE, 'APPEND_SQL')]: '0/1',
+    [at(JOURNAL_STORE, 'JournalStore.appendWithin')]: '0/1',
+    [at(MIGRATIONS, 'MIGRATIONS')]: '0/1',
+  },
 };
 
 const INVENTORY: Record<InventoryRule, string[]> = {
@@ -784,6 +837,14 @@ export function appendLaterBuilderRow(tx: JournalTransaction, command: BuilderCo
 
   it('SQL built from a table-name constant, in a production file', () => {
     caught(PLANNER_LOOP, 'const EVENTS = "build_room_events";\nexport const sql = `INSERT INTO ${EVENTS} (room_id) VALUES ($1)`;', 'lifecycleSql');
+  });
+
+  it('a second run of the journal\'s append SQL constant, inside the journal store (the tenth review\'s probe)', () => {
+    caught(
+      JOURNAL_STORE,
+      'export async function second(client: { query(sql: string, values: unknown[]): Promise<unknown> }, values: unknown[]): Promise<void> { await client.query(APPEND_SQL, values); }',
+      'journalSql',
+    );
   });
 
   it('a table name handed to a generic helper, in a production file', () => {
@@ -924,6 +985,33 @@ describe('binding-one-writer · every ordinary form is counted', () => {
     assert.equal(usesOf('appendRecorded', 'declare const store: Record<string, () => void>; store["append" + "Recorded"]();'), 1, 'a writer name assembled from literals');
     // Not known statically: a parameter, or a value read at run time. The test says so.
     assert.equal(write('export function insertInto(table: string) { return `INSERT INTO ${table} VALUES ($1)`; }'), 0, 'a parameter is not known');
+  });
+
+  it('a declared value counts where it is used, every time: SQL in a const run elsewhere, through an alias, a property or an import; a writer\'s name held in a const', () => {
+    const run = 'declare const client: { query(sql: unknown, values?: unknown): void };';
+    const sql = 'const APPEND = "SELECT * FROM public.command_journal_append($1, $2, $3, $4, $5)";';
+    assert.equal(usesOf('journalSql', `${sql} ${run}`), 1, 'declared, never run: the declaration');
+    assert.equal(usesOf('journalSql', `${sql} ${run} client.query(APPEND, []);`), 2, 'run once');
+    assert.equal(usesOf('journalSql', `${sql} ${run} client.query(APPEND, []); client.query(APPEND);`), 3, 'run twice');
+    assert.equal(usesOf('journalSql', `${sql} ${run} const again = APPEND; client.query(again);`), 3, 'an alias, and its use');
+    assert.equal(usesOf('journalSql', `${sql} ${run} const SQL = { append: APPEND }; client.query(SQL.append); client.query(SQL["append"]);`), 4, 'a property, read twice');
+    assert.equal(usesOf('lifecycleSql', 'class S { private readonly sql = "INSERT INTO build_room_events VALUES ($1)"; run(c: { query(s: string): void }) { c.query(this.sql); } }'), 2, 'a field, and its use');
+    assert.equal(usesOf('tableNames', `${sql} ${run} client.query(APPEND, []);`), 2, 'the mention, where written and where run');
+    assert.equal(usesOf('appendRecorded', 'declare const store: Record<string, () => void>; const M = "appendRecorded"; store[M](); store[M]();'), 3, 'the name, declared and used twice');
+    assert.equal(usesOf('journalSql', `${run} function f(sql: string) { client.query(sql); }`), 0, 'a parameter holds nothing known');
+
+    const dir = join(REPO_ROOT, '__binding_one_writer_fixture__');
+    const holder = join(dir, 'holder.ts');
+    const runner = join(dir, 'runner.ts');
+    const program = programOver(
+      new Map([
+        [holder, 'export const APPEND = "SELECT * FROM command_journal_append($1, $2, $3, $4, $5)";\n'],
+        [runner, `import { APPEND as A } from "./holder.js";\nimport * as held from "./holder.js";\n${run}\nexport function go() { client.query(A); client.query(held.APPEND); }\n`],
+      ]),
+      scanOptions(),
+    );
+    const found = findingsIn(program.getSourceFile(runner)!, program.getTypeChecker());
+    assert.equal(totalOf(found, 'journalSql').uses, 2, 'an imported const, by name and through the namespace');
   });
 
   it('a tagged template is read whole, its constants resolved', () => {
