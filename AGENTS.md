@@ -141,9 +141,23 @@ OFF-ROADMAP Build Room side bet (Open-Inspect S3 evolved). Claim language:
 
 ## GitHub credentials and identity (agent sessions)
 
-Agent sessions run GitHub operations on two separate credential legs. Both are intentional — do not "align" them or substitute one for the other.
+Every agent session acts on GitHub as `daley40-lab`, and only as `daley40-lab`. `decivantiq` is the Founder's own login (macOS keyring) and SSH key. No agent session uses it for anything.
 
-- **`gh` (API, PRs, comments) acts as the agent PAT `daley40-lab`,** exported as `GH_TOKEN` by the session launcher from `~/.secrets/mad-agent-env.sh`. That PAT is the intended `gh` identity for agent work. Never unset `GH_TOKEN`, never bypass it with the human keyring login (`decivantiq`), and never print, echo, or commit the token value.
-- **Git transport is separate.** SSH remotes (`git@github.com:…`) push with the SSH key as `decivantiq`; HTTPS remotes resolve through the `gh` credential helper. A session pushing over SSH as `decivantiq` while `gh pr create` acts as `daley40-lab` is normal, not a misconfiguration.
-- **On any `gh` 401: run `gh auth status`, stop, and report** — no keyring fallback, no `env -u GH_TOKEN`, no improvised retry. The token file is prefixed (`GITHUB_TOKEN=…`); extract it exactly as the loader does, and test any copy by API probe, never by printing it.
-- **A session relaunched after a stop must have a valid `GH_TOKEN` before it runs** — check `gh auth status` first; if the token is invalid, stop and report rather than pushing with the wrong identity.
+- **Who may do what.** Builder sessions may read, commit, push branches, open and update pull requests, and reply to review threads. Review sessions may read and post review comments; they push nothing to the branch they review. Merges, merge authorizations, pushes to `main`, and repository settings stay with the Founder.
+- **Commits** are authored and committed as `daley40-lab` with its GitHub no-reply address, so the commits and the pull request come from the same account. A machine's global git config may name a human account, so set both on every commit: `git -c user.name=daley40-lab -c user.email=293512385+daley40-lab@users.noreply.github.com commit <arguments>`.
+- **Check the identity in the same command as every write.** Each shell command starts with a fresh environment, so a token loaded by an earlier command is gone. Use the token already in the environment, or load it, and fail closed:
+
+  ```bash
+  { [ -n "${GH_TOKEN:-}" ] || . ~/.secrets/mad-agent-env.sh; } && [ "$(gh api user --jq .login)" = "daley40-lab" ] && <command>
+  ```
+
+- **Push over HTTPS only,** through the `gh` credential helper, so the push lands as `daley40-lab`. An SSH remote (`git@github.com:…`) pushes with the Founder's key as `decivantiq` whatever the check says. If `origin` is SSH, push to the HTTPS URL and leave the remote configuration unchanged. If the credential helper is not configured for HTTPS, stop and report. Never push or commit through a connected git tool (for example GitKraken's `git_push`), because it cannot run this check or set the commit identity in the same command.
+
+  ```bash
+  { [ -n "${GH_TOKEN:-}" ] || . ~/.secrets/mad-agent-env.sh; } && [ "$(gh api user --jq .login)" = "daley40-lab" ] && git push https://github.com/MADVenturesLLC/founder-os-build-room.git HEAD:refs/heads/<branch>
+  ```
+
+- **Never** unset `GH_TOKEN`, run `env -u GH_TOKEN`, or fall back to the keyring login. Never print, echo or commit a token. The token file is prefixed (`GITHUB_TOKEN=…`); extract it exactly as the loader does, and test any copy by API probe, never by printing it.
+- **On any `gh` 401:** run `gh auth status`, stop, and report. No improvised retry.
+- **After a relaunch:** run `gh auth status` before any GitHub operation. If the token is missing or invalid, stop and report rather than act as the wrong account.
+- **Cloud sessions** with no `GH_TOKEN` and no `~/.secrets/mad-agent-env.sh` confirm that the platform writes as `daley40-lab` before the first push. If it writes as another account, or that cannot be confirmed, stop and report.
