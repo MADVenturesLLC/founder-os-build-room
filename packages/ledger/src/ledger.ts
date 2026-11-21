@@ -196,6 +196,9 @@ const reject = (code: RejectionCode, reason: string): ApplyResult => ({
   reason,
 });
 
+const noRebinding = (binding: RuntimeRoomBindingRecord): string =>
+  `the room is already bound to runtime room ${binding.runtimeRoomId} by event ${binding.eventId} — there is no rebinding`;
+
 const refuseBinding = (code: BindingRefusalCode, reason: string): ApplyResult => ({
   ok: false,
   kind: 'binding_refused',
@@ -228,12 +231,12 @@ function resolveTarget(spec: TransitionSpec, current: LedgerState): State | null
  * Apply one event. Total, pure, and deterministic.
  *
  * Order of checks is deliberate: identity (replay) first so a duplicate is
- * never re-validated against changed facts, then vocabulary, then terminality,
- * then actor, then the from-set, then attribution, then the binding member,
- * then the conjunction limb, then the guard. An event that triggers no
- * transition (`runtime_room.bound`) leaves the common path after the actor
- * check and takes `applyRecorded`, which keeps the same order for the checks
- * that apply to it.
+ * never re-validated against changed facts, then vocabulary, then a second
+ * `runtime_room.bound` (B4), then terminality, then actor, then the from-set,
+ * then attribution, then the binding member, then the conjunction limb, then
+ * the guard. An event that triggers no transition (`runtime_room.bound`)
+ * leaves the common path after the actor check and takes `applyRecorded`,
+ * which keeps the same order for the checks that apply to it.
  */
 export function apply(current: LedgerState, event: LifecycleEvent): ApplyResult {
   // INV-4 — replay idempotency. A repeated eventId yields the same state and
@@ -247,6 +250,14 @@ export function apply(current: LedgerState, event: LifecycleEvent): ApplyResult 
 
   if (!isEventName(event.event)) {
     return reject('unknown_event', `not a canonical event: ${String(event.event)}`);
+  }
+
+  // B4: a second runtime_room.bound for a room that has a binding "is refused
+  // and writes nothing. There is no rebinding." Checked before terminality,
+  // the actor and the state, so it is a refused binding in every state the
+  // room can be in, never a lifecycle rejection (D1 keeps that vocabulary).
+  if (recordedEventSpec(event.event) !== null && current.binding !== null) {
+    return refuseBinding('binding_exists', noRebinding(current.binding));
   }
 
   // The terminal set is closed (Founder Ruling — Non-Plain Transition Semantics, ruling 1). No transition has a
@@ -373,12 +384,10 @@ function applyRecorded(
   // B4: "A lifecycle room has at most one binding ... A second
   // runtime_room.bound for the same lifecycle room ... is refused and writes
   // nothing. There is no rebinding."
+  // Unreachable through `apply`, which refuses a second binding before any
+  // other check; kept so this function holds B4 on its own.
   if (current.binding !== null) {
-    return refuseBinding(
-      'binding_exists',
-      `the room is already bound to runtime room ${current.binding.runtimeRoomId} ` +
-        `by event ${current.binding.eventId} — there is no rebinding`,
-    );
+    return refuseBinding('binding_exists', noRebinding(current.binding));
   }
 
   const binding: RuntimeRoomBindingRecord = {

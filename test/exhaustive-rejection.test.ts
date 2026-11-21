@@ -67,17 +67,25 @@ describe('AC#2 — exhaustive transition rejection', () => {
     assert.deepEqual(wronglyRejected, [], 'table transitions that were rejected');
   });
 
-  it('rejects runtime_room.bound from every state but BUILDING, by state', () => {
+  it('rejects runtime_room.bound from every state but BUILDING, by state; where the room is already bound, refuses it as a second binding', () => {
     for (const state of STATES) {
       if (state === 'BUILDING') continue;
-      const result = apply(ledgerAt(state), makeEvent('runtime_room.bound'));
+      const ledger = ledgerAt(state);
+      const result = apply(ledger, makeEvent('runtime_room.bound'));
       assert.equal(result.ok, false, `${state} accepted runtime_room.bound`);
-      if (!result.ok) {
+      if (result.ok) continue;
+      if (ledger.binding !== null) {
+        // B4: a second binding is refused, in any state, never a lifecycle rejection (D1).
+        assert.equal(result.kind, 'binding_refused', `${state}: ${result.reason}`);
+        assert.equal(result.code, 'binding_exists', `${state}: ${result.reason}`);
+      } else {
         const expected =
           state === 'CLOSED_DELIVERED' || state === 'CLOSED_ABANDONED' ? 'terminal_state' : 'state_not_in_from_set';
+        assert.equal(result.kind, 'rejected', `${state}: ${result.reason}`);
         assert.equal(result.code, expected, `${state}: ${result.reason}`);
       }
     }
+    assert.notEqual(ledgerAt('MERGE_CONFIRMED').binding, null, 'the parked MERGE_CONFIRMED ledger carries the binding T17 needs');
   });
 
   it('rejects every event from both terminal states', () => {

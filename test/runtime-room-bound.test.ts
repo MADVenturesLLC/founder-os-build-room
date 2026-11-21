@@ -31,6 +31,8 @@ import {
   EVENTS,
   GUARDS,
   RUNTIME_ROOM_BINDING_FIELDS,
+  STATES,
+  TERMINAL_STATES,
   isCanonicalUuid,
   isRuntimeRoomBinding,
   isRuntimeRoomId,
@@ -219,6 +221,32 @@ describe('ledger — runtime_room.bound is recorded, not transitioned', () => {
     if (altered.ok) assert.deepEqual(altered.state.binding, { ...BINDING, eventId: event.eventId });
   });
 
+  it('refuses a second binding as a refused binding in every one of the 17 states, terminal ones included, never as a rejection (B4, D1)', () => {
+    assert.equal(STATES.length, 17);
+    assert.ok(TERMINAL_STATES.length > 0);
+    for (const state of STATES) {
+      const bound = ledgerAt(state, { binding: BINDING_RECORD });
+      for (const [label, event] of [
+        ['a fresh id, the same ids', makeEvent('runtime_room.bound', { eventId: `evt-second-${state}` })],
+        ['a fresh id, another runtime room', makeEvent('runtime_room.bound', {
+          eventId: `evt-other-${state}`,
+          binding: { ...BINDING, runtimeRoomId: 'room-55555555-5555-4555-8555-555555555555' },
+        })],
+        ['another actor', makeEvent('runtime_room.bound', { eventId: `evt-actor-${state}`, actor: 'founder' })],
+      ] as const) {
+        const result = apply(bound, event);
+        assert.ok(!result.ok, `${state}: ${label}`);
+        if (result.ok) continue;
+        assert.equal(result.kind, 'binding_refused', `${state}: ${label} came back as ${result.kind} ${result.code}`);
+        assert.equal(result.code, 'binding_exists', `${state}: ${label}`);
+        assert.match(result.reason, /no rebinding/);
+      }
+    }
+    // The first binding outside BUILDING stays the lifecycle's own refusal, in the seven codes.
+    const unbound = apply(ledgerAt('EVIDENCE_CAPTURE'), makeEvent('runtime_room.bound', { eventId: 'evt-first-late' }));
+    assert.ok(!unbound.ok && unbound.kind === 'rejected' && unbound.code === 'state_not_in_from_set');
+  });
+
   it('refuses a second binding for the room, whatever it names (B4: no rebinding)', () => {
     const bound = recorded(apply(ledgerAt('BUILDING'), makeEvent('runtime_room.bound', { eventId: 'evt-first-bind' })));
     for (const binding of [
@@ -316,10 +344,12 @@ describe('ledger — runtime_room.bound refusals', () => {
     }
   });
 
-  it('checks well-formedness before the existing binding, and the state before either', () => {
+  it('refuses any runtime_room.bound on a bound room as binding_exists, well-formed or not; for a first binding, checks the state before well-formedness', () => {
     const bound = recorded(apply(ledgerAt('BUILDING'), makeEvent('runtime_room.bound')));
     const malformed = { ...BINDING, gatewayId: 'not-a-uuid' };
-    assert.equal(rejected(apply(bound, makeEvent('runtime_room.bound', { binding: malformed }))).code, 'binding_invalid');
+    assert.equal(rejected(apply(bound, makeEvent('runtime_room.bound', { binding: malformed }))).code, 'binding_exists');
+    assert.equal(rejected(apply(bound, makeEvent('runtime_room.bound', { binding: undefined }))).code, 'binding_exists');
+    assert.equal(rejected(apply(ledgerAt('BUILDING'), makeEvent('runtime_room.bound', { binding: malformed }))).code, 'binding_invalid');
     assert.equal(
       rejected(apply(ledgerAt('PLANNING'), makeEvent('runtime_room.bound', { binding: undefined }))).code,
       'state_not_in_from_set',

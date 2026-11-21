@@ -45,8 +45,8 @@
  *     export) or string or template text (bracket access, a key held in a
  *     variable, a `Pick` key).
  *
- * For SQL, every string or template part is read after its comments are
- * removed, so a comment between keywords hides nothing, and each match in it
+ * For SQL, every whole string expression (see below) is read after its
+ * comments are removed, so a comment between keywords hides nothing, and each match in it
  * counts as one use: each write to the lifecycle log or the journal's table
  * (INSERT INTO, MERGE INTO, COPY or UPDATE, schema and name quoted or not),
  * and each call of the journal's append routine (its name quoted or not,
@@ -72,10 +72,30 @@
  * reached another way (an array lookup, a forwarded request) cannot write
  * anything without one of the counted methods.
  *
+ * A WHOLE STRING EXPRESSION is a literal, a template (tagged or not), a `+`
+ * chain, or a `[…].join` or `concat` call, read as one text with every part
+ * the TypeScript type checker can resolve statically resolved first: a
+ * literal type (a const, an `as const` property, a union of literals, an enum
+ * member), else the initializer of what the part names, wherever it is
+ * declared (a const, let or var, an object property, shorthand included, a
+ * class field, a parameter's or a destructured binding's default), by name,
+ * property access or literal element access, through imports. Where a part
+ * can take several values, the most writes any of them makes is counted. A
+ * composed value that spells a writer's name counts as the literal would.
+ *
+ * A third SQL rule pins MENTIONS: every occurrence, in any whole string
+ * expression and in any case, of the two tables' names and the append
+ * routine's, whatever statement it is in or none. A write needs the table's
+ * name spelled somewhere, so a name handed to a generic helper as an argument
+ * (`insertInto('build_room_events')`) is caught where it is written, though
+ * what the helper does with it is not known statically.
+ *
  * Fixtures pin each ordinary form, a second caller added inside an allowed
- * file, a write moved into a shared helper, and comments inside SQL. What the
- * check cannot see: a name or SQL text assembled at run time from parts (it
- * reads names and SQL as written), and a closure created inside a governed
+ * file, a write moved into a shared helper, comments inside SQL, SQL built
+ * from constants and declared values, and a table name handed to a helper.
+ * What the check cannot see: a name assembled at run time from parts none of
+ * which spells it (input, a call other than join or concat, text appended
+ * with `+=` or pushed into an array), and a closure created inside a governed
  * function that escapes it at run time (sites are lexical).
  */
 
@@ -83,7 +103,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
@@ -92,6 +112,9 @@ const GOVERNED_PATH = 'packages/control-plane/src/runtime-room-binding.ts';
 const LIFECYCLE_STORE = 'packages/control-plane/src/store.ts';
 const JOURNAL_STORE = 'packages/control-plane/src/journal-store.ts';
 const MIGRATIONS = 'packages/control-plane/src/migrations.ts';
+const GATEWAY_ROOM_STATE = 'packages/control-plane/src/gateway/room-state.ts';
+const PLAN_STORE = 'packages/control-plane/src/plan-store.ts';
+const PLANNER_LOOP = 'packages/control-plane/src/planner-loop.ts';
 
 type WriterRule =
   | 'appendRecorded'
@@ -102,7 +125,8 @@ type WriterRule =
   | 'appendWithin'
   | 'insertEvent'
   | 'lifecycleSql'
-  | 'journalSql';
+  | 'journalSql'
+  | 'tableNames';
 type InventoryRule = 'builderKind' | 'boundEvent';
 
 const WRITER_NAMES: ReadonlySet<string> = new Set<WriterRule>([
@@ -182,6 +206,16 @@ export function tableWrites(sql: string, table: string): number {
 }
 
 /**
+ * Mentions of the two tables and the journal's append routine, in any case,
+ * quoted or not, in any statement or none; one per match. Every mention is
+ * pinned by site, so a table name handed to a generic helper as an argument
+ * is caught where it is written, whatever the helper does with it.
+ */
+export function tableNameMentions(text: string): number {
+  return matches(/\b(?:build_room_events|command_journal_events|command_journal_append)\b/gi, text);
+}
+
+/**
  * Calls of the journal's append routine, its name quoted or not and followed
  * by an opening parenthesis; one per match. The one exclusion is the routine
  * as the object of DDL, named right after FUNCTION, ROUTINE or PROCEDURE.
@@ -256,11 +290,146 @@ export function totalOf(found: FileFindings, rule: WriterRule): Counts {
   return total;
 }
 
-/** What one source text holds: counts for each writer rule at each site, and the inventory rules it touches. */
-export function findingsIn(file: string, text: string): FileFindings {
+/** A part of a string whose value is not known statically; it matches no SQL keyword or name. */
+const UNKNOWN = '\u0000';
+const MAX_VARIANTS = 64;
+
+function combine(parts: readonly (readonly string[])[]): string[] {
+  let out = [''];
+  for (const options of parts) {
+    const next: string[] = [];
+    for (const prefix of out) for (const option of options) if (next.length < MAX_VARIANTS) next.push(prefix + option);
+    out = next;
+  }
+  return out;
+}
+
+const WRAPPERS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.ParenthesizedExpression,
+  ts.SyntaxKind.AsExpression,
+  ts.SyntaxKind.SatisfiesExpression,
+  ts.SyntaxKind.NonNullExpression,
+  ts.SyntaxKind.TypeAssertionExpression,
+]);
+
+const isPlus = (node: ts.Node): node is ts.BinaryExpression =>
+  ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken;
+
+/** `[…].join(sep)` or `x.concat(…)`: string calls whose result is known when their parts are. */
+function stringCall(node: ts.Node): { readonly method: 'join' | 'concat'; readonly call: ts.CallExpression } | null {
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return null;
+  const method = node.expression.name.text;
+  if (method === 'join' && ts.isArrayLiteralExpression(node.expression.expression)) return { method, call: node };
+  if (method === 'concat') return { method, call: node };
+  return null;
+}
+
+/**
+ * The values `expr` can take that are known statically: literals, template
+ * literals, `+` chains, `[…].join` and `concat` of known parts, and any
+ * expression the type checker gives a string or number literal type (a const,
+ * imported or not, an `as const` property, a union of literals), else the
+ * initializer of the const it names. A part that cannot be known is UNKNOWN.
+ */
+export function staticTexts(expr: ts.Expression, checker: ts.TypeChecker, depth = 0): string[] {
+  if (depth > 16) return [UNKNOWN];
+  const next = (e: ts.Expression): string[] => staticTexts(e, checker, depth + 1);
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr) || ts.isNumericLiteral(expr)) return [expr.text];
+  if (WRAPPERS.has(expr.kind)) return next((expr as ts.ParenthesizedExpression).expression);
+  if (ts.isTemplateExpression(expr)) {
+    return combine([[expr.head.text], ...expr.templateSpans.flatMap((span) => [next(span.expression), [span.literal.text]])]);
+  }
+  if (ts.isTaggedTemplateExpression(expr)) return next(expr.template);
+  if (isPlus(expr)) return combine([next(expr.left), next(expr.right)]);
+  const call = stringCall(expr);
+  if (call !== null) {
+    const access = call.call.expression as ts.PropertyAccessExpression;
+    if (call.method === 'join') {
+      const elements = (access.expression as ts.ArrayLiteralExpression).elements.map((e) => next(e));
+      const separator = call.call.arguments[0] === undefined ? [','] : next(call.call.arguments[0]);
+      const parts: string[][] = [];
+      elements.forEach((element, index) => {
+        if (index > 0) parts.push(separator);
+        parts.push(element);
+      });
+      return combine(parts);
+    }
+    return combine([next(access.expression), ...call.call.arguments.map((a) => next(a))]);
+  }
+  const type = checker.getTypeAtLocation(expr);
+  const members = type.isUnion() ? type.types : [type];
+  if (members.length > 0 && members.every((t) => t.isStringLiteral() || t.isNumberLiteral())) {
+    return members.map((t) => String((t as ts.LiteralType).value));
+  }
+  const initializer = declaredInitializer(expr, checker);
+  return initializer === undefined ? [UNKNOWN] : next(initializer);
+}
+
+/**
+ * The initializer `expr` names, wherever it is declared: a variable (const,
+ * let or var), a property of an object literal (shorthand included), a class
+ * field, an enum member, a parameter's default, a destructured binding's
+ * default; reached by name, by property access or by element access with a
+ * literal key, through imports. For anything that can be reassigned this is
+ * one value it can take, not every one; text assigned later is read where it
+ * is written.
+ */
+function declaredInitializer(expr: ts.Expression, checker: ts.TypeChecker): ts.Expression | undefined {
+  const at = ts.isPropertyAccessExpression(expr) ? expr.name : ts.isElementAccessExpression(expr) ? expr.argumentExpression : expr;
+  let symbol = checker.getSymbolAtLocation(at);
+  if (symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+  let declaration = symbol?.valueDeclaration;
+  if (declaration !== undefined && ts.isShorthandPropertyAssignment(declaration)) {
+    declaration = checker.getShorthandAssignmentValueSymbol(declaration)?.valueDeclaration;
+  }
+  if (declaration === undefined) return undefined;
+  if (
+    ts.isVariableDeclaration(declaration)
+    || ts.isParameter(declaration)
+    || ts.isPropertyDeclaration(declaration)
+    || ts.isPropertyAssignment(declaration)
+    || ts.isEnumMember(declaration)
+    || ts.isBindingElement(declaration)
+  ) {
+    return declaration.initializer;
+  }
+  return undefined;
+}
+
+/** The node a value expression is folded into, past wrappers, if it is part of a larger string expression. */
+function foldedInto(node: ts.Node): boolean {
+  let parent = node.parent;
+  while (parent !== undefined && WRAPPERS.has(parent.kind)) parent = parent.parent;
+  if (parent === undefined) return false;
+  if (ts.isTemplateSpan(parent) || isPlus(parent) || ts.isTaggedTemplateExpression(parent)) return true;
+  if (ts.isArrayLiteralExpression(parent) && parent.parent !== undefined && ts.isPropertyAccessExpression(parent.parent)) {
+    return stringCall(parent.parent.parent ?? parent) !== null;
+  }
+  if (ts.isPropertyAccessExpression(parent) && parent.name.text === 'concat') return true;
+  if (ts.isCallExpression(parent) && stringCall(parent)?.method === 'concat') return true;
+  return false;
+}
+
+/** A string expression to read whole: a literal, a template, tagged or not, a `+` chain or a join/concat call, not itself part of a larger one. */
+function isWholeString(node: ts.Node): node is ts.Expression {
+  const stringish = ts.isStringLiteral(node)
+    || ts.isNoSubstitutionTemplateLiteral(node)
+    || ts.isTemplateExpression(node)
+    || ts.isTaggedTemplateExpression(node)
+    || isPlus(node)
+    || stringCall(node) !== null;
+  return stringish && !foldedInto(node);
+}
+
+/**
+ * What one source file holds: counts for each writer rule at each site, and
+ * the inventory rules it touches. Names are read as identifiers and as
+ * string literals; SQL is read from each whole string expression, its
+ * statically known parts resolved through `checker`.
+ */
+export function findingsIn(source: ts.SourceFile, checker: ts.TypeChecker): FileFindings {
   const writers = new Map<WriterRule, Map<string, Counts>>();
   const inventory = new Set<InventoryRule>();
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const visit = (node: ts.Node): void => {
     const count = (rule: WriterRule, declaration: boolean, times = 1): void => {
       if (times === 0) return;
@@ -288,14 +457,65 @@ export function findingsIn(file: string, text: string): FileFindings {
       if (WRITER_NAMES.has(value)) count(value as WriterRule, false);
       if (value === 'builder.invoke') inventory.add('builderKind');
       if (value === 'runtime_room.bound') inventory.add('boundEvent');
-      const sql = withoutSqlComments(value);
-      count('lifecycleSql', false, tableWrites(sql, 'build_room_events'));
-      count('journalSql', false, tableWrites(sql, 'command_journal_events') + routineCalls(sql));
+    }
+    if (isWholeString(node)) {
+      const plain = ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
+      let lifecycle = 0;
+      let journal = 0;
+      let mentions = 0;
+      for (const value of staticTexts(node, checker)) {
+        // A composed value that spells a writer's name, or an inventoried one, counts as the literal would.
+        if (!plain) {
+          if (WRITER_NAMES.has(value)) count(value as WriterRule, false);
+          if (value === 'builder.invoke') inventory.add('builderKind');
+          if (value === 'runtime_room.bound') inventory.add('boundEvent');
+        }
+        mentions = Math.max(mentions, tableNameMentions(value));
+        const sql = withoutSqlComments(value);
+        lifecycle = Math.max(lifecycle, tableWrites(sql, 'build_room_events'));
+        journal = Math.max(journal, tableWrites(sql, 'command_journal_events') + routineCalls(sql));
+      }
+      count('lifecycleSql', false, lifecycle);
+      count('journalSql', false, journal);
+      count('tableNames', false, mentions);
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
   return { writers, inventory };
+}
+
+let cachedScanOptions: ts.CompilerOptions | undefined;
+
+/** The repository's compiler options, without the standard library or ambient types: literal types need neither. */
+function scanOptions(): ts.CompilerOptions {
+  cachedScanOptions ??= { ...repositoryOptions(), noLib: true, types: [], noEmit: true };
+  return cachedScanOptions;
+}
+
+/** A program over in-memory sources (absolute path to text), reading any other file it needs from disk. */
+export function programOver(sources: ReadonlyMap<string, string>, options: ts.CompilerOptions): ts.Program {
+  const host = ts.createCompilerHost(options, true);
+  const fromDisk = host.getSourceFile.bind(host);
+  host.getSourceFile = (fileName, languageVersion, onError, shouldCreate) => {
+    const text = sources.get(resolve(fileName));
+    return text !== undefined ? ts.createSourceFile(fileName, text, languageVersion, true) : fromDisk(fileName, languageVersion, onError, shouldCreate);
+  };
+  const exists = host.fileExists.bind(host);
+  host.fileExists = (fileName) => sources.has(resolve(fileName)) || exists(fileName);
+  // Module resolution walks directories: an in-memory file's directory exists.
+  const directoryExists = host.directoryExists?.bind(host) ?? ts.sys.directoryExists;
+  host.directoryExists = (dir) => [...sources.keys()].some((path) => path.startsWith(resolve(dir) + sep)) || directoryExists(dir);
+  const read = host.readFile.bind(host);
+  host.readFile = (fileName) => sources.get(resolve(fileName)) ?? read(fileName);
+  return ts.createProgram({ rootNames: [...sources.keys()], options, host });
+}
+
+/** The findings of one text on its own, as a fixture file. */
+export function findingsInText(text: string, file = 'fixture.ts'): FileFindings {
+  const path = join(REPO_ROOT, '__binding_one_writer_fixture__', file);
+  const program = programOver(new Map([[path, text]]), scanOptions());
+  return findingsIn(program.getSourceFile(path)!, program.getTypeChecker());
 }
 
 const TS_SOURCE = /\.(?:ts|mts|cts)$/;
@@ -355,12 +575,14 @@ function sourceFiles(): string[] {
 
 const readSource = (file: string): string => readFileSync(join(REPO_ROOT, file), 'utf8');
 
-/** Every writer rule's counts at each "file :: declaration" site, and every inventory rule's files, over the given sources. */
+/** Every writer rule's counts at each "file :: declaration" site, and every inventory rule's files, over the given sources (repository-relative path to text). */
 function scan(sources: ReadonlyMap<string, string>): { writers: Tallies; inventory: Record<InventoryRule, string[]> } {
   const writers: Tallies = {};
   const inventory: Record<InventoryRule, string[]> = { builderKind: [], boundEvent: [] };
-  for (const [file, text] of [...sources].sort(([a], [b]) => a.localeCompare(b))) {
-    const found = findingsIn(file, text);
+  const program = programOver(new Map([...sources].map(([file, text]) => [join(REPO_ROOT, file), text])), scanOptions());
+  const checker = program.getTypeChecker();
+  for (const [file] of [...sources].sort(([a], [b]) => a.localeCompare(b))) {
+    const found = findingsIn(program.getSourceFile(join(REPO_ROOT, file))!, checker);
     for (const [rule, sites] of found.writers) {
       for (const [site, { declarations, uses }] of [...sites].sort(([a], [b]) => a.localeCompare(b))) {
         (writers[rule] ??= {})[`${file} :: ${site}`] = `${declarations}/${uses}`;
@@ -425,6 +647,28 @@ const EXPECTED: Tallies = {
     [at(LIFECYCLE_STORE, 'insertEvent')]: '1/0',
   },
   lifecycleSql: { [at(LIFECYCLE_STORE, 'insertEvent')]: '0/1' },
+  // Every mention of the two tables and the routine: the two writes above,
+  // reads (SELECT … FROM), the journal's error message naming the routine,
+  // and the migrations' DDL and routine body. A new mention is reviewed as a
+  // possible write, a table name handed to a generic helper included.
+  tableNames: {
+    [at(GATEWAY_ROOM_STATE, 'isBoundRuntimeRoom')]: '0/1',
+    [at(GATEWAY_ROOM_STATE, 'roomOpenForMint')]: '0/2',
+    [at(JOURNAL_STORE, 'APPEND_SQL')]: '0/1',
+    [at(JOURNAL_STORE, 'BINDINGS_SQL')]: '0/1',
+    [at(JOURNAL_STORE, 'BOUND_SQL')]: '0/1',
+    [at(JOURNAL_STORE, 'JOURNALED_SQL')]: '0/1',
+    [at(JOURNAL_STORE, 'JournalStore.appendWithin')]: '0/1',
+    [at(JOURNAL_STORE, 'LIFECYCLE_SQL')]: '0/1',
+    [at(JOURNAL_STORE, 'PAGE_SQL')]: '0/1',
+    [at(MIGRATIONS, 'MIGRATIONS')]: '0/44',
+    [at(PLAN_STORE, 'LIFECYCLE_SQL')]: '0/1',
+    [at(PLANNER_LOOP, 'T1_FACTS_SQL')]: '0/1',
+    [at(PLANNER_LOOP, 'T4_PAYLOAD_SQL')]: '0/1',
+    [at(LIFECYCLE_STORE, 'PostgresLedgerStore.exportRoom')]: '0/1',
+    [at(LIFECYCLE_STORE, 'insertEvent')]: '0/1',
+    [at(LIFECYCLE_STORE, 'replay')]: '0/1',
+  },
   // The journal store's routine call, and the routine's own body in migration 0006.
   journalSql: { [at(JOURNAL_STORE, 'APPEND_SQL')]: '0/1', [at(MIGRATIONS, 'MIGRATIONS')]: '0/1' },
 };
@@ -522,8 +766,8 @@ export function appendLaterBuilderRow(tx: JournalTransaction, command: BuilderCo
     tampered.set(GOVERNED_PATH, moved);
     tampered.set(server, `${sources.get(server)!}\nexport const viaHelper = appendLaterBuilderRow;\n`);
     assert.deepEqual(
-      totalOf(findingsIn(GOVERNED_PATH, moved), 'appendBuilderJournaled'),
-      totalOf(findingsIn(GOVERNED_PATH, original), 'appendBuilderJournaled'),
+      totalOf(findingsInText(moved), 'appendBuilderJournaled'),
+      totalOf(findingsInText(original), 'appendBuilderJournaled'),
       'the file\'s totals are unchanged, so a per-file check passes it',
     );
     const writers = scan(tampered).writers;
@@ -538,15 +782,27 @@ export function appendLaterBuilderRow(tx: JournalTransaction, command: BuilderCo
     caught(GOVERNED_PATH, 'await (null as unknown as PostgresLedgerStore).appendRecorded("r", {} as never);', 'appendRecorded');
   });
 
+  it('SQL built from a table-name constant, in a production file', () => {
+    caught(PLANNER_LOOP, 'const EVENTS = "build_room_events";\nexport const sql = `INSERT INTO ${EVENTS} (room_id) VALUES ($1)`;', 'lifecycleSql');
+  });
+
+  it('a table name handed to a generic helper, in a production file', () => {
+    caught(
+      PLANNER_LOOP,
+      'export function insertInto(table: string) { return `INSERT INTO ${table} (room_id) VALUES ($1)`; }\nexport const viaHelper = insertInto("build_room_events");',
+      'tableNames',
+    );
+  });
+
   it('a first caller anywhere else', () => {
-    caught('packages/control-plane/src/planner-loop.ts', 'export const w = (s: { appendRecorded: unknown }) => s.appendRecorded;', 'appendRecorded');
+    caught(PLANNER_LOOP, 'export const w = (s: { appendRecorded: unknown }) => s.appendRecorded;', 'appendRecorded');
   });
 });
 
 describe('binding-one-writer · every ordinary form is counted', () => {
-  const usesOf = (rule: WriterRule, text: string): number => totalOf(findingsIn('fixture.ts', text), rule).uses;
-  const declarationsOf = (rule: WriterRule, text: string): number => totalOf(findingsIn('fixture.ts', text), rule).declarations;
-  const inventoried = (rule: InventoryRule, text: string): boolean => findingsIn('fixture.ts', text).inventory.has(rule);
+  const usesOf = (rule: WriterRule, text: string): number => totalOf(findingsInText(text), rule).uses;
+  const declarationsOf = (rule: WriterRule, text: string): number => totalOf(findingsInText(text), rule).declarations;
+  const inventoried = (rule: InventoryRule, text: string): boolean => findingsInText(text).inventory.has(rule);
 
   const nameForms = (name: string): readonly string[] => [
     `await store.${name}(roomId, spec);`,
@@ -574,7 +830,7 @@ describe('binding-one-writer · every ordinary form is counted', () => {
   }
 
   it('attributes each occurrence to the top-level declaration that contains it', () => {
-    const sites = (text: string): string[] => [...(findingsIn('fixture.ts', text).writers.get('appendBinding')?.keys() ?? [])].sort();
+    const sites = (text: string): string[] => [...(findingsInText(text).writers.get('appendBinding')?.keys() ?? [])].sort();
     assert.deepEqual(sites('export async function governed(tx: T) { const inner = () => tx.appendBinding(); return inner(); }'), ['governed'], 'a nested function belongs to the outer one');
     assert.deepEqual(sites('export const helper = async (tx: T) => tx.appendBinding();'), ['helper']);
     assert.deepEqual(sites('const a = 1, helper = (tx: T) => tx.appendBinding();'), ['helper']);
@@ -654,6 +910,70 @@ describe('binding-one-writer · every ordinary form is counted', () => {
     }
   });
 
+  it('SQL whose table name or keywords come from statically known constants: local, imported, as const, through + chains, join and concat', () => {
+    const write = (sql: string): number => usesOf('lifecycleSql', sql);
+    assert.equal(write('const TABLE = "build_room_events"; export const sql = `INSERT INTO ${TABLE} (room_id) VALUES ($1)`;'), 1, 'the ninth Tier-2 review\'s probe (ec9d494)');
+    assert.equal(write('const TABLE: string = "build_room_events"; export const sql = `INSERT INTO ${TABLE} (room_id) VALUES ($1)`;'), 1, 'a const typed wide');
+    assert.equal(write('const T = { events: "build_room_events" } as const; export const sql = `INSERT INTO ${T.events} VALUES ($1)`;'), 1, 'an as-const property');
+    assert.equal(write('const VERB = "INSERT INTO"; const TABLE = "build_room_events"; export const sql = VERB + " " + TABLE + " VALUES ($1)";'), 1, 'a + chain');
+    assert.equal(write('const TABLE = "build_room_events"; export const sql = ["INSERT", "INTO", TABLE, "VALUES ($1)"].join(" ");'), 1, 'join');
+    assert.equal(write('const TABLE = "build_room_events"; export const sql = "INSERT INTO ".concat(TABLE, " VALUES ($1)");'), 1, 'concat');
+    assert.equal(write('const SCHEMA = "public"; const TABLE = "build_room_events"; export const sql = `INSERT /* x */ INTO ${SCHEMA}.${TABLE} VALUES ($1)`;'), 1, 'schema and table both constants');
+    assert.equal(write('function pick(k: "a" | "b") { return k; } declare const which: "build_room_events" | "other_table"; export const sql = `INSERT INTO ${which} VALUES ($1)`;'), 1, 'a union of literals');
+    assert.equal(usesOf('journalSql', 'const FN = "command_journal_append"; export const sql = `SELECT * FROM public.${FN}($1, $2, $3, $4, $5)`;'), 1, 'the routine through a constant');
+    assert.equal(usesOf('appendRecorded', 'declare const store: Record<string, () => void>; store["append" + "Recorded"]();'), 1, 'a writer name assembled from literals');
+    // Not known statically: a parameter, or a value read at run time. The test says so.
+    assert.equal(write('export function insertInto(table: string) { return `INSERT INTO ${table} VALUES ($1)`; }'), 0, 'a parameter is not known');
+  });
+
+  it('a tagged template is read whole, its constants resolved', () => {
+    const tag = 'declare const sql: any; ';
+    assert.equal(usesOf('lifecycleSql', `${tag}export const q = sql\`INSERT INTO build_room_events VALUES (1)\`;`), 1);
+    assert.equal(usesOf('lifecycleSql', `${tag}const T = "build_room_events"; export const q = sql\`INSERT INTO \${T} VALUES (1)\`;`), 1);
+    assert.equal(usesOf('tableNames', `${tag}export const q = sql\`SELECT * FROM build_room_events\`;`), 1);
+  });
+
+  it('a table name declared any other way: let, var, an object property, shorthand, element access, a class field, an enum member, a parameter default, a destructured default', () => {
+    const write = (code: string): number => usesOf('lifecycleSql', code);
+    const sql = (part: string): string => `\`INSERT INTO \${${part}} VALUES ($1)\``;
+    assert.equal(write(`let T = "build_room_events"; export const q = ${sql('T')};`), 1, 'let');
+    assert.equal(write(`var T = "build_room_events"; export const q = ${sql('T')};`), 1, 'var');
+    assert.equal(write(`const TABLES = { events: "build_room_events" }; export const q = ${sql('TABLES.events')};`), 1, 'an object property');
+    assert.equal(write(`const TABLES = { events: "build_room_events" }; export const q = ${sql('TABLES["events"]')};`), 1, 'element access');
+    assert.equal(write(`const events = "build_room_events"; const TABLES = { events }; export const q = ${sql('TABLES.events')};`), 1, 'shorthand');
+    assert.equal(write(`class S { static table = "build_room_events"; q() { return ${sql('S.table')}; } }`), 1, 'a static field');
+    assert.equal(write(`class S { private table = "build_room_events"; q() { return ${sql('this.table')}; } }`), 1, 'an instance field');
+    assert.equal(write(`enum T { Events = "build_room_events" } export const q = ${sql('T.Events')};`), 1, 'an enum member');
+    assert.equal(write(`export function q(table = "build_room_events") { return ${sql('table')}; }`), 1, 'a parameter default');
+    assert.equal(write(`export function q({ table = "build_room_events" }: { table?: string }) { return ${sql('table')}; }`), 1, 'a destructured default');
+    assert.equal(write(`import * as tables from "./nowhere.js"; export const q = ${sql('tables.events')};`), 0, 'not known: nothing declares it');
+  });
+
+  it('mentions every spelling of the two tables and the routine, and nothing that only resembles them', () => {
+    assert.equal(tableNameMentions('SELECT * FROM "BUILD_ROOM_EVENTS" JOIN public.command_journal_events USING (x)'), 2);
+    assert.equal(tableNameMentions('SELECT public.Command_Journal_Append($1)'), 1);
+    assert.equal(tableNameMentions('build_room_events_archive xbuild_room_events command_journal_events2'), 0);
+    const helper = 'export function insertInto(table: string) { return `INSERT INTO ${table} VALUES ($1)`; }\nexport const q = insertInto("build_room_events");';
+    assert.equal(usesOf('lifecycleSql', helper), 0, 'what the helper writes is not known statically');
+    assert.equal(usesOf('tableNames', helper), 1, 'the name handed to it is pinned where it is written');
+  });
+
+  it('a constant imported from another module resolves, as the type checker sees it', () => {
+    const dir = join(REPO_ROOT, '__binding_one_writer_fixture__');
+    const tables = join(dir, 'tables.ts');
+    const writer = join(dir, 'writer.ts');
+    const program = programOver(
+      new Map([
+        [tables, 'export const EVENTS_TABLE = "build_room_events";\nexport const JOURNAL_FN = "command_journal_append";\n'],
+        [writer, 'import { EVENTS_TABLE, JOURNAL_FN as FN } from "./tables.js";\nexport const a = `INSERT INTO ${EVENTS_TABLE} (room_id) VALUES ($1)`;\nexport const b = `SELECT * FROM ${FN}($1, $2, $3, $4, $5)`;\n'],
+      ]),
+      scanOptions(),
+    );
+    const found = findingsIn(program.getSourceFile(writer)!, program.getTypeChecker());
+    assert.equal(totalOf(found, 'lifecycleSql').uses, 1);
+    assert.equal(totalOf(found, 'journalSql').uses, 1);
+  });
+
   it('each write in one string counts, so a second one added to an existing string is caught', () => {
     assert.equal(tableWrites('INSERT INTO build_room_events VALUES (1); INSERT INTO "build_room_events" VALUES (2)', 'build_room_events'), 2);
     assert.equal(usesOf('lifecycleSql', `const sql = 'INSERT INTO build_room_events VALUES (1); INSERT INTO build_room_events VALUES (2)';`), 2);
@@ -676,7 +996,7 @@ describe('binding-one-writer · every ordinary form is counted', () => {
       assert.deepEqual(roots.map((path) => relative(dir, path).split(sep).join('/')), ['packages/p/src/deep/legacy.cts', 'packages/p/src/entry.ts']);
       const files = compiledFiles(roots, { module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, types: [] }, dir);
       assert.ok(files.includes('outside/second.mts'), `the imported .mts module was not compiled in: ${files.join(', ')}`);
-      const found = new Map(files.map((file) => [file, findingsIn(file, readFileSync(join(dir, file), 'utf8'))]));
+      const found = new Map(files.map((file) => [file, findingsInText(readFileSync(join(dir, file), 'utf8'), file.replace(/\//g, '_'))]));
       assert.equal(totalOf(found.get('outside/second.mts')!, 'appendRecorded').uses, 1);
       assert.equal(totalOf(found.get('packages/p/src/deep/legacy.cts')!, 'lifecycleSql').uses, 1);
     } finally {
