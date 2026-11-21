@@ -22,16 +22,23 @@
 
 import type { Pool, PoolClient } from 'pg';
 import { isCanonicalUuid } from '../../gateway-protocol/src/index.js';
+import { TRANSITIONS, recordedEventSpec } from '../../contracts/src/index.js';
 import {
   apply,
   applyAll,
   initialLedger,
   type ApplyResult,
+  type BindingRefusalCode,
   type LedgerEntry,
   type LedgerState,
   type LifecycleEvent,
   type RejectionCode,
 } from '../../ledger/src/index.js';
+import { bindingRecordedFor } from './journal-store.js';
+import { transactionBoundClient } from './transaction-client.js';
+
+/** T17's triggers, read from the transition table rather than restated. */
+const T17_TRIGGERS: ReadonlySet<string> = new Set(TRANSITIONS.find((row) => row.id === 'T17')?.triggers ?? []);
 
 export type AppendOutcome =
   | 'transition'
@@ -60,6 +67,15 @@ export type RoomAppendOutcome<T> =
  * asserts ledger semantics alone, can exercise the store directly.
  */
 export interface RoomAppendFence {
+  /**
+   * G17's occupancy limb, derived and never believed: true only when the
+   * room's binding names a runtime room whose occupancy the Gateway named
+   * in the binding has reported CLOSED over its signed channel
+   * (FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING, C1). Optional on this
+   * interface for the same reason the fence itself is optional; a fenced
+   * append without it derives false.
+   */
+  deriveBoundRuntimeRoomClosed?(binding: LedgerState['binding']): boolean;
   runRoomAppend<T>(
     body: (
       client: PoolClient,
@@ -121,6 +137,39 @@ export interface DerivedAppend<T> {
     client: PoolClient,
     appended: { readonly event: LifecycleEvent; readonly seq: number; readonly entry: LedgerEntry; readonly state: LedgerState },
   ) => Promise<T>;
+}
+
+/**
+ * An append of a recorded event: one that triggers no transition
+ * (`runtime_room.bound`, the lifecycle ruling's B1; journal ruling B4).
+ *
+ * `build` reads the room's state under the room lock and either returns the
+ * event or throws to refuse it; `afterRecorded` runs on the same connection
+ * after the lifecycle row is written, before COMMIT. Both get that connection
+ * without the means to end the transaction (`transactionBoundClient`): the
+ * store alone commits, and only once its own checks hold. Unlike a transition,
+ * a refusal here writes nothing at all, not even a rejection row: the
+ * lifecycle ruling's B4 says a refused binding "is refused and writes
+ * nothing". A throw from either step, or a reducer refusal, rolls back the
+ * whole transaction.
+ */
+export interface RecordedAppend<T> {
+  readonly build: (client: PoolClient, current: LedgerState) => Promise<LifecycleEvent>;
+  readonly afterRecorded: (
+    client: PoolClient,
+    appended: { readonly event: LifecycleEvent; readonly seq: number; readonly state: LedgerState },
+  ) => Promise<T>;
+}
+
+/** The reducer refused a recorded event; the transaction wrote nothing. */
+export class RecordedEventRefusedError extends Error {
+  constructor(
+    readonly code: RejectionCode | BindingRefusalCode | 'not_recorded' | 'binding_not_journaled',
+    readonly reason: string,
+  ) {
+    super(`recorded event refused (${code}): ${reason}`);
+    this.name = 'RecordedEventRefusedError';
+  }
 }
 
 export interface DerivedAppendResult<T> {
@@ -251,6 +300,106 @@ export class PostgresLedgerStore {
     }
     if (outcome.value === null) throw new RoomNotFoundError(roomId);
     return outcome.value;
+  }
+
+  /**
+   * A recorded event under the room lock (see `RecordedAppend`). Fenced
+   * exactly as `underRoomLock` is. On success the lifecycle row and
+   * whatever `afterRecorded` wrote commit together; on any refusal or throw
+   * nothing commits.
+   */
+  async appendRecorded<T>(
+    roomId: string,
+    spec: RecordedAppend<T>,
+  ): Promise<
+    | { readonly status: 'ok'; readonly value: T; readonly seq: number; readonly event: LifecycleEvent; readonly state: LedgerState }
+    | { readonly status: 'not_leader'; readonly committed: boolean }
+  > {
+    const body = async (client: PoolClient) => {
+      const { current, logLength } = await lockAndReplay(client, roomId);
+      // The caller's steps share this transaction but cannot end it: a COMMIT
+      // from either would make the lifecycle row durable before the binding
+      // check below ran.
+      const stepClient = transactionBoundClient(client);
+      const event = withoutCallerOccupancy(await spec.build(stepClient, current));
+      const result: ApplyResult = apply(current, event);
+      if (!result.ok) throw new RecordedEventRefusedError(result.code, result.reason);
+      if (result.kind !== 'recorded') {
+        throw new RecordedEventRefusedError('not_recorded', `${event.event} is not a recorded event here (${result.kind})`);
+      }
+      const seq = logLength + 1;
+      await insertEvent(client, {
+        roomId,
+        seq,
+        event,
+        outcome: 'recorded',
+        entry: null,
+        state: result.state,
+        recordedState: result.state.state,
+      });
+      const value = await spec.afterRecorded(stepClient, { event, seq, state: result.state });
+      // The recorded entry commits only with its binding record, and through
+      // that record's own check with the first Builder command's journaled
+      // row (journal ruling B3), whatever the callback did.
+      if (!(await bindingRecordedFor(client, { roomId, eventId: event.eventId }))) {
+        throw new RecordedEventRefusedError(
+          'binding_not_journaled',
+          `${event.event} commits only with its binding record and its first Builder command (journal ruling B3)`,
+        );
+      }
+      return { value, seq, event, state: result.state };
+    };
+    if (this.fence === undefined) {
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const out = await body(client);
+        await client.query('COMMIT');
+        return { status: 'ok', ...out };
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    let notFound = false;
+    const outcome = await this.fence.runRoomAppend<Awaited<ReturnType<typeof body>> | null>(async (client) => {
+      try {
+        return { value: await body(client), commit: true };
+      } catch (error) {
+        if (error instanceof RoomNotFoundError) {
+          notFound = true;
+          return { value: null, commit: false };
+        }
+        throw error;
+      }
+    });
+    if (notFound) throw new RoomNotFoundError(roomId);
+    if (outcome.status === 'not_leader') return { status: 'not_leader', committed: outcome.committed };
+    if (outcome.status === 'commit_failed') throw new Error(`recorded append commit failed: ${outcome.message}`);
+    if (outcome.value === null) throw new RoomNotFoundError(roomId);
+    return { status: 'ok', ...outcome.value };
+  }
+
+  /**
+   * The facts a fenced append decides over: the caller's, with the derived
+   * ones overwritten. `gatewayOnline` is derived for every event, as it
+   * always has been. G17's occupancy limb, `boundRuntimeRoomClosed`, is
+   * derived only for T17's trigger, the one event whose guard reads it,
+   * from the room's own binding and the bound Gateway's signed report
+   * (FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING, C1); on every other
+   * event a caller's value is dropped, so it is never persisted.
+   */
+  private async derivedFacts(
+    event: LifecycleEvent,
+    current: LedgerState,
+    deriveGatewayOnline: () => Promise<boolean>,
+  ): Promise<NonNullable<LifecycleEvent['facts']>> {
+    const facts: NonNullable<LifecycleEvent['facts']> = { ...event.facts, gatewayOnline: await deriveGatewayOnline() };
+    delete (facts as { boundRuntimeRoomClosed?: boolean }).boundRuntimeRoomClosed;
+    if (!T17_TRIGGERS.has(event.event)) return facts;
+    return { ...facts, boundRuntimeRoomClosed: this.fence?.deriveBoundRuntimeRoomClosed?.(current.binding) ?? false };
   }
 
   /** Whether appends run inside the leader fence with `gatewayOnline` derived. */
@@ -394,15 +543,35 @@ export class PostgresLedgerStore {
      * deliberately: it is evidence of what the caller sent, never an input
      * to a replay.
      */
+    // Without a fence nothing can derive G17's occupancy limb, so a caller's
+    // `boundRuntimeRoomClosed` is dropped here too: it is never reduced or
+    // persisted on any path, and T17 refuses on an unfenced store.
     const offered =
       deriveGatewayOnline === null
-        ? event
+        ? withoutCallerOccupancy(event)
         : {
             ...event,
-            facts: { ...event.facts, gatewayOnline: await deriveGatewayOnline() },
+            facts: await this.derivedFacts(event, current, deriveGatewayOnline),
           };
 
     const result: ApplyResult = apply(current, offered);
+
+    // A recorded event (`runtime_room.bound`) is appended only through
+    // `appendRecorded`. Here, short of a replay of one already recorded
+    // (INV-4: answered, nothing written), it is refused by a throw before
+    // anything is written, not even a rejection row, whatever the reducer
+    // said: the lifecycle ruling's B4 says a refused binding "is refused and
+    // writes nothing". The throw aborts the transaction.
+    if (recordedEventSpec(event.event) !== null && !(result.ok && result.kind === 'replay')) {
+      throw new Error(`${event.event} is a recorded event, appended only through its governed path`);
+    }
+
+    // A binding member on any other event is a refused binding, not a
+    // rejection: written nowhere, as B4 says, and the rejection vocabulary
+    // stands (D1). The generic route refuses such a body before the store.
+    if (!result.ok && result.kind === 'binding_refused') {
+      throw new Error(`refused, nothing written (${result.code}): ${result.reason}`);
+    }
 
     if (!result.ok) {
       await recordRejection(client, roomId, event, result.code, result.reason);
@@ -432,6 +601,12 @@ export class PostgresLedgerStore {
         awaiting: result.awaiting,
         state: result.state,
       };
+    }
+
+    if (result.kind === 'recorded') {
+      // Unreachable: a recorded event is refused above. Kept so a reducer
+      // result of this kind for any other event still fails closed.
+      throw new Error(`${result.event} is a recorded event, appended only through its governed path`);
     }
 
     await insertEvent(client, {
@@ -850,9 +1025,11 @@ interface InsertArgs {
   readonly roomId: string;
   readonly seq: number;
   readonly event: LifecycleEvent;
-  readonly outcome: 'transition' | 'conjunction_pending';
+  readonly outcome: 'transition' | 'conjunction_pending' | 'recorded';
   readonly entry: LedgerEntry | null;
   readonly state: LedgerState;
+  /** A recorded row's state, from and to alike (journal ruling B4). */
+  readonly recordedState?: string;
 }
 
 /**
@@ -884,7 +1061,7 @@ async function lockAndReplay(
 }
 
 async function insertEvent(client: PoolClient, args: InsertArgs): Promise<void> {
-  const { roomId, seq, event, outcome, entry, state } = args;
+  const { roomId, seq, event, outcome, entry, state, recordedState } = args;
   await client.query(
     `INSERT INTO build_room_events (
        room_id, seq, event_id, event, outcome, entry_seq, transition_id, guard_id,
@@ -900,8 +1077,8 @@ async function insertEvent(client: PoolClient, args: InsertArgs): Promise<void> 
       entry?.seq ?? null,
       entry?.transition ?? null,
       entry?.guard ?? null,
-      entry?.fromState ?? null,
-      entry?.resultingState ?? null,
+      entry?.fromState ?? recordedState ?? null,
+      entry?.resultingState ?? recordedState ?? null,
       JSON.stringify(event.actor),
       JSON.stringify(event.attribution),
       JSON.stringify(event.scope),
@@ -926,4 +1103,20 @@ async function recordRejection(
      VALUES ($1,$2,$3,$4,$5,$6,$7)`,
     [roomId, event.eventId, String(event.event), code, reason, JSON.stringify(event.actor), event.occurredAt],
   );
+}
+
+/**
+ * The event without `boundRuntimeRoomClosed`. Only a fenced append derives
+ * that fact, from the room's binding and the bound Gateway's report
+ * (FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING, C1); everywhere else a
+ * caller's value is dropped before the reducer sees the event and before it
+ * is persisted.
+ */
+function withoutCallerOccupancy(event: LifecycleEvent): LifecycleEvent {
+  if (event.facts === undefined || !Object.prototype.hasOwnProperty.call(event.facts, 'boundRuntimeRoomClosed')) {
+    return event;
+  }
+  const facts = { ...event.facts };
+  delete (facts as { boundRuntimeRoomClosed?: boolean }).boundRuntimeRoomClosed;
+  return { ...event, facts };
 }

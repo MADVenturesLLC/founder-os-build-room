@@ -11,13 +11,17 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
 import { type State } from '../packages/contracts/src/index.js';
 import {
   COMMAND_EVENT_TYPES,
+  SPEC_ID_C2,
+  SPEC_ID_D,
+  SPEC_ID_E,
   effectivePlanBearingState,
+  journalRowSpec,
   planHashRequired,
 } from '../packages/journal/src/index.js';
 import { buildAllVectorFiles, renderVectorFile } from './support/journal-vector-source.js';
@@ -49,11 +53,16 @@ describe('golden vectors — committed files match a fresh build', () => {
       assert.equal(committed, renderVectorFile(built));
     });
   }
+
+  it('the committed directory holds exactly the files the implementation builds, no fewer and no stale extra', () => {
+    const committed = readdirSync(vectorsDir).filter((name) => name.endsWith('.json')).sort();
+    assert.deepEqual(committed, [...buildAllVectorFiles().keys()].sort());
+  });
 });
 
 describe('golden vectors — hashes re-verified against the §6.2 definitions', () => {
   it('every standalone vector sha256 equals SHA-256 over its canonical bytes', () => {
-    for (const fileName of ['envelope.json', 'plandoc.json', 'decision-row.json']) {
+    for (const fileName of ['envelope.json', 'plandoc.json', 'decision-row.json', 'binding-row.json']) {
       const parsed = JSON.parse(readFileSync(`${vectorsDir}${fileName}`, 'utf8')) as {
         vectors: readonly StandaloneVector[];
       };
@@ -153,5 +162,30 @@ describe('golden vectors — hashes re-verified against the §6.2 definitions', 
       prior = row.chain_hash;
     }
     assert.deepEqual([...classes].sort(), ['command', 'decision'], 'both record classes on one chain');
+  });
+
+  it('the binding chain verifies from the 64-zero genesis, all three record classes on one seq space', () => {
+    // Contract §6.2: chain_hash covers each row's bytes per (c), (d) or (e)
+    // as its record class determines, under the one framing.
+    const parsed = JSON.parse(readFileSync(`${vectorsDir}chain-binding.json`, 'utf8')) as {
+      specs: readonly string[];
+      genesis: string;
+      rows: readonly (ChainVectorRow & { readonly spec: string; readonly input: { readonly seq: string } })[];
+    };
+    assert.equal(parsed.genesis, '0'.repeat(64));
+    assert.deepEqual([...parsed.specs], [SPEC_ID_C2, SPEC_ID_D, SPEC_ID_E]);
+    let prior = parsed.genesis;
+    const classes = new Set<string>();
+    for (const [index, row] of parsed.rows.entries()) {
+      classes.add(row.record_class);
+      assert.equal(row.input.seq, String(index + 1), `${row.name}: one seq space, no gap`);
+      assert.equal(row.prior_chain_hash, prior, `${row.name}: prior linkage`);
+      const bytes = Buffer.from(row.canonical_hex, 'hex');
+      assert.equal(journalRowSpec(new Uint8Array(bytes)), row.spec, `${row.name}: bytes open with their spec`);
+      assert.equal(sha256HexOf(bytes), row.row_sha256, `${row.name}: row hash`);
+      assert.equal(sha256HexOf(Buffer.concat([Buffer.from(prior, 'ascii'), bytes])), row.chain_hash, `${row.name}: chain framing`);
+      prior = row.chain_hash;
+    }
+    assert.deepEqual([...classes].sort(), ['binding', 'command', 'decision'], 'three record classes on one chain');
   });
 });

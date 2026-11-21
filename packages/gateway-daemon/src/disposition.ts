@@ -140,6 +140,50 @@ export const SERVER_VOCABULARY: Readonly<Record<string, readonly string[]>> = {
     '503 clock_unreliable',
     '5xx',
   ],
+  /*
+   * The runtime-room reports (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2) answer
+   * in the planner report's vocabulary: same session, same checks. A report
+   * the control plane cannot record is a 200 with `accepted: false`, not a new
+   * refusal code, so the primary table needs no new row.
+   */
+  'POST /gateway/room/minted': [
+    '200',
+    '400 invalid_request',
+    '401 unknown_key',
+    '401 bad_signature',
+    '401 purpose_mismatch',
+    '403 revoked',
+    '403 awaiting_approval',
+    '403 denied',
+    '403 expired',
+    '409 session_required',
+    '409 stale_sequence',
+    '409 stale_timestamp',
+    '413 payload_too_large',
+    '429 rate_limited',
+    '503 not_leader',
+    '503 clock_unreliable',
+    '5xx',
+  ],
+  'POST /gateway/room/occupancy': [
+    '200',
+    '400 invalid_request',
+    '401 unknown_key',
+    '401 bad_signature',
+    '401 purpose_mismatch',
+    '403 revoked',
+    '403 awaiting_approval',
+    '403 denied',
+    '403 expired',
+    '409 session_required',
+    '409 stale_sequence',
+    '409 stale_timestamp',
+    '413 payload_too_large',
+    '429 rate_limited',
+    '503 not_leader',
+    '503 clock_unreliable',
+    '5xx',
+  ],
 };
 
 /**
@@ -199,7 +243,7 @@ export const STAGING_PROBE_TABLE: Readonly<Record<string, Disposition>> = {
   '413 payload_too_large': 'halt_fail_closed',
 };
 
-/** Primary lane (heartbeat, session-start, and planner poll and report traffic). */
+/** Primary lane (heartbeat, session-start, planner poll and report, and runtime-room report traffic). */
 export const PRIMARY_TABLE: Readonly<Record<string, Disposition>> = {
   '200': 'retain_and_continue',
   '409 session_required': 'resync_session',

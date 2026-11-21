@@ -29,6 +29,7 @@ import {
   stringField,
 } from './bytes.js';
 import { SPEC_ID_D } from './decision-row.js';
+import { SPEC_ID_E } from './binding-row.js';
 import {
   encodeEnvelope,
   envelopeDigest,
@@ -379,14 +380,14 @@ export function encodeCommandEventRowAs(spec: CommandRowSpec, row: CommandEventR
 
 /**
  * A chain's command rows may move from `BRJ:c:1` to `BRJ:c:2` once and never back.
- * `specs` lists every row's spec id in `seq` order. Decision rows (`BRJ:d:1`) are
- * skipped wherever they sit; any other id is refused. Answers the reason the row
- * at `index` breaks the order, or null.
+ * `specs` lists every row's spec id in `seq` order. Decision rows (`BRJ:d:1`) and
+ * binding rows (`BRJ:e:1`) are skipped wherever they sit; any other id is refused.
+ * Answers the reason the row at `index` breaks the order, or null.
  */
 export function commandSpecOrderDefect(specs: readonly string[]): string | null {
   let seenV2 = false;
   for (const [index, spec] of specs.entries()) {
-    if (spec === SPEC_ID_D) continue;
+    if (spec === SPEC_ID_D || spec === SPEC_ID_E) continue;
     if (spec === SPEC_ID_C2) seenV2 = true;
     else if (spec === SPEC_ID_C && seenV2) {
       return `row ${index} is a ${SPEC_ID_C} command row after a ${SPEC_ID_C2} one`;

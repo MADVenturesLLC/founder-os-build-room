@@ -1914,6 +1914,161 @@ export const MIGRATIONS: readonly Migration[] = [
       `GRANT SELECT, INSERT ON public.build_room_plans TO br_app_runtime`,
     ],
   },
+
+  {
+    /*
+     * The Phase 5 journal schema: G1 of FOUNDER-RULING-20261117-BR-JOURNAL-PHASE5
+     * (docs/command-journal-contract.md §2, "Phase 5 schema and verification").
+     * "One migration, the next in sequence. It admits the binding record
+     * class and its one event; admits the four T7 events to the decision
+     * class; gives the lifecycle log the recorded outcome of B4; and adds
+     * the constraints of B5."
+     *
+     * - The journal: `binding` joins the record classes, with its one event
+     *   `runtime_room.bound`; the decision class admits the four T7 acts
+     *   (written from step 3 on, under BRJ:d:2); a binding row's
+     *   `command_id` is the first Builder command's, so the `cmd_`
+     *   namespace covers it as it covers command rows.
+     * - The lifecycle log: the `recorded` outcome, for the one event that
+     *   triggers no transition (B4). A recorded row carries no transition,
+     *   guard or entry, records `BUILDING` from and to, and carries the
+     *   three binding fields, the lifecycle room id equal to its own room.
+     *   `runtime_room.bound` is recorded and nothing else is.
+     * - B5, by constraint and not by application code alone: a second
+     *   binding for a lifecycle room, and a binding naming a runtime room
+     *   already bound, each violate a unique index, which aborts the whole
+     *   transaction that carries the binding (B3).
+     *
+     * Applier privileges. The journal table belongs to br_journal_owner
+     * (0006, step 4), and altering its constraints needs that role's
+     * privileges. A superuser applier has them; the administrative login of
+     * a managed Postgres does not keep them after 0006 (its step 13a). As
+     * 0006 did, this entry lends the applier membership in
+     * br_journal_owner for the length of its own transaction and takes it
+     * back before COMMIT, and only when the applier was not already a
+     * member, so every role and grant ends as it began (G1: "It changes no
+     * database role and no grant"). The owner-class path is not touched.
+     * The loan is made when the applier cannot use the owner's privileges
+     * (`USAGE`). On PostgreSQL 16 a membership is recorded per grantor: a
+     * login that created br_journal_owner under CREATEROLE keeps a grant
+     * from the bootstrap superuser with ADMIN only (no INHERIT, no SET),
+     * and the loan is a second grant, made by the applier itself, which
+     * the closing REVOKE removes and nothing else; the bootstrap grant is
+     * untouched. The marker that says a loan happened is set to `no` before
+     * anything else, so the return reads only what this transaction did,
+     * never a value left in the session. If the applier still cannot use
+     * the owner's privileges after the loan (a role without INHERIT, or its
+     * own earlier grant without INHERIT, which a GRANT does not change), the
+     * migration refuses before any DDL, and its transaction, the loan
+     * included, rolls back.
+     *
+     * The lifecycle-log CHECKs are re-added NOT VALID and then validated,
+     * as 0002 does, so the strong lock is held only for the swap.
+     *
+     * Deployment order: the revision that ships this migration refuses to
+     * boot until it is applied (schema-preflight.ts requires every id), so
+     * the apply precedes that revision's deployment.
+     */
+    id: '0011_phase5_binding',
+    statements: [
+      `DO $$
+       BEGIN
+         PERFORM pg_catalog.set_config('build_room.migration_0011_lent', 'no', true);
+         IF NOT pg_catalog.pg_has_role(CURRENT_USER, 'br_journal_owner', 'USAGE') THEN
+           GRANT br_journal_owner TO CURRENT_USER;
+           PERFORM pg_catalog.set_config('build_room.migration_0011_lent', 'yes', true);
+         END IF;
+         IF NOT pg_catalog.pg_has_role(CURRENT_USER, 'br_journal_owner', 'USAGE') THEN
+           RAISE EXCEPTION '0011_phase5_binding: the applier cannot use br_journal_owner''s privileges even after the loan (no INHERIT); refusing rather than change its role or membership';
+         END IF;
+       END
+       $$`,
+
+      // The journal: record classes, event types, command-id namespace.
+      `ALTER TABLE public.command_journal_events
+         DROP CONSTRAINT command_journal_events_record_class_known`,
+      `ALTER TABLE public.command_journal_events
+         ADD CONSTRAINT command_journal_events_record_class_known
+         CHECK (record_class IN ('command', 'decision', 'binding'))`,
+      `ALTER TABLE public.command_journal_events
+         DROP CONSTRAINT command_journal_events_event_type_known`,
+      `ALTER TABLE public.command_journal_events
+         ADD CONSTRAINT command_journal_events_event_type_known
+         CHECK (
+           (record_class = 'command' AND event_type IN
+             ('journaled','identity_bound','dispatched','completed','failed','unresolved','resolved'))
+           OR
+           (record_class = 'decision' AND event_type IN
+             ('plan.revision_requested','plan.approved','founder.cancel',
+              'decision.answered','command.approved','command.denied','ceiling.raised'))
+           OR
+           (record_class = 'binding' AND event_type = 'runtime_room.bound')
+         )`,
+      `ALTER TABLE public.command_journal_events
+         DROP CONSTRAINT command_journal_events_command_id_namespace`,
+      `ALTER TABLE public.command_journal_events
+         ADD CONSTRAINT command_journal_events_command_id_namespace
+         CHECK (record_class = 'decision' OR command_id LIKE 'cmd\\_%')`,
+
+      // The lifecycle log: the recorded outcome (B4).
+      `ALTER TABLE build_room_events
+         DROP CONSTRAINT build_room_events_outcome_known`,
+      `ALTER TABLE build_room_events
+         ADD CONSTRAINT build_room_events_outcome_known
+         CHECK (
+           outcome IN ('transition', 'conjunction_pending', 'recorded')
+           AND ((event = 'runtime_room.bound') = (outcome = 'recorded'))
+         ) NOT VALID`,
+      `ALTER TABLE build_room_events
+         VALIDATE CONSTRAINT build_room_events_outcome_known`,
+      `ALTER TABLE build_room_events
+         DROP CONSTRAINT build_room_events_transition_complete`,
+      `ALTER TABLE build_room_events
+         ADD CONSTRAINT build_room_events_transition_complete
+         CHECK (
+           (outcome = 'transition' AND transition_id IS NOT NULL
+                                   AND guard_id IS NOT NULL
+                                   AND from_state IS NOT NULL
+                                   AND resulting_state IS NOT NULL
+                                   AND entry_seq IS NOT NULL)
+           OR
+           (outcome = 'conjunction_pending' AND transition_id IS NULL
+                                            AND entry_seq IS NULL)
+           OR
+           (outcome = 'recorded' AND COALESCE(
+               transition_id IS NULL
+               AND guard_id IS NULL
+               AND entry_seq IS NULL
+               AND from_state IS NOT NULL AND from_state = 'BUILDING'
+               AND resulting_state IS NOT NULL AND resulting_state = 'BUILDING'
+               AND jsonb_typeof(payload->'binding') = 'object'
+               AND jsonb_typeof(payload->'binding'->'lifecycleRoomId') = 'string'
+               AND payload->'binding'->>'lifecycleRoomId' = room_id::text
+               AND jsonb_typeof(payload->'binding'->'runtimeRoomId') = 'string'
+               AND jsonb_typeof(payload->'binding'->'gatewayId') = 'string'
+               AND (payload->'binding') - 'lifecycleRoomId' - 'runtimeRoomId' - 'gatewayId' = '{}'::jsonb,
+               false))
+         ) NOT VALID`,
+      `ALTER TABLE build_room_events
+         VALIDATE CONSTRAINT build_room_events_transition_complete`,
+
+      // B5: one binding per lifecycle room; one lifecycle room per runtime room.
+      `CREATE UNIQUE INDEX build_room_events_one_binding_per_room
+         ON build_room_events (room_id)
+         WHERE event = 'runtime_room.bound'`,
+      `CREATE UNIQUE INDEX build_room_events_runtime_room_bound_once
+         ON build_room_events ((payload->'binding'->>'runtimeRoomId'))
+         WHERE event = 'runtime_room.bound'`,
+
+      `DO $$
+       BEGIN
+         IF pg_catalog.current_setting('build_room.migration_0011_lent', true) = 'yes' THEN
+           REVOKE br_journal_owner FROM CURRENT_USER;
+         END IF;
+       END
+       $$`,
+    ],
+  },
 ];
 
 /** Advisory-lock key. Arbitrary but fixed — any value works if it never changes. */

@@ -89,6 +89,7 @@ const TRANCHE_ORDER = [
   '0008_runtime_operational_grants',
   '0009_two_enrolled_gateways',
   '0010_plan_store',
+  '0011_phase5_binding',
 ] as const;
 
 /* ---------------- dedicated disposable instance ---------------- */

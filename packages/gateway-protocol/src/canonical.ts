@@ -30,6 +30,7 @@ import {
   isValidSequence,
   isValidTimestampMs,
 } from './envelope.js';
+import { isValidRuntimeRoomId } from './room.js';
 
 export interface SessionStartCanonicalInput {
   readonly gatewayId: string;
@@ -54,6 +55,19 @@ export type PlannerPollCanonicalInput = HeartbeatCanonicalInput;
 
 export interface PlannerReportCanonicalInput extends HeartbeatCanonicalInput {
   readonly requestId: string;
+  /** SHA-256 of the report's payload text, 64 lowercase hex. */
+  readonly payloadDigest: string;
+}
+
+/**
+ * A `runtime_room_minted` report signs what a planner report signs, under its
+ * own purpose: the request it answers and its payload's digest.
+ */
+export type RuntimeRoomMintedCanonicalInput = PlannerReportCanonicalInput;
+
+/** A `runtime_room_occupancy` report signs the runtime room it is about and its payload's digest. */
+export interface RuntimeRoomOccupancyCanonicalInput extends HeartbeatCanonicalInput {
+  readonly runtimeRoomId: string;
   /** SHA-256 of the report's payload text, 64 lowercase hex. */
   readonly payloadDigest: string;
 }
@@ -169,6 +183,60 @@ export function plannerReportCanonicalArray(
   ];
 }
 
+export function runtimeRoomMintedCanonicalArray(
+  input: RuntimeRoomMintedCanonicalInput,
+): readonly CanonicalElement[] {
+  require(isValidGatewayId(input.gatewayId), 'gatewayId');
+  require(isValidKeyId(input.keyId), 'keyId');
+  require(isValidHex32(input.epoch), 'epoch');
+  require(isValidSequence(input.sequence), 'sequence');
+  require(isValidHex32(input.nonce), 'nonce');
+  require(isValidTimestampMs(input.timestampMs), 'timestampMs');
+  require(isValidRequestId(input.requestId), 'requestId');
+  require(isValidHex32(input.payloadDigest), 'payloadDigest');
+
+  return [
+    PROTOCOL_ID,
+    VERSION,
+    'runtime_room_minted',
+    input.gatewayId,
+    input.keyId,
+    input.epoch,
+    input.sequence,
+    input.nonce,
+    input.timestampMs,
+    input.requestId,
+    input.payloadDigest,
+  ];
+}
+
+export function runtimeRoomOccupancyCanonicalArray(
+  input: RuntimeRoomOccupancyCanonicalInput,
+): readonly CanonicalElement[] {
+  require(isValidGatewayId(input.gatewayId), 'gatewayId');
+  require(isValidKeyId(input.keyId), 'keyId');
+  require(isValidHex32(input.epoch), 'epoch');
+  require(isValidSequence(input.sequence), 'sequence');
+  require(isValidHex32(input.nonce), 'nonce');
+  require(isValidTimestampMs(input.timestampMs), 'timestampMs');
+  require(isValidRuntimeRoomId(input.runtimeRoomId), 'runtimeRoomId');
+  require(isValidHex32(input.payloadDigest), 'payloadDigest');
+
+  return [
+    PROTOCOL_ID,
+    VERSION,
+    'runtime_room_occupancy',
+    input.gatewayId,
+    input.keyId,
+    input.epoch,
+    input.sequence,
+    input.nonce,
+    input.timestampMs,
+    input.runtimeRoomId,
+    input.payloadDigest,
+  ];
+}
+
 /**
  * `utf8(domain tag) || 0x00 || utf8(JSON.stringify(array))`.
  *
@@ -201,4 +269,12 @@ export function plannerPollSignedBytes(input: PlannerPollCanonicalInput): Uint8A
 
 export function plannerReportSignedBytes(input: PlannerReportCanonicalInput): Uint8Array {
   return signedBytesFor('planner_report', plannerReportCanonicalArray(input));
+}
+
+export function runtimeRoomMintedSignedBytes(input: RuntimeRoomMintedCanonicalInput): Uint8Array {
+  return signedBytesFor('runtime_room_minted', runtimeRoomMintedCanonicalArray(input));
+}
+
+export function runtimeRoomOccupancySignedBytes(input: RuntimeRoomOccupancyCanonicalInput): Uint8Array {
+  return signedBytesFor('runtime_room_occupancy', runtimeRoomOccupancyCanonicalArray(input));
 }

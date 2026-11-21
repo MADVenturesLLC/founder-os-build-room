@@ -24,6 +24,7 @@ import { DIRECTORY_MODE, type GatewayPaths } from './paths.js';
 import { RingBuffer } from './ring-buffer.js';
 import { IpcServer } from './ipc.js';
 import { RoomRuntime } from './room-runtime.js';
+import { GatewayRoomWorker } from './room-worker.js';
 import { GatewayStateStore, type GatewayState } from './state.js';
 import { GatewayPlannerWorker, PlannerRecordStore, plannerRecordsDirectory, type PlannerExecutor } from './planner-worker.js';
 import { privateKeyFromSecret, publicMembersOf, type GatewayIdentity } from './signing.js';
@@ -35,8 +36,10 @@ export interface GatewayDaemonDeps {
   readonly client: ControlPlaneClient;
   readonly heartbeatCadenceMs: number;
   /**
-   * The Planner's executor (plan r1 Q2b). Absent, the daemon never polls for
-   * planner work. `main.ts` injects one only where
+   * The Planner's executor (plan r1 Q2b). Absent, the daemon never handles
+   * planner work: it still polls, for the room worker's mint requests
+   * (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2), and a planner request a poll
+   * carries is not read. `main.ts` injects one only where
    * `planner-executor-factory.ts` selects it.
    */
   readonly plannerExecutor?: PlannerExecutor;
@@ -67,6 +70,14 @@ export class GatewayDaemon {
   readonly staging: StagingLane;
   /** Present only when an executor is injected. */
   readonly planner: GatewayPlannerWorker | null;
+  /**
+   * The runtime-room worker (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2), on
+   * every daemon because every daemon has a room runtime: it mints a runtime
+   * room when the control plane asks through the poll answer, and says which
+   * bound rooms' occupancy is due to be reported (none in step 1: nothing
+   * yet tells the daemon a room is bound).
+   */
+  readonly roomWorker: GatewayRoomWorker;
   private readonly state: GatewayStateStore;
   private readonly ipc: IpcServer;
   private cadence: NodeJS.Timeout | null = null;
@@ -98,6 +109,7 @@ export class GatewayDaemon {
             log: (level, at, fields) => this.log(level, at, fields),
           });
     this.rooms = new RoomRuntime({ newId: () => randomUUID() });
+    this.roomWorker = new GatewayRoomWorker({ rooms: this.rooms, log: (level, at, fields) => this.log(level, at, fields) });
     this.ipc = new IpcServer(deps.paths, {
       status: () => ({
         primary: { lane: this.primary.laneState, epoch: this.primary.currentEpoch !== null },
@@ -225,10 +237,19 @@ export class GatewayDaemon {
     const primaryVerdict = await this.primary.step();
     if (primaryVerdict !== null) this.log('info', 'primary.step', { verdict: primaryVerdict });
 
-    if (this.planner !== null) {
-      const handled = await this.primary.exchangePlanner(this.planner);
-      if (handled > 0) this.log('info', 'planner.exchanged', { handled });
-    }
+    /*
+     * The poll carries planner work and the control plane's mint requests
+     * (act B2: "carried in its answer to a Gateway poll as planner work is
+     * carried today"), so the tick polls when a planner worker OR a room
+     * worker exists, and the room worker exists on every daemon. Planner work
+     * goes to the planner worker only, as before; with none, it is not read.
+     */
+    this.roomWorker.tick();
+    const exchanged = await this.primary.exchange(this.planner, this.roomWorker);
+    if (exchanged.planner > 0) this.log('info', 'planner.exchanged', { handled: exchanged.planner });
+    if (exchanged.room > 0) this.log('info', 'room.exchanged', { handled: exchanged.room });
+    const reported = await this.primary.reportRoomOccupancy(this.roomWorker);
+    if (reported > 0) this.log('info', 'room.occupancy_reported', { reported });
 
     const stagingOutcome = await this.staging.probe();
     if (stagingOutcome.disposition !== null) {

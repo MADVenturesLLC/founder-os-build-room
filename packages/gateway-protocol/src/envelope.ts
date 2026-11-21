@@ -30,6 +30,7 @@ import {
   type Purpose,
 } from './constants.js';
 import { decodeBase64Fixed, isCanonicalUuid, isLowercaseHex } from './encoding.js';
+import { isValidRoomPayload, isValidRuntimeRoomId } from './room.js';
 
 export interface SessionStartEnvelope {
   readonly protocol: string;
@@ -98,7 +99,59 @@ export interface PlannerReportEnvelope {
   readonly signature: string;
 }
 
-export type Envelope = SessionStartEnvelope | HeartbeatEnvelope | PlannerPollEnvelope | PlannerReportEnvelope;
+/**
+ * The Gateway reports the runtime room it minted for one mint request
+ * (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2). Session-bound, and carried as
+ * `planner_report` is: `payload` is a JSON text outside the signed array,
+ * and the array signs the request id and the payload's SHA-256.
+ */
+export interface RuntimeRoomMintedEnvelope {
+  readonly protocol: string;
+  readonly version: number;
+  readonly purpose: 'runtime_room_minted';
+  readonly gatewayId: string;
+  readonly keyId: string;
+  readonly epoch: string;
+  readonly sequence: number;
+  readonly nonce: string;
+  readonly timestampMs: number;
+  readonly requestId: string;
+  readonly payloadDigest: string;
+  readonly payload: string;
+  readonly pubkey: string;
+  readonly signature: string;
+}
+
+/**
+ * The Gateway reports a minted runtime room's occupancy (act B2). As the
+ * minted report, with the runtime room id in the request id's place: there is
+ * no request to answer, and the room is what the report is about.
+ */
+export interface RuntimeRoomOccupancyEnvelope {
+  readonly protocol: string;
+  readonly version: number;
+  readonly purpose: 'runtime_room_occupancy';
+  readonly gatewayId: string;
+  readonly keyId: string;
+  readonly epoch: string;
+  readonly sequence: number;
+  readonly nonce: string;
+  readonly timestampMs: number;
+  readonly runtimeRoomId: string;
+  readonly payloadDigest: string;
+  readonly payload: string;
+  readonly pubkey: string;
+  readonly signature: string;
+}
+
+/** Every envelope that rides an established session: same epoch, same sequence counter. */
+export type SessionBoundEnvelope =
+  | PlannerPollEnvelope
+  | PlannerReportEnvelope
+  | RuntimeRoomMintedEnvelope
+  | RuntimeRoomOccupancyEnvelope;
+
+export type Envelope = SessionStartEnvelope | HeartbeatEnvelope | SessionBoundEnvelope;
 
 /**
  * The two structured refusals this module can produce, both members of the
@@ -152,6 +205,40 @@ const PLANNER_REPORT_FIELDS = [
   'nonce',
   'timestampMs',
   'requestId',
+  'payloadDigest',
+  'payload',
+  'pubkey',
+  'signature',
+] as const;
+
+const RUNTIME_ROOM_MINTED_FIELDS = [
+  'protocol',
+  'version',
+  'purpose',
+  'gatewayId',
+  'keyId',
+  'epoch',
+  'sequence',
+  'nonce',
+  'timestampMs',
+  'requestId',
+  'payloadDigest',
+  'payload',
+  'pubkey',
+  'signature',
+] as const;
+
+const RUNTIME_ROOM_OCCUPANCY_FIELDS = [
+  'protocol',
+  'version',
+  'purpose',
+  'gatewayId',
+  'keyId',
+  'epoch',
+  'sequence',
+  'nonce',
+  'timestampMs',
+  'runtimeRoomId',
   'payloadDigest',
   'payload',
   'pubkey',
@@ -295,7 +382,7 @@ export function validateHeartbeat(body: unknown): EnvelopeResult<HeartbeatEnvelo
 function validateSessionBound(
   body: unknown,
   fields: readonly string[],
-  purpose: 'planner_poll' | 'planner_report',
+  purpose: SessionBoundEnvelope['purpose'],
 ):
   | { readonly ok: true; readonly candidate: Record<string, unknown> }
   | { readonly ok: false; readonly error: EnvelopeErrorCode; readonly detail: string } {
@@ -324,4 +411,24 @@ export function validatePlannerReport(body: unknown): EnvelopeResult<PlannerRepo
   if (!isValidHex32(candidate['payloadDigest'])) return fail('invalid_request', 'payloadDigest');
   if (!isValidPlannerPayload(candidate['payload'])) return fail('invalid_request', 'payload');
   return { ok: true, envelope: candidate as unknown as PlannerReportEnvelope };
+}
+
+export function validateRuntimeRoomMinted(body: unknown): EnvelopeResult<RuntimeRoomMintedEnvelope> {
+  const checked = validateSessionBound(body, RUNTIME_ROOM_MINTED_FIELDS, 'runtime_room_minted');
+  if (!checked.ok) return checked;
+  const candidate = checked.candidate;
+  if (!isValidRequestId(candidate['requestId'])) return fail('invalid_request', 'requestId');
+  if (!isValidHex32(candidate['payloadDigest'])) return fail('invalid_request', 'payloadDigest');
+  if (!isValidRoomPayload(candidate['payload'])) return fail('invalid_request', 'payload');
+  return { ok: true, envelope: candidate as unknown as RuntimeRoomMintedEnvelope };
+}
+
+export function validateRuntimeRoomOccupancy(body: unknown): EnvelopeResult<RuntimeRoomOccupancyEnvelope> {
+  const checked = validateSessionBound(body, RUNTIME_ROOM_OCCUPANCY_FIELDS, 'runtime_room_occupancy');
+  if (!checked.ok) return checked;
+  const candidate = checked.candidate;
+  if (!isValidRuntimeRoomId(candidate['runtimeRoomId'])) return fail('invalid_request', 'runtimeRoomId');
+  if (!isValidHex32(candidate['payloadDigest'])) return fail('invalid_request', 'payloadDigest');
+  if (!isValidRoomPayload(candidate['payload'])) return fail('invalid_request', 'payload');
+  return { ok: true, envelope: candidate as unknown as RuntimeRoomOccupancyEnvelope };
 }

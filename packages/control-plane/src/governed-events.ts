@@ -3,7 +3,7 @@
  *
  * `POST /rooms/:roomId/events` takes a whole lifecycle event from its body,
  * actor included, behind the shared `CONTROL_PLANE_TOKEN`. For most events
- * that is the ruled shape. For the thirteen below it is not:
+ * that is the ruled shape. For the fourteen below it is not:
  *
  * - T2 `task.dispatched.planner` and T3 `plan.submitted` are produced by the
  *   governed planner path, after the command journal records the dispatch
@@ -32,9 +32,11 @@
  * sees them: this is an authorization refusal, like a missing token, not a
  * lifecycle judgement, and nothing is recorded.
  *
- * `runtime_room.bound`, the thirtieth lifecycle event, is not yet in this
- * code's vocabulary (it implements DEC-20260815-11 at 29 events). It joins
- * this set in the change that adds it.
+ * `runtime_room.bound`, the thirtieth lifecycle event, joins the set in the
+ * change that adds it to this code's vocabulary (F2): it is recorded only by
+ * the governed binding path, in one transaction with the first Builder
+ * command's journal record and the binding record (that ruling's B3). Posted
+ * here, a token holder could name any runtime room and Gateway for any room.
  *
  * The store stays generic. The governed paths call it directly.
  */
@@ -58,6 +60,8 @@ export const GOVERNED_PATH_EVENTS: ReadonlySet<EventName> = new Set<EventName>([
   'ceiling.raised',
   // T8: the build is ready for evidence (Phase 5).
   'build.ready_for_evidence',
+  // Event 30: the room binding, recorded with no transition (Phase 5).
+  'runtime_room.bound',
 ]);
 
 export function requiresGovernedPath(event: string): boolean {

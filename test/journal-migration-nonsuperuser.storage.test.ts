@@ -54,6 +54,7 @@ const TRANCHE_ORDER = [
   '0008_runtime_operational_grants',
   '0009_two_enrolled_gateways',
   '0010_plan_store',
+  '0011_phase5_binding',
 ] as const;
 
 const ADMIN_ROLE = 'br_ns_admin';

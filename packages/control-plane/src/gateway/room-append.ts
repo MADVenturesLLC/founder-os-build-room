@@ -20,6 +20,8 @@ import type { ClockGate } from './clock.js';
 import type { GatewayLeadership } from './leadership.js';
 import type { RoomAppendFence, RoomAppendOutcome } from '../store.js';
 import type { GatewaySessionState } from './session-state.js';
+import type { LedgerState } from '../../../ledger/src/index.js';
+import type { RoomOccupancyReading } from './room-channel.js';
 
 export class GatewayRoomAppendFence implements RoomAppendFence {
   constructor(
@@ -28,8 +30,42 @@ export class GatewayRoomAppendFence implements RoomAppendFence {
       readonly clock: ClockGate;
       readonly session: GatewaySessionState;
       readonly leadership: GatewayLeadership;
+      /** The leader-local room channel's occupancy readings (act B2). */
+      readonly rooms?: { occupancyOf(gatewayId: string, runtimeRoomId: string): RoomOccupancyReading | null };
     },
   ) {}
+
+  /**
+   * Is this one Gateway enrolled and live? The binding's check
+   * (FOUNDER-RULING-20261027-LIFECYCLE-ROOM-BINDING, B5: "The Gateway
+   * named is enrolled and live"), which `deriveGatewayOnline` cannot give:
+   * that one answers whether ANY enrolled Gateway is live. Read inside the
+   * caller's fenced transaction, fail closed at every step as that one is.
+   */
+  async deriveGatewayEnrolledAndLive(client: PoolClient, gatewayId: string): Promise<boolean> {
+    const { rows } = await client.query<{ gateway_id: string }>(
+      'SELECT gateway_id FROM gateway_current_state WHERE gateway_id = $1::uuid AND enrollment_slot IS NOT NULL',
+      [gatewayId],
+    );
+    if (rows.length !== 1) return false;
+    if (!this.deps.clock.monotonicTrustworthy) return false;
+    const liveness = this.deps.session.livenessFor(gatewayId);
+    if (liveness === null) return false;
+    return this.deps.clock.monotonicNow() - liveness.monoMs <= this.deps.config.gatewayStalenessMs;
+  }
+
+  /**
+   * G17's occupancy limb (C1): the binding's runtime room, as the binding's
+   * own Gateway last reported it over its signed channel, is CLOSED. No
+   * binding, no channel or no reading is false. CLOSED is final for a
+   * runtime room, so a reading of CLOSED stays true however old it is. The
+   * channel is leader-local and is lost on a restart or a leader change;
+   * until the Gateway reports again, this answers false.
+   */
+  deriveBoundRuntimeRoomClosed(binding: LedgerState['binding']): boolean {
+    if (binding === null || this.deps.rooms === undefined) return false;
+    return this.deps.rooms.occupancyOf(binding.gatewayId, binding.runtimeRoomId)?.occupancy === 'CLOSED';
+  }
 
   /**
    * Is at least one enrolled gateway live?

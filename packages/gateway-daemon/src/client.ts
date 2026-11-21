@@ -95,7 +95,12 @@ const heartbeatShape: SuccessShape = {
     isLowercaseHex(body['epoch'], 64),
 };
 
-/** A poll's success: the heartbeat's members plus the one request collected, or `null`. */
+/**
+ * A poll's success: the heartbeat's members plus the one request collected, or `null`.
+ * Any other member, the runtime-room `room` member included, is not judged here: the
+ * room worker validates `room` and ignores one it cannot read, so a malformed member
+ * never becomes a transport event that would back the whole lane off.
+ */
 const plannerPollShape: SuccessShape = {
   status: 200,
   validate: (body) =>
@@ -106,6 +111,12 @@ const plannerPollShape: SuccessShape = {
 
 /** A report's success: the heartbeat's members plus whether the answer settled an open request. */
 const plannerReportShape: SuccessShape = {
+  status: 200,
+  validate: (body) => heartbeatShape.validate(body) && typeof body['accepted'] === 'boolean',
+};
+
+/** A runtime-room report's success (act B2): the heartbeat's members plus whether the report was recorded. */
+const roomReportShape: SuccessShape = {
   status: 200,
   validate: (body) => heartbeatShape.validate(body) && typeof body['accepted'] === 'boolean',
 };
@@ -143,6 +154,15 @@ export class ControlPlaneClient {
 
   plannerReport(envelope: Record<string, unknown>): Promise<ControlPlaneResponse> {
     return this.request('POST', '/gateway/planner/report', envelope, plannerReportShape);
+  }
+
+  /** The two runtime-room reports (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2). */
+  roomMinted(envelope: Record<string, unknown>): Promise<ControlPlaneResponse> {
+    return this.request('POST', '/gateway/room/minted', envelope, roomReportShape);
+  }
+
+  roomOccupancy(envelope: Record<string, unknown>): Promise<ControlPlaneResponse> {
+    return this.request('POST', '/gateway/room/occupancy', envelope, roomReportShape);
   }
 
   /**

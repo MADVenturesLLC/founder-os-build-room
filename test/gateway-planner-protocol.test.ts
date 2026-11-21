@@ -73,8 +73,21 @@ const WORK = {
 };
 
 describe('gateway-planner-protocol · purposes and signed bytes', () => {
-  it('has exactly four purposes', () => {
-    assert.deepEqual([...PURPOSES], ['session_start', 'heartbeat', 'planner_poll', 'planner_report']);
+  /*
+   * The closed set was four until FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2 added
+   * exactly two Gateway messages, `runtime_room_minted` and
+   * `runtime_room_occupancy`, and nothing else. The control plane's mint request
+   * rides the planner_poll answer and is not a purpose.
+   */
+  it('has exactly six purposes: the four, and the two FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2 adds', () => {
+    assert.deepEqual([...PURPOSES], [
+      'session_start',
+      'heartbeat',
+      'planner_poll',
+      'planner_report',
+      'runtime_room_minted',
+      'runtime_room_occupancy',
+    ]);
   });
 
   it('signs a poll under its own domain tag, so a heartbeat signature never verifies as a poll', () => {

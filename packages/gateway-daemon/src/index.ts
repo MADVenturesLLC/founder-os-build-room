@@ -91,6 +91,8 @@ export {
   buildHeartbeat,
   buildPlannerPoll,
   buildPlannerReport,
+  buildRuntimeRoomMinted,
+  buildRuntimeRoomOccupancy,
   buildSessionStart,
   generateGatewayKeypair,
   privateKeyFromSecret,
@@ -103,17 +105,23 @@ export {
   BACKOFF_MAX_MS,
   BACKOFF_MIN_MS,
   MAX_PLANNER_EXCHANGES_PER_TICK,
+  MAX_ROOM_OCCUPANCY_REPORTS_PER_TICK,
   PrimaryLane,
   REDEEM_RETRY_HORIZON_MS,
   StagingLane,
   type AcceptedRedemption,
+  type ExchangeCounts,
   type LaneObservation,
   type PlannerRequestHandler,
+  type RoomRequestHandler,
   type StagingOutcome,
   type StagingRedeemRequest,
 } from './lanes.js';
 
 export { RING_CAPACITY, RingBuffer, type RingEntry } from './ring-buffer.js';
+
+/** The runtime-room worker (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2). */
+export { GatewayRoomWorker, OCCUPANCY_REFRESH_TICKS, type RoomWorkerDeps } from './room-worker.js';
 
 export {
   GatewayPlannerWorker,

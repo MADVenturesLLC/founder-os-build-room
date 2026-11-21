@@ -511,7 +511,13 @@ describe('phase 4 lifecycle · reconstruction', { skip: SKIP }, () => {
       'SELECT e.seq::text AS seq, e.record_class, e.event_type FROM command_journal_events AS e ORDER BY e.seq',
     );
     assert.deepEqual(
-      rebuilt.map((r) => [r.seq, r.decoded.recordClass, r.decoded.recordClass === 'command' ? r.decoded.row.eventType : r.decoded.row.decision]),
+      rebuilt.map((r) => [
+        r.seq,
+        r.decoded.recordClass,
+        r.decoded.recordClass === 'command' ? r.decoded.row.eventType
+        : r.decoded.recordClass === 'decision' ? r.decoded.row.decision
+        : r.decoded.row.event,
+      ]),
       persisted.map((r) => [r.seq, r.record_class, r.event_type]),
     );
     assert.ok(new Set(rebuilt.map((r) => r.decoded.recordClass)).size === 2, 'the chain is mixed: commands and decisions');

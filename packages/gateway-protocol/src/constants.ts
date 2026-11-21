@@ -1,7 +1,7 @@
 /**
  * Protocol identity and the closed purpose set.
  *
- * Four purposes exist and no more. There is deliberately **no enrollment
+ * Six purposes exist and no more. There is deliberately **no enrollment
  * purpose** — redemption is code-authenticated (contract §3, §8) — and **no
  * rejection-record purpose**, because rejections are server-side records that
  * no client ever signs.
@@ -12,19 +12,46 @@
  * existing session, so the PC still accepts no inbound connection
  * (`DEC-20260815-15` clause 2, outbound-only HTTPS long-poll + POST). Both
  * are session-bound like `heartbeat`: same epoch, same sequence counter.
+ *
+ * `runtime_room_minted` and `runtime_room_occupancy` are the two Gateway
+ * messages FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2 adds, and the only two:
+ * the Gateway's signed report of the runtime room it minted for a lifecycle
+ * room, and its signed report of a minted runtime room's occupancy. The
+ * control plane's request to mint is not a purpose: it rides the
+ * `planner_poll` answer as its `room` member, as planner work does
+ * (`room.ts`). Both reports are session-bound exactly as `planner_report`
+ * is, and like it sign a key and their payload's digest, never the payload.
  */
 
 export const PROTOCOL_ID = 'founder-os.gateway-protocol';
 
 export const VERSION = 1;
 
-export type Purpose = 'session_start' | 'heartbeat' | 'planner_poll' | 'planner_report';
+export type Purpose =
+  | 'session_start'
+  | 'heartbeat'
+  | 'planner_poll'
+  | 'planner_report'
+  | 'runtime_room_minted'
+  | 'runtime_room_occupancy';
 
-export const PURPOSES: readonly Purpose[] = ['session_start', 'heartbeat', 'planner_poll', 'planner_report'];
+export const PURPOSES: readonly Purpose[] = [
+  'session_start',
+  'heartbeat',
+  'planner_poll',
+  'planner_report',
+  'runtime_room_minted',
+  'runtime_room_occupancy',
+];
 
 export function isPurpose(value: unknown): value is Purpose {
   return (
-    value === 'session_start' || value === 'heartbeat' || value === 'planner_poll' || value === 'planner_report'
+    value === 'session_start' ||
+    value === 'heartbeat' ||
+    value === 'planner_poll' ||
+    value === 'planner_report' ||
+    value === 'runtime_room_minted' ||
+    value === 'runtime_room_occupancy'
   );
 }
 
@@ -35,6 +62,14 @@ export function isPurpose(value: unknown): value is Purpose {
  * envelope's other members.
  */
 export const MAX_PLANNER_PAYLOAD_BYTES = 200 * 1024;
+
+/**
+ * The largest `runtime_room_minted` or `runtime_room_occupancy` payload, in
+ * UTF-8 bytes. Both payloads are three or four short identifiers and an
+ * occupancy state, a little over 150 bytes; the bound leaves room for that
+ * and nothing a room report has any use for.
+ */
+export const MAX_ROOM_PAYLOAD_BYTES = 1024;
 
 /**
  * The domain-separation tag prefix. The purpose is appended, so the full tag
