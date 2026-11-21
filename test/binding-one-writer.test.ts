@@ -33,7 +33,10 @@
  *
  * WHAT IS COUNTED. Each of those files is parsed with the TypeScript compiler
  * (comments never count). For each writer method and helper, every
- * occurrence of its name is counted per file and sorted into
+ * occurrence of its name is counted at its SITE, the top-level declaration
+ * that lexically contains it (a function, a variable, an interface or type,
+ * or a class member as `Class.member`; a nested function belongs to the
+ * outer one; anything else is `<module>`), and sorted into
  *
  *   - a DECLARATION: the name a method, function, property or interface
  *     member is declared under;
@@ -53,12 +56,14 @@
  * earlier in the same string hides no call, and a call inside a function body
  * a migration defines is counted.
  *
- * The counts must equal EXPECTED exactly, file by file. A second caller fails
- * the test wherever it is added, an allowed file included: a new use of
- * `appendRecorded` inside store.ts, or of `appendBuilderJournaled` inside
- * journal-store.ts, changes that file's count. A change to EXPECTED is a
- * change the act makes reviewable: it is a second writer unless the reviewer
- * finds it only defines, refuses, checks or reads.
+ * The counts must equal EXPECTED exactly, site by site. The three writes are
+ * pinned to the two governed functions, so a second caller fails the test
+ * wherever it is added, an allowed file included, and so does a write moved
+ * out of bindFirstBuilderCommand or journalLaterBuilderCommand into a helper
+ * other code can call, even in the same file with the file's totals
+ * unchanged. A change to EXPECTED is a change the act makes reviewable: it is
+ * a second writer unless the reviewer finds it only defines, refuses, checks
+ * or reads.
  *
  * Two further rules are an inventory, not the enforcement: where the Builder
  * command kind is spelled (`BUILDER_COMMAND_KIND`, imported plain or renamed,
@@ -68,8 +73,10 @@
  * anything without one of the counted methods.
  *
  * Fixtures pin each ordinary form, a second caller added inside an allowed
- * file, and comments inside SQL. What the check cannot see is a name or SQL
- * text assembled at run time from parts; it reads names and SQL as written.
+ * file, a write moved into a shared helper, and comments inside SQL. What the
+ * check cannot see: a name or SQL text assembled at run time from parts (it
+ * reads names and SQL as written), and a closure created inside a governed
+ * function that escapes it at run time (sites are lexical).
  */
 
 import { describe, it } from 'node:test';
@@ -108,9 +115,11 @@ const WRITER_NAMES: ReadonlySet<string> = new Set<WriterRule>([
   'insertEvent',
 ]);
 
-/** "declarations/uses" for one file. */
+/** "declarations/uses" for one site. */
 type Tally = string;
+/** Per writer rule, keyed "file :: declaration" (see `siteOf`). */
 type Tallies = Partial<Record<WriterRule, Record<string, Tally>>>;
+type Counts = { declarations: number; uses: number };
 
 /** SQL with its comments replaced by a space: `--` to a line feed or carriage return, and nested block comments; quoted text is kept. */
 export function withoutSqlComments(sql: string): string {
@@ -201,24 +210,68 @@ function isDeclarationName(node: ts.Identifier | ts.PrivateIdentifier): boolean 
   return parent !== undefined && DECLARING.has(parent.kind) && (parent as { name?: ts.Node }).name === node;
 }
 
+const nameText = (name: ts.Node | undefined): string =>
+  name === undefined ? '(anonymous)' : ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteral(name) ? name.text : name.getText();
+
+/**
+ * The top-level declaration that lexically contains `node`: a function, a
+ * variable (an arrow function assigned to a const included), an interface or
+ * type, or a class member as `Class.member`. A function nested inside another
+ * belongs to the outer one. Anything else at the top level is `<module>`.
+ */
+export function siteOf(node: ts.Node): string {
+  let top: ts.Node = node;
+  let member: ts.ClassElement | undefined;
+  let variable: ts.VariableDeclaration | undefined;
+  while (top.parent !== undefined && !ts.isSourceFile(top.parent)) {
+    if (ts.isClassLike(top.parent) && ts.isClassElement(top)) member = top;
+    if (ts.isVariableDeclaration(top) && ts.isVariableDeclarationList(top.parent)) variable = top;
+    top = top.parent;
+  }
+  if (ts.isFunctionDeclaration(top)) return nameText(top.name);
+  if (ts.isClassDeclaration(top)) {
+    const cls = nameText(top.name);
+    if (member === undefined) return cls;
+    return ts.isConstructorDeclaration(member) ? `${cls}.constructor` : `${cls}.${nameText(member.name)}`;
+  }
+  if (ts.isInterfaceDeclaration(top) || ts.isTypeAliasDeclaration(top) || ts.isEnumDeclaration(top)) return top.name.text;
+  if (ts.isVariableStatement(top)) return variable === undefined ? '<module>' : nameText(variable.name);
+  if (ts.isExportAssignment(top)) return 'export default';
+  return '<module>';
+}
+
 interface FileFindings {
-  readonly writers: Map<WriterRule, { declarations: number; uses: number }>;
+  /** Per writer rule, counts per site (`siteOf`). */
+  readonly writers: Map<WriterRule, Map<string, Counts>>;
   readonly inventory: Set<InventoryRule>;
 }
 
-/** What one source text holds: counts for each writer rule, and the inventory rules it touches. */
+/** A rule's counts summed over a file's sites. */
+export function totalOf(found: FileFindings, rule: WriterRule): Counts {
+  const total: Counts = { declarations: 0, uses: 0 };
+  for (const counts of found.writers.get(rule)?.values() ?? []) {
+    total.declarations += counts.declarations;
+    total.uses += counts.uses;
+  }
+  return total;
+}
+
+/** What one source text holds: counts for each writer rule at each site, and the inventory rules it touches. */
 export function findingsIn(file: string, text: string): FileFindings {
-  const writers = new Map<WriterRule, { declarations: number; uses: number }>();
+  const writers = new Map<WriterRule, Map<string, Counts>>();
   const inventory = new Set<InventoryRule>();
-  const count = (rule: WriterRule, declaration: boolean, times = 1): void => {
-    if (times === 0) return;
-    const current = writers.get(rule) ?? { declarations: 0, uses: 0 };
-    if (declaration) current.declarations += times;
-    else current.uses += times;
-    writers.set(rule, current);
-  };
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const visit = (node: ts.Node): void => {
+    const count = (rule: WriterRule, declaration: boolean, times = 1): void => {
+      if (times === 0) return;
+      const sites = writers.get(rule) ?? new Map<string, Counts>();
+      const site = siteOf(node);
+      const current = sites.get(site) ?? { declarations: 0, uses: 0 };
+      if (declaration) current.declarations += times;
+      else current.uses += times;
+      sites.set(site, current);
+      writers.set(rule, sites);
+    };
     if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) {
       const name = node.text.replace(/^#/, '');
       if (WRITER_NAMES.has(name)) count(name as WriterRule, isDeclarationName(node));
@@ -302,14 +355,16 @@ function sourceFiles(): string[] {
 
 const readSource = (file: string): string => readFileSync(join(REPO_ROOT, file), 'utf8');
 
-/** Every writer rule's counts, file by file, and every inventory rule's files, over the given sources. */
+/** Every writer rule's counts at each "file :: declaration" site, and every inventory rule's files, over the given sources. */
 function scan(sources: ReadonlyMap<string, string>): { writers: Tallies; inventory: Record<InventoryRule, string[]> } {
   const writers: Tallies = {};
   const inventory: Record<InventoryRule, string[]> = { builderKind: [], boundEvent: [] };
   for (const [file, text] of [...sources].sort(([a], [b]) => a.localeCompare(b))) {
     const found = findingsIn(file, text);
-    for (const [rule, { declarations, uses }] of found.writers) {
-      (writers[rule] ??= {})[file] = `${declarations}/${uses}`;
+    for (const [rule, sites] of found.writers) {
+      for (const [site, { declarations, uses }] of [...sites].sort(([a], [b]) => a.localeCompare(b))) {
+        (writers[rule] ??= {})[`${file} :: ${site}`] = `${declarations}/${uses}`;
+      }
     }
     for (const rule of found.inventory) inventory[rule].push(file);
   }
@@ -318,26 +373,60 @@ function scan(sources: ReadonlyMap<string, string>): { writers: Tallies; invento
 
 const productionSources = (): Map<string, string> => new Map(sourceFiles().map((file) => [file, readSource(file)]));
 
+const at = (file: string, site: string): string => `${file} :: ${site}`;
+
 /**
- * Each writer rule, file by file, as "declarations/uses". A use in the
- * governed path is a write it makes or a type it names; a use in a store is
- * that store's own plumbing, and the counts pin it.
+ * Each writer rule, as "declarations/uses" at each site: the top-level
+ * declaration that contains the occurrence (`siteOf`). The three writes are
+ * pinned to the two governed functions, bindFirstBuilderCommand and
+ * journalLaterBuilderCommand; every other use is a store's own plumbing,
+ * pinned to the store method that makes it.
  */
 const EXPECTED: Tallies = {
-  // The lifecycle store's declaration; the governed path's call and its deps' Pick key.
-  appendRecorded: { [GOVERNED_PATH]: '0/2', [LIFECYCLE_STORE]: '1/0' },
-  // The joined append and its interface member; the governed path's call.
-  appendBinding: { [GOVERNED_PATH]: '0/1', [JOURNAL_STORE]: '2/0' },
-  // The joined append and its interface member; the governed path's two calls.
-  appendBuilderJournaled: { [GOVERNED_PATH]: '0/2', [JOURNAL_STORE]: '2/0' },
+  appendRecorded: {
+    // The governed path's call, and the Pick key of its deps' type.
+    [at(GOVERNED_PATH, 'bindFirstBuilderCommand')]: '0/1',
+    [at(GOVERNED_PATH, 'RuntimeRoomBindingDeps')]: '0/1',
+    [at(LIFECYCLE_STORE, 'PostgresLedgerStore.appendRecorded')]: '1/0',
+  },
+  appendBinding: {
+    [at(GOVERNED_PATH, 'bindFirstBuilderCommand')]: '0/1',
+    // The joined append, and its interface member.
+    [at(JOURNAL_STORE, 'JournalStore.inTransaction')]: '1/0',
+    [at(JOURNAL_STORE, 'JournalTransaction')]: '1/0',
+  },
+  appendBuilderJournaled: {
+    [at(GOVERNED_PATH, 'bindFirstBuilderCommand')]: '0/1',
+    [at(GOVERNED_PATH, 'journalLaterBuilderCommand')]: '0/1',
+    [at(JOURNAL_STORE, 'JournalStore.inTransaction')]: '1/0',
+    [at(JOURNAL_STORE, 'JournalTransaction')]: '1/0',
+  },
   // The private helpers: declared once each, used only by their own store's methods.
-  appendCommandRow: { [JOURNAL_STORE]: '1/5' },
-  appendBindingRow: { [JOURNAL_STORE]: '1/1' },
-  appendWithin: { [JOURNAL_STORE]: '1/3' },
-  insertEvent: { [LIFECYCLE_STORE]: '1/3' },
-  lifecycleSql: { [LIFECYCLE_STORE]: '0/1' },
+  appendCommandRow: {
+    [at(JOURNAL_STORE, 'JournalStore.appendCommandEvent')]: '0/1',
+    [at(JOURNAL_STORE, 'JournalStore.appendCommandRow')]: '1/0',
+    [at(JOURNAL_STORE, 'JournalStore.appendJournaled')]: '0/1',
+    // The joined appendJournaled, appendBuilderJournaled and appendCommandEvent.
+    [at(JOURNAL_STORE, 'JournalStore.inTransaction')]: '0/3',
+  },
+  appendBindingRow: {
+    [at(JOURNAL_STORE, 'JournalStore.appendBindingRow')]: '1/0',
+    [at(JOURNAL_STORE, 'JournalStore.inTransaction')]: '0/1',
+  },
+  appendWithin: {
+    [at(JOURNAL_STORE, 'JournalStore.appendBindingRow')]: '0/1',
+    [at(JOURNAL_STORE, 'JournalStore.appendCommandRow')]: '0/1',
+    [at(JOURNAL_STORE, 'JournalStore.appendDecisionRow')]: '0/1',
+    [at(JOURNAL_STORE, 'JournalStore.appendWithin')]: '1/0',
+  },
+  insertEvent: {
+    [at(LIFECYCLE_STORE, 'PostgresLedgerStore.appendRecorded')]: '0/1',
+    [at(LIFECYCLE_STORE, 'PostgresLedgerStore.decideAndRecord')]: '0/2',
+    [at(LIFECYCLE_STORE, 'insertEvent')]: '1/0',
+  },
+  lifecycleSql: { [at(LIFECYCLE_STORE, 'insertEvent')]: '0/1' },
   // The journal store's routine call, and the routine's own body in migration 0006.
-  journalSql: { [JOURNAL_STORE]: '0/1', [MIGRATIONS]: '0/1' },
+  journalSql: { [at(JOURNAL_STORE, 'APPEND_SQL')]: '0/1', [at(MIGRATIONS, 'MIGRATIONS')]: '0/1' },
 };
 
 const INVENTORY: Record<InventoryRule, string[]> = {
@@ -369,7 +458,7 @@ describe('binding-one-writer · only the governed path writes the binding (bound
     assert.ok(sources.size >= roots.length && roots.length > 50, `${sources.size} files scanned, ${roots.length} roots`);
   });
 
-  it('counts every writer\'s declarations and uses exactly, file by file', () => {
+  it('counts every writer\'s declarations and uses exactly, declaration by declaration', () => {
     assert.deepEqual(writers, EXPECTED);
   });
 
@@ -388,7 +477,7 @@ describe('binding-one-writer · a second caller fails, wherever it is added', ()
   const caught = (file: string, code: string, rule: WriterRule): void => {
     const writers = withAdded(file, code);
     assert.notDeepEqual(writers, EXPECTED, `not caught in ${file}:\n${code}`);
-    assert.notEqual(writers[rule]?.[file], EXPECTED[rule]?.[file], `${rule} in ${file} unchanged`);
+    assert.notDeepEqual(writers[rule], EXPECTED[rule], `${rule} unchanged after adding to ${file}`);
   };
 
   it('a second use of appendRecorded inside the lifecycle store', () => {
@@ -411,14 +500,52 @@ describe('binding-one-writer · a second caller fails, wherever it is added', ()
     caught(JOURNAL_STORE, "export const sql = 'SELECT * FROM public.command_journal_append($1, $2, $3, $4, $5)';", 'journalSql');
   });
 
+  it('a write moved out of a governed function into a shared helper that other code calls, the file\'s totals unchanged', () => {
+    // The refactor of the 913e4b2 review: journalLaterBuilderCommand's call
+    // moves into an exported helper in the same file, and server.ts calls the
+    // helper. Per-file counts stay the same; the per-declaration table does not.
+    const original = sources.get(GOVERNED_PATH)!;
+    const call = `return deps.journal
+        .inTransaction(client)
+        .appendBuilderJournaled(command, { roomId, lifecycleEventRef: { roomId, eventId: current.binding.eventId } });`;
+    assert.ok(original.includes(call), 'the governed later-command call is where this fixture expects it');
+    const moved = `${original.replace(
+      call,
+      'return appendLaterBuilderRow(deps.journal.inTransaction(client), command, { roomId, lifecycleEventRef: { roomId, eventId: current.binding.eventId } });',
+    )}
+export function appendLaterBuilderRow(tx: JournalTransaction, command: BuilderCommandRequest, binding: JournaledBinding): Promise<JournaledAppendResult> {
+  return tx.appendBuilderJournaled(command, binding);
+}
+`;
+    const server = 'packages/control-plane/src/server.ts';
+    const tampered = new Map(sources);
+    tampered.set(GOVERNED_PATH, moved);
+    tampered.set(server, `${sources.get(server)!}\nexport const viaHelper = appendLaterBuilderRow;\n`);
+    assert.deepEqual(
+      totalOf(findingsIn(GOVERNED_PATH, moved), 'appendBuilderJournaled'),
+      totalOf(findingsIn(GOVERNED_PATH, original), 'appendBuilderJournaled'),
+      'the file\'s totals are unchanged, so a per-file check passes it',
+    );
+    const writers = scan(tampered).writers;
+    assert.notDeepEqual(writers.appendBuilderJournaled, EXPECTED.appendBuilderJournaled);
+    assert.equal(writers.appendBuilderJournaled?.[at(GOVERNED_PATH, 'appendLaterBuilderRow')], '0/1');
+    assert.equal(writers.appendBuilderJournaled?.[at(GOVERNED_PATH, 'journalLaterBuilderCommand')], undefined);
+  });
+
+  it('a write in a new arrow-function helper, a class method, or top-level code, in the governed file', () => {
+    caught(GOVERNED_PATH, 'export const helper = (tx: JournalTransaction) => tx.appendBuilderJournaled({} as never, {});', 'appendBuilderJournaled');
+    caught(GOVERNED_PATH, 'export class Writer { write(tx: JournalTransaction) { return tx.appendBinding({} as never); } }', 'appendBinding');
+    caught(GOVERNED_PATH, 'await (null as unknown as PostgresLedgerStore).appendRecorded("r", {} as never);', 'appendRecorded');
+  });
+
   it('a first caller anywhere else', () => {
     caught('packages/control-plane/src/planner-loop.ts', 'export const w = (s: { appendRecorded: unknown }) => s.appendRecorded;', 'appendRecorded');
   });
 });
 
 describe('binding-one-writer · every ordinary form is counted', () => {
-  const usesOf = (rule: WriterRule, text: string): number => findingsIn('fixture.ts', text).writers.get(rule)?.uses ?? 0;
-  const declarationsOf = (rule: WriterRule, text: string): number => findingsIn('fixture.ts', text).writers.get(rule)?.declarations ?? 0;
+  const usesOf = (rule: WriterRule, text: string): number => totalOf(findingsIn('fixture.ts', text), rule).uses;
+  const declarationsOf = (rule: WriterRule, text: string): number => totalOf(findingsIn('fixture.ts', text), rule).declarations;
   const inventoried = (rule: InventoryRule, text: string): boolean => findingsIn('fixture.ts', text).inventory.has(rule);
 
   const nameForms = (name: string): readonly string[] => [
@@ -445,6 +572,17 @@ describe('binding-one-writer · every ordinary form is counted', () => {
       assert.equal(usesOf(name as WriterRule, `a.${name}(); b.${name}(); c['${name}']();`), 3, 'three uses');
     });
   }
+
+  it('attributes each occurrence to the top-level declaration that contains it', () => {
+    const sites = (text: string): string[] => [...(findingsIn('fixture.ts', text).writers.get('appendBinding')?.keys() ?? [])].sort();
+    assert.deepEqual(sites('export async function governed(tx: T) { const inner = () => tx.appendBinding(); return inner(); }'), ['governed'], 'a nested function belongs to the outer one');
+    assert.deepEqual(sites('export const helper = async (tx: T) => tx.appendBinding();'), ['helper']);
+    assert.deepEqual(sites('const a = 1, helper = (tx: T) => tx.appendBinding();'), ['helper']);
+    assert.deepEqual(sites('class Store { constructor(tx: T) { tx.appendBinding(); } write(tx: T) { return tx.appendBinding(); } }'), ['Store.constructor', 'Store.write']);
+    assert.deepEqual(sites('interface Tx { appendBinding(): void }'), ['Tx']);
+    assert.deepEqual(sites('tx.appendBinding();'), ['<module>']);
+    assert.deepEqual(sites('export default function (tx: T) { return tx.appendBinding(); }'), ['(anonymous)']);
+  });
 
   it('a declaration is counted apart from a use', () => {
     assert.equal(declarationsOf('appendRecorded', 'class S { async appendRecorded() { return 1; } }'), 1);
@@ -539,8 +677,8 @@ describe('binding-one-writer · every ordinary form is counted', () => {
       const files = compiledFiles(roots, { module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, types: [] }, dir);
       assert.ok(files.includes('outside/second.mts'), `the imported .mts module was not compiled in: ${files.join(', ')}`);
       const found = new Map(files.map((file) => [file, findingsIn(file, readFileSync(join(dir, file), 'utf8'))]));
-      assert.equal(found.get('outside/second.mts')?.writers.get('appendRecorded')?.uses, 1);
-      assert.equal(found.get('packages/p/src/deep/legacy.cts')?.writers.get('lifecycleSql')?.uses, 1);
+      assert.equal(totalOf(found.get('outside/second.mts')!, 'appendRecorded').uses, 1);
+      assert.equal(totalOf(found.get('packages/p/src/deep/legacy.cts')!, 'lifecycleSql').uses, 1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
