@@ -37,6 +37,8 @@ export interface RoomStub {
   readonly rejections: { resolvedKeyId: unknown; errorCode: unknown }[];
   /** Lifecycle room id -> what its log holds. */
   readonly lifecycle: Map<string, LifecycleRow>;
+  /** Awaited before `roomOpenForMint`'s read is answered, when set: a test makes the read stall or fail. */
+  beforeRoomRead: (() => Promise<void>) | null;
 }
 
 export function roomStub(): RoomStub {
@@ -79,6 +81,7 @@ export function roomStub(): RoomStub {
     }
     // `roomOpenForMint`: always one row, as the SELECT of two scalar subqueries is.
     if (/^SELECT EXISTS \(SELECT 1 FROM build_room_events WHERE room_id = \$1::uuid AND event = 'runtime_room\.bound'\) AS bound/.test(text)) {
+      if (stub.beforeRoomRead !== null) await stub.beforeRoomRead();
       const row = lifecycle.get(String(params[0]));
       return { rows: [{ bound: row?.binding != null, state: row?.state ?? null }], rowCount: 1 };
     }
@@ -99,5 +102,6 @@ export function roomStub(): RoomStub {
     on: () => undefined,
     end: async () => undefined,
   } as unknown as Pool;
-  return { pool, registry, rejections, lifecycle };
+  const stub: RoomStub = { pool, registry, rejections, lifecycle, beforeRoomRead: null };
+  return stub;
 }

@@ -437,7 +437,11 @@ export class GatewaySessionService {
    * same fence, and re-delivered until a minted report answers it, but only
    * while the lifecycle log, read in this fenced transaction, still has its
    * room in BUILDING with no binding; a request for a room that has bound or
-   * left BUILDING is withdrawn instead of delivered.
+   * left BUILDING is withdrawn instead of delivered. That read awaits the
+   * database, so it runs BEFORE the planner request is collected: a read
+   * that fails collects no planner work, and one that stalls past a planner
+   * request's wait cannot deliver the withdrawn request afterwards, as the
+   * planner channel's synchronous collection always guaranteed.
    */
   async plannerPoll(body: unknown, sourceIp: string): Promise<RouteResult> {
     if (!this.clock.reliable) return this.refuse(503, 'clock_unreliable', null, sourceIp);
@@ -459,10 +463,13 @@ export class GatewaySessionService {
       async (ctx) => {
         const checked = await this.sessionBoundChecks(ctx.client, envelope);
         if (checked.refusal !== null) return rollback(checked.refusal);
-        const request = this.planner.collect(envelope.gatewayId);
+        // The room read first: planner work is collected last, with no await
+        // between its collection and the answer, so a failed or slow read
+        // can neither strand it delivered nor deliver it after its wait.
         const room = await this.roomChannel.collect(envelope.gatewayId, (lifecycleRoomId) =>
           roomOpenForMint(ctx.client, lifecycleRoomId),
         );
+        const request = this.planner.collect(envelope.gatewayId);
         return {
           value: { status: 200, body: { ok: true, state: 'enrolled', epoch: checked.cursor.epoch, request, room } },
           commit: true,

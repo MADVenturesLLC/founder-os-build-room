@@ -216,6 +216,60 @@ describe('gateway-room-routes · the poll answer carries the mint request', () =
   });
 });
 
+describe('gateway-room-routes · the room read never strands or late-delivers planner work', () => {
+  const statusRequest = (requestId: string) => ({ requestId, kind: 'status' as const, commandId: 'cmd_room_read' });
+
+  it('a room read that fails collects no planner work: the poll is refused and the request was never delivered', async () => {
+    const stub = roomStub();
+    const surface = await startSurface({}, stub.pool);
+    try {
+      const gateway = enroll(stub);
+      const epoch = await openSession(surface, gateway);
+      const lifecycleRoomId = uuid();
+      stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: null });
+      surface.gateway.roomChannel.requestMint(gateway.gatewayId, lifecycleRoomId);
+      const asked = surface.gateway.planner.ask(gateway.gatewayId, statusRequest, 300);
+      stub.beforeRoomRead = () => Promise.reject(new Error('the lifecycle read failed'));
+      const polled = await post(surface, '/gateway/planner/poll', poll(gateway, epoch, 1));
+      assert.notEqual(polled.status, 200, 'the poll is not answered');
+      assert.equal(polled.body['request'], undefined, 'and carries no planner work');
+      assert.deepEqual(await asked, { answered: false, delivered: false }, 'never delivered: not_sent stays affirmable');
+    } finally {
+      await surface.close();
+    }
+  });
+
+  it('a room read that stalls past a planner request\'s wait does not deliver the withdrawn request', async () => {
+    const stub = roomStub();
+    const surface = await startSurface({}, stub.pool);
+    try {
+      const gateway = enroll(stub);
+      const epoch = await openSession(surface, gateway);
+      const lifecycleRoomId = uuid();
+      stub.lifecycle.set(lifecycleRoomId, { state: 'BUILDING', binding: null });
+      const { requestId: mintRequestId } = surface.gateway.roomChannel.requestMint(gateway.gatewayId, lifecycleRoomId);
+      const asked = surface.gateway.planner.ask(gateway.gatewayId, statusRequest, 100);
+      stub.beforeRoomRead = () => new Promise((resolve) => setTimeout(resolve, 400));
+      const polled = await post(surface, '/gateway/planner/poll', poll(gateway, epoch, 1));
+      assert.equal(polled.status, 200);
+      assert.equal(polled.body['request'], null, 'the request was withdrawn during the read, so it is not delivered');
+      assert.deepEqual(polled.body['room'], { kind: 'mint', requestId: mintRequestId, lifecycleRoomId }, 'the mint request is');
+      assert.deepEqual(await asked, { answered: false, delivered: false });
+
+      // A planner request asked after the read is delivered by the next poll, as always.
+      stub.beforeRoomRead = null;
+      const later = surface.gateway.planner.ask(gateway.gatewayId, statusRequest, 2_000);
+      const next = await post(surface, '/gateway/planner/poll', poll(gateway, epoch, 2));
+      assert.equal((next.body['request'] as { kind?: string } | null)?.kind, 'status');
+      const answered = (next.body['request'] as { requestId: string }).requestId;
+      assert.equal(surface.gateway.planner.answer(gateway.gatewayId, answered, { kind: 'never_received' }), true);
+      assert.equal((await later).answered, true);
+    } finally {
+      await surface.close();
+    }
+  });
+});
+
 describe('gateway-room-routes · the poll delivers a mint request only while its room is open for one', () => {
   it('withdraws, instead of delivering, a request whose room has bound, has left BUILDING, or is unknown to the log', async () => {
     const stub = roomStub();

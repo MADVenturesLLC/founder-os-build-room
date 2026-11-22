@@ -74,20 +74,25 @@
  *
  * A WHOLE STRING EXPRESSION is a literal, a template (tagged or not), a `+`
  * chain, or a `[…].join` or `concat` call, read as one text with every part
- * the TypeScript type checker can resolve statically resolved first: a
- * literal type (a const, an `as const` property, a union of literals, an enum
- * member), else the initializer of what the part names, wherever it is
- * declared (a const, let or var, an object property, shorthand included, a
- * class field, a parameter's or a destructured binding's default), by name,
- * property access or literal element access, through imports. Where a part
- * can take several values, the most writes any of them makes is counted. A
- * composed value that spells a writer's name counts as the literal would.
+ * that can be known statically resolved first (`ValueFlow`): a literal type
+ * (a const, an `as const` property, a union of literals, an enum member),
+ * else whatever the part names can hold, followed through every
+ * declaration's initializer (a const, let or var, an object property,
+ * shorthand included, a class field, an enum member, a parameter's or a
+ * destructured binding's default), through destructuring, to the property
+ * or element of its source, and through every assignment anywhere in the
+ * program (`=`, `||=`, `&&=`, `??=`, destructuring assignments included); by
+ * name, property access or literal element access, through imports. Where a
+ * part can take several values, the most writes any of them makes is
+ * counted. A composed value that spells a writer's name counts as the
+ * literal would.
  *
- * A value held in a declaration counts where it is declared AND at every
- * reference to it, by name, property access or element access, through
- * imports: a const holding SQL counts again wherever it is run, so a second
- * `client.query(APPEND_SQL, values)` is a second use at its own site, and a
- * const holding a writer's name counts wherever it is used as one.
+ * A value counts where it is written AND at every reference that reads it
+ * (an assignment's target is not a read): a const holding SQL counts again
+ * wherever it is run, by name, through an alias, a property, a destructured
+ * binding or an import, so a second `client.query(APPEND_SQL, values)` is a
+ * second use at its own site, and a const holding a writer's name counts
+ * wherever it is used as one.
  *
  * A third SQL rule pins MENTIONS: every occurrence, in any whole string
  * expression and in any case, of the two tables' names and the append
@@ -96,18 +101,29 @@
  * (`insertInto('build_room_events')`) is caught where it is written, though
  * what the helper does with it is not known statically.
  *
+ * CONTENT. Counts see a new reference anywhere, but not a rewrite inside a
+ * site already allowed to write that keeps them: a loop, a closure run twice,
+ * a value routed another way. So every site that holds a write (every site
+ * the writer rules pin, but the migrations) is also pinned by the digest of
+ * its code, its parser tokens without comments or whitespace
+ * (`siteContents`). Any change to such a site fails, and is reviewed as a
+ * change to a writer; a comment or a reformatting does not.
+ *
  * Fixtures pin each ordinary form, a second caller added inside an allowed
  * file, a write moved into a shared helper, comments inside SQL, SQL built
  * from constants and declared values, SQL held in a const and run again
- * elsewhere, and a table name handed to a helper.
- * What the check cannot see: a name assembled at run time from parts none of
- * which spells it (input, a call other than join or concat, text appended
- * with `+=` or pushed into an array), and a closure created inside a governed
- * function that escapes it at run time (sites are lexical).
+ * elsewhere, by name, destructuring or assignment, a table name handed to a
+ * helper, and a count-keeping rewrite inside a writer site. What the check
+ * cannot see: a name assembled at run time from parts none of which spells
+ * it (input, a call other than join or concat, text appended with `+=` or
+ * pushed into an array), and a value that reaches a new site only through a
+ * function's parameter, which is counted where it is passed, not where the
+ * function runs it.
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -331,80 +347,263 @@ function stringCall(node: ts.Node): { readonly method: 'join' | 'concat'; readon
   return null;
 }
 
-/**
- * The values `expr` can take that are known statically: literals, template
- * literals, `+` chains, `[…].join` and `concat` of known parts, and any
- * expression the type checker gives a string or number literal type (a const,
- * imported or not, an `as const` property, a union of literals), else the
- * initializer of the const it names. A part that cannot be known is UNKNOWN.
- */
-export function staticTexts(expr: ts.Expression, checker: ts.TypeChecker, depth = 0): string[] {
-  if (depth > 16) return [UNKNOWN];
-  const next = (e: ts.Expression): string[] => staticTexts(e, checker, depth + 1);
-  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr) || ts.isNumericLiteral(expr)) return [expr.text];
-  if (WRAPPERS.has(expr.kind)) return next((expr as ts.ParenthesizedExpression).expression);
-  if (ts.isTemplateExpression(expr)) {
-    return combine([[expr.head.text], ...expr.templateSpans.flatMap((span) => [next(span.expression), [span.literal.text]])]);
-  }
-  if (ts.isTaggedTemplateExpression(expr)) return next(expr.template);
-  if (isPlus(expr)) return combine([next(expr.left), next(expr.right)]);
-  const call = stringCall(expr);
-  if (call !== null) {
-    const access = call.call.expression as ts.PropertyAccessExpression;
-    if (call.method === 'join') {
-      const elements = (access.expression as ts.ArrayLiteralExpression).elements.map((e) => next(e));
-      const separator = call.call.arguments[0] === undefined ? [','] : next(call.call.arguments[0]);
-      const parts: string[][] = [];
-      elements.forEach((element, index) => {
-        if (index > 0) parts.push(separator);
-        parts.push(element);
-      });
-      return combine(parts);
-    }
-    return combine([next(access.expression), ...call.call.arguments.map((a) => next(a))]);
-  }
-  const type = checker.getTypeAtLocation(expr);
-  const members = type.isUnion() ? type.types : [type];
-  if (members.length > 0 && members.every((t) => t.isStringLiteral() || t.isNumberLiteral())) {
-    return members.map((t) => String((t as ts.LiteralType).value));
-  }
-  const initializer = declaredInitializer(expr, checker);
-  return initializer === undefined ? [UNKNOWN] : next(initializer);
-}
+/** Where a value can come from: an expression, or a member of another source (a property by name, an element by index). */
+type Source = ts.Expression | { readonly of: Source; readonly key: string } | { readonly of: Source; readonly index: number };
+
+const isExpressionSource = (source: Source): source is ts.Expression => 'kind' in source;
+
+const unwrap = (expr: ts.Expression): ts.Expression => (WRAPPERS.has(expr.kind) ? unwrap((expr as ts.ParenthesizedExpression).expression) : expr);
+
+const ASSIGNING = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+]);
+
+/** A property name's text, when it is written as one: an identifier, a string or a number. */
+const keyText = (name: ts.Node | undefined): string | undefined =>
+  name !== undefined && (ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) ? name.text : undefined;
 
 /**
- * The initializer `expr` names, wherever it is declared: a variable (const,
- * let or var), a property of an object literal (shorthand included), a class
- * field, an enum member, a parameter's default, a destructured binding's
- * default; reached by name, by property access or by element access with a
- * literal key, through imports. For anything that can be reassigned this is
- * one value it can take, not every one; text assigned later is read where it
- * is written.
+ * How values move through one program, as far as they can be followed
+ * statically: through every declaration's initializer (a const, let or var,
+ * an object property, shorthand included, a class field, an enum member, a
+ * parameter's or a destructured binding's default), through destructuring,
+ * from the property or element of its source, and through every assignment
+ * made anywhere in the program (`=`, `||=`, `&&=`, `??=`, destructuring
+ * assignments included); by name, property access or literal element access,
+ * through imports. Not through a function's parameters, which hold whatever a
+ * caller passes, nor a call's result other than join or concat.
  */
-function declaredInitializer(expr: ts.Expression, checker: ts.TypeChecker): ts.Expression | undefined {
-  if (ts.isElementAccessExpression(expr) && !ts.isStringLiteralLike(expr.argumentExpression) && !ts.isNumericLiteral(expr.argumentExpression)) {
-    // A computed key names a property only by its value; the key itself is a reference of its own.
-    return undefined;
+export class ValueFlow {
+  readonly checker: ts.TypeChecker;
+  private readonly assigned = new Map<ts.Symbol, Source[]>();
+  private readonly cache = new Map<ts.Symbol, string[]>();
+
+  constructor(program: ts.Program) {
+    this.checker = program.getTypeChecker();
+    const visit = (node: ts.Node): void => {
+      if (ts.isBinaryExpression(node) && ASSIGNING.has(node.operatorToken.kind)) this.assignTo(node.left, node.right);
+      ts.forEachChild(node, visit);
+    };
+    for (const file of program.getSourceFiles()) if (!file.isDeclarationFile) visit(file);
   }
-  const at = ts.isPropertyAccessExpression(expr) ? expr.name : ts.isElementAccessExpression(expr) ? expr.argumentExpression : expr;
-  let symbol = checker.getSymbolAtLocation(at);
-  if (symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
-  let declaration = symbol?.valueDeclaration;
-  if (declaration !== undefined && ts.isShorthandPropertyAssignment(declaration)) {
-    declaration = checker.getShorthandAssignmentValueSymbol(declaration)?.valueDeclaration;
+
+  /** The symbol a reference names: by name, property access or literal element access, through an import. */
+  symbolOf(expr: ts.Expression): ts.Symbol | undefined {
+    const e = unwrap(expr);
+    let at: ts.Node;
+    if (ts.isPropertyAccessExpression(e)) at = e.name;
+    else if (ts.isElementAccessExpression(e)) {
+      // A computed key names a property only by its value; the key itself is a reference of its own.
+      if (!ts.isStringLiteralLike(e.argumentExpression) && !ts.isNumericLiteral(e.argumentExpression)) return undefined;
+      at = e.argumentExpression;
+    } else if (ts.isIdentifier(e)) at = e;
+    else return undefined;
+    const symbol = this.checker.getSymbolAtLocation(at);
+    return symbol !== undefined && symbol.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(symbol) : symbol;
   }
-  if (declaration === undefined) return undefined;
-  if (
-    ts.isVariableDeclaration(declaration)
-    || ts.isParameter(declaration)
-    || ts.isPropertyDeclaration(declaration)
-    || ts.isPropertyAssignment(declaration)
-    || ts.isEnumMember(declaration)
-    || ts.isBindingElement(declaration)
-  ) {
-    return declaration.initializer;
+
+  private assignTo(target: ts.Expression, value: Source): void {
+    const t = unwrap(target);
+    if (ts.isBinaryExpression(t) && t.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      // A default inside a destructuring assignment: the target takes the member, or the default (visited as its own assignment).
+      this.assignTo(t.left, value);
+      return;
+    }
+    if (ts.isObjectLiteralExpression(t)) {
+      for (const property of t.properties) {
+        if (ts.isShorthandPropertyAssignment(property)) {
+          this.add(this.checker.getShorthandAssignmentValueSymbol(property), { of: value, key: property.name.text });
+          if (property.objectAssignmentInitializer !== undefined) {
+            this.add(this.checker.getShorthandAssignmentValueSymbol(property), property.objectAssignmentInitializer);
+          }
+        } else if (ts.isPropertyAssignment(property)) {
+          const key = keyText(property.name);
+          if (key !== undefined) this.assignTo(property.initializer, { of: value, key });
+        }
+      }
+      return;
+    }
+    if (ts.isArrayLiteralExpression(t)) {
+      t.elements.forEach((element, index) => {
+        if (!ts.isOmittedExpression(element) && !ts.isSpreadElement(element)) this.assignTo(element, { of: value, index });
+      });
+      return;
+    }
+    this.add(this.symbolOf(t), value);
   }
-  return undefined;
+
+  private add(symbol: ts.Symbol | undefined, source: Source): void {
+    if (symbol === undefined) return;
+    const list = this.assigned.get(symbol) ?? [];
+    list.push(source);
+    this.assigned.set(symbol, list);
+  }
+
+  /** Every source a symbol's value can come from: its declarations, and every assignment to it. */
+  private sourcesOf(symbol: ts.Symbol): Source[] {
+    const sources: Source[] = [...(this.assigned.get(symbol) ?? [])];
+    for (const declaration of symbol.declarations ?? []) {
+      if (ts.isShorthandPropertyAssignment(declaration)) {
+        // An object literal's shorthand property holds what the variable it names holds.
+        const variable = this.checker.getShorthandAssignmentValueSymbol(declaration);
+        if (variable !== undefined && variable !== symbol) sources.push(...this.sourcesOf(variable));
+      } else if (
+        ts.isVariableDeclaration(declaration)
+        || ts.isParameter(declaration)
+        || ts.isPropertyDeclaration(declaration)
+        || ts.isPropertyAssignment(declaration)
+        || ts.isEnumMember(declaration)
+      ) {
+        if (declaration.initializer !== undefined) sources.push(declaration.initializer);
+      } else if (ts.isBindingElement(declaration)) {
+        sources.push(...this.bindingSources(declaration, symbol));
+      }
+    }
+    return sources;
+  }
+
+  /** What a destructured binding holds: its default, and the member of what it destructures. */
+  private bindingSources(element: ts.BindingElement, symbol?: ts.Symbol): Source[] {
+    const sources: Source[] = element.initializer !== undefined ? [element.initializer] : [];
+    const pattern = element.parent;
+    const holder = pattern.parent;
+    let whole: Source[] = [];
+    if ((ts.isVariableDeclaration(holder) || ts.isParameter(holder)) && holder.initializer !== undefined) whole = [holder.initializer];
+    else if (ts.isBindingElement(holder)) whole = this.bindingSources(holder);
+    if (ts.isObjectBindingPattern(pattern)) {
+      if (element.dotDotDotToken !== undefined) return sources;
+      const key = keyText(element.propertyName ?? element.name);
+      if (key === undefined) return sources;
+      for (const of of whole) sources.push({ of, key });
+      // Where nothing is written to destructure from (a parameter, an import), the type says where the property was declared.
+      const property = this.checker.getTypeAtLocation(pattern).getProperty(key);
+      if (property !== undefined && property !== symbol) {
+        const declared = property.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(property) : property;
+        if (declared !== symbol) sources.push(...this.sourcesOf(declared));
+      }
+    } else {
+      const index = pattern.elements.indexOf(element);
+      for (const of of whole) sources.push({ of, index });
+    }
+    return sources;
+  }
+
+  /** The sources a member of `of` can come from. */
+  private membersOf(of: Source, selector: { readonly key: string } | { readonly index: number }, depth: number): Source[] {
+    if (depth > 16) return [];
+    const wholes = isExpressionSource(of) ? [of] : this.membersOf(of.of, of, depth + 1);
+    const found: Source[] = [];
+    for (const whole of wholes) {
+      if (!isExpressionSource(whole)) {
+        found.push(...this.membersOf(whole, selector, depth + 1));
+        continue;
+      }
+      const e = unwrap(whole);
+      if ('key' in selector && ts.isObjectLiteralExpression(e)) {
+        for (const property of e.properties) {
+          if (ts.isSpreadAssignment(property)) found.push(...this.membersOf(property.expression, selector, depth + 1));
+          else if (ts.isShorthandPropertyAssignment(property) && property.name.text === selector.key) {
+            const variable = this.checker.getShorthandAssignmentValueSymbol(property);
+            if (variable !== undefined) found.push(...this.sourcesOf(variable));
+          }
+          else if (ts.isPropertyAssignment(property) && keyText(property.name) === selector.key) found.push(property.initializer);
+        }
+      } else if ('index' in selector && ts.isArrayLiteralExpression(e)) {
+        const before = e.elements.slice(0, selector.index + 1);
+        const element = e.elements[selector.index];
+        if (element !== undefined && !before.some((item) => ts.isSpreadElement(item)) && !ts.isOmittedExpression(element)) found.push(element);
+      } else {
+        const symbol = this.symbolOf(e);
+        if (symbol !== undefined) for (const source of this.sourcesOf(symbol)) found.push(...this.membersOf(source, selector, depth + 1));
+        if ('key' in selector) {
+          const property = this.checker.getTypeAtLocation(e).getProperty(selector.key);
+          if (property !== undefined) found.push(...this.sourcesOf(property.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(property) : property));
+        }
+      }
+    }
+    return found;
+  }
+
+  private textsOfSource(source: Source, depth: number): string[] {
+    if (isExpressionSource(source)) return this.texts(source, depth + 1);
+    const members = this.membersOf(source.of, source, depth + 1);
+    return members.length === 0 ? [UNKNOWN] : union(members.map((member) => this.textsOfSource(member, depth + 1)));
+  }
+
+  /** What a referenced symbol can hold, or `null` when nothing about it is known. Cycles read as unknown. */
+  textsOfSymbol(symbol: ts.Symbol, depth = 0): string[] | null {
+    const cached = this.cache.get(symbol);
+    if (cached !== undefined) return cached;
+    this.cache.set(symbol, [UNKNOWN]);
+    const sources = this.sourcesOf(symbol);
+    const texts = sources.length === 0 ? null : union(sources.map((source) => this.textsOfSource(source, depth)));
+    if (texts === null) this.cache.delete(symbol);
+    else this.cache.set(symbol, texts);
+    return texts;
+  }
+
+  /**
+   * The values `expr` can take that are known statically: literals, template
+   * literals, `+` chains, `[…].join` and `concat` of known parts, any
+   * expression the type checker gives a string or number literal type (a
+   * union of literals included), and whatever a reference holds as this
+   * flow follows it. A part that cannot be known is UNKNOWN.
+   */
+  texts(expr: ts.Expression, depth = 0): string[] {
+    if (depth > 16) return [UNKNOWN];
+    const next = (e: ts.Expression): string[] => this.texts(e, depth + 1);
+    if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr) || ts.isNumericLiteral(expr)) return [expr.text];
+    if (WRAPPERS.has(expr.kind)) return next((expr as ts.ParenthesizedExpression).expression);
+    if (ts.isTemplateExpression(expr)) {
+      return combine([[expr.head.text], ...expr.templateSpans.flatMap((span) => [next(span.expression), [span.literal.text]])]);
+    }
+    if (ts.isTaggedTemplateExpression(expr)) return next(expr.template);
+    if (isPlus(expr)) return combine([next(expr.left), next(expr.right)]);
+    const call = stringCall(expr);
+    if (call !== null) {
+      const access = call.call.expression as ts.PropertyAccessExpression;
+      if (call.method === 'join') {
+        const elements = (access.expression as ts.ArrayLiteralExpression).elements.map((e) => next(e));
+        const separator = call.call.arguments[0] === undefined ? [','] : next(call.call.arguments[0]);
+        const parts: string[][] = [];
+        elements.forEach((element, index) => {
+          if (index > 0) parts.push(separator);
+          parts.push(element);
+        });
+        return combine(parts);
+      }
+      return combine([next(access.expression), ...call.call.arguments.map((a) => next(a))]);
+    }
+    const type = this.checker.getTypeAtLocation(expr);
+    const members = type.isUnion() ? type.types : [type];
+    if (members.length > 0 && members.every((t) => t.isStringLiteral() || t.isNumberLiteral())) {
+      return members.map((t) => String((t as ts.LiteralType).value));
+    }
+    const symbol = this.symbolOf(expr);
+    return (symbol === undefined ? null : this.textsOfSymbol(symbol, depth + 1)) ?? [UNKNOWN];
+  }
+}
+
+/** The distinct values of several sources, at most MAX_VARIANTS. */
+function union(lists: readonly (readonly string[])[]): string[] {
+  const out = new Set<string>();
+  for (const list of lists) for (const value of list) if (out.size < MAX_VARIANTS) out.add(value);
+  return [...out];
+}
+
+const flows = new WeakMap<ts.Program, ValueFlow>();
+
+/** The program's value flow, built once. */
+export function flowOf(program: ts.Program): ValueFlow {
+  let flow = flows.get(program);
+  if (flow === undefined) {
+    flow = new ValueFlow(program);
+    flows.set(program, flow);
+  }
+  return flow;
 }
 
 /** The node a value expression is folded into, past wrappers, if it is part of a larger string expression. */
@@ -428,6 +627,7 @@ function foldedInto(node: ts.Node): boolean {
  * the reference), not an import or export specifier's name.
  */
 function isValueReference(node: ts.Node): node is ts.Expression {
+  if (isAssignmentTarget(node)) return false;
   if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) return true;
   if (!ts.isIdentifier(node) || node.parent === undefined) return false;
   const parent = node.parent;
@@ -435,6 +635,23 @@ function isValueReference(node: ts.Node): node is ts.Expression {
   if (ts.isShorthandPropertyAssignment(parent)) return true;
   const named = parent as { name?: ts.Node; propertyName?: ts.Node };
   return named.name !== node && named.propertyName !== node;
+}
+
+/** Whether `node` is what an assignment writes to, directly or inside a destructuring assignment's target. */
+function isAssignmentTarget(node: ts.Node): boolean {
+  let current = node;
+  for (let parent = node.parent; parent !== undefined; current = parent, parent = parent.parent) {
+    if (ts.isBinaryExpression(parent)) return ASSIGNING.has(parent.operatorToken.kind) && parent.left === current;
+    const inTarget = ts.isParenthesizedExpression(parent)
+      || ts.isObjectLiteralExpression(parent)
+      || ts.isArrayLiteralExpression(parent)
+      || ts.isShorthandPropertyAssignment(parent)
+      || ts.isSpreadAssignment(parent)
+      || ts.isSpreadElement(parent)
+      || (ts.isPropertyAssignment(parent) && parent.initializer === current);
+    if (!inTarget) return false;
+  }
+  return false;
 }
 
 /** A string expression to read whole: a literal, a template, tagged or not, a `+` chain or a join/concat call, not itself part of a larger one. */
@@ -454,7 +671,8 @@ function isWholeString(node: ts.Node): node is ts.Expression {
  * string literals; SQL is read from each whole string expression, its
  * statically known parts resolved through `checker`.
  */
-export function findingsIn(source: ts.SourceFile, checker: ts.TypeChecker): FileFindings {
+export function findingsIn(source: ts.SourceFile, program: ts.Program): FileFindings {
+  const flow = flowOf(program);
   const writers = new Map<WriterRule, Map<string, Counts>>();
   const inventory = new Set<InventoryRule>();
   const visit = (node: ts.Node): void => {
@@ -508,18 +726,55 @@ export function findingsIn(source: ts.SourceFile, checker: ts.TypeChecker): File
       count('tableNames', false, mentions);
     };
     if (isWholeString(node)) {
-      record(staticTexts(node, checker), !(ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)));
+      record(flow.texts(node), !(ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)));
     } else if (isValueReference(node) && !foldedInto(node)) {
       // A reference to a declared value (a const holding SQL, say) counts
       // where it is used, every time, as well as where it is declared: a
       // second `client.query(APPEND_SQL, values)` is a second use.
-      const initializer = declaredInitializer(node, checker);
-      if (initializer !== undefined) record(staticTexts(initializer, checker, 1), true);
+      const symbol = flow.symbolOf(node);
+      const held = symbol === undefined ? null : flow.textsOfSymbol(symbol);
+      if (held !== null) record(held, true);
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
   return { writers, inventory };
+}
+
+/**
+ * Each top-level site of a file, named as `siteOf` names it, with a digest of
+ * its code: its tokens in order, without comments or whitespace, so an edit
+ * to what it does changes the digest and a reformatting or a comment does not.
+ */
+export function siteContents(source: ts.SourceFile): Map<string, string> {
+  const parts = new Map<string, string[]>();
+  const add = (site: string, node: ts.Node): void => {
+    // The parser's own tokens: comments are trivia it never makes a token of, and template text stays one token.
+    const tokens: string[] = [];
+    const walk = (n: ts.Node): void => {
+      const children = n.getChildren(source);
+      if (children.length === 0) {
+        if (n.kind !== ts.SyntaxKind.EndOfFileToken) tokens.push(n.getText(source));
+        return;
+      }
+      for (const child of children) walk(child);
+    };
+    walk(node);
+    parts.set(site, [...(parts.get(site) ?? []), tokens.join(' ')]);
+  };
+  for (const statement of source.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) add(statement.name.text, statement);
+    else if (ts.isClassDeclaration(statement) && statement.name !== undefined) {
+      for (const member of statement.members) {
+        add(`${statement.name.text}.${ts.isConstructorDeclaration(member) ? 'constructor' : nameText(member.name)}`, member);
+      }
+    } else if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement) || ts.isEnumDeclaration(statement)) {
+      add(statement.name.text, statement);
+    } else if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) add(nameText(declaration.name), declaration);
+    }
+  }
+  return new Map([...parts].map(([site, texts]) => [site, createHash('sha256').update(texts.join('\n'), 'utf8').digest('hex').slice(0, 16)]));
 }
 
 let cachedScanOptions: ts.CompilerOptions | undefined;
@@ -552,7 +807,7 @@ export function programOver(sources: ReadonlyMap<string, string>, options: ts.Co
 export function findingsInText(text: string, file = 'fixture.ts'): FileFindings {
   const path = join(REPO_ROOT, '__binding_one_writer_fixture__', file);
   const program = programOver(new Map([[path, text]]), scanOptions());
-  return findingsIn(program.getSourceFile(path)!, program.getTypeChecker());
+  return findingsIn(program.getSourceFile(path)!, program);
 }
 
 const TS_SOURCE = /\.(?:ts|mts|cts)$/;
@@ -612,22 +867,31 @@ function sourceFiles(): string[] {
 
 const readSource = (file: string): string => readFileSync(join(REPO_ROOT, file), 'utf8');
 
-/** Every writer rule's counts at each "file :: declaration" site, and every inventory rule's files, over the given sources (repository-relative path to text). */
-function scan(sources: ReadonlyMap<string, string>): { writers: Tallies; inventory: Record<InventoryRule, string[]> } {
+/**
+ * Every writer rule's counts at each "file :: declaration" site, every
+ * inventory rule's files, and every site's content digest, over the given
+ * sources (repository-relative path to text).
+ */
+function scan(sources: ReadonlyMap<string, string>): {
+  writers: Tallies;
+  inventory: Record<InventoryRule, string[]>;
+  contents: Record<string, string>;
+} {
   const writers: Tallies = {};
   const inventory: Record<InventoryRule, string[]> = { builderKind: [], boundEvent: [] };
+  const contents: Record<string, string> = {};
   const program = programOver(new Map([...sources].map(([file, text]) => [join(REPO_ROOT, file), text])), scanOptions());
-  const checker = program.getTypeChecker();
   for (const [file] of [...sources].sort(([a], [b]) => a.localeCompare(b))) {
-    const found = findingsIn(program.getSourceFile(join(REPO_ROOT, file))!, checker);
+    const found = findingsIn(program.getSourceFile(join(REPO_ROOT, file))!, program);
     for (const [rule, sites] of found.writers) {
       for (const [site, { declarations, uses }] of [...sites].sort(([a], [b]) => a.localeCompare(b))) {
         (writers[rule] ??= {})[`${file} :: ${site}`] = `${declarations}/${uses}`;
       }
     }
     for (const rule of found.inventory) inventory[rule].push(file);
+    for (const [site, digest] of siteContents(program.getSourceFile(join(REPO_ROOT, file))!)) contents[`${file} :: ${site}`] = digest;
   }
-  return { writers, inventory };
+  return { writers, inventory, contents };
 }
 
 const productionSources = (): Map<string, string> => new Map(sourceFiles().map((file) => [file, readSource(file)]));
@@ -726,6 +990,41 @@ const EXPECTED: Tallies = {
   },
 };
 
+/**
+ * The content digest (`siteContents`) of every site that holds a write: every
+ * site a writer rule above pins, but the migrations, whose SQL is applied only
+ * through a tranche the Founder dispatches and whose counts already see any
+ * new write or routine call in it. Counts see a new reference anywhere; they
+ * cannot see a rewrite inside an allowed site that keeps them (a loop, a
+ * closure called twice, a value routed another way). So any change to these
+ * sites' code fails this check and is reviewed as a change to a writer; a
+ * comment or a reformatting does not.
+ */
+const CONTENT_UNPINNED = new Set([at(MIGRATIONS, 'MIGRATIONS')]);
+
+const contentPinnedSites = (): string[] =>
+  [...new Set(Object.entries(EXPECTED).filter(([rule]) => rule !== 'tableNames').flatMap(([, sites]) => Object.keys(sites ?? {})))]
+    .filter((site) => !CONTENT_UNPINNED.has(site))
+    .sort();
+
+const EXPECTED_CONTENT: Record<string, string> = {
+  [at(GOVERNED_PATH, 'RuntimeRoomBindingDeps')]: '944917436ccb31ad',
+  [at(GOVERNED_PATH, 'bindFirstBuilderCommand')]: 'ad3a9640fbb2d2a6',
+  [at(GOVERNED_PATH, 'journalLaterBuilderCommand')]: '1892b08ba66330d7',
+  [at(JOURNAL_STORE, 'APPEND_SQL')]: 'c23c4247c9d49bdb',
+  [at(JOURNAL_STORE, 'JournalStore.appendBindingRow')]: '28498b633ae01a85',
+  [at(JOURNAL_STORE, 'JournalStore.appendCommandEvent')]: '93ec32d789ca5664',
+  [at(JOURNAL_STORE, 'JournalStore.appendCommandRow')]: '97f7c7bf2833e0a7',
+  [at(JOURNAL_STORE, 'JournalStore.appendDecisionRow')]: '8636c5913b63846a',
+  [at(JOURNAL_STORE, 'JournalStore.appendJournaled')]: '00d095399365b32b',
+  [at(JOURNAL_STORE, 'JournalStore.appendWithin')]: 'aa8d7451efc34068',
+  [at(JOURNAL_STORE, 'JournalStore.inTransaction')]: '55c885d71c0072eb',
+  [at(JOURNAL_STORE, 'JournalTransaction')]: '73f6b60604fbc66c',
+  [at(LIFECYCLE_STORE, 'PostgresLedgerStore.appendRecorded')]: 'a93bdb9df5a67ec9',
+  [at(LIFECYCLE_STORE, 'PostgresLedgerStore.decideAndRecord')]: 'd88f73f7e58e2b31',
+  [at(LIFECYCLE_STORE, 'insertEvent')]: '1763621c025f9376',
+};
+
 const INVENTORY: Record<InventoryRule, string[]> = {
   builderKind: [
     JOURNAL_STORE,
@@ -746,7 +1045,7 @@ const INVENTORY: Record<InventoryRule, string[]> = {
 
 describe('binding-one-writer · only the governed path writes the binding (boundary act B2)', () => {
   const sources = productionSources();
-  const { writers, inventory } = scan(sources);
+  const { writers, inventory, contents } = scan(sources);
 
   it('scans the production build\'s whole file set: every source root, and nothing else the build needs is left out', () => {
     for (const file of [GOVERNED_PATH, LIFECYCLE_STORE, JOURNAL_STORE, MIGRATIONS]) assert.ok(sources.has(file), file);
@@ -757,6 +1056,12 @@ describe('binding-one-writer · only the governed path writes the binding (bound
 
   it('counts every writer\'s declarations and uses exactly, declaration by declaration', () => {
     assert.deepEqual(writers, EXPECTED);
+  });
+
+  it('pins the code of every site that holds a write, so a rewrite that keeps every count still fails', () => {
+    const pinned = contentPinnedSites();
+    assert.deepEqual(Object.keys(EXPECTED_CONTENT).sort(), pinned, 'every writer site, and only those, is pinned by content');
+    assert.deepEqual(Object.fromEntries(pinned.map((site) => [site, contents[site]])), EXPECTED_CONTENT);
   });
 
   it('finds the Builder command kind and the event name only in the inventoried files', () => {
@@ -845,6 +1150,45 @@ export function appendLaterBuilderRow(tx: JournalTransaction, command: BuilderCo
       'export async function second(client: { query(sql: string, values: unknown[]): Promise<unknown> }, values: unknown[]): Promise<void> { await client.query(APPEND_SQL, values); }',
       'journalSql',
     );
+  });
+
+  const APPEND_CALL = 'const { rows } = await client.query<{ seq: string; chain_hash: string }>(APPEND_SQL, [';
+  const APPEND_END = '            Buffer.from(bytes),\n          ]);\n          committed = rows[0];';
+  const edited = (from: string, to: string, then?: readonly [string, string]): Map<string, string> => {
+    const tampered = new Map(sources);
+    const text = sources.get(JOURNAL_STORE)!;
+    assert.equal(text.split(from).length, 2, `the edit's anchor is in the journal store once: ${from}`);
+    let next = text.replace(from, to);
+    if (then !== undefined) {
+      assert.equal(next.split(then[0]).length, 2, `the edit's second anchor is in the journal store once: ${then[0]}`);
+      next = next.replace(then[0], then[1]);
+    }
+    tampered.set(JOURNAL_STORE, next);
+    return tampered;
+  };
+
+  it('the twelfth review\'s probe: appendWithin\'s SQL routed through a destructured property and run twice', () => {
+    const tampered = edited(APPEND_CALL, 'const { sql } = { sql: APPEND_SQL };\n          await client.query(sql, []);\n          const { rows } = await client.query<{ seq: string; chain_hash: string }>(sql, [');
+    const { writers } = scan(tampered);
+    assert.notDeepEqual(writers['journalSql'], EXPECTED['journalSql'], 'each run through the destructured binding counts');
+  });
+
+  it('a rewrite inside appendWithin that keeps every count, a closure run twice, fails on its content', () => {
+    const tampered = edited(
+      APPEND_CALL,
+      'const run = () => client.query<{ seq: string; chain_hash: string }>(APPEND_SQL, [',
+      [APPEND_END, '            Buffer.from(bytes),\n          ]);\n          await run();\n          const { rows } = await run();\n          committed = rows[0];'],
+    );
+    const { writers, contents } = scan(tampered);
+    assert.deepEqual(writers, EXPECTED, 'no count moves: counts cannot see this');
+    assert.notEqual(contents[at(JOURNAL_STORE, 'JournalStore.appendWithin')], EXPECTED_CONTENT[at(JOURNAL_STORE, 'JournalStore.appendWithin')], 'the content pin does');
+  });
+
+  it('a comment or a reformatting inside a pinned site changes nothing', () => {
+    const tampered = edited(APPEND_CALL, `// a note on the append\n\n          ${APPEND_CALL.replace('APPEND_SQL, [', 'APPEND_SQL,   [')}`);
+    const { writers, contents } = scan(tampered);
+    assert.deepEqual(writers, EXPECTED);
+    assert.equal(contents[at(JOURNAL_STORE, 'JournalStore.appendWithin')], EXPECTED_CONTENT[at(JOURNAL_STORE, 'JournalStore.appendWithin')]);
   });
 
   it('a table name handed to a generic helper, in a production file', () => {
@@ -1010,8 +1354,41 @@ describe('binding-one-writer · every ordinary form is counted', () => {
       ]),
       scanOptions(),
     );
-    const found = findingsIn(program.getSourceFile(runner)!, program.getTypeChecker());
+    const found = findingsIn(program.getSourceFile(runner)!, program);
     assert.equal(totalOf(found, 'journalSql').uses, 2, 'an imported const, by name and through the namespace');
+  });
+
+  it('a value followed through destructuring, from a literal, a const, an import or a parameter\'s default, and through every assignment', () => {
+    const run = 'declare const client: { query(sql: unknown, values?: unknown): void };';
+    const sql = 'const APPEND = "SELECT * FROM public.command_journal_append($1, $2, $3, $4, $5)";';
+    const journal = (code: string): number => usesOf('journalSql', `${sql} ${run} ${code}`);
+    // The declaration counts once; each further line below says what it adds.
+    assert.equal(journal('const { s } = { s: APPEND }; client.query(s); client.query(s);'), 4, 'object destructuring of a literal: the reference, and two runs');
+    assert.equal(journal('const SQL = { s: APPEND }; const { s } = SQL; client.query(s);'), 3, 'of a const');
+    assert.equal(journal('const SQL = { s: APPEND }; const { s: renamed } = SQL; client.query(renamed);'), 3, 'renamed');
+    assert.equal(journal('const SQL = { inner: { s: APPEND } }; const { inner: { s } } = SQL; client.query(s);'), 3, 'nested');
+    assert.equal(journal('const [s] = [APPEND]; client.query(s); client.query(s);'), 4, 'array destructuring');
+    assert.equal(journal('const LIST = [APPEND]; const [s] = LIST; client.query(s);'), 3, 'array destructuring of a const');
+    assert.equal(journal('function f({ s } = { s: APPEND }) { client.query(s); }'), 3, 'a parameter\'s destructured default');
+    assert.equal(journal('let s: string; s = APPEND; client.query(s); client.query(s);'), 4, 'a later assignment');
+    assert.equal(journal('let s = ""; s ||= APPEND; client.query(s);'), 3, 'a logical assignment');
+    assert.equal(journal('let s: string; ({ s } = { s: APPEND }); client.query(s);'), 3, 'a destructuring assignment');
+    assert.equal(journal('let s: string; [s] = [APPEND]; client.query(s);'), 3, 'an array destructuring assignment');
+    assert.equal(journal('const box = { s: "" }; box.s = APPEND; client.query(box.s);'), 3, 'a property assigned later');
+    assert.equal(journal('function f(s: string) { client.query(s); client.query(s); } f(APPEND);'), 2, 'a parameter holds only what is passed, counted where it is passed');
+
+    const dir = join(REPO_ROOT, '__binding_one_writer_fixture__');
+    const holder = join(dir, 'holder.ts');
+    const runner = join(dir, 'runner.ts');
+    const program = programOver(
+      new Map([
+        [holder, 'export const APPEND = "SELECT * FROM command_journal_append($1, $2, $3, $4, $5)";\nexport const SQLS = { append: APPEND };\n'],
+        [runner, `import * as held from "./holder.js";\n${run}\nexport function go() { const { APPEND: a } = held; const { append } = held.SQLS; client.query(a); client.query(append); }\n`],
+      ]),
+      scanOptions(),
+    );
+    const found = findingsIn(program.getSourceFile(runner)!, program);
+    assert.equal(totalOf(found, 'journalSql').uses, 2, 'destructured from a namespace import, and from an imported const: both runs (held.SQLS is an object, no text)');
   });
 
   it('a tagged template is read whole, its constants resolved', () => {
@@ -1057,7 +1434,7 @@ describe('binding-one-writer · every ordinary form is counted', () => {
       ]),
       scanOptions(),
     );
-    const found = findingsIn(program.getSourceFile(writer)!, program.getTypeChecker());
+    const found = findingsIn(program.getSourceFile(writer)!, program);
     assert.equal(totalOf(found, 'lifecycleSql').uses, 1);
     assert.equal(totalOf(found, 'journalSql').uses, 1);
   });
