@@ -16,7 +16,7 @@ Monorepo. Present today:
 
 **Pure — zero I/O, zero credentials, enforced by a static test:**
 
-- `packages/contracts` — the lifecycle as types and data: 17 states, 29 events, the T1–T22 transition table, the G1–G22 guards.
+- `packages/contracts` — the lifecycle as types and data: 17 states, 30 events (one of them, `runtime_room.bound`, recorded without a transition), the T1–T22 transition table, the G1–G22 guards.
 - `packages/ledger` — the reducer that enforces that lifecycle and its four core invariants.
 - `packages/cost-meter` — the ratified spend rule as a function. Carries no rate data; the canonical price table lives in `founder-os-console` (`DEC-20260722-01`).
 - `packages/gateway-protocol` — the shared signed-message protocol: canonical bytes, envelope validation, bounds, encodings, and the clock-reliability evaluator. Zero dependencies, so both sides of the wire derive signed bytes from one implementation.
@@ -288,7 +288,7 @@ npm run build && npm run phase2:runs
 - `DEC-20260815-01` — repository creation authority
 - `DEC-20260815-08` — hosting/runtime stack
 - `DEC-20260815-09` / `DEC-20260815-16` — cost ceilings; the recognition choice is selected and recorded in `docs/cost-recognition-choice.md`
-- `DEC-20260815-11` — the concrete lifecycle this slice implements (v0.10)
+- `DEC-20260815-11` — the concrete lifecycle this slice implements (v0.12)
 - `DEC-20260815-17` — phase sequencing and stop gates
 - `DEC-20260815-18` — attribution and gate conventions
 - `docs/phase-2-provider-controls.md` — provider spend controls and the Founder-accepted Neon gap

@@ -1,6 +1,6 @@
 /**
- * Golden-vector inputs and builders for the four §6.2 serialization
- * contracts. The INPUTS here are hand-authored synthetic values (clearly
+ * Golden-vector inputs and builders for the §6.2 serialization contracts
+ * (a) to (e). The INPUTS here are hand-authored synthetic values (clearly
  * fake, no credential-shaped material); every canonical byte string and
  * every hash in a built vector object is produced by the implementation,
  * never hand-authored (contract §6.2).
@@ -12,13 +12,16 @@
 
 import { Buffer } from 'node:buffer';
 import {
+  BUILDER_COMMAND_KIND,
   GENESIS_CHAIN_HASH,
   SPEC_ID_A,
   SPEC_ID_B,
   SPEC_ID_C,
   SPEC_ID_C2,
   SPEC_ID_D,
+  SPEC_ID_E,
   chainHash,
+  encodeBindingRecordRow,
   encodeCommandEventRow,
   encodeCommandEventRowAs,
   encodeDecisionRecordRow,
@@ -27,6 +30,7 @@ import {
   envelopeDigest,
   planHash,
   sha256Hex,
+  type BindingRecordRow,
   type CanonicalDocument,
   type CommandEventRow,
   type CommandRowSpec,
@@ -408,6 +412,262 @@ export const DECISION_VECTOR_ROWS: readonly { readonly name: string; readonly ro
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Spec (e): binding rows (contract §2 "Binding-class records", §13 B1–B6).
+// Lifecycle rooms and Gateways are canonical lowercase UUIDs and runtime
+// rooms `room-` + one; every value below is synthetic and plainly fake.
+// ---------------------------------------------------------------------------
+
+export const BINDING_LIFECYCLE_ROOM_A = 'aaaaaaaa-0000-4000-8000-000000000301';
+export const BINDING_LIFECYCLE_ROOM_B = 'aaaaaaaa-0000-4000-8000-000000000302';
+export const BINDING_RUNTIME_ROOM_A = 'room-bbbbbbbb-0000-4000-8000-000000000301';
+export const BINDING_RUNTIME_ROOM_B = 'room-bbbbbbbb-0000-4000-8000-000000000302';
+export const BINDING_GATEWAY = 'cccccccc-0000-4000-8000-000000000301';
+
+const TB = (second: string): string => `2026-11-17T12:00:${second}.000000Z`;
+
+/** A Builder command's normalized envelope: its kind is what marks it a Builder command. */
+export const ENVELOPE_BUILDER: NormalizedCommandEnvelope = {
+  envelopeVersion: '1',
+  commandKind: BUILDER_COMMAND_KIND,
+  argv: ['--plan', 'plan_example_0301'],
+  targetRepository: 'example-org/example-repo',
+  scopeRef: 'scope_example_0301',
+};
+
+const PLANDOC_EXAMPLE_B: CanonicalDocument = { plan_version: '1', title: 'Second example plan document' };
+
+/** A Builder command's `journaled` row, naming the room's `runtime_room.bound` entry (B3, B6). */
+const builderJournaled = (
+  seq: string,
+  commandId: string,
+  second: string,
+  roomId: string,
+  boundEventId: string,
+): CommandEventRow => ({
+  seq,
+  eventType: 'journaled',
+  commandId,
+  roomId,
+  actorId: 'agent.builder',
+  roleId: 'builder',
+  repository: 'example-org/example-repo',
+  scopeRef: 'scope_example_0301',
+  commandEnvelope: ENVELOPE_BUILDER,
+  envelopeDigest: envelopeDigest(ENVELOPE_BUILDER),
+  authorizationRef: 'auth_example_0301',
+  intendedProvider: 'example-provider',
+  intendedModel: 'example-model-2',
+  intendedSurface: 'example-builder-surface',
+  lifecycleEventRef: { roomId, eventId: boundEventId },
+  evidenceRefs: [],
+  recordedAt: TB(second),
+});
+
+/** Standalone binding vectors. Every field is required, so the shapes vary in value, not presence. */
+export const BINDING_VECTOR_ROWS: readonly { readonly name: string; readonly row: BindingRecordRow }[] = [
+  {
+    name: 'binding of a lifecycle room to the runtime room its Gateway minted, after its first Builder command',
+    row: {
+      seq: '2',
+      event: 'runtime_room.bound',
+      actorId: 'system',
+      lifecycleRoomId: BINDING_LIFECYCLE_ROOM_A,
+      runtimeRoomId: BINDING_RUNTIME_ROOM_A,
+      gatewayId: BINDING_GATEWAY,
+      recordedState: 'BUILDING',
+      planHash: planHash(PLANDOC_EXAMPLE),
+      lifecycleEventRef: { roomId: BINDING_LIFECYCLE_ROOM_A, eventId: 'evt_example_0303' },
+      recordedAt: TB('31'),
+    },
+  },
+  {
+    name: 'binding of a second lifecycle room to another runtime room on the same Gateway',
+    row: {
+      seq: '7',
+      event: 'runtime_room.bound',
+      actorId: 'system',
+      lifecycleRoomId: BINDING_LIFECYCLE_ROOM_B,
+      runtimeRoomId: BINDING_RUNTIME_ROOM_B,
+      gatewayId: BINDING_GATEWAY,
+      recordedState: 'BUILDING',
+      planHash: planHash(PLANDOC_EXAMPLE_B),
+      lifecycleEventRef: { roomId: BINDING_LIFECYCLE_ROOM_B, eventId: 'evt_example_0311' },
+      recordedAt: TB('32'),
+    },
+  },
+  {
+    name: 'binding whose event id carries a multi-byte character: lp counts UTF-8 bytes',
+    row: {
+      seq: '12',
+      event: 'runtime_room.bound',
+      actorId: 'system',
+      lifecycleRoomId: 'aaaaaaaa-0000-4000-8000-000000000303',
+      runtimeRoomId: 'room-bbbbbbbb-0000-4000-8000-000000000303',
+      gatewayId: 'cccccccc-0000-4000-8000-000000000302',
+      recordedState: 'BUILDING',
+      planHash: planHash(PLANDOC_EXAMPLE),
+      lifecycleEventRef: { roomId: 'aaaaaaaa-0000-4000-8000-000000000303', eventId: 'evt_example_é_0321' },
+      recordedAt: TB('33'),
+    },
+  },
+];
+
+type BindingChainEntry =
+  | { readonly recordClass: 'command'; readonly name: string; readonly row: CommandEventRow }
+  | { readonly recordClass: 'decision'; readonly commandId: string; readonly name: string; readonly row: DecisionRecordRow }
+  | { readonly recordClass: 'binding'; readonly commandId: string; readonly name: string; readonly row: BindingRecordRow };
+
+/**
+ * The binding chain: command rows (all `BRJ:c:2`, as a chain writes them since
+ * the cutover), a plan decision and two bindings on one `seq` space. Each
+ * Builder command's first `journaled` row sits at k and its binding at k+1
+ * (B3); a later Builder command of the first room names that room's binding
+ * entry (B6). A decision or binding row's stored `command_id` column is
+ * outside its bytes (§13 G4) and is carried here beside them, so the chain's
+ * cross-row rules can be run over the committed file.
+ */
+export const BINDING_CHAIN_ROWS: readonly BindingChainEntry[] = [
+  {
+    recordClass: 'command',
+    name: 'planner journaled for lifecycle room A',
+    row: journaled('1', 'cmd_example_0301', '01', {
+      roomId: BINDING_LIFECYCLE_ROOM_A,
+      lifecycleEventRef: { roomId: BINDING_LIFECYCLE_ROOM_A, eventId: 'evt_example_0301' },
+      recordedAt: TB('01'),
+    }),
+  },
+  {
+    recordClass: 'command',
+    name: 'planner dispatched carrying init_model and provider_conversation_id',
+    row: {
+      seq: '2',
+      eventType: 'dispatched',
+      commandId: 'cmd_example_0301',
+      provider: 'example-provider',
+      model: 'example-model-1',
+      executionSurface: 'example-surface',
+      evidenceRefs: [],
+      recordedAt: TB('02'),
+      initModel: 'example-model-1',
+      providerConversationId: 'conv_example_0301',
+    },
+  },
+  {
+    recordClass: 'command',
+    name: 'planner completed with its PlanDoc as evidence',
+    row: {
+      seq: '3',
+      eventType: 'completed',
+      commandId: 'cmd_example_0301',
+      evidenceRefs: ['plandoc/example_0301'],
+      recordedAt: TB('03'),
+    },
+  },
+  {
+    recordClass: 'decision',
+    commandId: 'cmd_example_0301',
+    name: 'decision plan.approved at PLAN_REVIEW, bound to the planner command',
+    row: {
+      seq: '4',
+      decision: 'plan.approved',
+      actorId: 'founder',
+      recordedState: 'PLAN_REVIEW',
+      planHash: planHash(PLANDOC_EXAMPLE),
+      authorizationRef: 'auth_example_0302',
+      lifecycleEventRef: { roomId: BINDING_LIFECYCLE_ROOM_A, eventId: 'evt_example_0302' },
+      recordedAt: TB('04'),
+    },
+  },
+  {
+    recordClass: 'command',
+    name: 'first Builder command journaled at k, naming the runtime_room.bound entry',
+    row: builderJournaled('5', 'cmd_example_0302', '05', BINDING_LIFECYCLE_ROOM_A, 'evt_example_0303'),
+  },
+  {
+    recordClass: 'binding',
+    commandId: 'cmd_example_0302',
+    name: 'binding of room A at k+1, its command_id column naming the first Builder command',
+    row: {
+      seq: '6',
+      event: 'runtime_room.bound',
+      actorId: 'system',
+      lifecycleRoomId: BINDING_LIFECYCLE_ROOM_A,
+      runtimeRoomId: BINDING_RUNTIME_ROOM_A,
+      gatewayId: BINDING_GATEWAY,
+      recordedState: 'BUILDING',
+      planHash: planHash(PLANDOC_EXAMPLE),
+      lifecycleEventRef: { roomId: BINDING_LIFECYCLE_ROOM_A, eventId: 'evt_example_0303' },
+      recordedAt: TB('06'),
+    },
+  },
+  {
+    recordClass: 'command',
+    name: 'first Builder command dispatched, carrying neither init field',
+    row: {
+      seq: '7',
+      eventType: 'dispatched',
+      commandId: 'cmd_example_0302',
+      runId: 'run_example_0302',
+      provider: 'example-provider',
+      model: 'example-model-2',
+      executionSurface: 'example-builder-surface',
+      evidenceRefs: [],
+      recordedAt: TB('07'),
+    },
+  },
+  {
+    recordClass: 'command',
+    name: 'first Builder command completed',
+    row: {
+      seq: '8',
+      eventType: 'completed',
+      commandId: 'cmd_example_0302',
+      evidenceRefs: ['evidence_example_0302'],
+      recordedAt: TB('08'),
+    },
+  },
+  {
+    recordClass: 'command',
+    name: 'a later Builder command of room A, naming the binding entry (B6)',
+    row: builderJournaled('9', 'cmd_example_0303', '09', BINDING_LIFECYCLE_ROOM_A, 'evt_example_0303'),
+  },
+  {
+    recordClass: 'command',
+    name: 'the later Builder command failed before dispatch',
+    row: {
+      seq: '10',
+      eventType: 'failed',
+      commandId: 'cmd_example_0303',
+      failureClassification: 'policy_rejection',
+      evidenceRefs: [],
+      recordedAt: TB('10'),
+    },
+  },
+  {
+    recordClass: 'command',
+    name: 'first Builder command of lifecycle room B journaled at k',
+    row: builderJournaled('11', 'cmd_example_0304', '11', BINDING_LIFECYCLE_ROOM_B, 'evt_example_0311'),
+  },
+  {
+    recordClass: 'binding',
+    commandId: 'cmd_example_0304',
+    name: 'binding of room B at k+1, to another runtime room on the same Gateway',
+    row: {
+      seq: '12',
+      event: 'runtime_room.bound',
+      actorId: 'system',
+      lifecycleRoomId: BINDING_LIFECYCLE_ROOM_B,
+      runtimeRoomId: BINDING_RUNTIME_ROOM_B,
+      gatewayId: BINDING_GATEWAY,
+      recordedState: 'BUILDING',
+      planHash: planHash(PLANDOC_EXAMPLE_B),
+      lifecycleEventRef: { roomId: BINDING_LIFECYCLE_ROOM_B, eventId: 'evt_example_0311' },
+      recordedAt: TB('12'),
+    },
+  },
+];
+
 export function buildEnvelopeVectorFile(): object {
   const inputs = [
     { name: 'full envelope with target and scope', envelope: ENVELOPE_FULL },
@@ -518,14 +778,66 @@ export function buildChainV2VectorFile(): object {
   };
 }
 
+/** Standalone spec (e) vectors. */
+export function buildBindingVectorFile(): object {
+  return {
+    spec: SPEC_ID_E,
+    generated_by: 'test/support/generate-journal-vectors.ts',
+    vectors: BINDING_VECTOR_ROWS.map(({ name, row }) => {
+      const bytes = encodeBindingRecordRow(row);
+      return {
+        name,
+        input: row,
+        canonical_hex: hex(bytes),
+        sha256: sha256Hex(bytes),
+      };
+    }),
+  };
+}
+
+/** The binding chain, framed exactly as `chain.json` is, each row with its stored `command_id` column. */
+export function buildChainBindingVectorFile(): object {
+  let prior = GENESIS_CHAIN_HASH;
+  const rows = BINDING_CHAIN_ROWS.map((entry) => {
+    const bytes =
+      entry.recordClass === 'command'
+        ? encodeCommandEventRowAs(SPEC_ID_C2, entry.row)
+        : entry.recordClass === 'decision'
+          ? encodeDecisionRecordRow(entry.row)
+          : encodeBindingRecordRow(entry.row);
+    const rowChainHash = chainHash(prior, bytes);
+    const built = {
+      name: entry.name,
+      record_class: entry.recordClass,
+      spec: entry.recordClass === 'command' ? SPEC_ID_C2 : entry.recordClass === 'decision' ? SPEC_ID_D : SPEC_ID_E,
+      command_id: entry.recordClass === 'command' ? entry.row.commandId : entry.commandId,
+      input: entry.row,
+      canonical_hex: hex(bytes),
+      row_sha256: sha256Hex(bytes),
+      prior_chain_hash: prior,
+      chain_hash: rowChainHash,
+    };
+    prior = rowChainHash;
+    return built;
+  });
+  return {
+    specs: [SPEC_ID_C2, SPEC_ID_D, SPEC_ID_E],
+    generated_by: 'test/support/generate-journal-vectors.ts',
+    genesis: GENESIS_CHAIN_HASH,
+    rows,
+  };
+}
+
 /** Every vector file, keyed by its path under `packages/journal/vectors/`. */
 export function buildAllVectorFiles(): ReadonlyMap<string, object> {
   return new Map<string, object>([
     ['envelope.json', buildEnvelopeVectorFile()],
     ['plandoc.json', buildPlanDocVectorFile()],
     ['decision-row.json', buildDecisionVectorFile()],
+    ['binding-row.json', buildBindingVectorFile()],
     ['chain.json', buildChainVectorFile()],
     ['chain-v2.json', buildChainV2VectorFile()],
+    ['chain-binding.json', buildChainBindingVectorFile()],
   ]);
 }
 

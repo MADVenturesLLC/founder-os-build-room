@@ -247,6 +247,7 @@ before(async () => {
       '0008_runtime_operational_grants',
       '0009_two_enrolled_gateways',
       '0010_plan_store',
+      '0011_phase5_binding',
     ],
     'the full canonical sequence through 0006 applied in order on the owned instance',
   );

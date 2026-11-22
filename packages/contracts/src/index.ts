@@ -5,7 +5,7 @@
  * WF-04 Step 3 Slice 1 half that describes the lifecycle; `@build-room/ledger`
  * is the half that enforces it.
  *
- * Authority: `DEC-20260815-11` v0.10 (`source_of_truth: true`), whose
+ * Authority: `DEC-20260815-11` v0.12 (`source_of_truth: true`), whose
  * `## Reproduced Lifecycle Artifacts` section is authoritative for the states,
  * overlay flags and the T1-T22 table. The Fable planning package is pinned
  * PROVENANCE ONLY at `cff972d34a7a3a2c6b7225fffe96a76af86c8b25`.
@@ -34,11 +34,20 @@ export {
   EVENTS,
   ACTORS,
   EVENT_TABLE,
+  RECORDED_EVENTS,
+  RUNTIME_ROOM_BINDING_FIELDS,
   eventSpec,
+  recordedEventSpec,
   isEventName,
+  isCanonicalUuid,
+  isRuntimeRoomId,
+  isRuntimeRoomBinding,
+  runtimeRoomBindingDefect,
   type EventName,
   type Actor,
   type EventSpec,
+  type RecordedEventSpec,
+  type RuntimeRoomBinding,
 } from './events.js';
 
 export {
@@ -56,6 +65,7 @@ export {
   type Target,
   type LifecycleSnapshot,
   type AuthorizationRecord,
+  type RuntimeRoomBindingRecord,
 } from './transitions.js';
 
 export {

@@ -21,6 +21,8 @@ import {
   heartbeatSignedBytes,
   plannerPollSignedBytes,
   plannerReportSignedBytes,
+  runtimeRoomMintedSignedBytes,
+  runtimeRoomOccupancySignedBytes,
   sessionStartSignedBytes,
   type Clock,
 } from '../../gateway-protocol/src/index.js';
@@ -193,6 +195,78 @@ export function buildPlannerReport(
     pubkey: identity.pubkeyBase64,
     signature: encodeBase64(
       new Uint8Array(sign(null, Buffer.from(plannerReportSignedBytes(canonical)), identity.privateKey)),
+    ),
+  };
+}
+
+/**
+ * A signed `runtime_room_minted` report answering the mint request
+ * `requestId` (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2). Built as a planner
+ * report is: the payload travels as the exact JSON text whose SHA-256 is
+ * signed, beside the request id, under the purpose's own domain tag.
+ */
+export function buildRuntimeRoomMinted(
+  identity: GatewayIdentity,
+  epoch: string,
+  sequence: number,
+  requestId: string,
+  payload: string,
+  clock: Clock,
+): Record<string, unknown> {
+  const canonical = {
+    gatewayId: identity.gatewayId,
+    keyId: identity.keyId,
+    epoch,
+    sequence,
+    nonce: nonce(),
+    timestampMs: clock.wallNow(),
+    requestId,
+    payloadDigest: createHash('sha256').update(payload, 'utf8').digest('hex'),
+  };
+  return {
+    protocol: 'founder-os.gateway-protocol',
+    version: 1,
+    purpose: 'runtime_room_minted',
+    ...canonical,
+    payload,
+    pubkey: identity.pubkeyBase64,
+    signature: encodeBase64(
+      new Uint8Array(sign(null, Buffer.from(runtimeRoomMintedSignedBytes(canonical)), identity.privateKey)),
+    ),
+  };
+}
+
+/**
+ * A signed `runtime_room_occupancy` report about `runtimeRoomId` (act B2):
+ * the runtime room id and the payload text's SHA-256 are signed.
+ */
+export function buildRuntimeRoomOccupancy(
+  identity: GatewayIdentity,
+  epoch: string,
+  sequence: number,
+  runtimeRoomId: string,
+  payload: string,
+  clock: Clock,
+): Record<string, unknown> {
+  const canonical = {
+    gatewayId: identity.gatewayId,
+    keyId: identity.keyId,
+    epoch,
+    sequence,
+    nonce: nonce(),
+    timestampMs: clock.wallNow(),
+    runtimeRoomId,
+    payloadDigest: createHash('sha256').update(payload, 'utf8').digest('hex'),
+  };
+  return {
+    protocol: 'founder-os.gateway-protocol',
+    version: 1,
+    purpose: 'runtime_room_occupancy',
+    ...canonical,
+    payload,
+    pubkey: identity.pubkeyBase64,
+    signature: encodeBase64(
+      new Uint8Array(sign(null, Buffer.from(runtimeRoomOccupancySignedBytes(canonical)), identity.privateKey)),
     ),
   };
 }

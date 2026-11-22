@@ -346,6 +346,25 @@ describe('journal — validation refuses before the store is touched', () => {
     });
   }
 
+  it('refuses a builder.invoke command with 400: Builder commands are journaled only through the governed Builder path (journal ruling B6)', async () => {
+    const { store, requests } = recordingStore();
+    const url = await start(store);
+    const response = await post(url, commandBody({ commandKind: 'builder.invoke' }));
+    assert.equal(response.status, 400);
+    const answer = (await response.json()) as { error: string; message: string };
+    assert.equal(answer.error, 'invalid_request');
+    assert.match(answer.message, /builder\.invoke is journaled only through the governed Builder path/);
+    assert.equal(requests.length, 0);
+  });
+
+  it('still journals an ordinary command whose roleId is builder: the kind, not the role, marks a Builder command', async () => {
+    const { store, requests } = recordingStore();
+    const url = await start(store);
+    const response = await post(url, commandBody({ roleId: 'builder', commandKind: 'planner.invoke' }));
+    assert.equal(response.status, 201);
+    assert.equal(requests.length, 1);
+  });
+
   for (const field of ['seq', 'recordedAt', 'recordClass', 'eventType'] as const) {
     it(`refuses a body that carries server-assigned ${field}, naming it`, async () => {
       const { store, requests } = recordingStore();

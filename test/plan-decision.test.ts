@@ -237,8 +237,14 @@ function stubDeps(
           commandEvents.push(event);
           return { recordClass: 'command', commandId: event.commandId, eventType: event.eventType, seq: '8', chainHash: 'd'.repeat(64) };
         },
+        appendBinding: async () => {
+          throw new Error('a plan decision appends no binding');
+        },
         appendJournaled: async () => {
           throw new Error('unused');
+        },
+        appendBuilderJournaled: async () => {
+          throw new Error('a plan decision journals no Builder command');
         },
         commandHistory: async (commandId: string): Promise<CommandHistory> => {
           const outcome = outcomes[commandId];

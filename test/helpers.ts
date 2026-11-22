@@ -11,10 +11,26 @@ import {
   type EventName,
   type EvidenceRef,
   type GuardFacts,
+  type RuntimeRoomBinding,
+  type RuntimeRoomBindingRecord,
   type Scope,
   type State,
 } from '../packages/contracts/src/index.js';
 import { initialLedger, type LedgerState, type LifecycleEvent } from '../packages/ledger/src/index.js';
+
+/**
+ * A well-formed `runtime_room.bound` payload: two canonical lowercase UUIDs
+ * and a `room-` runtime room id. Fixture values, not real rooms or Gateways.
+ * Each id carries hex letters, so a case-folded copy is a different string.
+ */
+export const BINDING: RuntimeRoomBinding = {
+  lifecycleRoomId: '0f1e2d3c-4b5a-4968-8778-a1b2c3d4e5f6',
+  runtimeRoomId: 'room-9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d',
+  gatewayId: 'c0ffee00-1234-4abc-8def-0123456789ab',
+};
+
+/** `BINDING` as the ledger records it, under a fixed event id. */
+export const BINDING_RECORD: RuntimeRoomBindingRecord = { ...BINDING, eventId: 'evt-binding' };
 
 export const SHA = 'a'.repeat(40);
 export const SHA_OLD = 'b'.repeat(40);
@@ -53,6 +69,10 @@ export const EVIDENCE: readonly EvidenceRef[] = [
  *    exhaustive matrix needs.
  *  - `headSha` is SHA_OLD while `newHeadSha` is SHA_NEW, so G12's
  *    "new head ≠ old head" holds.
+ *
+ * `boundRuntimeRoomClosed` is a fact the control plane derives and a client
+ * never supplies; asserting it here stands in for that derivation, as the
+ * other facts stand in for theirs.
  */
 export const PERMISSIVE_FACTS: GuardFacts = {
   repoInAllowlist: true,
@@ -88,6 +108,7 @@ export const PERMISSIVE_FACTS: GuardFacts = {
   pollCorroborated: true,
   mergedHeadSha: SHA,
   allEvidenceVerified: true,
+  boundRuntimeRoomClosed: true,
   typedCause: 'drift',
   stateVerifiedConsistent: true,
   boundedRetriesSpent: true,
@@ -100,7 +121,11 @@ export function nextEventId(): string {
   return `evt-${counter}`;
 }
 
-/** Build a well-formed event for `name`, with the actor the event table requires. */
+/**
+ * Build a well-formed event for `name`, with the actor the event table
+ * requires. `runtime_room.bound` gets `BINDING`, which it requires; no other
+ * event carries a binding, since the ledger refuses one anywhere else.
+ */
 export function makeEvent(
   name: EventName,
   overrides: Partial<LifecycleEvent> = {},
@@ -114,6 +139,7 @@ export function makeEvent(
     evidence: EVIDENCE,
     occurredAt: '2026-08-16T00:00:00.000Z',
     facts: PERMISSIVE_FACTS,
+    ...(name === 'runtime_room.bound' ? { binding: BINDING } : {}),
     ...overrides,
   };
 }
@@ -125,6 +151,10 @@ export function makeEvent(
  * `authorization` is present only at AUTHORIZED: T16 requires a live one, while
  * T15's single-use limb rejects a grant made while one is already outstanding.
  * Attaching it everywhere would make T15 unfirable and mask a real rejection.
+ *
+ * `binding` follows the same rule and is present only at MERGE_CONFIRMED: G17
+ * requires one, while `runtime_room.bound` from BUILDING is refused once one
+ * exists. Attaching it everywhere would make the binding unrecordable.
  */
 export function ledgerAt(state: State, overrides: Partial<LedgerState> = {}): LedgerState {
   return {
@@ -136,6 +166,7 @@ export function ledgerAt(state: State, overrides: Partial<LedgerState> = {}): Le
       state === 'AUTHORIZED'
         ? { authorizedSha: SHA, consumed: false, voided: false, round: 0 }
         : null,
+    binding: state === 'MERGE_CONFIRMED' ? BINDING_RECORD : null,
     reviewedSha: SHA,
     headSha: SHA_OLD,
     // Pre-seeding both compound pairs lets T9 and T13 fire on either member

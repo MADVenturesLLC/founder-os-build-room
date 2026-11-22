@@ -71,7 +71,7 @@ before(async () => {
   const migrator = new Pool({ host: '127.0.0.1', port: instance.port, user: 'postgres', database: DATABASE, max: 1 });
   try {
     const result = await migrate(migrator);
-    assert.equal(result.applied.at(-1), '0010_plan_store');
+    assert.equal(result.applied.at(-1), '0011_phase5_binding');
   } finally {
     await migrator.end();
   }

@@ -13,6 +13,7 @@ export {
   DOMAIN_TAG_PREFIX,
   HEX32_LENGTH,
   MAX_PLANNER_PAYLOAD_BYTES,
+  MAX_ROOM_PAYLOAD_BYTES,
   MAX_SEQUENCE,
   MIN_GENERATION,
   MIN_SEQUENCE,
@@ -52,6 +53,8 @@ export {
   validateHeartbeat,
   validatePlannerPoll,
   validatePlannerReport,
+  validateRuntimeRoomMinted,
+  validateRuntimeRoomOccupancy,
   validateSessionStart,
   type Envelope,
   type EnvelopeErrorCode,
@@ -59,6 +62,9 @@ export {
   type HeartbeatEnvelope,
   type PlannerPollEnvelope,
   type PlannerReportEnvelope,
+  type RuntimeRoomMintedEnvelope,
+  type RuntimeRoomOccupancyEnvelope,
+  type SessionBoundEnvelope,
   type SessionStartEnvelope,
 } from './envelope.js';
 
@@ -70,6 +76,10 @@ export {
   plannerPollSignedBytes,
   plannerReportCanonicalArray,
   plannerReportSignedBytes,
+  runtimeRoomMintedCanonicalArray,
+  runtimeRoomMintedSignedBytes,
+  runtimeRoomOccupancyCanonicalArray,
+  runtimeRoomOccupancySignedBytes,
   sessionStartCanonicalArray,
   sessionStartSignedBytes,
   signedBytesFor,
@@ -77,6 +87,8 @@ export {
   type HeartbeatCanonicalInput,
   type PlannerPollCanonicalInput,
   type PlannerReportCanonicalInput,
+  type RuntimeRoomMintedCanonicalInput,
+  type RuntimeRoomOccupancyCanonicalInput,
   type SessionStartCanonicalInput,
 } from './canonical.js';
 
@@ -182,3 +194,21 @@ export {
   type PlannerSurface,
   type PlannerWorkWire,
 } from './planner.js';
+
+/**
+ * The runtime-room request and report shapes (FOUNDER-ACT-20261117-BR-PHASE5-STEP1
+ * B2): the poll answer's `room` member and the two room reports' payloads.
+ */
+export {
+  RUNTIME_ROOM_ID_PREFIX,
+  isOccupancyState,
+  isValidLifecycleRoomId,
+  isValidRoomPayload,
+  isValidRuntimeRoomId,
+  validateRoomRequest,
+  validateRuntimeRoomMintedPayload,
+  validateRuntimeRoomOccupancyPayload,
+  type RoomRequestWire,
+  type RuntimeRoomMintedPayload,
+  type RuntimeRoomOccupancyPayload,
+} from './room.js';

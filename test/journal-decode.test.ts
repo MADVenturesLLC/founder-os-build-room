@@ -1,5 +1,5 @@
 /**
- * The read side of specs (a), (c) and (d), and the cross-row rules of
+ * The read side of specs (a), (c), (d) and (e), and the cross-row rules of
  * contract §2 and §5.3.
  *
  * Decoding is proven against the committed golden vectors (every vector
@@ -15,20 +15,27 @@ import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
 import {
   JournalDecodeError,
+  SPEC_ID_E,
   boundDecisionDefect,
   commandSequenceDefect,
+  decodeBindingRecordRow,
   decodeCommandEventRow,
   decodeDecisionRecordRow,
   decodeEnvelope,
   decodeJournalRow,
   deriveCommandState,
+  encodeBindingRecordRow,
   encodeCommandEventRow,
+  encodeDecisionRecordRow,
   envelopeDigest,
+  journalRowSpec,
+  type BindingRecordRow,
   type BoundEntry,
   type CommandEventRow,
   type DecisionRecordRow,
   type NormalizedCommandEnvelope,
 } from '../packages/journal/src/index.js';
+import { BINDING_VECTOR_ROWS } from './support/journal-vector-source.js';
 
 const vectorsDir = fileURLToPath(new URL('../../packages/journal/vectors/', import.meta.url));
 const readVectors = (name: string): Record<string, unknown> =>
@@ -66,6 +73,26 @@ describe('decoders reproduce every golden vector input', () => {
     assert.ok(vectors.length > 0);
     for (const vector of vectors) {
       assert.deepEqual(decodeEnvelope(hex(vector.canonical_hex)), vector.input, vector.name);
+    }
+  });
+
+  it('binding-row vectors decode to their inputs, directly and through the dispatch', () => {
+    const vectors = readVectors('binding-row.json')['vectors'] as Vector[];
+    assert.ok(vectors.length > 0);
+    for (const vector of vectors) {
+      const bytes = hex(vector.canonical_hex);
+      assert.deepEqual(decodeBindingRecordRow(bytes), vector.input, vector.name);
+      assert.deepEqual(decodeJournalRow(bytes), { recordClass: 'binding', row: vector.input }, vector.name);
+    }
+  });
+
+  it('binding-chain vectors: each row decodes to its input, in its own record class', () => {
+    const rows = readVectors('chain-binding.json')['rows'] as Vector[];
+    assert.ok(rows.some((r) => r.record_class === 'binding'));
+    for (const vector of rows) {
+      const decoded = decodeJournalRow(hex(vector.canonical_hex));
+      assert.equal(decoded.recordClass, vector.record_class, vector.name);
+      assert.deepEqual(decoded.row, vector.input, vector.name);
     }
   });
 });
@@ -246,5 +273,96 @@ describe('decisions bound to a planner command (Q3)', () => {
   it('refuses anything decided after founder.cancel', () => {
     assert.match(boundDecisionDefect([command, decision(2, 'founder.cancel'), decision(3, 'founder.cancel')])?.reason ?? '', /after founder.cancel/);
     assert.match(boundDecisionDefect([command, decision(2, 'founder.cancel'), decision(3, 'plan.approved')])?.reason ?? '', /after founder.cancel/);
+  });
+
+  it('ignores a binding row sharing the column, and never reads a decision off it (§13 B3, G4)', () => {
+    const binding: BoundEntry = { recordClass: 'binding', row: { ...(BINDING_VECTOR_ROWS[0]?.row as BindingRecordRow), seq: '2' } };
+    assert.equal(boundDecisionDefect([command, binding]), null, 'the first Builder command and its binding');
+    assert.equal(boundDecisionDefect([binding]), null, 'a binding alone is no decision');
+    assert.equal(boundDecisionDefect([command, binding, decision(3, 'plan.approved')]), null);
+    assert.match(
+      boundDecisionDefect([binding, decision(3, 'plan.approved')])?.reason ?? '',
+      /not journaled before it/,
+      'a binding does not stand in for the journaled row',
+    );
+  });
+});
+
+describe('the spec (e) reader refuses what is not a canonical binding row', () => {
+  const row = BINDING_VECTOR_ROWS[0]?.row as BindingRecordRow;
+  const good = encodeBindingRecordRow(row);
+  const lpHex = (text: string): string => {
+    const body = Buffer.from(text, 'utf8');
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(body.length);
+    return Buffer.concat([length, body]).toString('hex');
+  };
+  /** Replace one field's encoded bytes (given as hex) with others; the field must occur once. */
+  const replaceField = (fromHex: string, toHex: string): Uint8Array => {
+    const source = Buffer.from(good).toString('hex');
+    assert.equal(source.split(fromHex).length, 2, 'the field occurs once');
+    return hex(source.replace(fromHex, toHex));
+  };
+
+  it('opens with lp("BRJ:e:1") and dispatches by it', () => {
+    assert.equal(journalRowSpec(good), SPEC_ID_E);
+    assert.equal(decodeJournalRow(good).recordClass, 'binding');
+    assert.deepEqual(encodeBindingRecordRow(decodeBindingRecordRow(good)), good);
+  });
+
+  it('refuses a trailing byte, a truncated row and an empty buffer', () => {
+    assert.throws(() => decodeBindingRecordRow(new Uint8Array([...good, 0x00])), /trailing bytes/);
+    assert.throws(() => decodeBindingRecordRow(good.subarray(0, good.length - 3)), JournalDecodeError);
+    assert.throws(() => decodeBindingRecordRow(new Uint8Array()), JournalDecodeError);
+  });
+
+  it('refuses bytes of another class offered as a binding, and a binding offered as a decision', () => {
+    const decisionBytes = encodeDecisionRecordRow({
+      seq: '1',
+      decision: 'founder.cancel',
+      actorId: 'founder',
+      recordedState: 'ROOM_CREATED',
+      authorizationRef: 'auth_example',
+      lifecycleEventRef: { roomId: 'room_1', eventId: 'evt_1' },
+      recordedAt: '2026-11-17T12:00:00.000000Z',
+    });
+    assert.throws(() => decodeBindingRecordRow(decisionBytes), /expected spec BRJ:e:1/);
+    assert.throws(() => decodeDecisionRecordRow(good), /expected spec BRJ:d:1/);
+    assert.throws(() => decodeCommandEventRow(good), /expected spec BRJ:c:1/);
+  });
+
+  it('refuses a record class other than binding under BRJ:e:1', () => {
+    const forged = replaceField(`0101${lpHex('binding')}`, `0101${lpHex('command')}`);
+    assert.throws(() => decodeJournalRow(forged), /BRJ:e:1 carries record class binding, found "command"/);
+  });
+
+  it('refuses an absent presence byte on any field: the class has no optional field', () => {
+    const absentSeq = replaceField(`0201${lpHex(row.seq)}`, '0200');
+    assert.throws(() => decodeBindingRecordRow(absentSeq), /required field 0x2 is absent/);
+    const absentPlanHash = replaceField(`0901${lpHex(row.planHash)}`, '0900');
+    assert.throws(() => decodeBindingRecordRow(absentPlanHash), /required field 0x9 is absent/);
+    const pair = `0a01${lpHex(row.lifecycleEventRef.roomId)}${lpHex(row.lifecycleEventRef.eventId)}`;
+    assert.throws(() => decodeBindingRecordRow(replaceField(pair, '0a00')), /lifecycle_event_ref is required/);
+  });
+
+  it('refuses a presence byte that is neither 0 nor 1', () => {
+    assert.throws(() => decodeBindingRecordRow(replaceField(`0301${lpHex(row.event)}`, `0302${lpHex(row.event)}`)), /presence byte/);
+  });
+
+  it('refuses decoded content the encoder would refuse', () => {
+    const upper = replaceField(`0701${lpHex(row.gatewayId)}`, `0701${lpHex(row.gatewayId.toUpperCase())}`);
+    assert.throws(() => decodeBindingRecordRow(upper), /the decoded row is not valid \(gateway_id is not a canonical lowercase UUID/);
+    const otherRoom = 'aaaaaaaa-0000-4000-8000-0000000003ff';
+    const pair = `0a01${lpHex(row.lifecycleEventRef.roomId)}`;
+    const strayRef = replaceField(pair, `0a01${lpHex(otherRoom)}`);
+    assert.throws(() => decodeBindingRecordRow(strayRef), /the decoded row is not valid \(lifecycle_event_ref\.room_id must be the lifecycle_room_id/);
+    const otherState = replaceField(`0801${lpHex('BUILDING')}`, `0801${lpHex('BLOCKED')}`);
+    assert.throws(() => decodeBindingRecordRow(otherState), /a binding is recorded in BUILDING/);
+  });
+
+  it('refuses invalid UTF-8 in a string field', () => {
+    const event = Buffer.from(row.event, 'utf8').toString('hex');
+    const bad = `ff${event.slice(2)}`;
+    assert.throws(() => decodeBindingRecordRow(replaceField(`0301${lpHex(row.event)}`, `0301${lpHex(row.event).slice(0, 8)}${bad}`)), /not valid UTF-8/);
   });
 });

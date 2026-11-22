@@ -2,11 +2,16 @@
  * AC#6 — Every accepted transition records role, actual model, execution
  * surface, scope, evidence, and resulting state in the event structure.
  *
- * Source: `DEC-20260815-11` v0.10 `## Context`, restating architecture §3.8;
+ * Source: `DEC-20260815-11` v0.12 `## Context`, restating architecture §3.8;
  * `DEC-20260815-18` adopts the FounderOS attribution vocabulary.
  *
  * The check runs over EVERY accepted (state, event) pair the table defines, not
  * a sample, so a transition that forgets to carry the record fails here.
+ *
+ * One accepted pair is not a transition: `BUILDING|runtime_room.bound`, which
+ * the ledger RECORDS without a `LedgerEntry` (DEC-20260815-11 row 30). It is
+ * counted separately below; its attribution is still shape-checked on the way
+ * in, and the stored event, not a ledger entry, is its record.
  */
 
 import { describe, it } from 'node:test';
@@ -27,11 +32,19 @@ describe('AC#6 — the attributed record on every accepted transition', () => {
     const accepted = acceptedPairs();
     const missing: string[] = [];
     let fired = 0;
+    let recorded = 0;
 
     for (const state of STATES) {
       for (const event of EVENTS) {
         if (!accepted.has(`${state}|${event}`)) continue;
         const result = apply(ledgerAt(state), makeEvent(event));
+        if (result.ok && result.kind === 'recorded') {
+          recorded += 1;
+          // No entry, and the room did not move.
+          if (result.state.entries.length !== 0) missing.push(`${state}|${event}: recorded event created an entry`);
+          if (result.state.state !== state) missing.push(`${state}|${event}: recorded event changed the state`);
+          continue;
+        }
         if (!(result.ok && result.kind === 'transition')) continue;
         fired += 1;
         const entry = result.entry;
@@ -68,11 +81,12 @@ describe('AC#6 — the attributed record on every accepted transition', () => {
       }
     }
 
-    // Pinned, not just `> 0`: the table defines 61 accepted (state, event)
-    // pairs, so a silent drop in coverage fails here instead of passing on a
-    // smaller set.
-    assert.equal(fired, accepted.size, 'not every accepted pair produced a transition');
+    // Pinned, not just `> 0`: the table defines 61 transition (state, event)
+    // pairs and one recorded pair, so a silent drop in coverage fails here
+    // instead of passing on a smaller set.
+    assert.equal(fired + recorded, accepted.size, 'not every accepted pair was accepted');
     assert.equal(fired, 61);
+    assert.equal(recorded, 1);
     assert.deepEqual(missing, [], 'accepted transitions with an incomplete attribution record');
   });
 

@@ -1,6 +1,6 @@
 /**
  * Decoders for the canonical journal rows — the read side of specs (a),
- * (c) and (d).
+ * (c), (d) and (e).
  *
  * `verify()` and reconstruction work from the persisted `row_bytes` alone
  * (contract §4.1: "reconstruction replays events in `seq` order"; §1.4: the
@@ -11,10 +11,10 @@
  * re-encoded by the one encoder, and the result must equal the input byte
  * for byte. That one check carries every rule the encoders enforce (field
  * legality per event type, canonical `seq` and `recorded_at`, the envelope
- * digest, the `plan_hash` derivation) without restating any of them here,
- * and it refuses any byte sequence that is not the canonical spelling of
- * its row: a decoder that accepted a second spelling would let two byte
- * strings name one row.
+ * digest, the `plan_hash` derivation, the binding's formats) without
+ * restating any of them here, and it refuses any byte sequence that is
+ * not the canonical spelling of its row: a decoder that accepted a second
+ * spelling would let two byte strings name one row.
  */
 
 import { ABSENT, PRESENT } from './bytes.js';
@@ -35,6 +35,12 @@ import {
   encodeDecisionRecordRow,
   type DecisionRecordRow,
 } from './decision-row.js';
+import {
+  RECORD_CLASS_BINDING,
+  SPEC_ID_E,
+  encodeBindingRecordRow,
+  type BindingRecordRow,
+} from './binding-row.js';
 
 /** The bytes are not a canonical row of the spec they name. */
 export class JournalDecodeError extends Error {
@@ -281,9 +287,48 @@ export function decodeDecisionRecordRow(bytes: Uint8Array): DecisionRecordRow {
   return roundTrip(bytes, row, encodeDecisionRecordRow, SPEC_ID_D);
 }
 
+/**
+ * Spec (e) v1. Every field is required: an absent presence byte anywhere is
+ * refused, as the encoder has no absent form for any of them.
+ */
+export function decodeBindingRecordRow(bytes: Uint8Array): BindingRecordRow {
+  const r = new Reader(bytes);
+  readSpec(r, SPEC_ID_E);
+  const recordClass = r.requiredString(0x01);
+  if (recordClass !== RECORD_CLASS_BINDING) {
+    throw new JournalDecodeError(`${SPEC_ID_E} carries record class ${RECORD_CLASS_BINDING}, found ${JSON.stringify(recordClass)}`);
+  }
+  const seq = r.requiredString(0x02);
+  const event = r.requiredString(0x03);
+  const actorId = r.requiredString(0x04);
+  const lifecycleRoomId = r.requiredString(0x05);
+  const runtimeRoomId = r.requiredString(0x06);
+  const gatewayId = r.requiredString(0x07);
+  const recordedState = r.requiredString(0x08);
+  const planHash = r.requiredString(0x09);
+  const lifecycleEventRef = r.optionalPair(0x0a);
+  const recordedAt = r.requiredString(0x0b);
+  r.end();
+  if (lifecycleEventRef === undefined) throw new JournalDecodeError(`${SPEC_ID_E}: lifecycle_event_ref is required`);
+  const row = {
+    seq,
+    event,
+    actorId,
+    lifecycleRoomId,
+    runtimeRoomId,
+    gatewayId,
+    recordedState,
+    planHash,
+    lifecycleEventRef,
+    recordedAt,
+  } as unknown as BindingRecordRow;
+  return roundTrip(bytes, row, encodeBindingRecordRow, SPEC_ID_E);
+}
+
 export type DecodedJournalRow =
   | { readonly recordClass: typeof RECORD_CLASS_COMMAND; readonly row: CommandEventRow }
-  | { readonly recordClass: typeof RECORD_CLASS_DECISION; readonly row: DecisionRecordRow };
+  | { readonly recordClass: typeof RECORD_CLASS_DECISION; readonly row: DecisionRecordRow }
+  | { readonly recordClass: typeof RECORD_CLASS_BINDING; readonly row: BindingRecordRow };
 
 /**
  * The spec id a row's bytes begin with, read and not otherwise checked: what a verifier
@@ -293,11 +338,12 @@ export function journalRowSpec(bytes: Uint8Array): string {
   return new Reader(bytes).lpString();
 }
 
-/** Either class, chosen by the spec id the bytes open with — never by which fields are absent (contract §2). */
+/** Any class, chosen by the spec id the bytes open with — never by which fields are absent (contract §2). */
 export function decodeJournalRow(bytes: Uint8Array): DecodedJournalRow {
   const spec = new Reader(bytes).lpString();
   if (spec === SPEC_ID_C) return { recordClass: RECORD_CLASS_COMMAND, row: decodeCommandEventRow(bytes) };
   if (spec === SPEC_ID_C2) return { recordClass: RECORD_CLASS_COMMAND, row: decodeCommandEventRowV2(bytes) };
   if (spec === SPEC_ID_D) return { recordClass: RECORD_CLASS_DECISION, row: decodeDecisionRecordRow(bytes) };
+  if (spec === SPEC_ID_E) return { recordClass: RECORD_CLASS_BINDING, row: decodeBindingRecordRow(bytes) };
   throw new JournalDecodeError(`not a journal row spec: ${JSON.stringify(spec)}`);
 }

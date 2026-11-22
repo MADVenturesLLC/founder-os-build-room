@@ -15,8 +15,10 @@
  * The writer asks a resolver for it; nothing here pretends to.
  */
 
-import type { CommandEventRow } from './event-row.js';
+import type { CommandEventRow, LifecycleEventRef } from './event-row.js';
 import type { DecisionRecordRow } from './decision-row.js';
+import { BUILDER_COMMAND_KIND, type BindingRecordRow } from './binding-row.js';
+import type { DecodedJournalRow } from './decode.js';
 
 export interface SequenceDefect {
   /** Position in the list that was checked, not a `seq`. */
@@ -139,7 +141,8 @@ export function deriveCommandState(rows: readonly CommandEventRow[]): DerivedCom
 
 export type BoundEntry =
   | { readonly recordClass: 'command'; readonly row: CommandEventRow }
-  | { readonly recordClass: 'decision'; readonly row: DecisionRecordRow };
+  | { readonly recordClass: 'decision'; readonly row: DecisionRecordRow }
+  | { readonly recordClass: 'binding'; readonly row: BindingRecordRow };
 
 /**
  * The first defect in the decisions bound to one planner command, or `null`.
@@ -154,6 +157,10 @@ export type BoundEntry =
  * - a plan is decided once: at most one of `plan.approved` and
  *   `plan.revision_requested`;
  * - `founder.cancel` is at most once, and nothing is decided after it.
+ *
+ * A binding row shares its `command_id` column with the first Builder
+ * command (contract §2, §13 B3, G4). It is not a decision, and these rules
+ * do not read it: `bindingChainDefect` holds the binding rules.
  */
 export function boundDecisionDefect(entries: readonly BoundEntry[]): SequenceDefect | null {
   let journaledSeen = false;
@@ -162,6 +169,7 @@ export function boundDecisionDefect(entries: readonly BoundEntry[]): SequenceDef
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index] as BoundEntry;
     const defect = (reason: string): SequenceDefect => ({ index, reason });
+    if (entry.recordClass === 'binding') continue;
     if (entry.recordClass === 'command') {
       if (entry.row.eventType === 'journaled') journaledSeen = true;
       continue;
@@ -173,6 +181,130 @@ export function boundDecisionDefect(entries: readonly BoundEntry[]): SequenceDef
     } else {
       if (planDecided) return defect('a plan is decided once');
       planDecided = true;
+    }
+  }
+  return null;
+}
+
+/** One row of the chain as a verifier holds it: its `seq`, its stored `command_id` column, its decoded bytes. */
+export interface ChainEntry {
+  readonly seq: string;
+  readonly commandId: string;
+  readonly decoded: DecodedJournalRow;
+}
+
+/** A chain-wide defect, named by the `seq` of the row that shows it. */
+export interface ChainDefect {
+  readonly atSeq: string;
+  readonly reason: string;
+}
+
+/** A Builder command is identified by its envelope's command kind, never by its role. */
+function isBuilderCommand(row: CommandEventRow): boolean {
+  return row.commandEnvelope?.commandKind === BUILDER_COMMAND_KIND;
+}
+
+function sameRef(a: LifecycleEventRef | undefined, b: LifecycleEventRef): boolean {
+  return a !== undefined && a.roomId === b.roomId && a.eventId === b.eventId;
+}
+
+/**
+ * The first defect in the chain's binding records and Builder commands, in
+ * `seq` order, or `null`. `records` is the whole chain in `seq` order, each
+ * row with its stored `command_id` column, which on a binding row names the
+ * first Builder command (contract §2, §13 G4). A Builder command is a
+ * command-class row whose envelope's command kind is `builder.invoke`
+ * (`BUILDER_COMMAND_KIND`); a row journaled under role `builder` with any
+ * other kind is not one, and these rules do not read it. The rules, from
+ * FOUNDER-RULING-20261117-BR-JOURNAL-PHASE5 (contract §13):
+ *
+ * 1. B3, how a binding commits. For a binding row at seq k, the row at seq
+ *    k−1 is the `journaled` row of a Builder command that shares the
+ *    binding's `command_id` column, whose `room_id` is the binding's
+ *    lifecycle room, and whose `lifecycle_event_ref` is the binding's.
+ * 2. B5, one to one, both directions. No two binding rows name the same
+ *    lifecycle room, and no two name the same runtime room.
+ * 3. B6, every Builder command names the binding. Every `journaled` row of
+ *    a Builder command carries a `room_id`, that room has a binding, the
+ *    row's seq is at least that binding's seq − 1 (only the first Builder
+ *    command, the one rule 1 places at k−1, precedes its binding), and its
+ *    `lifecycle_event_ref` is the binding's. Rule 3 covers the first Builder
+ *    command too, so a first command whose reference is not its binding's
+ *    is reported at its own seq, k−1.
+ *
+ * Each row is checked when the pass reaches it, against the rules that
+ * concern it, so the defect returned is the one at the lowest seq. Where a
+ * room has two bindings (rule 2), rule 3 reads the first. The caller holds
+ * each row's columns to its bytes (seq, record class, a command row's
+ * `command_id`) before this runs; this function reads them as given.
+ */
+export function bindingChainDefect(records: readonly ChainEntry[]): ChainDefect | null {
+  const firstBindingOfRoom = new Map<string, { readonly seq: string; readonly row: BindingRecordRow }>();
+  for (const record of records) {
+    if (record.decoded.recordClass !== 'binding') continue;
+    const row = record.decoded.row;
+    if (!firstBindingOfRoom.has(row.lifecycleRoomId)) firstBindingOfRoom.set(row.lifecycleRoomId, { seq: record.seq, row });
+  }
+
+  const boundLifecycleRooms = new Map<string, string>();
+  const boundRuntimeRooms = new Map<string, string>();
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index] as ChainEntry;
+    const defect = (reason: string): ChainDefect => ({ atSeq: record.seq, reason });
+    const decoded = record.decoded;
+
+    if (decoded.recordClass === 'binding') {
+      const binding = decoded.row;
+      const prior = index > 0 ? records[index - 1] : undefined;
+      if (prior === undefined || BigInt(prior.seq) + 1n !== BigInt(record.seq)) {
+        return defect('B3: a binding follows its first Builder command at the seq before it, and no row is there');
+      }
+      if (prior.decoded.recordClass !== 'command' || prior.decoded.row.eventType !== 'journaled') {
+        const found = prior.decoded.recordClass === 'command' ? `a ${prior.decoded.row.eventType} command row` : `a ${prior.decoded.recordClass} row`;
+        return defect(`B3: the row before a binding is the first Builder command's journaled row, not ${found}`);
+      }
+      const command = prior.decoded.row;
+      if (prior.commandId !== record.commandId) {
+        return defect("B3: a binding's command_id column names the Builder command journaled at the seq before it");
+      }
+      if (!isBuilderCommand(command)) {
+        return defect(`B3: the command journaled before a binding is a Builder command (${BUILDER_COMMAND_KIND})`);
+      }
+      if (command.roomId !== binding.lifecycleRoomId) {
+        return defect("B3: the first Builder command's room_id is the binding's lifecycle room");
+      }
+      if (!sameRef(command.lifecycleEventRef, binding.lifecycleEventRef)) {
+        return defect("B3: the first Builder command's lifecycle_event_ref names the binding's runtime_room.bound entry");
+      }
+      const lifecycleTwice = boundLifecycleRooms.get(binding.lifecycleRoomId);
+      if (lifecycleTwice !== undefined) {
+        return defect(`B5: lifecycle room ${binding.lifecycleRoomId} is already bound at seq ${lifecycleTwice}`);
+      }
+      const runtimeTwice = boundRuntimeRooms.get(binding.runtimeRoomId);
+      if (runtimeTwice !== undefined) {
+        return defect(`B5: runtime room ${binding.runtimeRoomId} is already bound at seq ${runtimeTwice}`);
+      }
+      boundLifecycleRooms.set(binding.lifecycleRoomId, record.seq);
+      boundRuntimeRooms.set(binding.runtimeRoomId, record.seq);
+      continue;
+    }
+
+    if (decoded.recordClass !== 'command' || decoded.row.eventType !== 'journaled' || !isBuilderCommand(decoded.row)) {
+      continue;
+    }
+    const command = decoded.row;
+    if (command.roomId === undefined) {
+      return defect('B6: a Builder command is journaled with no room_id');
+    }
+    const binding = firstBindingOfRoom.get(command.roomId);
+    if (binding === undefined) {
+      return defect(`B6: a Builder command is journaled for room ${command.roomId}, which has no binding`);
+    }
+    if (BigInt(record.seq) < BigInt(binding.seq) - 1n) {
+      return defect(`B6: a Builder command is journaled before its room's binding at seq ${binding.seq}; only the first, at the seq before it, commits with it`);
+    }
+    if (!sameRef(command.lifecycleEventRef, binding.row.lifecycleEventRef)) {
+      return defect(`B6: a Builder command's lifecycle_event_ref names its room's runtime_room.bound entry (the binding at seq ${binding.seq})`);
     }
   }
   return null;

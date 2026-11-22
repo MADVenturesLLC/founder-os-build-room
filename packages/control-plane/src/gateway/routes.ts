@@ -200,6 +200,45 @@ export function gatewayRouter(deps: GatewayRoutesDeps): Router {
     }),
   );
 
+  /*
+   * The runtime-room reports (FOUNDER-ACT-20261117-BR-PHASE5-STEP1 B2). The
+   * planner report's guard order exactly: body limit, rate limit,
+   * verification budget, leader pre-filter, then the service's clock, parse,
+   * resolve, verify, digest, payload and fence. A room payload is bounded at
+   * 1 KiB (`MAX_ROOM_PAYLOAD_BYTES`), so these keep the 16 KB gateway limit.
+   */
+  router.post(
+    '/gateway/room/minted',
+    express.json({ limit: GATEWAY_BODY_LIMIT }),
+    limit(limiter, 'room-minted', RATE_LIMITS.roomMinted),
+    verificationBudget(limiter),
+    deps.leadership.requireLeader(),
+    asyncRoute(async (req, res) => {
+      const sourceIp = sourceIpOf(req);
+      const result = await service.roomMinted(req.body, sourceIp);
+      if (isVerificationFailure(result.status)) {
+        limiter.take(`verify-fail:${sourceIp}`, RATE_LIMITS.verificationFailure);
+      }
+      res.status(result.status).json(result.body);
+    }),
+  );
+
+  router.post(
+    '/gateway/room/occupancy',
+    express.json({ limit: GATEWAY_BODY_LIMIT }),
+    limit(limiter, 'room-occupancy', RATE_LIMITS.roomOccupancy),
+    verificationBudget(limiter),
+    deps.leadership.requireLeader(),
+    asyncRoute(async (req, res) => {
+      const sourceIp = sourceIpOf(req);
+      const result = await service.roomOccupancy(req.body, sourceIp);
+      if (isVerificationFailure(result.status)) {
+        limiter.take(`verify-fail:${sourceIp}`, RATE_LIMITS.verificationFailure);
+      }
+      res.status(result.status).json(result.body);
+    }),
+  );
+
   return router;
 }
 

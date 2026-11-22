@@ -237,6 +237,13 @@ export function createServer(deps: ServerDeps): Express {
         res.status(403).json({ error: 'governed_path_required', event: offered.event });
         return;
       }
+      // Only runtime_room.bound carries a binding, and this route refuses it
+      // above. A binding member on any other event is a refused binding,
+      // which writes nothing (lifecycle ruling B4) and is no rejection (D1),
+      // so it is refused here as a malformed request, before the ledger.
+      if ((offered as { binding?: unknown }).binding !== undefined) {
+        throw new HttpError(400, 'binding is carried only by runtime_room.bound, which this route does not accept');
+      }
       // The Founder goal rides on T1 only, checked, with its digest the
       // server's evidence (founder-goal.ts; plan r1 Q7c).
       let event: LifecycleEvent;

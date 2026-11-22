@@ -94,6 +94,12 @@ export const RATE_LIMITS = {
   /** The planner pull channel (plan r1 Q2b): a few exchanges per session cadence. */
   plannerPoll: 60,
   plannerReport: 60,
+  /**
+   * The runtime-room reports (act B2): a minted report per mint request, and
+   * an occupancy report per minted room on change and every sixth tick.
+   */
+  roomMinted: 60,
+  roomOccupancy: 60,
   /** The additional budget spent by requests that fail verification. */
   verificationFailure: 20,
 } as const;
