@@ -440,8 +440,13 @@ export class GatewaySessionService {
    * left BUILDING is withdrawn instead of delivered. That read awaits the
    * database, so it runs BEFORE the planner request is collected: a read
    * that fails collects no planner work, and one that stalls past a planner
-   * request's wait cannot deliver the withdrawn request afterwards, as the
-   * planner channel's synchronous collection always guaranteed.
+   * request's wait cannot deliver the withdrawn request afterwards. The
+   * planner request is collected last in the fenced step, with no await
+   * after it there; the transaction's commit, which the fence awaits after
+   * the step, is the window described above, unchanged by this step: a
+   * request collected in a transaction that fails to publish stays marked
+   * delivered, and one whose wait ends during the commit is still answered,
+   * and the channel refuses the late report.
    */
   async plannerPoll(body: unknown, sourceIp: string): Promise<RouteResult> {
     if (!this.clock.reliable) return this.refuse(503, 'clock_unreliable', null, sourceIp);
@@ -463,9 +468,10 @@ export class GatewaySessionService {
       async (ctx) => {
         const checked = await this.sessionBoundChecks(ctx.client, envelope);
         if (checked.refusal !== null) return rollback(checked.refusal);
-        // The room read first: planner work is collected last, with no await
-        // between its collection and the answer, so a failed or slow read
-        // can neither strand it delivered nor deliver it after its wait.
+        // The room read first, and planner work collected last, with no await
+        // after it in this step, so a failed or slow room read can neither
+        // strand it delivered nor deliver it after its wait. The fence's
+        // commit still follows (see above).
         const room = await this.roomChannel.collect(envelope.gatewayId, (lifecycleRoomId) =>
           roomOpenForMint(ctx.client, lifecycleRoomId),
         );

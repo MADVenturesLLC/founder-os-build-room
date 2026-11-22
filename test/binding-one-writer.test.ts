@@ -103,22 +103,42 @@
  *
  * CONTENT. Counts see a new reference anywhere, but not a rewrite inside a
  * site already allowed to write that keeps them: a loop, a closure run twice,
- * a value routed another way. So every site that holds a write (every site
- * the writer rules pin, but the migrations) is also pinned by the digest of
- * its code, its parser tokens without comments or whitespace
- * (`siteContents`). Any change to such a site fails, and is reviewed as a
- * change to a writer; a comment or a reformatting does not.
+ * a value routed another way. So every site that holds a write is also
+ * pinned by the digest of its code (`siteContents`): every site of the rules
+ * that count writes (the store methods' and helpers' names, lifecycleSql and
+ * journalSql), but MIGRATIONS. The sites pinned only by tableNames hold reads
+ * and an error message; for one of them to write, a write count must move.
+ * The digest is of the syntax tree, each node by its kind and each token by
+ * its text, so a change to what runs, a line break after `return` included,
+ * changes it, and a comment, a JSDoc or whitespace does not. Any change to a
+ * pinned site fails, and is reviewed as a change to a writer.
+ *
+ * WHY THIS IS ENOUGH. A second writer either edits a pinned site, which its
+ * digest catches, or adds code elsewhere. Code elsewhere can write only by
+ * naming a writer method or helper, by spelling a table's or the routine's
+ * name, or by reading a value that holds one of those (a const holding SQL,
+ * say); each is counted where it is written. Following values through
+ * declarations, destructuring and assignments makes the counts exact; the
+ * catch does not depend on it.
+ *
+ * A value with more than MAX_VARIANTS statically known variants is never
+ * cut: it counts under `tooManyValues`, which EXPECTED pins at zero.
  *
  * Fixtures pin each ordinary form, a second caller added inside an allowed
  * file, a write moved into a shared helper, comments inside SQL, SQL built
  * from constants and declared values, SQL held in a const and run again
- * elsewhere, by name, destructuring or assignment, a table name handed to a
- * helper, and a count-keeping rewrite inside a writer site. What the check
- * cannot see: a name assembled at run time from parts none of which spells
- * it (input, a call other than join or concat, text appended with `+=` or
- * pushed into an array), and a value that reaches a new site only through a
- * function's parameter, which is counted where it is passed, not where the
- * function runs it.
+ * elsewhere, by name, destructuring, a literal computed key, a literal type
+ * or assignment, a table name handed to a helper, a count-keeping rewrite
+ * inside a writer site, and the digest's own rules.
+ *
+ * LIMITS. What the check cannot see: a name or SQL text assembled at run
+ * time from parts none of which spells it, whatever carries the parts
+ * (input, a call's result other than join or concat, text appended with `+=`,
+ * a collection, reflection). The counts' exactness, not the catch, has two
+ * further limits: a value that reaches code only through a function's
+ * parameter is counted where it is passed, not where the function uses it
+ * (unless the parameter's type is the literal), and a value read through a
+ * key not known statically is not followed.
  */
 
 import { describe, it } from 'node:test';
@@ -149,7 +169,8 @@ type WriterRule =
   | 'insertEvent'
   | 'lifecycleSql'
   | 'journalSql'
-  | 'tableNames';
+  | 'tableNames'
+  | 'tooManyValues';
 type InventoryRule = 'builderKind' | 'boundEvent';
 
 const WRITER_NAMES: ReadonlySet<string> = new Set<WriterRule>([
@@ -315,13 +336,16 @@ export function totalOf(found: FileFindings, rule: WriterRule): Counts {
 
 /** A part of a string whose value is not known statically; it matches no SQL keyword or name. */
 const UNKNOWN = '\u0000';
-const MAX_VARIANTS = 64;
+/** A value with more statically known variants than MAX_VARIANTS: never cut, it fails the test (rule `tooManyValues`). */
+const TOO_MANY = '\u0001';
+const MAX_VARIANTS = 256;
 
 function combine(parts: readonly (readonly string[])[]): string[] {
   let out = [''];
   for (const options of parts) {
     const next: string[] = [];
-    for (const prefix of out) for (const option of options) if (next.length < MAX_VARIANTS) next.push(prefix + option);
+    if (out.length * options.length > MAX_VARIANTS) return [TOO_MANY];
+    for (const prefix of out) for (const option of options) next.push(prefix + option);
     out = next;
   }
   return out;
@@ -347,10 +371,26 @@ function stringCall(node: ts.Node): { readonly method: 'join' | 'concat'; readon
   return null;
 }
 
-/** Where a value can come from: an expression, or a member of another source (a property by name, an element by index). */
-type Source = ts.Expression | { readonly of: Source; readonly key: string } | { readonly of: Source; readonly index: number };
+/**
+ * Where a value can come from: an expression, a member of another source (a
+ * property by name, an element by index), or the type of a declared name
+ * (a parameter's, a destructured binding's, an annotated one's), which
+ * counts when it is a literal or a union of literals.
+ */
+type Source =
+  | ts.Expression
+  | { readonly of: Source; readonly key: string }
+  | { readonly of: Source; readonly index: number }
+  | { readonly typeOf: ts.Node };
 
 const isExpressionSource = (source: Source): source is ts.Expression => 'kind' in source;
+
+/** The values a type admits, when it is a string or number literal or a union of them; otherwise `null`. */
+function literalValues(type: ts.Type): string[] | null {
+  const members = type.isUnion() ? type.types : [type];
+  if (members.length === 0 || !members.every((t) => t.isStringLiteral() || t.isNumberLiteral())) return null;
+  return members.map((t) => String((t as ts.LiteralType).value));
+}
 
 const unwrap = (expr: ts.Expression): ts.Expression => (WRAPPERS.has(expr.kind) ? unwrap((expr as ts.ParenthesizedExpression).expression) : expr);
 
@@ -362,8 +402,11 @@ const ASSIGNING = new Set<ts.SyntaxKind>([
 ]);
 
 /** A property name's text, when it is written as one: an identifier, a string or a number. */
-const keyText = (name: ts.Node | undefined): string | undefined =>
-  name !== undefined && (ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) ? name.text : undefined;
+const keyText = (name: ts.Node | undefined): string | undefined => {
+  if (name === undefined) return undefined;
+  if (ts.isComputedPropertyName(name)) return keyText(unwrap(name.expression));
+  return ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name) ? name.text : undefined;
+};
 
 /**
  * How values move through one program, as far as they can be followed
@@ -458,8 +501,12 @@ export class ValueFlow {
         || ts.isEnumMember(declaration)
       ) {
         if (declaration.initializer !== undefined) sources.push(declaration.initializer);
+        // A parameter, or a name declared with a type, holds what its type admits when that is a literal.
+        if (ts.isParameter(declaration) || (!ts.isPropertyAssignment(declaration) && !ts.isEnumMember(declaration) && declaration.type !== undefined)) {
+          sources.push({ typeOf: declaration.name });
+        }
       } else if (ts.isBindingElement(declaration)) {
-        sources.push(...this.bindingSources(declaration, symbol));
+        sources.push(...this.bindingSources(declaration, symbol), { typeOf: declaration.name });
       }
     }
     return sources;
@@ -494,9 +541,11 @@ export class ValueFlow {
   /** The sources a member of `of` can come from. */
   private membersOf(of: Source, selector: { readonly key: string } | { readonly index: number }, depth: number): Source[] {
     if (depth > 16) return [];
+    if ('typeOf' in of) return [];
     const wholes = isExpressionSource(of) ? [of] : this.membersOf(of.of, of, depth + 1);
     const found: Source[] = [];
     for (const whole of wholes) {
+      if ('typeOf' in whole) continue;
       if (!isExpressionSource(whole)) {
         found.push(...this.membersOf(whole, selector, depth + 1));
         continue;
@@ -529,6 +578,7 @@ export class ValueFlow {
 
   private textsOfSource(source: Source, depth: number): string[] {
     if (isExpressionSource(source)) return this.texts(source, depth + 1);
+    if ('typeOf' in source) return literalValues(this.checker.getTypeAtLocation(source.typeOf)) ?? [UNKNOWN];
     const members = this.membersOf(source.of, source, depth + 1);
     return members.length === 0 ? [UNKNOWN] : union(members.map((member) => this.textsOfSource(member, depth + 1)));
   }
@@ -577,21 +627,18 @@ export class ValueFlow {
       }
       return combine([next(access.expression), ...call.call.arguments.map((a) => next(a))]);
     }
-    const type = this.checker.getTypeAtLocation(expr);
-    const members = type.isUnion() ? type.types : [type];
-    if (members.length > 0 && members.every((t) => t.isStringLiteral() || t.isNumberLiteral())) {
-      return members.map((t) => String((t as ts.LiteralType).value));
-    }
+    const literal = literalValues(this.checker.getTypeAtLocation(expr));
+    if (literal !== null) return literal;
     const symbol = this.symbolOf(expr);
     return (symbol === undefined ? null : this.textsOfSymbol(symbol, depth + 1)) ?? [UNKNOWN];
   }
 }
 
-/** The distinct values of several sources, at most MAX_VARIANTS. */
+/** The distinct values of several sources; more than MAX_VARIANTS of them is TOO_MANY, never a cut. */
 function union(lists: readonly (readonly string[])[]): string[] {
   const out = new Set<string>();
-  for (const list of lists) for (const value of list) if (out.size < MAX_VARIANTS) out.add(value);
-  return [...out];
+  for (const list of lists) for (const value of list) out.add(value);
+  return out.size > MAX_VARIANTS ? [TOO_MANY] : [...out];
 }
 
 const flows = new WeakMap<ts.Program, ValueFlow>();
@@ -710,6 +757,7 @@ export function findingsIn(source: ts.SourceFile, program: ts.Program): FileFind
       let lifecycle = 0;
       let journal = 0;
       let mentions = 0;
+      if (values.some((value) => value.includes(TOO_MANY))) count('tooManyValues', false);
       for (const value of values) {
         if (composed) {
           if (WRITER_NAMES.has(value)) count(value as WriterRule, false);
@@ -749,15 +797,20 @@ export function findingsIn(source: ts.SourceFile, program: ts.Program): FileFind
 export function siteContents(source: ts.SourceFile): Map<string, string> {
   const parts = new Map<string, string[]>();
   const add = (site: string, node: ts.Node): void => {
-    // The parser's own tokens: comments are trivia it never makes a token of, and template text stays one token.
+    // The syntax tree, each node by its kind with its children, each token by its text: comments and
+    // whitespace are trivia the parser keeps out of it (JSDoc, which it attaches, is skipped), and a
+    // line break that changes what runs, such as one after `return`, changes the tree.
     const tokens: string[] = [];
     const walk = (n: ts.Node): void => {
+      if (n.kind >= ts.SyntaxKind.FirstJSDocNode && n.kind <= ts.SyntaxKind.LastJSDocNode) return;
       const children = n.getChildren(source);
       if (children.length === 0) {
         if (n.kind !== ts.SyntaxKind.EndOfFileToken) tokens.push(n.getText(source));
         return;
       }
+      tokens.push(`(${ts.SyntaxKind[n.kind]}`);
       for (const child of children) walk(child);
+      tokens.push(')');
     };
     walk(node);
     parts.set(site, [...(parts.get(site) ?? []), tokens.join(' ')]);
@@ -992,13 +1045,14 @@ const EXPECTED: Tallies = {
 
 /**
  * The content digest (`siteContents`) of every site that holds a write: every
- * site a writer rule above pins, but the migrations, whose SQL is applied only
- * through a tranche the Founder dispatches and whose counts already see any
- * new write or routine call in it. Counts see a new reference anywhere; they
- * cannot see a rewrite inside an allowed site that keeps them (a loop, a
- * closure called twice, a value routed another way). So any change to these
- * sites' code fails this check and is reviewed as a change to a writer; a
- * comment or a reformatting does not.
+ * site of the rules that count writes, all but tableNames, whose sites only
+ * read, and but the migrations, whose SQL is applied only through a tranche
+ * the Founder dispatches and whose counts already see any new write or
+ * routine call in it. Counts see a new reference anywhere; they cannot see a
+ * rewrite inside an allowed site that keeps them (a loop, a closure called
+ * twice, a value routed another way). So any change to these sites' code
+ * fails this check and is reviewed as a change to a writer; a comment, a
+ * JSDoc or a reformatting does not.
  */
 const CONTENT_UNPINNED = new Set([at(MIGRATIONS, 'MIGRATIONS')]);
 
@@ -1008,21 +1062,21 @@ const contentPinnedSites = (): string[] =>
     .sort();
 
 const EXPECTED_CONTENT: Record<string, string> = {
-  [at(GOVERNED_PATH, 'RuntimeRoomBindingDeps')]: '944917436ccb31ad',
-  [at(GOVERNED_PATH, 'bindFirstBuilderCommand')]: 'ad3a9640fbb2d2a6',
-  [at(GOVERNED_PATH, 'journalLaterBuilderCommand')]: '1892b08ba66330d7',
-  [at(JOURNAL_STORE, 'APPEND_SQL')]: 'c23c4247c9d49bdb',
-  [at(JOURNAL_STORE, 'JournalStore.appendBindingRow')]: '28498b633ae01a85',
-  [at(JOURNAL_STORE, 'JournalStore.appendCommandEvent')]: '93ec32d789ca5664',
-  [at(JOURNAL_STORE, 'JournalStore.appendCommandRow')]: '97f7c7bf2833e0a7',
-  [at(JOURNAL_STORE, 'JournalStore.appendDecisionRow')]: '8636c5913b63846a',
-  [at(JOURNAL_STORE, 'JournalStore.appendJournaled')]: '00d095399365b32b',
-  [at(JOURNAL_STORE, 'JournalStore.appendWithin')]: 'aa8d7451efc34068',
-  [at(JOURNAL_STORE, 'JournalStore.inTransaction')]: '55c885d71c0072eb',
-  [at(JOURNAL_STORE, 'JournalTransaction')]: '73f6b60604fbc66c',
-  [at(LIFECYCLE_STORE, 'PostgresLedgerStore.appendRecorded')]: 'a93bdb9df5a67ec9',
-  [at(LIFECYCLE_STORE, 'PostgresLedgerStore.decideAndRecord')]: 'd88f73f7e58e2b31',
-  [at(LIFECYCLE_STORE, 'insertEvent')]: '1763621c025f9376',
+  [at(GOVERNED_PATH, 'RuntimeRoomBindingDeps')]: '41466a913f4156c0',
+  [at(GOVERNED_PATH, 'bindFirstBuilderCommand')]: 'af27334b6df84d68',
+  [at(GOVERNED_PATH, 'journalLaterBuilderCommand')]: '9dbee1be21d188b6',
+  [at(JOURNAL_STORE, 'APPEND_SQL')]: 'dad07e6616fb0930',
+  [at(JOURNAL_STORE, 'JournalStore.appendBindingRow')]: '871082eb97ab56a9',
+  [at(JOURNAL_STORE, 'JournalStore.appendCommandEvent')]: 'a415b2c7ed665075',
+  [at(JOURNAL_STORE, 'JournalStore.appendCommandRow')]: 'ea3bb1244aef181f',
+  [at(JOURNAL_STORE, 'JournalStore.appendDecisionRow')]: 'b8e41daba8c8900e',
+  [at(JOURNAL_STORE, 'JournalStore.appendJournaled')]: 'b59f0e518d5f2735',
+  [at(JOURNAL_STORE, 'JournalStore.appendWithin')]: '760e58d1a0e1fb0b',
+  [at(JOURNAL_STORE, 'JournalStore.inTransaction')]: '75a2b228b3da5764',
+  [at(JOURNAL_STORE, 'JournalTransaction')]: '3a19a8888ee933a4',
+  [at(LIFECYCLE_STORE, 'PostgresLedgerStore.appendRecorded')]: '8364a9b97b3c30cf',
+  [at(LIFECYCLE_STORE, 'PostgresLedgerStore.decideAndRecord')]: '94d6ca502ae57e69',
+  [at(LIFECYCLE_STORE, 'insertEvent')]: 'bcba67fee07c02df',
 };
 
 const INVENTORY: Record<InventoryRule, string[]> = {
@@ -1184,8 +1238,12 @@ export function appendLaterBuilderRow(tx: JournalTransaction, command: BuilderCo
     assert.notEqual(contents[at(JOURNAL_STORE, 'JournalStore.appendWithin')], EXPECTED_CONTENT[at(JOURNAL_STORE, 'JournalStore.appendWithin')], 'the content pin does');
   });
 
-  it('a comment or a reformatting inside a pinned site changes nothing', () => {
-    const tampered = edited(APPEND_CALL, `// a note on the append\n\n          ${APPEND_CALL.replace('APPEND_SQL, [', 'APPEND_SQL,   [')}`);
+  it('a comment, a JSDoc edit or a reformatting inside a pinned site changes nothing', () => {
+    const tampered = edited(
+      APPEND_CALL,
+      `// a note on the append\n\n          ${APPEND_CALL.replace('APPEND_SQL, [', 'APPEND_SQL,   [')}`,
+      ['   * The append protocol, on a client already inside a transaction: lock,', '   * The append protocol (reworded), on a client inside a transaction: lock,'],
+    );
     const { writers, contents } = scan(tampered);
     assert.deepEqual(writers, EXPECTED);
     assert.equal(contents[at(JOURNAL_STORE, 'JournalStore.appendWithin')], EXPECTED_CONTENT[at(JOURNAL_STORE, 'JournalStore.appendWithin')]);
@@ -1389,6 +1447,35 @@ describe('binding-one-writer · every ordinary form is counted', () => {
     );
     const found = findingsIn(program.getSourceFile(runner)!, program);
     assert.equal(totalOf(found, 'journalSql').uses, 2, 'destructured from a namespace import, and from an imported const: both runs (held.SQLS is an object, no text)');
+  });
+
+  it('a site\'s digest follows its syntax tree: a line break that changes what runs changes it, a JSDoc or a comment does not', () => {
+    const digestOf = (text: string): string => siteContents(ts.createSourceFile('digest.ts', text, ts.ScriptTarget.Latest, true)).get('f')!;
+    const base = digestOf('export function f(v: string) { return v; }');
+    assert.notEqual(digestOf('export function f(v: string) { return\n v; }'), base, 'after `return`, a line break returns nothing');
+    assert.equal(digestOf('/** one thing */\nexport function f(v: string) { return v; }'), digestOf('/** another */\nexport function f(v: string) { return v; }'));
+    assert.equal(digestOf('export function f(v: string) {\n  // why\n  return   v;\n}'), base);
+    assert.notEqual(digestOf('export function f(v: string) { return v + v; }'), base);
+  });
+
+  it('a literal computed key, a literal type, and every one of many known values', () => {
+    const run = 'declare const client: { query(sql: unknown, values?: unknown): void };';
+    const sql = 'const APPEND = "SELECT * FROM public.command_journal_append($1, $2, $3, $4, $5)";';
+    const journal = (code: string): number => usesOf('journalSql', `${sql} ${run} ${code}`);
+    assert.equal(journal('const { ["s"]: x } = { s: APPEND }; client.query(x);'), 3, 'a literal computed key in the pattern');
+    assert.equal(journal('const { s: x } = { ["s"]: APPEND }; client.query(x);'), 3, 'a literal computed key in the source');
+    assert.equal(journal('declare const tuple: readonly ["SELECT * FROM command_journal_append($1)"]; const [x] = tuple; client.query(x);'), 3, 'a tuple element typed as the literal: the declaration, the type\'s literal, and the run');
+    assert.equal(journal('function f(s: "SELECT * FROM command_journal_append($1)") { client.query(s); }'), 3, 'a parameter typed as the literal: the declaration, the type\'s literal, and the run');
+    const assignments = (n: number, last: string): string => {
+      const lines = ['let s = "v0";'];
+      for (let i = 1; i < n; i += 1) lines.push(`s = "v${i}";`);
+      lines.push(`s = ${last};`, 'client.query(s);');
+      return lines.join(' ');
+    };
+    assert.equal(journal(assignments(65, 'APPEND')), 3, 'the 65th value is kept: the reference, and its run');
+    assert.equal(usesOf('tooManyValues', `${sql} ${run} ${assignments(300, 'APPEND')}`), 1, 'more than MAX_VARIANTS values fail the test, never cut');
+    const wide = (name: string): string => `let ${name} = "a0"; ${Array.from({ length: 20 }, (_, i) => `${name} = "a${i}";`).join(' ')}`;
+    assert.equal(usesOf('tooManyValues', `${wide('p')} ${wide('q')} export const t = \`\${p}\${q}\`;`), 1, 'a template whose combinations exceed it, likewise');
   });
 
   it('a tagged template is read whole, its constants resolved', () => {
