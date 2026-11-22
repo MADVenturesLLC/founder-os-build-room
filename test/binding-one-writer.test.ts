@@ -97,48 +97,56 @@
  * A third SQL rule pins MENTIONS: every occurrence, in any whole string
  * expression and in any case, of the two tables' names and the append
  * routine's, whatever statement it is in or none. A write needs the table's
- * name spelled somewhere, so a name handed to a generic helper as an argument
+ * name spelled somewhere, unless it is assembled at run time (see the limits
+ * below), so a name handed to a generic helper as an argument
  * (`insertInto('build_room_events')`) is caught where it is written, though
  * what the helper does with it is not known statically.
  *
  * CONTENT. Counts see a new reference anywhere, but not a rewrite inside a
- * site already allowed to write that keeps them: a loop, a closure run twice,
- * a value routed another way. So every site that holds a write is also
- * pinned by the digest of its code (`siteContents`): every site of the rules
- * that count writes (the store methods' and helpers' names, lifecycleSql and
- * journalSql), but MIGRATIONS. The sites pinned only by tableNames hold reads
- * and an error message; for one of them to write, a write count must move.
- * The digest is of the syntax tree, each node by its kind and each token by
- * its text, so a change to what runs, a line break after `return` included,
- * changes it, and a comment, a JSDoc or whitespace does not. Any change to a
- * pinned site fails, and is reviewed as a change to a writer.
+ * site that keeps them: a loop, a closure run twice, a value routed another
+ * way, a read turned into a write by a call such as `.replace()`. So every
+ * site any rule pins (every site that names a writer, writes the two tables,
+ * calls the routine, or mentions a table or the routine), but MIGRATIONS, is
+ * also pinned by the digest of its code (`siteContents`). The digest is of
+ * the syntax tree, each node by its kind and each token by its text, so a
+ * change to what runs, a line break after `return` included, changes it, and
+ * a comment, a JSDoc or whitespace does not. Any change to a pinned site
+ * fails, and is reviewed as a change to a writer.
  *
- * WHY THIS IS ENOUGH. A second writer either edits a pinned site, which its
- * digest catches, or adds code elsewhere. Code elsewhere can write only by
- * naming a writer method or helper, by spelling a table's or the routine's
- * name, or by reading a value that holds one of those (a const holding SQL,
- * say); each is counted where it is written. Following values through
- * declarations, destructuring and assignments makes the counts exact; the
- * catch does not depend on it.
+ * WHAT THIS CATCHES, AND WHAT IT DOES NOT. A second writer that edits a
+ * pinned site fails on its digest. One added anywhere else must get a
+ * writer, a table's or the routine's name, or SQL holding one into that
+ * code. If the code names it, spells it, or reads by reference a value
+ * holding it, that is counted where it is written and moves the count.
+ * Following values through declarations, destructuring, assignments,
+ * literal keys and literal types makes the counts exact; the catch rests on
+ * the counted tokens and the pinned sites. What it cannot see:
  *
- * A value with more than MAX_VARIANTS statically known variants is never
- * cut: it counts under `tooManyValues`, which EXPECTED pins at zero.
+ *   - text derived at run time where nothing counted is written: from input,
+ *     a collection, reflection, or a call other than join or concat (such as
+ *     `.replace()` or a function's result) applied to a value that reached
+ *     that code as a parameter or a call's result. Such a value was counted
+ *     where it was read by reference, but not where it is turned into SQL;
+ *   - text assembled at run time from parts none of which spells a counted
+ *     name;
+ *   - MIGRATIONS' text, applied only through a tranche the Founder
+ *     dispatches, which is pinned by its counts, not by content.
+ *
+ * The counts' exactness, not the catch, has two further limits: a value that
+ * reaches code only through a function's parameter is counted where it is
+ * passed, not where the function uses it (unless the parameter's type is the
+ * literal), and a value read through a key not known statically is not
+ * followed.
+ *
+ * A value with more than MAX_VARIANTS distinct statically known variants is
+ * never cut: it counts under `tooManyValues`, which EXPECTED pins at zero.
  *
  * Fixtures pin each ordinary form, a second caller added inside an allowed
  * file, a write moved into a shared helper, comments inside SQL, SQL built
  * from constants and declared values, SQL held in a const and run again
- * elsewhere, by name, destructuring, a literal computed key, a literal type
- * or assignment, a table name handed to a helper, a count-keeping rewrite
- * inside a writer site, and the digest's own rules.
- *
- * LIMITS. What the check cannot see: a name or SQL text assembled at run
- * time from parts none of which spells it, whatever carries the parts
- * (input, a call's result other than join or concat, text appended with `+=`,
- * a collection, reflection). The counts' exactness, not the catch, has two
- * further limits: a value that reaches code only through a function's
- * parameter is counted where it is passed, not where the function uses it
- * (unless the parameter's type is the literal), and a value read through a
- * key not known statically is not followed.
+ * elsewhere, by name, destructuring, a computed key, a literal type or
+ * assignment, a table name handed to a helper, count-keeping rewrites inside
+ * a writer site and a read site, and the digest's own rules.
  */
 
 import { describe, it } from 'node:test';
@@ -340,13 +348,23 @@ const UNKNOWN = '\u0000';
 const TOO_MANY = '\u0001';
 const MAX_VARIANTS = 256;
 
+/**
+ * Every concatenation of one option from each part, each distinct result
+ * once; TOO_MANY when the distinct results exceed MAX_VARIANTS. The work
+ * bound, MAX_VARIANTS squared pairs per step, never stops a step whose
+ * distinct results would fit: for distinct prefixes P and options Q, the
+ * results number at least max(|P|, |Q|), so more than MAX_VARIANTS squared
+ * pairs means more than MAX_VARIANTS results.
+ */
 function combine(parts: readonly (readonly string[])[]): string[] {
   let out = [''];
-  for (const options of parts) {
-    const next: string[] = [];
-    if (out.length * options.length > MAX_VARIANTS) return [TOO_MANY];
-    for (const prefix of out) for (const option of options) next.push(prefix + option);
-    out = next;
+  for (const part of parts) {
+    const options = [...new Set(part)];
+    if (out.length * options.length > MAX_VARIANTS * MAX_VARIANTS) return [TOO_MANY];
+    const next = new Set<string>();
+    for (const prefix of out) for (const option of options) next.add(prefix + option);
+    if (next.size > MAX_VARIANTS) return [TOO_MANY];
+    out = [...next];
   }
   return out;
 }
@@ -402,11 +420,6 @@ const ASSIGNING = new Set<ts.SyntaxKind>([
 ]);
 
 /** A property name's text, when it is written as one: an identifier, a string or a number. */
-const keyText = (name: ts.Node | undefined): string | undefined => {
-  if (name === undefined) return undefined;
-  if (ts.isComputedPropertyName(name)) return keyText(unwrap(name.expression));
-  return ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name) ? name.text : undefined;
-};
 
 /**
  * How values move through one program, as far as they can be followed
@@ -431,6 +444,20 @@ export class ValueFlow {
       ts.forEachChild(node, visit);
     };
     for (const file of program.getSourceFiles()) if (!file.isDeclarationFile) visit(file);
+  }
+
+  /**
+   * A property name's key: an identifier's, a string's or a number's text;
+   * for a computed name, the one value its expression's type admits (a
+   * literal, or a const holding one), never the name of what it reads.
+   */
+  keyOf(name: ts.Node | undefined): string | undefined {
+    if (name === undefined) return undefined;
+    if (ts.isComputedPropertyName(name)) {
+      const values = literalValues(this.checker.getTypeAtLocation(name.expression));
+      return values !== null && values.length === 1 ? values[0] : undefined;
+    }
+    return ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name) ? name.text : undefined;
   }
 
   /** The symbol a reference names: by name, property access or literal element access, through an import. */
@@ -463,7 +490,7 @@ export class ValueFlow {
             this.add(this.checker.getShorthandAssignmentValueSymbol(property), property.objectAssignmentInitializer);
           }
         } else if (ts.isPropertyAssignment(property)) {
-          const key = keyText(property.name);
+          const key = this.keyOf(property.name);
           if (key !== undefined) this.assignTo(property.initializer, { of: value, key });
         }
       }
@@ -522,7 +549,7 @@ export class ValueFlow {
     else if (ts.isBindingElement(holder)) whole = this.bindingSources(holder);
     if (ts.isObjectBindingPattern(pattern)) {
       if (element.dotDotDotToken !== undefined) return sources;
-      const key = keyText(element.propertyName ?? element.name);
+      const key = this.keyOf(element.propertyName ?? element.name);
       if (key === undefined) return sources;
       for (const of of whole) sources.push({ of, key });
       // Where nothing is written to destructure from (a parameter, an import), the type says where the property was declared.
@@ -558,7 +585,7 @@ export class ValueFlow {
             const variable = this.checker.getShorthandAssignmentValueSymbol(property);
             if (variable !== undefined) found.push(...this.sourcesOf(variable));
           }
-          else if (ts.isPropertyAssignment(property) && keyText(property.name) === selector.key) found.push(property.initializer);
+          else if (ts.isPropertyAssignment(property) && this.keyOf(property.name) === selector.key) found.push(property.initializer);
         }
       } else if ('index' in selector && ts.isArrayLiteralExpression(e)) {
         const before = e.elements.slice(0, selector.index + 1);
@@ -1044,20 +1071,19 @@ const EXPECTED: Tallies = {
 };
 
 /**
- * The content digest (`siteContents`) of every site that holds a write: every
- * site of the rules that count writes, all but tableNames, whose sites only
- * read, and but the migrations, whose SQL is applied only through a tranche
- * the Founder dispatches and whose counts already see any new write or
- * routine call in it. Counts see a new reference anywhere; they cannot see a
- * rewrite inside an allowed site that keeps them (a loop, a closure called
- * twice, a value routed another way). So any change to these sites' code
- * fails this check and is reviewed as a change to a writer; a comment, a
- * JSDoc or a reformatting does not.
+ * The content digest (`siteContents`) of every site any rule above pins, but
+ * the migrations, whose SQL is applied only through a tranche the Founder
+ * dispatches and whose counts already see any new write, routine call or
+ * mention in it. Counts see a new reference anywhere; they cannot see a
+ * rewrite inside a site that keeps them (a loop, a closure called twice, a
+ * value routed another way, a read turned into a write by `.replace()`). So
+ * any change to these sites' code fails this check and is reviewed as a
+ * change to a writer; a comment, a JSDoc or a reformatting does not.
  */
 const CONTENT_UNPINNED = new Set([at(MIGRATIONS, 'MIGRATIONS')]);
 
 const contentPinnedSites = (): string[] =>
-  [...new Set(Object.entries(EXPECTED).filter(([rule]) => rule !== 'tableNames').flatMap(([, sites]) => Object.keys(sites ?? {})))]
+  [...new Set(Object.values(EXPECTED).flatMap((sites) => Object.keys(sites ?? {})))]
     .filter((site) => !CONTENT_UNPINNED.has(site))
     .sort();
 
@@ -1077,6 +1103,27 @@ const EXPECTED_CONTENT: Record<string, string> = {
   [at(LIFECYCLE_STORE, 'PostgresLedgerStore.appendRecorded')]: '8364a9b97b3c30cf',
   [at(LIFECYCLE_STORE, 'PostgresLedgerStore.decideAndRecord')]: '94d6ca502ae57e69',
   [at(LIFECYCLE_STORE, 'insertEvent')]: 'bcba67fee07c02df',
+  // The sites pinned only by tableNames: reads, and the journal's error message.
+  [at(GATEWAY_ROOM_STATE, 'isBoundRuntimeRoom')]: '68925cd6486e9f91',
+  [at(GATEWAY_ROOM_STATE, 'roomOpenForMint')]: '5e70a9b5800c9581',
+  [at(JOURNAL_STORE, 'BINDINGS_SQL')]: '922ca9d6152ecde6',
+  [at(JOURNAL_STORE, 'BOUND_SQL')]: '5f529d74e9d17786',
+  [at(JOURNAL_STORE, 'JOURNALED_SQL')]: 'aa12fdf2104f7709',
+  [at(JOURNAL_STORE, 'LIFECYCLE_SQL')]: '5801a4f652d3e328',
+  [at(JOURNAL_STORE, 'PAGE_SQL')]: 'bdc8d686b578c3bd',
+  [at(JOURNAL_STORE, 'bindingRecordedFor')]: '799f8534c40142c3',
+  [at(JOURNAL_STORE, 'builderCommandJournaledFor')]: '77beb3649854a3ae',
+  [at(JOURNAL_STORE, 'readBound')]: '34bdfdea8e0ec85e',
+  [at(JOURNAL_STORE, 'requireLifecycleEvent')]: 'd4f38c406e2b19c4',
+  [at(JOURNAL_STORE, 'requireNamesBinding')]: '9ac0beafdba396bb',
+  [at(JOURNAL_STORE, 'scanChain')]: '157511cd158ea656',
+  [at(PLAN_STORE, 'LIFECYCLE_SQL')]: '00b85679c9b03620',
+  [at(PLAN_STORE, 'recordPlan')]: '84674d724fcf3e70',
+  [at(PLANNER_LOOP, 'T1_FACTS_SQL')]: '50ff4338623a7568',
+  [at(PLANNER_LOOP, 'T4_PAYLOAD_SQL')]: 'def8f8262b491482',
+  [at(PLANNER_LOOP, 'roundInputs')]: 'cf566330264c43e7',
+  [at(LIFECYCLE_STORE, 'PostgresLedgerStore.exportRoom')]: '2c50ee3ad62cce66',
+  [at(LIFECYCLE_STORE, 'replay')]: '52538116c8796830',
 };
 
 const INVENTORY: Record<InventoryRule, string[]> = {
@@ -1236,6 +1283,14 @@ export function appendLaterBuilderRow(tx: JournalTransaction, command: BuilderCo
     const { writers, contents } = scan(tampered);
     assert.deepEqual(writers, EXPECTED, 'no count moves: counts cannot see this');
     assert.notEqual(contents[at(JOURNAL_STORE, 'JournalStore.appendWithin')], EXPECTED_CONTENT[at(JOURNAL_STORE, 'JournalStore.appendWithin')], 'the content pin does');
+  });
+
+  it('the third run\'s probe: a read site turned into a write by .replace(), keeping every count, fails on its content', () => {
+    const read = 'const { rows } = await client.query<StoredRow>(BOUND_SQL, [commandId]);';
+    const tampered = edited(read, "const { rows } = await client.query<StoredRow>(BOUND_SQL.replace('SELECT', 'INSERT INTO x SELECT'), [commandId]);");
+    const { writers, contents } = scan(tampered);
+    assert.deepEqual(writers, EXPECTED, 'no count moves: a call\'s result is not followed');
+    assert.notEqual(contents[at(JOURNAL_STORE, 'readBound')], EXPECTED_CONTENT[at(JOURNAL_STORE, 'readBound')], 'the read site\'s content pin does');
   });
 
   it('a comment, a JSDoc edit or a reformatting inside a pinned site changes nothing', () => {
@@ -1462,8 +1517,12 @@ describe('binding-one-writer · every ordinary form is counted', () => {
     const run = 'declare const client: { query(sql: unknown, values?: unknown): void };';
     const sql = 'const APPEND = "SELECT * FROM public.command_journal_append($1, $2, $3, $4, $5)";';
     const journal = (code: string): number => usesOf('journalSql', `${sql} ${run} ${code}`);
-    assert.equal(journal('const { ["s"]: x } = { s: APPEND }; client.query(x);'), 3, 'a literal computed key in the pattern');
-    assert.equal(journal('const { s: x } = { ["s"]: APPEND }; client.query(x);'), 3, 'a literal computed key in the source');
+    // Sources typed as a Record, so the declared type cannot name the property and only the written source can.
+    assert.equal(journal('const SRC: Record<string, string> = { s: APPEND }; const { ["s"]: x } = SRC; client.query(x);'), 3, 'a literal computed key in the pattern');
+    assert.equal(journal('const SRC: Record<string, string> = { ["s"]: APPEND }; const { s: x } = SRC; client.query(x);'), 3, 'a literal computed key in the source');
+    assert.equal(journal('const SRC: Record<string, string> = { safe: APPEND, key: "" }; const key = "safe"; const { [key]: x } = SRC; client.query(x);'), 3, 'a computed key held in a const reads the property it names');
+    assert.equal(journal('const SRC: Record<string, string> = { key: APPEND, safe: "" }; const key = "safe"; const { [key]: x } = SRC; client.query(x);'), 2, 'never the property named like the const');
+    assert.equal(journal('declare const key: string; const SRC: Record<string, string> = { safe: APPEND }; const { [key]: x } = SRC; client.query(x);'), 2, 'a key not known statically reads nothing');
     assert.equal(journal('declare const tuple: readonly ["SELECT * FROM command_journal_append($1)"]; const [x] = tuple; client.query(x);'), 3, 'a tuple element typed as the literal: the declaration, the type\'s literal, and the run');
     assert.equal(journal('function f(s: "SELECT * FROM command_journal_append($1)") { client.query(s); }'), 3, 'a parameter typed as the literal: the declaration, the type\'s literal, and the run');
     const assignments = (n: number, last: string): string => {
@@ -1474,6 +1533,8 @@ describe('binding-one-writer · every ordinary form is counted', () => {
     };
     assert.equal(journal(assignments(65, 'APPEND')), 3, 'the 65th value is kept: the reference, and its run');
     assert.equal(usesOf('tooManyValues', `${sql} ${run} ${assignments(300, 'APPEND')}`), 1, 'more than MAX_VARIANTS values fail the test, never cut');
+    const repeats = (name: string): string => `let ${name} = ""; ${Array.from({ length: 16 }, (_, i) => `${name} = "${'a'.repeat(i + 1)}";`).join(' ')}`;
+    assert.equal(usesOf('tooManyValues', `${repeats('p')} ${repeats('q')} export const t = \`\${p}\${q}\`;`), 0, '17 by 17 options, 33 distinct results: well within the limit');
     const wide = (name: string): string => `let ${name} = "a0"; ${Array.from({ length: 20 }, (_, i) => `${name} = "a${i}";`).join(' ')}`;
     assert.equal(usesOf('tooManyValues', `${wide('p')} ${wide('q')} export const t = \`\${p}\${q}\`;`), 1, 'a template whose combinations exceed it, likewise');
   });
