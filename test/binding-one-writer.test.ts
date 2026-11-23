@@ -151,12 +151,15 @@
  * query that takes more than MAX_STEPS steps all count under
  * `tooManyValues`, which EXPECTED pins at zero.
  *
- * Reads do not depend on their order: a value the depth bound or a cycle
- * stopped is never kept, so a later read works it out again, and text from
- * the source is escaped, so it is never taken for one of the flow's markers.
- * Only the step budget sees the order of reads, since a value an earlier
- * query worked out costs a later one nothing: a query near MAX_STEPS can give
- * up in one order and finish in another, and giving up fails the test.
+ * Reads do not depend on their order. A value the depth bound or a cycle
+ * stopped is never kept. A value worked out in full is kept with the depth it
+ * reached, and used again only where working it out afresh would stay within
+ * MAX_DEPTH too, so every read gets what a fresh read would. Text from the
+ * source is escaped, so it is never taken for one of the flow's markers, and
+ * the escape leaves every word boundary where it was. Only the step budget
+ * sees the order of reads, since a value an earlier query worked out costs a
+ * later one nothing: a query near MAX_STEPS can give up in one order and
+ * finish in another, and giving up fails the test.
  *
  * Fixtures pin each ordinary form, a second caller added inside an allowed
  * file, a write moved into a shared helper, comments inside SQL, SQL built
@@ -374,12 +377,15 @@ const CUT = '\u0002';
 
 /**
  * Source text as the flow holds it: each marker character (UNKNOWN,
- * TOO_MANY, CUT) and the escape itself is written as the escape and a
- * letter, so text from the source is never read as a marker, and distinct
+ * TOO_MANY, CUT) and the escape itself is written as the escape and a code
+ * character, so text from the source is never read as a marker, and distinct
  * texts stay distinct. `toSource` reverses it, for a key looked up on a type.
+ * The code characters, like the escape, are neither word characters nor
+ * space, as the characters they stand for are not: a `\b` or `\s` in the
+ * scanner's patterns matches the escaped text where it matched the original.
  */
 const ESCAPE = '\uFFFD';
-const ESCAPES = new Map<string, string>([[UNKNOWN, '0'], [TOO_MANY, '1'], [CUT, '2'], [ESCAPE, 'e']]);
+const ESCAPES = new Map<string, string>([[UNKNOWN, '\uFFF0'], [TOO_MANY, '\uFFF1'], [CUT, '\uFFF2'], [ESCAPE, '\uFFF3']]);
 const UNESCAPES = new Map<string, string>([...ESCAPES].map(([character, letter]) => [letter, character]));
 function fromSource(text: string): string {
   let out = '';
@@ -519,11 +525,14 @@ const plainKey = (name: ts.Node): string | undefined =>
 export class ValueFlow {
   readonly checker: ts.TypeChecker;
   private readonly assigned = new Map<ts.Symbol, Source[]>();
-  private readonly cache = new Map<ts.Symbol, string[]>();
+  /** Values worked out with no cut, each with the depth it reached below the read that worked it out. */
+  private readonly cache = new Map<ts.Symbol, { readonly texts: string[]; readonly height: number }>();
   /** The symbols whose values are being worked out now: reaching one again is a cycle. */
   private readonly open = new Set<ts.Symbol>();
   /** How many times the depth bound or a cycle has stopped a value. */
   private cuts = 0;
+  /** The deepest level the value being worked out has reached. */
+  private deepest = 0;
   private steps = 0;
 
   constructor(program: ts.Program) {
@@ -554,6 +563,7 @@ export class ValueFlow {
 
   private query(run: () => string[] | null): string[] | null {
     this.steps = 0;
+    this.deepest = 0;
     try {
       return run();
     } catch (error) {
@@ -708,6 +718,7 @@ export class ValueFlow {
   /** The sources a member of `of` can come from. */
   private membersOf(of: Source, selector: Selector, depth: number): Source[] {
     this.step();
+    this.reach(depth);
     if (depth > MAX_DEPTH) {
       this.cuts += 1;
       return [DEPTH_CUT];
@@ -771,25 +782,37 @@ export class ValueFlow {
 
   /**
    * What a referenced symbol can hold, or `null` when nothing about it is
-   * known. A cycle reads as CUT. Only a value worked out with no cut is kept:
-   * it is the whole value, whatever the depth or the order it was asked for
-   * in, so no later read inherits an earlier one's depth or cycle.
+   * known. A cycle reads as CUT. Only a value worked out with no cut is kept,
+   * with the depth it reached below this read (its height), and it is used
+   * again only where working it out afresh would stay within MAX_DEPTH too:
+   * a read gets what a fresh read would get, whatever was read before it.
    */
   private symbolTexts(symbol: ts.Symbol, depth: number): string[] | null {
     const cached = this.cache.get(symbol);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined && depth + cached.height <= MAX_DEPTH) {
+      this.reach(depth + cached.height);
+      return cached.texts;
+    }
     if (this.open.has(symbol)) return this.cut();
     this.open.add(symbol);
     const cutsBefore = this.cuts;
+    const deepestBefore = this.deepest;
+    this.deepest = depth;
     try {
       const sources = this.sourcesOf(symbol, depth);
       const texts = sources.length === 0 ? null : union(sources.map((source) => this.textsOfSource(source, depth)));
-      if (texts !== null && this.cuts === cutsBefore) this.cache.set(symbol, texts);
+      if (texts !== null && this.cuts === cutsBefore) this.cache.set(symbol, { texts, height: this.deepest - depth });
       return texts;
     } finally {
       // A query that runs out of steps leaves nothing open behind it.
       this.open.delete(symbol);
+      this.deepest = Math.max(deepestBefore, this.deepest);
     }
+  }
+
+  /** The value being worked out has reached `depth`. */
+  private reach(depth: number): void {
+    if (depth > this.deepest) this.deepest = depth;
   }
 
   /** The depth bound or a cycle stopped a value here: it reads as CUT, and nothing worked out from it is kept. */
@@ -808,6 +831,7 @@ export class ValueFlow {
    */
   private textsAt(expr: ts.Expression, depth: number): string[] {
     this.step();
+    this.reach(depth);
     if (depth > MAX_DEPTH) return this.cut();
     const next = (e: ts.Expression): string[] => this.textsAt(e, depth + 1);
     if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr) || ts.isNumericLiteral(expr)) return [fromSource(expr.text)];
@@ -1789,6 +1813,22 @@ describe('binding-one-writer · every ordinary form is counted', () => {
       assert.equal(count('tooManyValues', code), 0, `${label}: the key is worked out in full`);
       assert.equal(count('journalSql', code), 3, `${label}: APPEND, its reference and the run`);
     }
+    // The third review's probe: a key worked out in full by a shallow read is not used again where reading it afresh
+    // would pass the depth bound. Per site, the deep read gets the same whichever function comes first.
+    const at = (rule: WriterRule, code: string, site: string): number => findingsInText(`${sql} ${run} ${code}`).writers.get(rule)?.get(site)?.uses ?? 0;
+    const chain = (name: string, links: number, end: string): string =>
+      Array.from({ length: links }, (_, i) => `const ${name}${i}: string = ${i + 1 === links ? end : `${name}${i + 1}`};`).join(' ');
+    const shallow = 'export function shallow() { const { [K0]: y } = SRC; client.query(y); }';
+    const deeper = 'export function deep() { const { [A0]: x } = SRC; client.query(x); }';
+    for (const [aLinks, kLinks, fits] of [[4, 3, true], [5, 4, false]] as const) {
+      const program = `${chain('A', aLinks, 'K0')} ${chain('K', kLinks, '"k"')} ${src}`;
+      for (const code of [`${shallow} ${deeper} ${program}`, `${deeper} ${shallow} ${program}`]) {
+        const label = `${aLinks} links to a key ${kLinks} deep, ${code.startsWith(shallow) ? 'the shallow read' : 'the deep read'} first`;
+        assert.equal(at('journalSql', code, 'deep'), fits ? 1 : 0, `${label}: the deep read's run`);
+        assert.equal(at('tooManyValues', code, 'deep'), fits ? 0 : 1, `${label}: past the bound, it gives up`);
+        assert.equal(at('journalSql', code, 'shallow'), 1, `${label}: the shallow read's run`);
+      }
+    }
   });
 
   it('text from the source is never read as a marker, and distinct texts stay distinct', () => {
@@ -1806,8 +1846,19 @@ describe('binding-one-writer · every ordinary form is counted', () => {
     const apart = (read: string): number => count('journalSql', `const SRC: Record<string, string> = { "a\\uFFFD2": "", "a\\u0002": APPEND }; const { ["${read}"]: x } = SRC; client.query(x);`);
     assert.equal(apart('a\\u0002'), 3, 'the property holding the marker\'s character');
     assert.equal(apart('a\\uFFFD2'), 2, 'not the property holding the escape');
+    // Nor is "a\uFFFD\uFFF2", the escaped form of "a\u0002" written out in the source.
+    const written = (read: string): number => count('journalSql', `const SRC: Record<string, string> = { "a\\uFFFD\\uFFF2": "", "a\\u0002": APPEND }; const { ["${read}"]: x } = SRC; client.query(x);`);
+    assert.equal(written('a\\u0002'), 3, 'the property holding the marker\'s character, beside its escaped form');
+    assert.equal(written('a\\uFFFD\\uFFF2'), 2, 'not the property holding its escaped form');
     // A key looked up on a type is the source's own text.
     assert.equal(count('journalSql', 'const SRC = { "a\\u0002": APPEND }; export function f(p: typeof SRC) { const { ["a\\u0002"]: x } = p; client.query(x); }'), 3, 'through the type of a parameter');
+    // The third review's probe: escaped, a character right before a name leaves its word boundary where it was.
+    const inS = (rule: WriterRule, code: string): number => findingsInText(code).writers.get(rule)?.get('s')?.uses ?? 0;
+    for (const character of ['\\u0000', '\\u0001', '\\u0002', '\\uFFFD']) {
+      assert.equal(inS('tableNames', `export const s = "metadata:${character}command_journal_events";`), 1, `a table named right after ${character}`);
+      assert.equal(inS('journalSql', `export const s = "SELECT ${character}command_journal_append($1)";`), 1, `the routine called right after ${character}`);
+      assert.equal(inS('tooManyValues', `export const s = "SELECT ${character}command_journal_append($1)";`), 0, `${character} is no marker`);
+    }
   });
 
   it('a tagged template is read whole, its constants resolved', () => {
