@@ -116,11 +116,13 @@
  * WHAT THIS CATCHES, AND WHAT IT DOES NOT. A second writer that edits a
  * pinned site fails on its digest. One added anywhere else must get a
  * writer, a table's or the routine's name, or SQL holding one into that
- * code. If the code names it, spells it, or reads by reference a value
- * holding it, that is counted where it is written and moves the count.
- * Following values through declarations, destructuring, assignments,
- * literal keys and literal types makes the counts exact; the catch rests on
- * the counted tokens and the pinned sites. What it cannot see:
+ * code. If the code names it, spells it whole, or reads by reference a
+ * value holding it, that is counted where it is written and moves the
+ * count. A name assembled statically from parts (a template, a `+` chain,
+ * a part read through a key) is counted only as far as the value flow
+ * follows those parts: through declarations, destructuring, assignments,
+ * keys whose values it can work out (literals, casts of them, consts, `+`
+ * chains, templates) and literal types. What it cannot see:
  *
  *   - text derived at run time where nothing counted is written: from input,
  *     a collection, reflection, or a call other than join or concat (such as
@@ -132,11 +134,11 @@
  *   - MIGRATIONS' text, applied only through a tranche the Founder
  *     dispatches, which is pinned by its counts, not by content.
  *
- * The counts' exactness, not the catch, has two further limits: a value that
- * reaches code only through a function's parameter is counted where it is
- * passed, not where the function uses it (unless the parameter's type is the
- * literal), and a value read through a key not known statically is not
- * followed.
+ * A name assembled from parts the flow does not follow is not seen
+ * either: a part that reaches code only through a function's parameter
+ * (unless its type is the literal; the part is counted where it is passed,
+ * not where it is used), through a call's result other than join or concat,
+ * or through a key whose value the flow cannot work out.
  *
  * A value with more than MAX_VARIANTS distinct statically known variants is
  * never cut: it counts under `tooManyValues`, which EXPECTED pins at zero.
@@ -397,9 +399,12 @@ function stringCall(node: ts.Node): { readonly method: 'join' | 'concat'; readon
  */
 type Source =
   | ts.Expression
-  | { readonly of: Source; readonly key: string }
-  | { readonly of: Source; readonly index: number }
+  | Member
   | { readonly typeOf: ts.Node };
+
+/** A member of another source: by a key known now, by a property name whose key is worked out when read, or by an index. */
+type Selector = { readonly key: string } | { readonly keyName: ts.PropertyName } | { readonly index: number };
+type Member = { readonly of: Source } & Selector;
 
 const isExpressionSource = (source: Source): source is ts.Expression => 'kind' in source;
 
@@ -447,17 +452,19 @@ export class ValueFlow {
   }
 
   /**
-   * A property name's key: an identifier's, a string's or a number's text;
-   * for a computed name, the one value its expression's type admits (a
-   * literal, or a const holding one), never the name of what it reads.
+   * The keys a property name can stand for: an identifier's, a string's or
+   * a number's text; for a computed name, every value its expression can
+   * statically take, worked out as any other text is (a literal, a cast of
+   * one, a const, a `+` chain, a template, a literal type), never the name of
+   * what it reads. A value not wholly known is no key; none known, no keys.
+   * Read only once the flow is built: it reads the flow.
    */
-  keyOf(name: ts.Node | undefined): string | undefined {
-    if (name === undefined) return undefined;
+  keysOf(name: ts.Node | undefined): string[] {
+    if (name === undefined) return [];
     if (ts.isComputedPropertyName(name)) {
-      const values = literalValues(this.checker.getTypeAtLocation(name.expression));
-      return values !== null && values.length === 1 ? values[0] : undefined;
+      return this.texts(name.expression).filter((value) => !value.includes(UNKNOWN) && !value.includes(TOO_MANY));
     }
-    return ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name) ? name.text : undefined;
+    return ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name) ? [name.text] : [];
   }
 
   /** The symbol a reference names: by name, property access or literal element access, through an import. */
@@ -490,8 +497,8 @@ export class ValueFlow {
             this.add(this.checker.getShorthandAssignmentValueSymbol(property), property.objectAssignmentInitializer);
           }
         } else if (ts.isPropertyAssignment(property)) {
-          const key = this.keyOf(property.name);
-          if (key !== undefined) this.assignTo(property.initializer, { of: value, key });
+          // The key is worked out when read: the flow is still being built here.
+          this.assignTo(property.initializer, { of: value, keyName: property.name });
         }
       }
       return;
@@ -549,14 +556,14 @@ export class ValueFlow {
     else if (ts.isBindingElement(holder)) whole = this.bindingSources(holder);
     if (ts.isObjectBindingPattern(pattern)) {
       if (element.dotDotDotToken !== undefined) return sources;
-      const key = this.keyOf(element.propertyName ?? element.name);
-      if (key === undefined) return sources;
-      for (const of of whole) sources.push({ of, key });
-      // Where nothing is written to destructure from (a parameter, an import), the type says where the property was declared.
-      const property = this.checker.getTypeAtLocation(pattern).getProperty(key);
-      if (property !== undefined && property !== symbol) {
-        const declared = property.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(property) : property;
-        if (declared !== symbol) sources.push(...this.sourcesOf(declared));
+      for (const key of this.keysOf(element.propertyName ?? element.name)) {
+        for (const of of whole) sources.push({ of, key });
+        // Where nothing is written to destructure from (a parameter, an import), the type says where the property was declared.
+        const property = this.checker.getTypeAtLocation(pattern).getProperty(key);
+        if (property !== undefined && property !== symbol) {
+          const declared = property.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(property) : property;
+          if (declared !== symbol) sources.push(...this.sourcesOf(declared));
+        }
       }
     } else {
       const index = pattern.elements.indexOf(element);
@@ -566,8 +573,9 @@ export class ValueFlow {
   }
 
   /** The sources a member of `of` can come from. */
-  private membersOf(of: Source, selector: { readonly key: string } | { readonly index: number }, depth: number): Source[] {
+  private membersOf(of: Source, selector: Selector, depth: number): Source[] {
     if (depth > 16) return [];
+    if ('keyName' in selector) return this.keysOf(selector.keyName).flatMap((key) => this.membersOf(of, { key }, depth + 1));
     if ('typeOf' in of) return [];
     const wholes = isExpressionSource(of) ? [of] : this.membersOf(of.of, of, depth + 1);
     const found: Source[] = [];
@@ -585,7 +593,7 @@ export class ValueFlow {
             const variable = this.checker.getShorthandAssignmentValueSymbol(property);
             if (variable !== undefined) found.push(...this.sourcesOf(variable));
           }
-          else if (ts.isPropertyAssignment(property) && this.keyOf(property.name) === selector.key) found.push(property.initializer);
+          else if (ts.isPropertyAssignment(property) && this.keysOf(property.name).includes(selector.key)) found.push(property.initializer);
         }
       } else if ('index' in selector && ts.isArrayLiteralExpression(e)) {
         const before = e.elements.slice(0, selector.index + 1);
@@ -1290,7 +1298,9 @@ export function appendLaterBuilderRow(tx: JournalTransaction, command: BuilderCo
     const tampered = edited(read, "const { rows } = await client.query<StoredRow>(BOUND_SQL.replace('SELECT', 'INSERT INTO x SELECT'), [commandId]);");
     const { writers, contents } = scan(tampered);
     assert.deepEqual(writers, EXPECTED, 'no count moves: a call\'s result is not followed');
-    assert.notEqual(contents[at(JOURNAL_STORE, 'readBound')], EXPECTED_CONTENT[at(JOURNAL_STORE, 'readBound')], 'the read site\'s content pin does');
+    assert.ok(contentPinnedSites().includes(at(JOURNAL_STORE, 'readBound')), 'the read site is pinned by content');
+    assert.equal(typeof EXPECTED_CONTENT[at(JOURNAL_STORE, 'readBound')], 'string');
+    assert.notEqual(contents[at(JOURNAL_STORE, 'readBound')], EXPECTED_CONTENT[at(JOURNAL_STORE, 'readBound')], 'and its pin catches the rewrite');
   });
 
   it('a comment, a JSDoc edit or a reformatting inside a pinned site changes nothing', () => {
@@ -1522,7 +1532,13 @@ describe('binding-one-writer · every ordinary form is counted', () => {
     assert.equal(journal('const SRC: Record<string, string> = { ["s"]: APPEND }; const { s: x } = SRC; client.query(x);'), 3, 'a literal computed key in the source');
     assert.equal(journal('const SRC: Record<string, string> = { safe: APPEND, key: "" }; const key = "safe"; const { [key]: x } = SRC; client.query(x);'), 3, 'a computed key held in a const reads the property it names');
     assert.equal(journal('const SRC: Record<string, string> = { key: APPEND, safe: "" }; const key = "safe"; const { [key]: x } = SRC; client.query(x);'), 2, 'never the property named like the const');
-    assert.equal(journal('declare const key: string; const SRC: Record<string, string> = { safe: APPEND }; const { [key]: x } = SRC; client.query(x);'), 2, 'a key not known statically reads nothing');
+    assert.equal(journal('declare const key: string; const SRC: Record<string, string> = { key: APPEND, safe: "" }; const { [key]: x } = SRC; client.query(x);'), 2, 'a key not known statically reads nothing, not even the property named like it');
+    // The fourth run's probe: a routine name assembled through a key whose literal is cast wide, or built from parts.
+    const assembled = (key: string): number =>
+      usesOf('journalSql', `${run} const SRC: Record<string, string> = { prefix: "command_journal_" }; const { [${key}]: p } = SRC; client.query(\`SELECT * FROM \${p}append($1, $2, $3, $4, $5)\`);`);
+    assert.equal(assembled('"prefix" as string'), 1, 'a literal key cast to string');
+    assert.equal(assembled('"pre" + "fix"'), 1, 'a key built by a + chain');
+    assert.equal(assembled('`pre${"fix"}`'), 1, 'a key built by a template');
     assert.equal(journal('declare const tuple: readonly ["SELECT * FROM command_journal_append($1)"]; const [x] = tuple; client.query(x);'), 3, 'a tuple element typed as the literal: the declaration, the type\'s literal, and the run');
     assert.equal(journal('function f(s: "SELECT * FROM command_journal_append($1)") { client.query(s); }'), 3, 'a parameter typed as the literal: the declaration, the type\'s literal, and the run');
     const assignments = (n: number, last: string): string => {
