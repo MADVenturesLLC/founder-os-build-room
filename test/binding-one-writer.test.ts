@@ -138,17 +138,25 @@
  * either: a part that reaches code only through a function's parameter
  * (unless its type is the literal; the part is counted where it is passed,
  * not where it is used), through a call's result other than join or concat,
- * or through a key whose value the flow cannot work out.
+ * through a key whose value is not known statically, or through element
+ * access whose key is not written as a literal (`SRC[key]`,
+ * `SRC["pre" + "fix"]`): only destructuring and object literals work a key
+ * out. The flow follows a value MAX_DEPTH levels deep and through no cycle;
+ * past that, the value reads as unknown.
  *
- * A value with more than MAX_VARIANTS distinct statically known variants is
- * never cut: it counts under `tooManyValues`, which EXPECTED pins at zero.
+ * Where the flow gives up, it never drops what it gave up on: a value with
+ * more than MAX_VARIANTS distinct statically known variants, a key it cannot
+ * finish working out (past MAX_DEPTH, through a cycle, or with more than
+ * MAX_VARIANTS values), and a query that takes more than MAX_STEPS steps all
+ * count under `tooManyValues`, which EXPECTED pins at zero.
  *
  * Fixtures pin each ordinary form, a second caller added inside an allowed
  * file, a write moved into a shared helper, comments inside SQL, SQL built
  * from constants and declared values, SQL held in a const and run again
  * elsewhere, by name, destructuring, a computed key, a literal type or
  * assignment, a table name handed to a helper, count-keeping rewrites inside
- * a writer site and a read site, and the digest's own rules.
+ * a writer site and a read site, the depth bound and each way the flow gives
+ * up, and the digest's own rules.
  */
 
 import { describe, it } from 'node:test';
@@ -348,7 +356,24 @@ export function totalOf(found: FileFindings, rule: WriterRule): Counts {
 const UNKNOWN = '\u0000';
 /** A value with more statically known variants than MAX_VARIANTS: never cut, it fails the test (rule `tooManyValues`). */
 const TOO_MANY = '\u0001';
+/**
+ * Where the flow stopped following a value: at the depth bound, or at a
+ * cycle. It matches nothing, as UNKNOWN does, but a key holding it is not
+ * ignored: the flow gives up on what that key selects (see `keysOf`).
+ */
+const CUT = '\u0002';
 const MAX_VARIANTS = 256;
+/** How many levels deep the flow follows one value; past them, the value is CUT. */
+const MAX_DEPTH = 16;
+/**
+ * The most steps (a member looked up, a text worked out) one query of the
+ * flow may take; past them the query gives up as TOO_MANY, never cut. It is
+ * `combine`'s work bound.
+ */
+const MAX_STEPS = MAX_VARIANTS * MAX_VARIANTS;
+
+/** Thrown when one query of the flow has taken MAX_STEPS steps; the query reads as TOO_MANY. */
+class StepsSpent extends Error {}
 
 /**
  * Every concatenation of one option from each part, each distinct result
@@ -400,19 +425,28 @@ function stringCall(node: ts.Node): { readonly method: 'join' | 'concat'; readon
 type Source =
   | ts.Expression
   | Member
-  | { readonly typeOf: ts.Node };
+  | { readonly typeOf: ts.Node }
+  | Stopped;
 
-/** A member of another source: by a key known now, by a property name whose key is worked out when read, or by an index. */
-type Selector = { readonly key: string } | { readonly keyName: ts.PropertyName } | { readonly index: number };
+/** A member of another source: by a key known now, by a computed property name whose key is worked out when read, or by an index. */
+type Selector = { readonly key: string } | { readonly keyName: ts.ComputedPropertyName } | { readonly index: number };
 type Member = { readonly of: Source } & Selector;
+
+/** Where the flow stopped: a member past the depth bound, which reads as CUT, or one it gave up on, which reads as TOO_MANY. */
+type Stopped = { readonly stopped: typeof CUT | typeof TOO_MANY };
+const DEPTH_CUT: Stopped = { stopped: CUT };
+const GAVE_UP: Stopped = { stopped: TOO_MANY };
 
 const isExpressionSource = (source: Source): source is ts.Expression => 'kind' in source;
 
-/** The values a type admits, when it is a string or number literal or a union of them; otherwise `null`. */
+/**
+ * The values a type admits, when it is a string or number literal or a union
+ * of them; otherwise `null`. More than MAX_VARIANTS of them is TOO_MANY.
+ */
 function literalValues(type: ts.Type): string[] | null {
   const members = type.isUnion() ? type.types : [type];
   if (members.length === 0 || !members.every((t) => t.isStringLiteral() || t.isNumberLiteral())) return null;
-  return members.map((t) => String((t as ts.LiteralType).value));
+  return members.length > MAX_VARIANTS ? [TOO_MANY] : members.map((t) => String((t as ts.LiteralType).value));
 }
 
 const unwrap = (expr: ts.Expression): ts.Expression => (WRAPPERS.has(expr.kind) ? unwrap((expr as ts.ParenthesizedExpression).expression) : expr);
@@ -425,6 +459,8 @@ const ASSIGNING = new Set<ts.SyntaxKind>([
 ]);
 
 /** A property name's text, when it is written as one: an identifier, a string or a number. */
+const plainKey = (name: ts.Node): string | undefined =>
+  ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name) ? name.text : undefined;
 
 /**
  * How values move through one program, as far as they can be followed
@@ -441,6 +477,7 @@ export class ValueFlow {
   readonly checker: ts.TypeChecker;
   private readonly assigned = new Map<ts.Symbol, Source[]>();
   private readonly cache = new Map<ts.Symbol, string[]>();
+  private steps = 0;
 
   constructor(program: ts.Program) {
     this.checker = program.getTypeChecker();
@@ -452,19 +489,57 @@ export class ValueFlow {
   }
 
   /**
-   * The keys a property name can stand for: an identifier's, a string's or
-   * a number's text; for a computed name, every value its expression can
-   * statically take, worked out as any other text is (a literal, a cast of
-   * one, a const, a `+` chain, a template, a literal type), never the name of
-   * what it reads. A value not wholly known is no key; none known, no keys.
-   * Read only once the flow is built: it reads the flow.
+   * The values `expr` can take that are known statically (see `textsAt`).
+   * One query: past MAX_STEPS steps it gives up as TOO_MANY.
    */
-  keysOf(name: ts.Node | undefined): string[] {
-    if (name === undefined) return [];
-    if (ts.isComputedPropertyName(name)) {
-      return this.texts(name.expression).filter((value) => !value.includes(UNKNOWN) && !value.includes(TOO_MANY));
+  texts(expr: ts.Expression): string[] {
+    return this.query(() => this.textsAt(expr, 0)) ?? [UNKNOWN];
+  }
+
+  /**
+   * What a referenced symbol can hold, or `null` when nothing about it is
+   * known (see `symbolTexts`). One query: past MAX_STEPS steps it gives up as
+   * TOO_MANY.
+   */
+  textsOfSymbol(symbol: ts.Symbol): string[] | null {
+    return this.query(() => this.symbolTexts(symbol, 0));
+  }
+
+  private query(run: () => string[] | null): string[] | null {
+    this.steps = 0;
+    try {
+      return run();
+    } catch (error) {
+      if (error instanceof StepsSpent) return [TOO_MANY];
+      throw error;
     }
-    return ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name) ? [name.text] : [];
+  }
+
+  private step(): void {
+    this.steps += 1;
+    if (this.steps > MAX_STEPS) throw new StepsSpent();
+  }
+
+  /**
+   * The keys a property name can stand for: a plain name's text; for a
+   * computed name, every value its expression can statically take, worked
+   * out as any other text is (a literal, a cast of one, a const, a `+` chain,
+   * a template, a literal type) at the depth it is read at, never the name of
+   * what it reads. A value not wholly known is no key: none known, no keys.
+   * `null` when the flow gave up on the key (a cycle, the depth bound, more
+   * than MAX_VARIANTS values): what the key selects is then given up on too,
+   * never dropped. Read only once the flow is built: it reads the flow.
+   */
+  private keysOf(name: ts.Node | undefined, depth: number): string[] | null {
+    if (name === undefined) return [];
+    if (!ts.isComputedPropertyName(name)) {
+      const key = plainKey(name);
+      return key === undefined ? [] : [key];
+    }
+    // At the depth it is read at: a literal key costs nothing, and any key read through a reference still goes deeper.
+    const values = this.textsAt(name.expression, depth);
+    if (values.some((value) => value.includes(CUT) || value.includes(TOO_MANY))) return null;
+    return values.filter((value) => !value.includes(UNKNOWN));
   }
 
   /** The symbol a reference names: by name, property access or literal element access, through an import. */
@@ -497,8 +572,13 @@ export class ValueFlow {
             this.add(this.checker.getShorthandAssignmentValueSymbol(property), property.objectAssignmentInitializer);
           }
         } else if (ts.isPropertyAssignment(property)) {
-          // The key is worked out when read: the flow is still being built here.
-          this.assignTo(property.initializer, { of: value, keyName: property.name });
+          // A plain key is known now; a computed one is worked out when read, the flow being still built here.
+          if (ts.isComputedPropertyName(property.name)) {
+            this.assignTo(property.initializer, { of: value, keyName: property.name });
+          } else {
+            const key = plainKey(property.name);
+            if (key !== undefined) this.assignTo(property.initializer, { of: value, key });
+          }
         }
       }
       return;
@@ -520,13 +600,13 @@ export class ValueFlow {
   }
 
   /** Every source a symbol's value can come from: its declarations, and every assignment to it. */
-  private sourcesOf(symbol: ts.Symbol): Source[] {
+  private sourcesOf(symbol: ts.Symbol, depth: number): Source[] {
     const sources: Source[] = [...(this.assigned.get(symbol) ?? [])];
     for (const declaration of symbol.declarations ?? []) {
       if (ts.isShorthandPropertyAssignment(declaration)) {
         // An object literal's shorthand property holds what the variable it names holds.
         const variable = this.checker.getShorthandAssignmentValueSymbol(declaration);
-        if (variable !== undefined && variable !== symbol) sources.push(...this.sourcesOf(variable));
+        if (variable !== undefined && variable !== symbol) sources.push(...this.sourcesOf(variable, depth + 1));
       } else if (
         ts.isVariableDeclaration(declaration)
         || ts.isParameter(declaration)
@@ -540,29 +620,35 @@ export class ValueFlow {
           sources.push({ typeOf: declaration.name });
         }
       } else if (ts.isBindingElement(declaration)) {
-        sources.push(...this.bindingSources(declaration, symbol), { typeOf: declaration.name });
+        sources.push(...this.bindingSources(declaration, depth, symbol), { typeOf: declaration.name });
       }
     }
     return sources;
   }
 
   /** What a destructured binding holds: its default, and the member of what it destructures. */
-  private bindingSources(element: ts.BindingElement, symbol?: ts.Symbol): Source[] {
+  private bindingSources(element: ts.BindingElement, depth: number, symbol?: ts.Symbol): Source[] {
     const sources: Source[] = element.initializer !== undefined ? [element.initializer] : [];
     const pattern = element.parent;
     const holder = pattern.parent;
     let whole: Source[] = [];
     if ((ts.isVariableDeclaration(holder) || ts.isParameter(holder)) && holder.initializer !== undefined) whole = [holder.initializer];
-    else if (ts.isBindingElement(holder)) whole = this.bindingSources(holder);
+    else if (ts.isBindingElement(holder)) whole = this.bindingSources(holder, depth + 1);
     if (ts.isObjectBindingPattern(pattern)) {
       if (element.dotDotDotToken !== undefined) return sources;
-      for (const key of this.keysOf(element.propertyName ?? element.name)) {
-        for (const of of whole) sources.push({ of, key });
+      const keys = this.keysOf(element.propertyName ?? element.name, depth);
+      if (keys === null) return [...sources, GAVE_UP];
+      for (const key of keys) {
+        for (const of of whole) {
+          // Each member is a step: keys at every level of a nested pattern multiply.
+          this.step();
+          sources.push({ of, key });
+        }
         // Where nothing is written to destructure from (a parameter, an import), the type says where the property was declared.
         const property = this.checker.getTypeAtLocation(pattern).getProperty(key);
         if (property !== undefined && property !== symbol) {
           const declared = property.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(property) : property;
-          if (declared !== symbol) sources.push(...this.sourcesOf(declared));
+          if (declared !== symbol) sources.push(...this.sourcesOf(declared, depth + 1));
         }
       }
     } else {
@@ -574,9 +660,18 @@ export class ValueFlow {
 
   /** The sources a member of `of` can come from. */
   private membersOf(of: Source, selector: Selector, depth: number): Source[] {
-    if (depth > 16) return [];
-    if ('keyName' in selector) return this.keysOf(selector.keyName).flatMap((key) => this.membersOf(of, { key }, depth + 1));
-    if ('typeOf' in of) return [];
+    this.step();
+    if (depth > MAX_DEPTH) return [DEPTH_CUT];
+    if ('keyName' in selector) {
+      // Working the key out spends none of the member's depth: the member is looked up at the depth it was asked for.
+      const keys = this.keysOf(selector.keyName, depth);
+      return keys === null ? [GAVE_UP] : keys.flatMap((key) => this.membersOf(of, { key }, depth));
+    }
+    if (!isExpressionSource(of)) {
+      if ('typeOf' in of) return [];
+      // What a stopped source holds is stopped too.
+      if ('stopped' in of) return [of];
+    }
     const wholes = isExpressionSource(of) ? [of] : this.membersOf(of.of, of, depth + 1);
     const found: Source[] = [];
     for (const whole of wholes) {
@@ -591,9 +686,13 @@ export class ValueFlow {
           if (ts.isSpreadAssignment(property)) found.push(...this.membersOf(property.expression, selector, depth + 1));
           else if (ts.isShorthandPropertyAssignment(property) && property.name.text === selector.key) {
             const variable = this.checker.getShorthandAssignmentValueSymbol(property);
-            if (variable !== undefined) found.push(...this.sourcesOf(variable));
+            if (variable !== undefined) found.push(...this.sourcesOf(variable, depth + 1));
           }
-          else if (ts.isPropertyAssignment(property) && this.keysOf(property.name).includes(selector.key)) found.push(property.initializer);
+          else if (ts.isPropertyAssignment(property)) {
+            const keys = this.keysOf(property.name, depth);
+            if (keys === null) found.push(GAVE_UP);
+            else if (keys.includes(selector.key)) found.push(property.initializer);
+          }
         }
       } else if ('index' in selector && ts.isArrayLiteralExpression(e)) {
         const before = e.elements.slice(0, selector.index + 1);
@@ -601,30 +700,39 @@ export class ValueFlow {
         if (element !== undefined && !before.some((item) => ts.isSpreadElement(item)) && !ts.isOmittedExpression(element)) found.push(element);
       } else {
         const symbol = this.symbolOf(e);
-        if (symbol !== undefined) for (const source of this.sourcesOf(symbol)) found.push(...this.membersOf(source, selector, depth + 1));
+        if (symbol !== undefined) for (const source of this.sourcesOf(symbol, depth + 1)) found.push(...this.membersOf(source, selector, depth + 1));
         if ('key' in selector) {
           const property = this.checker.getTypeAtLocation(e).getProperty(selector.key);
-          if (property !== undefined) found.push(...this.sourcesOf(property.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(property) : property));
+          if (property !== undefined) found.push(...this.sourcesOf(property.flags & ts.SymbolFlags.Alias ? this.checker.getAliasedSymbol(property) : property, depth + 1));
         }
       }
     }
-    return found;
+    // Once each: a const's initializer is reached both through its symbol and through the type's declared property.
+    return [...new Set(found)];
   }
 
   private textsOfSource(source: Source, depth: number): string[] {
-    if (isExpressionSource(source)) return this.texts(source, depth + 1);
+    if (isExpressionSource(source)) return this.textsAt(source, depth + 1);
     if ('typeOf' in source) return literalValues(this.checker.getTypeAtLocation(source.typeOf)) ?? [UNKNOWN];
+    if ('stopped' in source) return [source.stopped];
     const members = this.membersOf(source.of, source, depth + 1);
     return members.length === 0 ? [UNKNOWN] : union(members.map((member) => this.textsOfSource(member, depth + 1)));
   }
 
-  /** What a referenced symbol can hold, or `null` when nothing about it is known. Cycles read as unknown. */
-  textsOfSymbol(symbol: ts.Symbol, depth = 0): string[] | null {
+  /** What a referenced symbol can hold, or `null` when nothing about it is known. A cycle reads as CUT. */
+  private symbolTexts(symbol: ts.Symbol, depth: number): string[] | null {
     const cached = this.cache.get(symbol);
     if (cached !== undefined) return cached;
-    this.cache.set(symbol, [UNKNOWN]);
-    const sources = this.sourcesOf(symbol);
-    const texts = sources.length === 0 ? null : union(sources.map((source) => this.textsOfSource(source, depth)));
+    this.cache.set(symbol, [CUT]);
+    let texts: string[] | null;
+    try {
+      const sources = this.sourcesOf(symbol, depth);
+      texts = sources.length === 0 ? null : union(sources.map((source) => this.textsOfSource(source, depth)));
+    } catch (error) {
+      // A query that runs out of steps leaves no half-worked value behind.
+      this.cache.delete(symbol);
+      throw error;
+    }
     if (texts === null) this.cache.delete(symbol);
     else this.cache.set(symbol, texts);
     return texts;
@@ -635,11 +743,13 @@ export class ValueFlow {
    * literals, `+` chains, `[…].join` and `concat` of known parts, any
    * expression the type checker gives a string or number literal type (a
    * union of literals included), and whatever a reference holds as this
-   * flow follows it. A part that cannot be known is UNKNOWN.
+   * flow follows it. A part that cannot be known is UNKNOWN; one past the
+   * depth bound is CUT.
    */
-  texts(expr: ts.Expression, depth = 0): string[] {
-    if (depth > 16) return [UNKNOWN];
-    const next = (e: ts.Expression): string[] => this.texts(e, depth + 1);
+  private textsAt(expr: ts.Expression, depth: number): string[] {
+    this.step();
+    if (depth > MAX_DEPTH) return [CUT];
+    const next = (e: ts.Expression): string[] => this.textsAt(e, depth + 1);
     if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr) || ts.isNumericLiteral(expr)) return [expr.text];
     if (WRAPPERS.has(expr.kind)) return next((expr as ts.ParenthesizedExpression).expression);
     if (ts.isTemplateExpression(expr)) {
@@ -665,7 +775,7 @@ export class ValueFlow {
     const literal = literalValues(this.checker.getTypeAtLocation(expr));
     if (literal !== null) return literal;
     const symbol = this.symbolOf(expr);
-    return (symbol === undefined ? null : this.textsOfSymbol(symbol, depth + 1)) ?? [UNKNOWN];
+    return (symbol === undefined ? null : this.symbolTexts(symbol, depth + 1)) ?? [UNKNOWN];
   }
 }
 
@@ -1538,7 +1648,7 @@ describe('binding-one-writer · every ordinary form is counted', () => {
       usesOf('journalSql', `${run} const SRC: Record<string, string> = { prefix: "command_journal_" }; const { [${key}]: p } = SRC; client.query(\`SELECT * FROM \${p}append($1, $2, $3, $4, $5)\`);`);
     assert.equal(assembled('"prefix" as string'), 1, 'a literal key cast to string');
     assert.equal(assembled('"pre" + "fix"'), 1, 'a key built by a + chain');
-    assert.equal(assembled('`pre${"fix"}`'), 1, 'a key built by a template');
+    assert.equal(assembled('`pre${"fix" as string}`'), 1, 'a key built by a template whose part is cast wide');
     assert.equal(journal('declare const tuple: readonly ["SELECT * FROM command_journal_append($1)"]; const [x] = tuple; client.query(x);'), 3, 'a tuple element typed as the literal: the declaration, the type\'s literal, and the run');
     assert.equal(journal('function f(s: "SELECT * FROM command_journal_append($1)") { client.query(s); }'), 3, 'a parameter typed as the literal: the declaration, the type\'s literal, and the run');
     const assignments = (n: number, last: string): string => {
@@ -1553,6 +1663,47 @@ describe('binding-one-writer · every ordinary form is counted', () => {
     assert.equal(usesOf('tooManyValues', `${repeats('p')} ${repeats('q')} export const t = \`\${p}\${q}\`;`), 0, '17 by 17 options, 33 distinct results: well within the limit');
     const wide = (name: string): string => `let ${name} = "a0"; ${Array.from({ length: 20 }, (_, i) => `${name} = "a${i}";`).join(' ')}`;
     assert.equal(usesOf('tooManyValues', `${wide('p')} ${wide('q')} export const t = \`\${p}\${q}\`;`), 1, 'a template whose combinations exceed it, likewise');
+  });
+
+  it('a computed key costs no depth, and a key the flow cannot finish is given up on, never dropped', () => {
+    const run = 'declare const client: { query(sql: unknown, values?: unknown): void };';
+    const sql = 'const APPEND = "SELECT * FROM public.command_journal_append($1, $2, $3, $4, $5)";';
+    const journal = (code: string): number => usesOf('journalSql', `${sql} ${run} ${code}`);
+    const tooMany = (code: string): number => usesOf('tooManyValues', `${sql} ${run} ${code}`);
+    const nest = (levels: number, inner: string, key: string): string => {
+      let out = inner;
+      for (let i = 0; i < levels; i += 1) out = `{ ${key}: ${out} }`;
+      return out;
+    };
+    // The first review's probe, taken to the depth bound: a destructuring assignment sixteen levels deep, as deep as 0b4e3f5 followed it,
+    // by plain keys, by computed ones, and through a chain of consts.
+    assert.equal(journal(`const SRC = ${nest(16, 'APPEND', 'a')}; let x = ""; (${nest(16, 'x', 'a')} = SRC); client.query(x);`), 3, 'sixteen plain keys deep');
+    assert.equal(journal(`const SRC = ${nest(16, 'APPEND', 'a')}; let x = ""; (${nest(16, 'x', '["a"]')} = SRC); client.query(x);`), 3, 'sixteen computed keys deep');
+    const consts = Array.from({ length: 16 }, (_, i) => `const L${i + 1} = { a: L${i} };`).join(' ');
+    assert.equal(journal(`const L0 = APPEND; ${consts} let x = ""; (${nest(16, 'x', 'a')} = L16); client.query(x);`), 4, 'sixteen consts deep: APPEND, L0 and the run');
+
+    // A key worked out through a long chain of keys, read before the chain: the depth bound stops it, and the use fails the test.
+    const chain = (n: number): string => {
+      const links = [`export function use() { client.query(k${n}); }`, 'const r0: Record<string, string> = { k: "k" };', 'const { ["k"]: k1 } = r0;'];
+      for (let i = 1; i < n; i += 1) links.push(`const r${i}: Record<string, string> = { k: k${i} }; const { [k${i}]: k${i + 1} } = r${i};`);
+      return links.join(' ');
+    };
+    assert.ok(tooMany(chain(1024)) > 0, 'a chain of 1,024 keys ends at the depth bound and fails the test');
+    // A key that depends on itself: given up on, so the use fails the test, where it was once read as nothing.
+    assert.ok(tooMany('const SRC: Record<string, string> = { a: "b", b: APPEND }; let key = "a"; ({ [key]: key } = SRC); client.query(key);') > 0, 'a self-dependent key');
+    // Read in its own site, so only the read counts: a property whose key the flow gave up on may be the one read.
+    const tooManyIn = (code: string, site: string): number => findingsInText(`${sql} ${run} ${code}`).writers.get('tooManyValues')?.get(site)?.uses ?? 0;
+    assert.equal(tooManyIn('let key = "a"; const SRC: Record<string, string> = { [key]: "", safe: APPEND }; ({ [key]: key } = SRC); export function use() { const { safe: y } = SRC; client.query(y); }', 'use'), 1, 'a source property whose key the flow gave up on');
+
+    // Keys at every level of a nested pattern multiply: past MAX_STEPS steps the query gives up.
+    const eight = 'let k = "a0"; k = "a1"; k = "a2"; k = "a3"; k = "a4"; k = "a5"; k = "a6"; k = "a7";';
+    const levels = Array.from({ length: 6 }, (_, i) => `const L${i + 1} = { ${Array.from({ length: 8 }, (_, j) => `a${j}: ${i === 0 ? 'APPEND' : `L${i}`}`).join(', ')} };`).join(' ');
+    assert.ok(tooMany(`${eight} ${levels} const ${nest(6, 'x', '[k]')} = L6; client.query(x);`) > 0, 'eight keys at each of six levels');
+    // A key's values are capped like any other value's, here where nothing else reads them: a call typed as their union.
+    const union = (n: number): string => `type K = ${Array.from({ length: n }, (_, i) => `"k${i}"`).join(' | ')}; declare function pick(): K; const SRC: Record<string, string> = { k0: APPEND }; const { [pick()]: x } = SRC; client.query(x);`;
+    assert.equal(tooMany(union(256)), 0, 'a key of 256 literal values');
+    assert.equal(journal(union(256)), 3, 'each of them followed');
+    assert.equal(tooMany(union(257)), 1, 'a key of 257 literal values fails the test where it is read');
   });
 
   it('a tagged template is read whole, its constants resolved', () => {
