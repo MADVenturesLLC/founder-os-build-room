@@ -21,6 +21,9 @@
 # DIVIDER CHARACTER SET in `prbody`); FounderOS's `[[:space:]]` class is
 # broader than git's. ADDED HERE, NOT YET IN FounderOS: the MERGE WRAP and
 # TRAILER LINE LENGTH rules in `prbody`, for lines GitHub re-wraps at merge.
+# CORRECTED HERE, NOT YET IN FounderOS (2026-11-24): no check reads a
+# here-string, and a loop whose input cannot be opened fails the gate (see
+# `unread`).
 #
 # Original header follows.
 #
@@ -123,6 +126,17 @@ fail=0
 
 # --- helpers ---------------------------------------------------------------
 
+# unread <what> — a loop whose input could not be opened checked nothing,
+# so record a failure rather than fall through to PASS. The loops below read
+# through process substitution, never a here-string: bash 3.2 (macOS
+# /bin/bash) writes a here-string to a temporary file, and where writes are
+# denied, as in a review sandbox, the role-trailer loop was skipped and the
+# script printed PASS (Codex Tier-2 run on pull request 168, 2026-11-24).
+unread() {
+  echo "FAIL $1: could not read the lines to check (failing closed)"
+  fail=1
+}
+
 # validate_block <sha> <label>
 # Applies (b) and the block-validity rules of (c) to one commit.
 validate_block() {
@@ -140,7 +154,7 @@ validate_block() {
         echo "FAIL (b) $label $sha: invalid Role-Id value: '$line'"
         fail=1
       fi
-    done <<< "$role_lines"
+    done < <(printf '%s\n' "$role_lines") || unread "(b) $label $sha: Role-Id lines"
     # A block also requires Actor-Id (Appendix A canonical form).
     if [[ -z "$actor_present" ]]; then
       echo "FAIL (c) $label $sha: Role-Id present but Actor-Id missing"
@@ -366,7 +380,7 @@ case "$MODE" in
         echo "FAIL (prbody) PR body: attribution line '$line' is present but git interpret-trailers does not read it as a trailer of the merge commit"
         fail=1
       fi
-    done <<< "$raw_attr"
+    done < <(printf '%s\n' "$raw_attr") || unread "(prbody) PR body: attribution lines"
     # One for one, not merely membership (Copilot on FounderOS PR #356,
     # round 6): a stray line that DUPLICATES a real trailer ("Actor-Id:
     # founder" in prose above a block that also says it) passes the
@@ -428,7 +442,7 @@ case "$MODE" in
             echo "FAIL (prbody) PR body: invalid Role-Id-Secondary value: '$line'"
             fail=1
           fi
-        done <<< "$role_secondary_lines"
+        done < <(printf '%s\n' "$role_secondary_lines") || unread "(prbody) PR body: Role-Id-Secondary lines"
         if [[ -z "$role_lines" ]]; then
           echo "FAIL (prbody) PR body: Role-Id-Secondary present without a primary Role-Id"
           fail=1
@@ -440,7 +454,7 @@ case "$MODE" in
             echo "FAIL (prbody) PR body: invalid Role-Id value: '$line'"
             fail=1
           fi
-        done <<< "$role_lines"
+        done < <(printf '%s\n' "$role_lines") || unread "(prbody) PR body: Role-Id lines"
         if [[ -z "$actor_present" ]]; then
           echo "FAIL (prbody) PR body: Role-Id present but Actor-Id missing"
           fail=1
@@ -619,6 +633,15 @@ case "$MODE" in
     stb "no historical exemption here"   1 'plato/architecture-governance-reconciliation'
     stb "normal branch accepted"         0 'claude/feature-x'
     stb "builder branch accepted"        0 'builder/wf04-step3-slice1-contracts-ledger'
+    # No check reads a here-string (see unread). The marker is assembled so
+    # that this case does not match its own line.
+    here_string="$(printf '%s' '<' '<' '<')"
+    if grep -nF -- "$here_string" "$0" | grep -vE '^[0-9]+:[[:space:]]*#' >/dev/null; then
+      echo "SELFTEST FAIL: a check reads a here-string"
+      fail=1
+    else
+      echo "selftest ok: no check reads a here-string"
+    fi
     ;;
 
   *)
