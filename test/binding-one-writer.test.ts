@@ -1798,18 +1798,25 @@ describe('binding-one-writer · every ordinary form is counted', () => {
     const run = 'declare const client: { query(sql: unknown, values?: unknown): void };';
     const sql = 'const APPEND = "SELECT * FROM public.command_journal_append($1, $2, $3, $4, $5)";';
     const count = (rule: WriterRule, code: string): number => usesOf(rule, `${sql} ${run} ${code}`);
+    // Every const in these fixtures is declared before it is read, so each fixture type-checks.
+    const usedBeforeDeclared = (code: string): number => {
+      const path = join(REPO_ROOT, '__binding_one_writer_fixture__', 'order.ts');
+      const program = programOver(new Map([[path, `${sql} ${run} ${code}`]]), scanOptions());
+      return program.getSemanticDiagnostics(program.getSourceFile(path)).filter((d) => d.code === 2448).length;
+    };
     // The confirmation run's probe: a key read deep inside one chain first, then by a shallow lookup.
     // Typed `string`, so each link is followed by reference and not read off a literal type.
-    const deep = `const A1: string = A2; ${Array.from({ length: 4 }, (_, i) => `const A${i + 2}: string = A${i + 3};`).join(' ')} const A6: string = K;`;
-    const key = 'const K: string = K1; const K1: string = K2; const K2: string = K3; const K3: string = K4; const K4: string = "k";';
+    const key = 'const K4: string = "k"; const K3: string = K4; const K2: string = K3; const K1: string = K2; const K: string = K1;';
+    const deep = `const A6: string = K; ${Array.from({ length: 4 }, (_, i) => `const A${5 - i}: string = A${6 - i};`).join(' ')} const A1: string = A2;`;
     const src = 'const SRC: Record<string, string> = { k: APPEND };';
     const first = 'export function first() { client.query(A1); }';
     const second = 'export function second() { const { [K]: x } = SRC; client.query(x); }';
     const orders: readonly (readonly [string, string])[] = [
-      ['the deep read first', `${first} ${second} ${deep} ${key} ${src}`],
-      ['the shallow read first', `${second} ${first} ${deep} ${key} ${src}`],
+      ['the deep read first', `${first} ${second} ${key} ${deep} ${src}`],
+      ['the shallow read first', `${second} ${first} ${key} ${deep} ${src}`],
     ];
     for (const [label, code] of orders) {
+      assert.equal(usedBeforeDeclared(code), 0, `${label}: no const is read before its declaration`);
       assert.equal(count('tooManyValues', code), 0, `${label}: the key is worked out in full`);
       assert.equal(count('journalSql', code), 3, `${label}: APPEND, its reference and the run`);
     }
@@ -1817,13 +1824,16 @@ describe('binding-one-writer · every ordinary form is counted', () => {
     // would pass the depth bound. Per site, the deep read gets the same whichever function comes first.
     const at = (rule: WriterRule, code: string, site: string): number => findingsInText(`${sql} ${run} ${code}`).writers.get(rule)?.get(site)?.uses ?? 0;
     const chain = (name: string, links: number, end: string): string =>
-      Array.from({ length: links }, (_, i) => `const ${name}${i}: string = ${i + 1 === links ? end : `${name}${i + 1}`};`).join(' ');
+      Array.from({ length: links }, (_, i) => links - 1 - i)
+        .map((i) => `const ${name}${i}: string = ${i + 1 === links ? end : `${name}${i + 1}`};`)
+        .join(' ');
     const shallow = 'export function shallow() { const { [K0]: y } = SRC; client.query(y); }';
     const deeper = 'export function deep() { const { [A0]: x } = SRC; client.query(x); }';
     for (const [aLinks, kLinks, fits] of [[4, 3, true], [5, 4, false]] as const) {
-      const program = `${chain('A', aLinks, 'K0')} ${chain('K', kLinks, '"k"')} ${src}`;
+      const program = `${chain('K', kLinks, '"k"')} ${chain('A', aLinks, 'K0')} ${src}`;
       for (const code of [`${shallow} ${deeper} ${program}`, `${deeper} ${shallow} ${program}`]) {
         const label = `${aLinks} links to a key ${kLinks} deep, ${code.startsWith(shallow) ? 'the shallow read' : 'the deep read'} first`;
+        assert.equal(usedBeforeDeclared(code), 0, `${label}: no const is read before its declaration`);
         assert.equal(at('journalSql', code, 'deep'), fits ? 1 : 0, `${label}: the deep read's run`);
         assert.equal(at('tooManyValues', code, 'deep'), fits ? 0 : 1, `${label}: past the bound, it gives up`);
         assert.equal(at('journalSql', code, 'shallow'), 1, `${label}: the shallow read's run`);
