@@ -23,7 +23,8 @@
 # TRAILER LINE LENGTH rules in `prbody`, for lines GitHub re-wraps at merge.
 # CORRECTED HERE, NOT YET IN FounderOS (2026-11-24): no check reads a
 # here-string, and a loop whose input cannot be opened fails the gate (see
-# `unread`).
+# `unread`). CARRIED (2026-11-24): FounderOS's fail-closed handling of a
+# commit range git cannot list, with its selftest cases (st_range).
 #
 # Original header follows.
 #
@@ -203,6 +204,28 @@ case "$MODE" in
     fi
 
     # (b)+(c) every commit in the PR range, evaluated independently.
+    #
+    # The range is materialized and its exit status checked BEFORE the loop.
+    # Reading it through process substitution — `done < <(git rev-list …)` —
+    # discards rev-list's exit status entirely: an unresolvable range (an
+    # absent base or head object) produced an empty loop, `fail` was never
+    # set, and the gate reported PASS with exit 0. The fail-closed handling
+    # below covers a commit that cannot be READ; it did not cover a range
+    # that cannot be ENUMERATED, which is strictly worse because nothing is
+    # examined at all. Reproduced before this change:
+    #
+    #   $ attribution-shape-check.sh pr <absent-sha> <head> some/branch
+    #   fatal: Invalid revision range <absent-sha>..<head>
+    #   attribution-shape-check: PASS — attribution shape valid
+    #   exit 0
+    #
+    # Regression cases live in `selftest` (st_range). Carried from FounderOS's
+    # copy, where this guard and its cases already stand.
+    if ! range="$(git rev-list --reverse "$BASE_SHA..$HEAD_SHA" 2>&1)"; then
+      echo "FAIL (c) unable to enumerate the commit range $BASE_SHA..$HEAD_SHA (failing closed): $range"
+      fail=1
+      range=""
+    fi
     while IFS= read -r sha; do
       [[ -z "$sha" ]] && continue
       app_rc=0; applicable "$sha" || app_rc=$?
@@ -220,7 +243,7 @@ case "$MODE" in
           validate_block "$sha" "commit(non-applicable)"
         fi
       fi
-    done < <(git rev-list --reverse "$BASE_SHA..$HEAD_SHA")
+    done < <(printf '%s\n' "$range") || unread "(c) commit range $BASE_SHA..$HEAD_SHA"
     ;;
 
   main)
@@ -633,10 +656,37 @@ case "$MODE" in
     stb "no historical exemption here"   1 'plato/architecture-governance-reconciliation'
     stb "normal branch accepted"         0 'claude/feature-x'
     stb "builder branch accepted"        0 'builder/wf04-step3-slice1-contracts-ledger'
+    # st_range <name> <expected-exit> <base> <head>
+    # A range that cannot be ENUMERATED must fail closed. Before the fix,
+    # rev-list's exit status was discarded by process substitution and an
+    # unresolvable range reached PASS having examined nothing. Carried, with
+    # its cases, from FounderOS's copy.
+    absent_sha='0000000000000000000000000000000000000000'
+    st_range() {
+      local name="$1" expected="$2" base="$3" head="$4" rc=0
+      bash "$0" pr "$base" "$head" claude/selftest >/dev/null 2>&1 || rc=$?
+      if [[ "$rc" -ne "$expected" ]]; then
+        echo "SELFTEST FAIL: $name (exit $rc, expected $expected)"
+        fail=1
+      else
+        echo "selftest ok: $name"
+      fi
+    }
+    st_range "range: absent base fails closed"    1 "$absent_sha" HEAD
+    st_range "range: absent head fails closed"    1 HEAD "$absent_sha"
+    st_range "range: empty but valid range passes" 0 HEAD HEAD
     # No check reads a here-string (see unread). The marker is assembled so
-    # that this case does not match its own line.
+    # that this case does not match its own line. A line holding the marker
+    # in a quoted string or after code also fails the case, which errs on
+    # the side of a look; only a whole-line comment is skipped. The script
+    # is read first, so a read error fails the case rather than passing it.
     here_string="$(printf '%s' '<' '<' '<')"
-    if grep -nF -- "$here_string" "$0" | grep -vE '^[0-9]+:[[:space:]]*#' >/dev/null; then
+    hs_rc=0
+    hs_lines="$(grep -nF -- "$here_string" "$0")" || hs_rc=$?
+    if [[ "$hs_rc" -gt 1 ]]; then
+      echo "SELFTEST FAIL: could not read this script to look for a here-string"
+      fail=1
+    elif [[ -n "$hs_lines" ]] && grep -vE '^[0-9]+:[[:space:]]*#' < <(printf '%s\n' "$hs_lines") >/dev/null; then
       echo "SELFTEST FAIL: a check reads a here-string"
       fail=1
     else
