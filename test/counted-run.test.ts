@@ -362,12 +362,20 @@ describe('counted run · the act’s terms, read at boot', () => {
     assert.equal(createHash('sha256').update(text, 'utf8').digest('hex'), COUNTED_RUN_REGISTRY.sha256);
     assert.ok(pinnedRegisteredSurfaces(text).has('build-room-control-plane'));
     assert.equal(pinnedRegisteredSurfaces(`${text} `).size, 0, 'one byte appended');
-    // The Seat Registry's copy now pins the same doctrine text as this one
-    // (8bc4c55 and 8146435 both carry sha256 060a16a4...), so it declares the
-    // same surfaces. The appended-byte case above is the zero case.
+    // The Seat Registry keeps its own pin (the Founder's selection of
+    // 2026-10-16, quoted at COUNTED_RUN_REGISTRY). Its copy of this registry
+    // was this text byte for byte from 8bc4c55 to 846190f and is not at
+    // d3049d9; either may hold again. Whichever it is, the counted run
+    // declares surfaces from that copy only when its bytes hash to the counted
+    // run's own pinned digest, and from no other text, as the appended-byte
+    // case above shows.
     const seatRegistryCopy = readFileSync(join(root, 'packages', 'seat-registry', 'fixtures', 'execution-surface-registry.md'), 'utf8');
-    assert.equal(createHash('sha256').update(seatRegistryCopy, 'utf8').digest('hex'), COUNTED_RUN_REGISTRY.sha256);
-    assert.ok(pinnedRegisteredSurfaces(seatRegistryCopy).has('build-room-control-plane'));
+    const isPinnedCopy = createHash('sha256').update(seatRegistryCopy, 'utf8').digest('hex') === COUNTED_RUN_REGISTRY.sha256;
+    assert.equal(
+      pinnedRegisteredSurfaces(seatRegistryCopy).size > 0,
+      isPinnedCopy,
+      'the Seat Registry copy declares surfaces to the counted run only when it is the pinned copy',
+    );
   });
 });
 

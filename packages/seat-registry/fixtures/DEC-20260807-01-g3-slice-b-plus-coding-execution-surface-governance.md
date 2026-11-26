@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-08-07
-updated: 2026-10-24
-version: 0.5
+updated: 2026-10-26
+version: 0.7
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -21,6 +21,8 @@ related_decisions:
   - DEC-20260719-02-independent-reviewer-two-tier-binding
   - DEC-20260730-01-agent-isolation-act-time-logging-schedule-gates
   - DEC-20260801-02-founder-authorization-handoff-readiness
+  - DEC-20261019-01-model-registry-repin
+  - DEC-20261020-01-surface-bound-builder-and-tier2-lanes
 related_workflows:
   - wf-11-agent-handoff
   - wf-13-code-review
@@ -270,6 +272,29 @@ The ratification package MUST amend
 - Non-Gemini models exposed by the application receive no authority merely
   because the UI lists them. Their separate model and provider rules govern.
 
+  > **Reconciliation note (2026-10-26).** For the `antigravity:anthropic`
+  > Tier-2 lane only, the model rule above is superseded by
+  > `DEC-20261020-01` clause 9, as its Amendment 3 amends it (ratified
+  > 2026-10-25; in force since FounderOS pull request 405 merged as
+  > `65714a35a87d74c943dadf71ed19af280afde7ab`): "an `independent-reviewer`
+  > review on that lane may run on a model of the lane's allowlist", which
+  > `DEC-20261020-01` clause 2 sets as `claude-opus-5.5` and
+  > `claude-sonnet-5.5`. Every other role and model on `antigravity` stays
+  > under this registration as written; see also the note under §3.4. The
+  > historical text is retained verbatim; this note creates no binding.
+
+  > **Note (2026-10-26), headless Planner mode.** B4 of
+  > `FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR` amends this registration
+  > by one mode: "headless Planner execution through agy on Gateway
+  > 1880c12d, only for planner commands of a counted run my act authorizes,
+  > on the model that act names. Every other use of Antigravity stays
+  > founder-operated and interactive, and its prohibitions stand." It takes
+  > effect when the FounderOS pull request carrying this note merges. The
+  > ruling and its Amendments 1 and 2, which set the Planner's isolation
+  > and network on the PC, are recorded verbatim in `DEC-20260827-01` Section 12, and the mode
+  > in the `antigravity` entry of `/04-agents/execution-surface-registry.md`.
+  > The text above is retained verbatim.
+
 ##### `hermes-local-code`
 
 - Identity: model-independent local coding surface, distinct from
@@ -345,6 +370,26 @@ enforcement index. The approved amendment schedule is:
   fast-review model and `gemini-3.5-flash` is its fallback; both are
   non-binding. The existing `gemini-3.1-pro` entry remains the Gemini model
   eligible to provide a binding Tier-2 verdict.
+
+  > **Reconciliation note (2026-10-26).** The last sentence above is
+  > superseded by `DEC-20261019-01` Clause A (Founder ruling, 2026-10-19):
+  > "gemini-3.1-pro's bindings are retired, because the surface no longer
+  > serves it at any effort. gemini-4-argon gains the independent-reviewer
+  > Tier-2 binding on the antigravity surface, public-class review material
+  > only, inheriting that entry's data boundary." `gemini-4-argon` is the
+  > allowlist of the `antigravity:google` Tier-2 lane in `DEC-20261020-01`
+  > clause 2 and in the *Lanes* section of `04-agents/model-registry.md`.
+  > Separately, `DEC-20261020-01` clause 9, as its Amendment 3 amends it
+  > (ratified 2026-10-25; in force since FounderOS pull request 405 merged
+  > as `65714a35a87d74c943dadf71ed19af280afde7ab`), supersedes this bullet's
+  > Gemini-only model rule "for the `antigravity:anthropic` Tier-2 lane
+  > only"; every other role and model on `antigravity` stays under this
+  > bullet as written. Verdicts issued under the retired binding while it
+  > was active remain valid for the work they reviewed (`DEC-20261019-01`).
+  > How FounderOS attests a binding Tier-2 verdict, by execution surface
+  > with the model recorded but not bound, is in the reconciliation note
+  > under §5.1. The historical sentence is retained verbatim. This note
+  > records the text reconciliation; it creates no binding.
 - `hermes-local-code`: current proposed model `deepseek-v4-flash`; other local
   models require registration and Founder approval before writes or execution.
 
@@ -494,6 +539,13 @@ does not grant repository write authority.
   > `Tier2-Reviewer-Model` but is not bound. The historical sentence is
   > retained verbatim. This note records the text reconciliation; it does
   > not restore a retired binding.
+
+  > **Reconciliation note (2026-10-26).** `gemini-3.1-pro`, one of the
+  > entries the sentence above retains, has had its bindings retired since
+  > 2026-10-19 by `DEC-20261019-01` Clause A, which binds `gemini-4-argon`
+  > for Tier-2 on `antigravity` instead (see the note under §3.4). This
+  > note addresses `gemini-3.1-pro` only. The historical sentence is
+  > retained verbatim; this note creates no binding.
 
   Other Gemini models selected through `antigravity` may build or provide
   supplemental review but cannot satisfy Tier-2 until an explicit roster
@@ -1080,6 +1132,28 @@ ruling satisfies clause 6.3.
 activation ruling.
 
 ## Notes
+
+**v0.7 (2026-10-26) — note in §3.1 for the headless Planner mode.** Adds a
+dated note under the `antigravity` registration recording B4 of
+`FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR`, which adds one mode:
+headless Planner execution through agy on Gateway `1880c12d`, for planner
+commands of an act-authorized counted run only. The registration's text is
+unchanged.
+
+**v0.6 (2026-10-26) — reconciliation notes in §3.1, §3.4 and §5.1.** Adds
+three dated notes. Under §3.4's `antigravity` bullet: its sentence naming
+`gemini-3.1-pro` as the Gemini model eligible for a binding Tier-2 verdict
+is superseded by `DEC-20261019-01` Clause A, and `DEC-20261020-01`
+Amendment 3 supersedes the bullet's Gemini-only rule for the
+`antigravity:anthropic` Tier-2 lane only. Under §3.1's `antigravity`
+registration: the same supersession of its Gemini-only model rule, for
+that lane only. Under §5.1: `gemini-3.1-pro`, among the roster entries its
+sentence retains, is retired. Every historical sentence is retained
+verbatim; apart from these notes, this entry, and the `version`, `updated`
+and `related_decisions` fields, the decision's text is unchanged.
+Builder-drafted at the Founder's direction (2026-10-26, "yes, open the
+reconciliation PR"), for the advisory raised in all three Tier-2 rounds of
+FounderOS pull request 405.
 
 **v0.5 (2026-10-24) — Amendment 1 ratified and carried.** The Founder
 ratified the "Amendment 1 (proposed, 2026-10-24)" section at head

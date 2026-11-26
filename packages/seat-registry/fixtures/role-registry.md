@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-07-15
-updated: 2026-10-25
-version: 0.24
+updated: 2026-10-30
+version: 0.25
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -41,7 +41,7 @@ tags:
 # Role Registry
 
 ## Purpose
-Records the canonical roster of 17 stable roles approved by `DEC-20260715-17-stable-roles-and-replaceable-execution-architecture`, each separated from the model(s) bound to it per `/00-system/identity-taxonomy.md`. **This registry is active and authoritative**, promoted by the G2 activation package: the role files in `04-agents/roles/`, `04-agents/agent-registry.md`, `01-constitution/agent-rules.md`, and the active workflows and templates target this roster's role IDs. Promotion changes no binding status recorded below — approval of a roster identity still does not promote any underlying role contract, decision, or model policy beyond its recorded status.
+Records the canonical roster of the stable roles — seventeen approved by `DEC-20260715-17-stable-roles-and-replaceable-execution-architecture` and thirteen added by `DEC-20260812-03` (thirty in total) — each separated from the model(s) bound to it per `/00-system/identity-taxonomy.md`. **This registry is active and authoritative**, promoted by the G2 activation package: the role files in `04-agents/roles/`, `04-agents/agent-registry.md`, `01-constitution/agent-rules.md`, and the active workflows and templates target this roster's role IDs. Promotion changes no binding status recorded below — approval of a roster identity still does not promote any underlying role contract, decision, or model policy beyond its recorded status.
 
 ## Owner
 Founder (ruling authority for the roster and its bindings, per `DEC-20260715-17`). `builder` maintains structure (G1 drafting executed via Claude Code and the Fable 5 temporary Builder assignment — provenance).
@@ -84,6 +84,8 @@ Active — promoted by the G2 activation package executing `DEC-20260715-17` ite
 **Separately, 2026-08-12:** `DEC-20260812-02` (active) assigned first bindings to `product-lead` (`gpt-5.5`), `marketing-lead` (`gemini-3.6-flash`), and `pre-mortem-reviewer` (`gemini-3.5-flash`).
 
 **Separately, 2026-10-05:** `DEC-20261005-01` (active, ratified by the Founder 2026-10-05) assigned primary model bindings to the remaining eighteen bindable seats — the five executives, the seven bindable functional leads (`investment-acquisition-lead` stays activation-deferred and excluded), and six of the seven older seats. `founder-mirror` remains `binding_status: unassigned` by explicit ruling of that act (no local hosting). The same act reconciled the detailed `product-lead`, `marketing-lead`, and `pre-mortem-reviewer` blocks below with `DEC-20260812-02` and flipped their `binding_status` to `approved` — a recording correction; `DEC-20260812-02` itself is unchanged.
+
+**Registry internally reconciled 2026-10-30 — record-keeping correction, no authority change.** Two internal contradictions were corrected. First, the Roster summary table below recorded `underlying_contract_status: proposed` for the thirteen roles added by `DEC-20260812-03`; §18–§30 of this same registry and the thirteen contract files in `04-agents/roles/` have all read `active` since the ratification of 2026-08-12, so the summary column now reads `active`. Second, the `## Purpose` sentence still described the roster as "17 stable roles"; it now states the thirty-role roster and both ratifying decisions. No binding, `roster_status`, `activation_status`, binding status, or authority is changed by either correction — `investment-acquisition-lead` remains `activation_status: deferred`, and the 30 ÷ 29 attributable asymmetry is untouched. `DEC-20260814-03` was lifted by the Founder on 2026-09-29 and is archived; no freeze exception is claimed here.
 
 ## Next Action
 Remaining model-binding assignments for the unassigned roles, and any future routing implementation, follow `/00-system/model-portfolio-and-routing-strategy.md`'s staged evaluation track and `/04-agents/temporary-task-assignment-policy.md`'s lifecycle. Routing enforcement remains gated by its own implementation package.
@@ -1160,19 +1162,19 @@ historical_identifiers: []
 | chief-of-staff | Chief of Staff | approved (governance; runtime activation active DEC-20260801-08) | yes | active |
 | deputy-chief-of-staff | Deputy Chief of Staff | approved (governance; P3 channel + runtime activation active DEC-20260801-01 v1.1) | yes | draft |
 | founder-mirror | Founder Mirror | unassigned | no | active |
-| chief-strategy-officer | Chief Strategy Officer | approved (primary, DEC-20261005-01): kimi-k3 | no | proposed |
-| chief-operating-officer | Chief Operating Officer | approved (primary, DEC-20261005-01): gemini-3.8-flash | no | proposed |
-| chief-financial-officer | Chief Financial Officer | approved (primary, DEC-20261005-01): gpt-6.1-sol | no | proposed |
-| chief-marketing-creative-officer | Chief Marketing and Creative Officer | approved (primary, DEC-20261005-01): minimax-m3 | no | proposed |
-| chief-compliance-officer | Chief Compliance Officer | approved (primary, DEC-20261005-01): claude-opus-5.5 | no | proposed |
-| security-lead | Security Lead | approved (primary, DEC-20261005-01): claude-sonnet-5.5 | no | proposed |
-| data-intelligence-lead | Data & Intelligence Lead | approved (primary, DEC-20261005-01): deepseek-v4.1-flash | no | proposed |
-| reliability-lead | Reliability / SRE Lead | approved (primary, DEC-20261005-01): mimo-v2.6-pro | no | proposed |
-| portfolio-venture-lead | Portfolio & Venture Lead | approved (primary, DEC-20261005-01): qwen3.7-max | no | proposed |
-| growth-commercial-lead | Growth & Commercial Lead | approved (primary, DEC-20261005-01): minimax-m2.7 | no | proposed |
-| innovation-futures-lead | Innovation & Futures Lead | approved (primary, DEC-20261005-01): step-3.7-flash | no | proposed |
-| program-execution-lead | Program & Execution Lead | approved (primary, DEC-20261005-01): glm-5.3 | no | proposed |
-| investment-acquisition-lead | Investment & Acquisition Lead | unassigned (proposed, DEC-20260812-03; **activation-deferred**) | no | proposed |
+| chief-strategy-officer | Chief Strategy Officer | approved (primary, DEC-20261005-01): kimi-k3 | no | active |
+| chief-operating-officer | Chief Operating Officer | approved (primary, DEC-20261005-01): gemini-3.8-flash | no | active |
+| chief-financial-officer | Chief Financial Officer | approved (primary, DEC-20261005-01): gpt-6.1-sol | no | active |
+| chief-marketing-creative-officer | Chief Marketing and Creative Officer | approved (primary, DEC-20261005-01): minimax-m3 | no | active |
+| chief-compliance-officer | Chief Compliance Officer | approved (primary, DEC-20261005-01): claude-opus-5.5 | no | active |
+| security-lead | Security Lead | approved (primary, DEC-20261005-01): claude-sonnet-5.5 | no | active |
+| data-intelligence-lead | Data & Intelligence Lead | approved (primary, DEC-20261005-01): deepseek-v4.1-flash | no | active |
+| reliability-lead | Reliability / SRE Lead | approved (primary, DEC-20261005-01): mimo-v2.6-pro | no | active |
+| portfolio-venture-lead | Portfolio & Venture Lead | approved (primary, DEC-20261005-01): qwen3.7-max | no | active |
+| growth-commercial-lead | Growth & Commercial Lead | approved (primary, DEC-20261005-01): minimax-m2.7 | no | active |
+| innovation-futures-lead | Innovation & Futures Lead | approved (primary, DEC-20261005-01): step-3.7-flash | no | active |
+| program-execution-lead | Program & Execution Lead | approved (primary, DEC-20261005-01): glm-5.3 | no | active |
+| investment-acquisition-lead | Investment & Acquisition Lead | unassigned (proposed, DEC-20260812-03; **activation-deferred**) | no | active |
 
 ## Cross-references
 - `/00-system/identity-taxonomy.md` — the class definitions and binding-status taxonomy this registry applies.

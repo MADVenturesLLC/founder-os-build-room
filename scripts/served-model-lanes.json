@@ -1,10 +1,10 @@
 {
   "source": {
     "repository": "MADVenturesLLC/FounderOS",
-    "commit": "bff570de66dbc50dbfc5da6ef05d6d1177c101f8",
+    "commit": "d3049d9233000ed7a0c107a365fd035ff5d2b05c",
     "lanes": "04-agents/model-registry.md, section 'Lanes (DEC-20261020-01, active 2026-10-21)'",
     "display_names": "04-agents/model-registry.md, every entry's model_id and display_name",
-    "decision": "DEC-20261020-01 clauses 2, 3, 4 and 5 (Amendment 2, ratified 2026-10-22)"
+    "decision": "DEC-20261020-01 clauses 2, 3, 4 and 5 (Amendment 2, ratified 2026-10-22); claude-fable-5.2 added to the claude-code:anthropic allowlist by the Founder's act of 2026-11-17"
   },
   "blocking_from": "2026-11-15",
   "builder_lanes": {
@@ -13,7 +13,8 @@
       "record": "co-authored-by",
       "allowlist": [
         "claude-opus-5.5",
-        "claude-fable-5.1"
+        "claude-fable-5.1",
+        "claude-fable-5.2"
       ]
     },
     "codex": {
@@ -27,6 +28,7 @@
   },
   "display_names": {
     "Claude Fable 5.1": "claude-fable-5.1",
+    "Claude Fable 5.2": "claude-fable-5.2",
     "Claude Haiku 4.5": "claude-haiku-4-5",
     "Claude Opus 4.7": "opus-4.7",
     "Claude Opus 5.5": "claude-opus-5.5",
@@ -52,8 +54,12 @@
     "Gemini 3.8 Flash": "gemini-3.8-flash",
     "Gemini 4 Argon": "gemini-4-argon",
     "Grok 4.5": "grok-4.5",
+    "Grok 4.6": "grok-4.6",
+    "Grok 4.7": "grok-4.7",
+    "Grok 4.7 Fast": "grok-4.7-build-fast",
     "Hermes 4 14B (Q4_K_M, local)": "hermes-4-14b",
     "Kimi K3": "kimi-k3",
+    "Kimi K3.1 Pro": "kimi-k3.1",
     "MiniMax-M2.7": "minimax-m2.7",
     "MiniMax-M3": "minimax-m3",
     "Muse Spark 1.3": "muse-spark-1.3",

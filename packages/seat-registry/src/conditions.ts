@@ -2,14 +2,14 @@
  * Seat Registry V1 — verbatim condition strings, byte-captured from the
  * pinned fixtures (r7 test 10 compares each lane's conditions against these).
  *
- * Source windows (doctrine pin 846190fdb4da0604672bef8d7b1c8852407c4934):
+ * Source windows (doctrine pin d3049d9233000ed7a0c107a365fd035ff5d2b05c):
  *   - GROK_BULLET_1/2, HERMES_BULLET_1/2: DEC-20260815-04, "Conditions carried
  *     by two of the five" (lines 59–62, 63–67, 76–77, 78–80).
  *   - GROK_ITEM: DEC-20260716-02 amendment, grok-build item (lines 152–160).
  *   - GLM_52_CONDITION: DEC-20260716-02 amendment, cursor item (lines 141–144).
- *   - ANTIGRAVITY_*: execution-surface-registry.md lines 312, 314, 316.
+ *   - ANTIGRAVITY_*: execution-surface-registry.md lines 353, 355, 357.
  *   - REVIEWER_CLAUSE_3: DEC-20260815-05 clause 3 (lines 69–71).
- *   - ARCH_RECONCILE_PRECONDITIONS: DEC-20260807-01 lines 501–507.
+ *   - ARCH_RECONCILE_PRECONDITIONS: DEC-20260807-01 lines 553–559.
  *   - OPUS_RECONCILE_CONSTRAINT: model-registry.md opus-4.7 entry paragraph.
  *
  * Each string is complete — not truncated or composited. Regenerate by
