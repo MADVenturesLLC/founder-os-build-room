@@ -6,7 +6,7 @@
  * Ratified plan: docs/planning/seat-registry-v1/seat-registry-v1-implementation-plan-r7-DRAFT.md
  * (sha256 b1bc4159b8cdb1ce6c342d84b4be3650a340abfc467624154ea5ba2a54815b60).
  * Governing decision: DEC-20260902-02 (active, source_of_truth: true, version 0.2).
- * Doctrine pin: FounderOS 846190fdb4da0604672bef8d7b1c8852407c4934.
+ * Doctrine pin: FounderOS d3049d9233000ed7a0c107a365fd035ff5d2b05c.
  *
  * Requirements:
  * - imports only the public entry point (../packages/seat-registry/src/index.js)
@@ -46,8 +46,8 @@ function fixtureLines(filename: string): string[] {
 }
 
 describe('Test 14 — Fixture integrity (doctrine pin) (r7 §9.1 test 14)', () => {
-  it('recorded doctrine pin is the full 40-character 846190fdb4da0604672bef8d7b1c8852407c4934', () => {
-    assert.equal(DOCTRINE_PIN, '846190fdb4da0604672bef8d7b1c8852407c4934');
+  it('recorded doctrine pin is the full 40-character d3049d9233000ed7a0c107a365fd035ff5d2b05c', () => {
+    assert.equal(DOCTRINE_PIN, 'd3049d9233000ed7a0c107a365fd035ff5d2b05c');
     assert.match(DOCTRINE_PIN, /^[0-9a-f]{40}$/);
   });
 

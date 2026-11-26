@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-07-15
-updated: 2026-10-16
-version: 0.11
+updated: 2026-11-09
+version: 0.16
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -16,6 +16,9 @@ related_decisions:
   - DEC-20260807-01-g3-slice-b-plus-coding-execution-surface-governance
   - DEC-20260815-06-execution-surface-registration
   - DEC-20261015-01-build-room-control-plane-execution-surface
+  - DEC-20261019-01-model-registry-repin
+  - DEC-20261020-01-surface-bound-builder-and-tier2-lanes
+  - DEC-20261027-02-moonshot-kimi-channel-classification
 related_workflows: []
 used_by:
   - builder
@@ -372,6 +375,71 @@ model-registry entry; exact model and effort recorded". For every other role
 on this surface that line stands. Build Room and `madventures-tui` keep their
 own review rules (B7).
 
+**Claude on Antigravity (2026-10-25).** The `underlying_model_selection`
+line above names Gemini models only. `DEC-20261019-01` Clause D bound
+`claude-opus-5.5` and `claude-sonnet-5.5` as Tier-2 reviewers "served on
+the antigravity surface", and `DEC-20261020-01` carries them as the Tier-2
+lane `antigravity:anthropic` in its clause 2 table, with "Antigravity
+carries Claude only as a Tier-2 lane" (clause 9) and the lane
+"public-class only" (clause 8). Clause 9, as Amendment 3 to that decision
+amends it, supersedes `DEC-20260807-01` §3.1's model rule and §3.4's
+routing amendment for `antigravity`, which admit only Gemini models here,
+"for the `antigravity:anthropic` Tier-2 lane only". So on this surface:
+
+- An `independent-reviewer` Tier-2 review may run on a model of the
+  `antigravity:anthropic` lane, as `/04-agents/model-registry.md` (*Lanes*)
+  lists it, as well as on the Gemini model the line above admits.
+  Internal-class material on that lane needs the Founder's per-invocation
+  authorization (clause 8).
+- Claude serves no other role here. Builder and architect work on this
+  surface stays under the line above, Gemini only.
+- Independence holds as before: "the reviewer's model family must differ
+  from the builder's", so "work built on `claude-code:anthropic` is not
+  Tier-2-reviewed on `antigravity:anthropic`" (clause 7).
+- The approval, audit and prohibited-action lines above apply to that lane
+  unchanged.
+- The review records its model as `DEC-20261020-01` clause 5 sets for this
+  surface: the requested-and-routed model, by the client cross-check. A
+  FounderOS Tier-2 verdict records it without binding it (B3, above); a
+  Build Room review on a model off the lane's allowlist is refused
+  (clause 4).
+
+Build Room's seat registry carries this lane from [`056ffd1`](https://github.com/MADVenturesLLC/founder-os-build-room/commit/056ffd11d7db78b42463b233d758d41cdbf682a3),
+the merge of [Build Room pull request 128](https://github.com/MADVenturesLLC/founder-os-build-room/pull/128).
+
+**Headless Planner mode (2026-10-26).** B4 of
+`FOUNDER-RULING-20261026-BR-PLANNER-EXECUTOR` (recorded verbatim, with its
+Amendments 1 and 2, in `DEC-20260827-01` Section 12) amends this registration by
+one mode: "headless Planner execution through agy on Gateway 1880c12d,
+only for planner commands of a counted run my act authorizes, on the model
+that act names. Every other use of Antigravity stays founder-operated and
+interactive, and its prohibitions stand." So on this surface, from the merge
+of the FounderOS pull request that carries this paragraph:
+
+- The mode serves the `architect` seat's Planner only, on the lane
+  `antigravity`, `gemini-4-argon`, effort high (agy `gemini-4-argon-high`),
+  and only for planner commands of a counted Phase 4 run the Founder's act
+  authorizes (the ruling's B1).
+- Before work is sent, the executor reads agy's stream-json `init` event and
+  sends the work only if its model is exactly the act's; otherwise the round
+  fails closed (Amendment 1, B1 and B2).
+- agy runs as a dedicated unprivileged user, never as the Gateway's user or
+  root, through one fixed privilege rule, with no access to the Gateway's
+  credentials or the Founder's files (Amendment 1, Part C).
+- That user's processes connect only to an allowlist of exact host names
+  that the Founder's PC act names, enforced by the operating system, with
+  no direct DNS, and they end when each run ends (Amendment 2, Parts B and
+  C).
+- Inputs are public-class only (the ruling's B5); the Planner returns a plan
+  and nothing else, with no repository write, push, merge, deployment or
+  production operation (B7).
+- The approval, audit and prohibited-action lines above apply unchanged;
+  the mode is the one exception the ruling makes to "founder-operated
+  interactive" use.
+- The yaml above is kept as written, as the 2026-10-11 and 2026-10-25
+  paragraphs keep it. In this mode, the model the Founder selects manually
+  is the active model the counted-run act names (the ruling's A2 and B1).
+
 ### `hermes-local-code`
 
 ```yaml
@@ -408,11 +476,11 @@ classification: coding-execution-surface
 surface_subtype: agentic-coding-harness
 application_id: kimi-cli
 application_classification: agentic-coding-application
-provider_context: moonshot                            # Moonshot AI; operator's kimi.com subscription route
+provider_context: moonshot                            # Moonshot AI; operator's kimi.com Kimi Code membership route — a separate channel from the Kimi Open Platform API, per DEC-20261027-02
 current_status: registered-operator                    # no DEC-traced commit/PR work yet; C7 task44 was a brief, not task work
 governance_status: classified-in-g3                  # consistent with G3 Slice B+ activation pattern
 supported_work_types: coding work per the Kimi CLI lane; CLI non-interactive mode (`kimi --prompt`)
-underlying_model_selection: session-configured; default `kimi-code/k3` per `~/.kimi-code/config.toml`
+underlying_model_selection: session-configured; default `kimi-code/k3.1-pro-highspeed` per `~/.kimi-code/config.toml` (line 5, read 2026-10-27)
 repository_access_status: per a separately authorized task assignment; not a standing grant
 runtime_integration_status: none
 approval_requirements: existing agent-rules approval gates apply unchanged
@@ -421,10 +489,35 @@ activation_phase: G3
 ```
 
 - **Identity rule:** Kimi CLI is the Moonshot-AI-branded coding CLI
-  harness. It is **not a model** (`kimi-code/k3` is a model;
-  `moonshotai/kimi-k3` is the OpenRouter-routed model — Kimi CLI does
-  not use that route); **not a provider** (Moonshot AI is the provider);
+  harness. It is **not a model** (`kimi-code/k3.1-pro-highspeed` is a
+  model; `moonshotai/kimi-k3` is the OpenRouter-routed model — Kimi CLI
+  does not use that route); **not a provider** (Moonshot AI is the provider);
   **not a role**; **not the Builder**.
+- **Channel and base URL (corrected 2026-10-27, `DEC-20261027-02`, proposed; the Founder ratified it on 2026-11-08 and it takes effect when the decision is recorded `active`).** This
+  surface talks to the **Kimi Code** route, not the Kimi Open Platform API.
+  Its provider block is `managed:kimi-code`, `base_url =
+  https://api.kimi.com/coding/v1` — the **China** membership route,
+  Anthropic-compatible, billed by membership subscription with quota
+  included, keyed from the Kimi Code Console under OAuth. The Kimi Open
+  Platform is a separate route, `https://api.moonshot.ai/v1` (overseas) or
+  `https://api.moonshot.cn/v1` (China), billed pay-as-you-go from a
+  separate console. **The two must not be conflated.** The route this
+  surface uses is **classified into no provider class**, so under the
+  data-boundary policy's §4 it is in no permitted set and **may not be
+  used for any data class**: §4's public row permits P1, P2, P3, P4 and P5
+  only, and §5 item 1 defaults unclassified work to internal rather than
+  public. Its retention posture is also unverified, so §5 item 4 would
+  limit it to public-class data even once a class exists. Explicit Founder
+  authorization for a specific invocation addresses the retention ground
+  only — it cannot create a provider class, and it cannot promote a model
+  on the MP-2 ladder. The Open Platform overseas route is proposed for
+  **P3** by `DEC-20261027-02`, which is filed `proposed`; until that
+  decision is recorded `active`, neither route carries an asserted
+  provider class.
+  **This surface is therefore not usable for any data class at present**,
+  and its default model `kimi-code/k3.1-pro-highspeed` is an
+  `evaluation-candidate` that could not carry internal-class work on
+  either route in any case.
 - **Permission projection:** `builder`, `architect` (no
   `independent-reviewer`; no `strategist`).
 - **Attribution (Founder directive, 2026-09-28):** any PR attributed
@@ -438,13 +531,18 @@ activation_phase: G3
   an authorized role under an approved task and approval policy.
 - **Evidence sources:** `~/.kimi-code/AGENTS.md` (101 lines, SHA
   `de60af6b…`, last modified 2026-09-04); `~/.kimi-code/config.toml`
-  (`default_model = "kimi-code/k3"`, `provider = "managed:kimi-code"`,
-  OAuth access); `which kimi` → `/usr/local/bin/kimi`; `kimi --help`
+  (line 5 `default_model = "kimi-code/k3.1-pro-highspeed"`; line 429
+  `base_url = "https://api.kimi.com/coding/v1"`; provider
+  `managed:kimi-code` with an OAuth sub-block; configured model ids
+  `kimi-code/kimi-for-coding`, `kimi-code/kimi-for-coding-highspeed`,
+  `kimi-code/k3`, `kimi-code/k3-256k`, `kimi-code/k3.1-pro`,
+  `kimi-code/k3.1-pro-highspeed` — all read 2026-10-27); `which kimi` →
+  `/Users/michaeldaley/.local/bin/kimi`; `kimi --version` → `2.3.3`
   (verified: `--prompt` non-interactive mode present); Phase 2
   alignment document
   `~/MADVenturesOPs/build-room/verification/TOOL-CONFIG-ALIGNMENT-PHASE2-20260904.md`
   (Kimi row, line 35); `subscription-vs-api-inventory.md` Moonshot row
-  (line 157).
+  (line 158); `07-decisions/DEC-20261027-02-moonshot-kimi-channel-classification.md`.
 
 ### `zcode`
 
@@ -486,7 +584,7 @@ activation_phase: G3
   (1,649 heartbeat lines today alone, active session and `v4.publishers`
   counters); Phase 2 alignment document
   (`TOOL-CONFIG-ALIGNMENT-PHASE2-20260904.md`, Zcode row, line 34);
-  `subscription-vs-api-inventory.md` Z.ai row (line 156).
+  `subscription-vs-api-inventory.md` Z.ai row (line 157).
 
 ### `minimax`
 
@@ -531,7 +629,7 @@ activation_phase: G3
   (`TOOL-CONFIG-ALIGNMENT-PHASE2-20260904.md`, no MiniMax row — this
   registration is the first formal classification for the MiniMax
   `subscription-vs-api-inventory.md` (MiniMax is
-  referenced as a China-origin candidate alongside Kimi, line 157).
+  referenced as a China-origin candidate in the OpenRouter row, line 160).
 
 ### `mimo`
 
@@ -612,7 +710,7 @@ activation_phase: G3
   on the PR body and as commit-message trailers.
 - **Standing authority statement (inherited).**
 - **OpenRouter note:** the existing inventory row
-  (`subscription-vs-api-inventory.md` line 155) recommends
+  (`subscription-vs-api-inventory.md` line 156) recommends
   OpenRouter for closed Qwen variants. The Qwen CLI surface
   registered here is **not** OpenRouter-routed; it routes via the
   operator's own subscription. The OpenRouter recommendation
@@ -625,7 +723,7 @@ activation_phase: G3
   last modified 2026-09-28 08:03); `~/.qwen/sessions/`,
   `~/.qwen/skills/`, `~/.qwen/projects/`; Phase 2 alignment document
   (`TOOL-CONFIG-ALIGNMENT-PHASE2-20260904.md`, Qwen row, line 36);
-  `subscription-vs-api-inventory.md` Alibaba row (line 155).
+  `subscription-vs-api-inventory.md` Alibaba row (line 156).
 
 ### Roles permitted to execute via each coding surface
 

@@ -362,12 +362,15 @@ describe('counted run · the act’s terms, read at boot', () => {
     assert.equal(createHash('sha256').update(text, 'utf8').digest('hex'), COUNTED_RUN_REGISTRY.sha256);
     assert.ok(pinnedRegisteredSurfaces(text).has('build-room-control-plane'));
     assert.equal(pinnedRegisteredSurfaces(`${text} `).size, 0, 'one byte appended');
-    // The Seat Registry's copy now pins the same doctrine text as this one
-    // (8bc4c55 and 8146435 both carry sha256 060a16a4...), so it declares the
-    // same surfaces. The appended-byte case above is the zero case.
+    // The Seat Registry keeps its own pin (the Founder's selection of
+    // 2026-10-16, quoted at COUNTED_RUN_REGISTRY). From 8bc4c55 to 846190f its
+    // copy happened to be this text byte for byte; at d3049d9, where it is
+    // re-pinned to carry claude-fable-5.2's builder lane, it is not. Whatever
+    // it holds, the counted run reads only its own copy: a copy at another pin
+    // declares nothing here, as the appended-byte case above does.
     const seatRegistryCopy = readFileSync(join(root, 'packages', 'seat-registry', 'fixtures', 'execution-surface-registry.md'), 'utf8');
-    assert.equal(createHash('sha256').update(seatRegistryCopy, 'utf8').digest('hex'), COUNTED_RUN_REGISTRY.sha256);
-    assert.ok(pinnedRegisteredSurfaces(seatRegistryCopy).has('build-room-control-plane'));
+    assert.notEqual(createHash('sha256').update(seatRegistryCopy, 'utf8').digest('hex'), COUNTED_RUN_REGISTRY.sha256);
+    assert.equal(pinnedRegisteredSurfaces(seatRegistryCopy).size, 0, 'the Seat Registry copy declares nothing to the counted run');
   });
 });
 

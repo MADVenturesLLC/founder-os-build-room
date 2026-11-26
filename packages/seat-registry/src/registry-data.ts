@@ -2,7 +2,7 @@
  * Seat Registry V1 — registry data and derived lane data (§2.5, §2.7).
  *
  * Every lane mirrors the controlling registries and decisions read at the
- * doctrine pin 846190fdb4da0604672bef8d7b1c8852407c4934. No lane, model
+ * doctrine pin d3049d9233000ed7a0c107a365fd035ff5d2b05c. No lane, model
  * identifier, provider class, surface, or binding status is asserted,
  * inferred from a nearby value, or carried forward from prior drafts.
  * Where the corpus establishes no lawful lane, the row is an
@@ -277,7 +277,8 @@ const BUILDER_HERMES_LOCAL_RECORD: ModelExactLane = {
 const NOT_APPROVED_BUILDER_LANE =
   'DEC-20261020-01 clause 2: the clause 2 table is the whole set of Build Room builder seat lanes, and "a lane in ' +
   'scope or a model not in it is not approved for that lane". The table carries two builder lanes, ' +
-  '`claude-code:anthropic` (claude-opus-5.5, claude-fable-5.1) and `codex:openai` (gpt-6.1-sol, gpt-6-astra). ';
+  '`claude-code:anthropic` (claude-opus-5.5, claude-fable-5.1, and claude-fable-5.2 by the Founder\'s act of 2026-11-17) ' +
+  'and `codex:openai` (gpt-6.1-sol, gpt-6-astra). ';
 
 function notApprovedBuilderLane(record: ModelExactLane, why: string): NotApprovedLane {
   return { record, reason: NOT_APPROVED_BUILDER_LANE + why + ' Adding it back is a Founder act recorded in model-registry.md.' };
@@ -302,10 +303,10 @@ const BUILDER_CLAUDE_CODE: SurfaceProviderLane = {
   lane: 'claude-code:anthropic',
   provider: 'anthropic',
   surface_id: 'claude-code',
-  allowlist: ['claude-opus-5.5', 'claude-fable-5.1'],
+  allowlist: ['claude-opus-5.5', 'claude-fable-5.1', 'claude-fable-5.2'],
   binding_status: 'approved-binding', // portfolio_classification of every allowlist model at the pin
   binding_class: 'builder-lane', // DEC-20261020-01 clause 2 table
-  provider_class: 'P1', // deployment_channel: P1 for claude-opus-5.5 and claude-fable-5.1
+  provider_class: 'P1', // deployment_channel: P1 for claude-opus-5.5, claude-fable-5.1 and claude-fable-5.2
   data_eligibility: ['public', 'internal'],
   conditions: [],
   derivation: [
@@ -313,8 +314,10 @@ const BUILDER_CLAUDE_CODE: SurfaceProviderLane = {
     'model-registry.md Lanes',
     'DEC-20261019-01 Clause D (claude-opus-5.5)',
     "the Founder's answer of 2026-10-21 (claude-fable-5.1)",
+    "the Founder's act of 2026-11-17 (claude-fable-5.2)",
     'model-registry.md claude-opus-5.5',
     'model-registry.md claude-fable-5.1',
+    'model-registry.md claude-fable-5.2',
   ],
 };
 

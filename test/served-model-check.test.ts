@@ -638,7 +638,7 @@ describe('served-model lanes file — a pinned copy of the FounderOS registry', 
 
   it('holds exactly the two builder lanes of DEC-20261020-01 clause 2, models "on registration" excluded', () => {
     assert.deepEqual(lanes.builder_lanes, {
-      'claude-code': { lane: 'claude-code:anthropic', record: 'co-authored-by', allowlist: ['claude-opus-5.5', 'claude-fable-5.1'] },
+      'claude-code': { lane: 'claude-code:anthropic', record: 'co-authored-by', allowlist: ['claude-opus-5.5', 'claude-fable-5.1', 'claude-fable-5.2'] },
       codex: { lane: 'codex:openai', record: 'served-model-line', allowlist: ['gpt-6.1-sol', 'gpt-6-astra'] },
     });
   });
