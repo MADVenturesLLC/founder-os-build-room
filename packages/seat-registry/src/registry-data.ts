@@ -417,10 +417,13 @@ const TIER2_ANTIGRAVITY_GOOGLE: SurfaceProviderLane = {
  * clause 9). Its models' entries are P1 for Anthropic's own channel; this lane
  * reaches them through Antigravity, which nothing at the pin classifies, and
  * clause 8 holds it to public class. The execution-surface registry's
- * `underlying_model_selection` line for `antigravity` still names Gemini
- * models only at the pin, so this lane does not carry it; the Founder's
- * answer of 2026-10-25 keeps the lane, as the clause 2 table has it, and
- * leaves amending that registry entry to a separate FounderOS change.
+ * `underlying_model_selection` line for `antigravity` names Gemini models
+ * only, so this lane does not carry it. At the pin the registry records the
+ * exception beside that line, in its "Claude on Antigravity (2026-10-25)"
+ * paragraph: clause 9, as Amendment 3 to DEC-20261020-01 amends it, lets an
+ * `independent-reviewer` Tier-2 review run on this lane's models, and the
+ * surface's approval and prohibited-action lines, which this lane carries as
+ * conditions, apply to it unchanged.
  */
 const TIER2_ANTIGRAVITY_ANTHROPIC: SurfaceProviderLane = {
   lane_label: 'tier-2',
