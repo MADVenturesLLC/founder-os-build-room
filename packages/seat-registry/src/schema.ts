@@ -3,13 +3,14 @@
  *
  * Ratified plan: seat-registry-v1-implementation-plan-r7-DRAFT.md
  * (sha256 b1bc4159b8cdb1ce6c342d84b4be3650a340abfc467624154ea5ba2a54815b60),
- * governing DEC-20260902-02, doctrine/fixture pin FounderOS d3049d9233000ed7a0c107a365fd035ff5d2b05c
- * (re-pinned from the plan's 8d09e7e… under DEC-20261020-01, then from 846190f…;
- * see fixtures.ts).
+ * governing DEC-20260902-02, doctrine/fixture pin FounderOS c788495466db52e576a58d0856345e41fdcac9cb
+ * (re-pinned from the plan's 8d09e7e… under DEC-20261020-01, then from 846190f…
+ * and from d3049d9…; see fixtures.ts).
  *
  * DEC-20261020-01 clause 1 changes the §2.7 lane: a Build Room builder seat
- * lane or a Tier-2 lane is a `surface:provider` token plus an allowlist
- * (`SurfaceProviderLane`); every other lane stays model-exact
+ * lane or a Tier-2 lane is a `surface:provider` token (`SurfaceProviderLane`);
+ * a builder lane adds an allowlist, and a Tier-2 lane, under the clause as
+ * its Amendment 4 amends it, has none. Every other lane stays model-exact
  * (`ModelExactLane`). Lanes the clause 2 table drops are kept as
  * `not_approved_lanes` records, outside `routing`.
  *
@@ -55,16 +56,24 @@ export interface ModelExactLane extends SeatRoutingLaneBase {
 
 /**
  * DEC-20261020-01 clauses 1 and 2 — a Build Room builder seat lane or an
- * `independent-reviewer` Tier-2 lane: a `surface:provider` token plus the
- * closed allowlist of model ids the model registry's Lanes table gives it.
- * `lane` is always `${surface_id}:${provider}`. The model that served a piece
- * of work is recorded per piece of work (clause 3), never pinned here, and
- * the Tier-2 attestation token is the surface (clause 6), so neither
- * `model_id` nor `tier2_attestation_id` exists on this shape.
+ * `independent-reviewer` Tier-2 lane: a `surface:provider` token, as the
+ * model registry's Lanes table gives it. `lane` is always
+ * `${surface_id}:${provider}`.
+ *
+ * `allowlist` is the lane's closed list of model ids on a builder lane, and
+ * `null` on a Tier-2 lane: FOUNDER-RULING-20261118-TIER2-SURFACE-LANES
+ * (Amendment 4 to DEC-20261020-01) binds the four Tier-2 lanes to their
+ * surface and provider alone, a review on one "may run on any model the
+ * surface serves from that provider" (B1), and the review announces its
+ * model in its `Tier2-Reviewer-Model:` line (B2). Builder lanes keep their
+ * allowlists (B5). The model that served a piece of work is recorded per
+ * piece of work (clause 3), never pinned here, and the Tier-2 attestation
+ * token is the surface (clause 6), so neither `model_id` nor
+ * `tier2_attestation_id` exists on this shape.
  */
 export interface SurfaceProviderLane extends SeatRoutingLaneBase {
   readonly lane: string;
-  readonly allowlist: readonly string[];
+  readonly allowlist: readonly string[] | null;
   readonly model_id?: never;
   readonly tier2_attestation_id?: never;
 }
@@ -76,9 +85,15 @@ export function isSurfaceProviderLane(lane: SeatRoutingLane): lane is SurfacePro
   return lane.lane !== undefined;
 }
 
-/** The model ids a lane may serve: its allowlist, or its one exact model. */
+/**
+ * The model ids a lane lists: its allowlist, its one exact model, or none for
+ * a Tier-2 lane, which binds to its surface and provider alone and may serve
+ * any model the surface serves from that provider (Amendment 4, B1). An empty
+ * result on a Tier-2 lane therefore means "no list", not "no model".
+ */
 export function laneModelIds(lane: SeatRoutingLane): readonly string[] {
-  return isSurfaceProviderLane(lane) ? lane.allowlist : [lane.model_id];
+  if (!isSurfaceProviderLane(lane)) return [lane.model_id];
+  return lane.allowlist ?? [];
 }
 
 /**

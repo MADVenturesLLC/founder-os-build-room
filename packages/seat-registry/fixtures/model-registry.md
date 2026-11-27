@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-07-15
-updated: 2026-11-17
-version: 0.31
+updated: 2026-11-18
+version: 0.32
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -66,7 +66,7 @@ Active — promoted by the G2 activation package executing `DEC-20260715-16` ite
 
 **Tier-2 roster reconciled 2026-08-15** (`DEC-20260719-02` v1.1, founder-directed): full roster is now `gemini-3.1-pro`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `grok-4.5`. `gpt-5.6-terra` gains a Tier-2 binding (superseding its `DEC-20260807-01` not-Tier-2 status); `gpt-5.6-luna` is created as a new entry; `opus-4.8` and `gpt-5.6` are removed. This aligns the registry with the roster the `tier2-shape` gate has enforced since 2026-08-14. See *Tier-2 full roster* in the amendment record below for the `model_id` / attestation-id variance.
 
-**Tier-2 attestation by surface, 2026-10-11** (`FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION`, recorded in `DEC-20260719-02` v1.2): in FounderOS a binding Tier-2 verdict now names the execution surface the review ran on (`antigravity`, `codex`, `chatgpt` or `grok-build`) and records the model in a `Tier2-Reviewer-Model:` line without binding it. A model's entry in this registry is no longer a condition of a binding FounderOS verdict. Two model rules still bind whatever the surface: a restricted-roster model never issues a binding verdict, and a model's data-boundary condition binds any review it performs. The per-model Tier-2 bindings below stay in force as the roster for Build Room reviews (`DEC-20260815-05`); for FounderOS they, and their `tier2_attestation_id` fields, are dated history. Build Room and `madventures-tui` keep their own review rules.
+**Tier-2 attestation by surface, 2026-10-11** (`FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION`, recorded in `DEC-20260719-02` v1.2): in FounderOS a binding Tier-2 verdict now names the execution surface the review ran on (`antigravity`, `codex`, `chatgpt` or `grok-build`) and records the model in a `Tier2-Reviewer-Model:` line without binding it. A model's entry in this registry is no longer a condition of a binding FounderOS verdict. Two model rules still bind whatever the surface: a restricted-roster model never issues a binding verdict, and a model's data-boundary condition binds any review it performs. The per-model Tier-2 bindings below stay in force as the roster for Build Room reviews (`DEC-20260815-05`); for FounderOS they, and their `tier2_attestation_id` fields, are dated history. (For Build Room, superseded by `DEC-20261020-01` Amendment 4 when FounderOS pull request 434 merges: see the entry below.) Build Room and `madventures-tui` keep their own review rules.
 
 
 **Tier-2 roster reconciled 2026-10-19 — Antigravity** (`DEC-20261019-01` Clause A, founder-directed): `gemini-3.1-pro` is replaced by `gemini-4-argon` on the architect primary lane and the independent-reviewer Tier-2 lane. The surface no longer serves `gemini-3.1-pro` at any effort (catalog read 2026-10-19 with `agy models`). Prior bindings are retired, not erased; verdicts issued while they were active remain valid for the work they reviewed.
@@ -78,6 +78,8 @@ Active — promoted by the G2 activation package executing `DEC-20260715-16` ite
 **Grok models registered, 2026-10-25** (`DEC-20261020-01`: its clause 2 table admits them "on registration", following the Founder's answer of 2026-10-21, "Add served models"): `grok-4.6`, `grok-4.7` and `grok-4.7-build-fast` gain entries built from xAI's documentation and join the `grok-build:xai` Tier-2 allowlist. Each is public-class only while xAI's data-retention terms stay unverified. `grok-4.7-build-fast`'s id string is the one `grok-build` reports; xAI documents the variant as Grok 4.7 Fast but publishes no ID for it. `claude-fable-5.5` stays unregistered: Anthropic has not released it.
 
 **`claude-fable-5.2` registered and added to the `claude-code:anthropic` builder lane, 2026-11-17** (`DEC-20261020-01` clause 2: "Adding to it is a Founder act recorded in `/04-agents/model-registry.md`"): the entry below is built from Anthropic's documentation, read 2026-11-17. The Founder's direction, given in the builder's session on 2026-11-17, verbatim: "keep claude-fable-5-2". It followed the builder's report that the session's model, `claude-fable-5-2`, was not on the lane's allowlist and that Build Room builder work on it needed this entry and this addition. The Founder's SHA-named merge authorization of the pull request that carries this entry names the addition. The model binds to the builder lane only: `experience-architect` primary stays `claude-fable-5.1` (`DEC-20261005-01`). It is a Covered Model under Anthropic's data-retention terms (30-day retention, no Zero Data Retention), as `claude-fable-5.1` and `fable-5` are on the same page; `/00-system/data-boundary-policy.md` names only Fable 5 in its §2 note and §5 item 2, and is not edited here.
+
+**Tier-2 lanes bound to surface and provider alone, 2026-11-18** (`FOUNDER-RULING-20261118-TIER2-SURFACE-LANES`, recorded as Amendment 4 to `DEC-20261020-01`; in force when FounderOS pull request 434 merges): the four Build Room Tier-2 lanes keep their `surface:provider` tokens and lose their allowlists; a review records its model in its `Tier2-Reviewer-Model:` line, and its model stops it only on the conditions the *Lanes* section names. Builder lanes are unchanged. Its consumers act, `FOUNDER-ACT-20261118-TIER2-SURFACE-LANES-CONSUMERS`, brings this registry's remaining Build Room roster statements into line, each with its superseded wording kept.
 
 **Registry consolidated 2026-10-30 — structure only, no binding change.** The
 forty-three model entries were previously distributed across this file's
@@ -442,7 +444,7 @@ approved_role_bindings:
   - role_id: pre-mortem-reviewer
     binding_class: primary
     decision: DEC-20260812-02
-governance_status: approved-supplemental-review-not-tier-1-or-tier-2; active-pre-mortem-reviewer-primary-binding
+governance_status: approved-supplemental-review-not-tier-1-or-tier-2; active-pre-mortem-reviewer-primary-binding   # the supplemental binding; a Build Room Tier-2 lane review it serves follows DEC-20261020-01 clause 4 (Amendment 4) from FounderOS PR 434's merge
 portfolio_classification: approved-binding
 last_verified: 2026-08-07
 source: https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash
@@ -451,7 +453,7 @@ data_class_boundary: exact task approval plus active Google-channel data boundar
 surface_availability: [antigravity, google-ai-studio-api]
 ```
 
-This model cannot replace CodeRabbit Tier-1 or satisfy binding Tier-2.
+This model cannot replace CodeRabbit Tier-1 or satisfy binding Tier-2. That sentence describes its supplemental fast-review binding (`DEC-20260807-01` §3.4). From the merge of FounderOS pull request 434, a Build Room review on the `antigravity:google` lane that this model serves counts on the conditions of `DEC-20261020-01` clause 4 as its Amendment 4 amends it, flagged because Google labels the model Flash (B4); its `data_class_boundary` still binds (B3).
 
 ### `gemini-3.6-flash`
 
@@ -468,7 +470,7 @@ approved_role_bindings:
   - role_id: marketing-lead
     binding_class: primary
     decision: DEC-20260812-02
-governance_status: approved-supplemental-review-not-tier-1-or-tier-2; active-marketing-lead-primary-binding
+governance_status: approved-supplemental-review-not-tier-1-or-tier-2; active-marketing-lead-primary-binding   # the supplemental binding; a Build Room Tier-2 lane review it serves follows DEC-20261020-01 clause 4 (Amendment 4) from FounderOS PR 434's merge
 portfolio_classification: approved-binding
 last_verified: 2026-08-07
 source: https://ai.google.dev/gemini-api/docs/latest-model
@@ -477,7 +479,7 @@ data_class_boundary: exact task approval plus active Google-channel data boundar
 surface_availability: [antigravity, google-ai-studio-api]
 ```
 
-This model cannot replace CodeRabbit Tier-1 or satisfy binding Tier-2.
+This model cannot replace CodeRabbit Tier-1 or satisfy binding Tier-2. That sentence describes its supplemental fast-review binding (`DEC-20260807-01` §3.4). From the merge of FounderOS pull request 434, a Build Room review on the `antigravity:google` lane that this model serves counts on the conditions of `DEC-20261020-01` clause 4 as its Amendment 4 amends it, flagged because Google labels the model Flash (B4); its `data_class_boundary` still binds (B3).
 
 ### `gemini-3.8-flash`
 
@@ -691,7 +693,7 @@ last_verified: verification-pending   # entry created 2026-07-19 from DEC-202607
 deployment_channel: chatgpt   # accessed via the ChatGPT surface for invoked review, not via a runtime API integration
 ```
 
-- **Tier 2 binding removed (2026-08-15).** From 2026-07-19 to 2026-08-15 this model held an active `independent-reviewer` Tier 2 **full roster** binding per `DEC-20260719-02` (founder-activated 2026-07-19; roster expanded v0.7 2026-07-26 alongside `opus-4.8`, `gemini-3.1-pro`, `grok-4.5`). The founder removed it from the roster on 2026-08-15 (`DEC-20260719-02` v1.1). **This model can no longer satisfy Tier-2.** The `tier2-shape` gate has not accepted `gpt-5.6` as a `Tier2-Reviewer-Id` since the gate shipped on 2026-08-14 (`DEC-20260814-02`); this entry now matches that behaviour. Verdicts issued while the binding was active remain valid for the work they reviewed. No Telegram runtime capability existed or was authorized for this model as a reviewer.
+- **Tier 2 binding removed (2026-08-15).** From 2026-07-19 to 2026-08-15 this model held an active `independent-reviewer` Tier 2 **full roster** binding per `DEC-20260719-02` (founder-activated 2026-07-19; roster expanded v0.7 2026-07-26 alongside `opus-4.8`, `gemini-3.1-pro`, `grok-4.5`). The founder removed it from the roster on 2026-08-15 (`DEC-20260719-02` v1.1). **This model can no longer satisfy Tier-2.** (That was written of the model roster. For FounderOS, `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B3 records a review's model without binding it; for Build Room, from the merge of FounderOS pull request 434, a review on a Tier-2 lane whose surface serves this model counts on the conditions of `DEC-20261020-01` clause 4 as Amendment 4 amends it.) The `tier2-shape` gate has not accepted `gpt-5.6` as a `Tier2-Reviewer-Id` since the gate shipped on 2026-08-14 (`DEC-20260814-02`); this entry now matches that behaviour. Verdicts issued while the binding was active remain valid for the work they reviewed. No Telegram runtime capability existed or was authorized for this model as a reviewer.
 - **Classification ladder gap (2026-08-15, flagged not filled).** This field read `portfolio_classification: approved-binding` until 2026-08-15, justified by "an active Founder decision names the role, model, mode, and binding class." After the Tier-2 removal no active decision names any binding for this model, so that value became a false claim. **No ladder status in `DEC-20260716-02` §3 means "binding retired":** `evaluation-candidate` requires dated external verification this entry lacks, and `/00-system/model-portfolio-and-routing-strategy.md` §8 does not list `gpt-5.6` as a candidate for any role; `deprecated` means provider end-of-life, which has not been announced; `rejected` means considered and declined, which is not what happened. The field now carries **`unverified`**, which *is* one of the nine defined statuses — "a claim that could not be confirmed from primary or corroborated sources", promoted out by "independent verification". It is accurate on its own terms: this entry's `last_verified` has read `verification-pending` since creation, so its availability, pricing, and retention claims were never confirmed. **An interim revision of this entry carried an invented value, `no-active-classification`, explicitly marked as outside the ladder; that was withdrawn on Tier-1 review** — introducing an unvalidated sentinel into a `source_of_truth: true` registry is itself a data-model change, and no validator or consumer defines it. **The underlying gap is real and remains open for the founder:** the ladder has no status meaning "was bound, no longer is", and `unverified` records why this entry's claims are unconfirmed rather than that its binding ended — `governance_status` carries that. Resolving it needs a ladder amendment or a founder call; it is not the roster amendment's to decide. Note the contrast with `opus-4.8`, which legitimately carries `evaluation-candidate`: §8 does list it as a candidate for `independent-reviewer`, `strategist`, and `builder`, so its classification survives the same retirement.
 - **Not the same model as the Codex entries.** `gpt-5.6` is the ChatGPT-surface entry created 2026-07-19. It is distinct from `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`, which are the Codex-surface models on the current roster. Removing `gpt-5.6` does not affect those three.
 - **Authority statement:** owns no independent governance authority.
@@ -988,7 +990,7 @@ approved_role_bindings:
   - role_id: independent-reviewer
     binding_class: tier-2
     mode: invoked
-    decision: DEC-20261020-01   # clause 2 table: grok-build:xai allowlist, "on registration"; the Founder's answer of 2026-10-21, "Add served models"
+    decision: DEC-20261020-01   # clause 2 table: grok-build:xai allowlist, "on registration" (retired by Amendment 4 when FounderOS PR 434 merges); the Founder's answer of 2026-10-21, "Add served models"
     limits: public-class review material only while deployment_channel is unverified; internal-class needs the Founder's authorization for that specific invocation (data-boundary-policy §5 item 4)
 proposed_role_bindings: []
 implementation_observed_bindings: []
@@ -1005,7 +1007,7 @@ deployment_channel: unverified   # xAI's model pages state no data-retention or 
 data_class_boundary: public-class only; internal-class needs per-invocation Founder authorization; confidential, restricted and local-only prohibited
 ```
 
-- **Binding:** `independent-reviewer` Tier-2 on the `grok-build:xai` lane, admitted "on registration" by `DEC-20261020-01`'s clause 2 table, following the Founder's answer of 2026-10-21 ("Add served models"); this entry is that registration. FounderOS Tier-2 verdicts stay under `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B2 and B3 (surface named, model recorded, not bound).
+- **Binding:** `independent-reviewer` Tier-2 on the `grok-build:xai` lane, admitted "on registration" by `DEC-20261020-01`'s clause 2 table, following the Founder's answer of 2026-10-21 ("Add served models"); this entry is that registration. That admission is history from the merge of FounderOS pull request 434: Amendment 4 to `DEC-20261020-01` retires the lane's allowlist, so a Build Room review on `grok-build:xai` needs no entry here and counts as clause 4 states. This entry's `data_class_boundary` still binds any review this model serves (Amendment 4, B3). FounderOS Tier-2 verdicts stay under `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B2 and B3 (surface named, model recorded, not bound).
 - **Authority statement:** owns no independent governance authority; the `independent-reviewer` role remains accountable.
 
 ### `grok-4.7`
@@ -1020,7 +1022,7 @@ approved_role_bindings:
   - role_id: independent-reviewer
     binding_class: tier-2
     mode: invoked
-    decision: DEC-20261020-01   # clause 2 table: grok-build:xai allowlist, "on registration"; the Founder's answer of 2026-10-21, "Add served models"
+    decision: DEC-20261020-01   # clause 2 table: grok-build:xai allowlist, "on registration" (retired by Amendment 4 when FounderOS PR 434 merges); the Founder's answer of 2026-10-21, "Add served models"
     limits: public-class review material only while deployment_channel is unverified; internal-class needs the Founder's authorization for that specific invocation (data-boundary-policy §5 item 4)
 proposed_role_bindings: []
 implementation_observed_bindings: []
@@ -1037,7 +1039,7 @@ deployment_channel: unverified   # xAI's model pages state no data-retention or 
 data_class_boundary: public-class only; internal-class needs per-invocation Founder authorization; confidential, restricted and local-only prohibited
 ```
 
-- **Binding:** `independent-reviewer` Tier-2 on the `grok-build:xai` lane, admitted "on registration" by `DEC-20261020-01`'s clause 2 table, following the Founder's answer of 2026-10-21 ("Add served models"); this entry is that registration. FounderOS Tier-2 verdicts stay under `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B2 and B3 (surface named, model recorded, not bound).
+- **Binding:** `independent-reviewer` Tier-2 on the `grok-build:xai` lane, admitted "on registration" by `DEC-20261020-01`'s clause 2 table, following the Founder's answer of 2026-10-21 ("Add served models"); this entry is that registration. That admission is history from the merge of FounderOS pull request 434: Amendment 4 to `DEC-20261020-01` retires the lane's allowlist, so a Build Room review on `grok-build:xai` needs no entry here and counts as clause 4 states. This entry's `data_class_boundary` still binds any review this model serves (Amendment 4, B3). FounderOS Tier-2 verdicts stay under `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B2 and B3 (surface named, model recorded, not bound).
 - **Authority statement:** owns no independent governance authority; the `independent-reviewer` role remains accountable.
 
 ### `grok-4.7-build-fast`
@@ -1052,7 +1054,7 @@ approved_role_bindings:
   - role_id: independent-reviewer
     binding_class: tier-2
     mode: invoked
-    decision: DEC-20261020-01   # clause 2 table: grok-build:xai allowlist, "on registration"; the Founder's answer of 2026-10-21, "Add served models"
+    decision: DEC-20261020-01   # clause 2 table: grok-build:xai allowlist, "on registration" (retired by Amendment 4 when FounderOS PR 434 merges); the Founder's answer of 2026-10-21, "Add served models"
     limits: public-class review material only while deployment_channel is unverified; internal-class needs the Founder's authorization for that specific invocation (data-boundary-policy §5 item 4)
 proposed_role_bindings: []
 implementation_observed_bindings: []
@@ -1069,7 +1071,7 @@ deployment_channel: unverified   # xAI's model pages state no data-retention or 
 data_class_boundary: public-class only; internal-class needs per-invocation Founder authorization; confidential, restricted and local-only prohibited
 ```
 
-- **Binding:** `independent-reviewer` Tier-2 on the `grok-build:xai` lane, admitted "on registration" by `DEC-20261020-01`'s clause 2 table, following the Founder's answer of 2026-10-21 ("Add served models"); this entry is that registration. FounderOS Tier-2 verdicts stay under `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B2 and B3 (surface named, model recorded, not bound).
+- **Binding:** `independent-reviewer` Tier-2 on the `grok-build:xai` lane, admitted "on registration" by `DEC-20261020-01`'s clause 2 table, following the Founder's answer of 2026-10-21 ("Add served models"); this entry is that registration. That admission is history from the merge of FounderOS pull request 434: Amendment 4 to `DEC-20261020-01` retires the lane's allowlist, so a Build Room review on `grok-build:xai` needs no entry here and counts as clause 4 states. This entry's `data_class_boundary` still binds any review this model serves (Amendment 4, B3). FounderOS Tier-2 verdicts stay under `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B2 and B3 (surface named, model recorded, not bound).
 - **Identifier:** xAI documents the variant but publishes no model ID for it. The Founder chose on 2026-10-25 to register it under the id string `grok-build` reports (option label: "Own entry, ID from surface (Recommended)"). Capability statements for `grok-4.7` apply to it only as xAI's "same model" statement supports; if xAI publishes a different ID, this entry is corrected, not duplicated.
 - **Authority statement:** owns no independent governance authority; the `independent-reviewer` role remains accountable.
 
@@ -1307,7 +1309,7 @@ deployment_channel: P1   # anthropic first-party API
 ```
 
 - **Current implementation use:** none verified as a dedicated runtime capability; `01-constitution/agent-rules.md`'s Opus lane and `wf-13`'s "Opus for high-risk" reviewer guidance are lane/workflow evidence, not bindings.
-- **Tier 2 binding removed (2026-08-15).** From 2026-07-19 to 2026-08-15 `DEC-20260719-02` bound this model as an `independent-reviewer` Tier 2 **full roster** reviewer (invoked per-case; no runtime capability — Tier 2 is performed outside the Telegram runtime); roster peers as of v0.7 were `gpt-5.6`, `gemini-3.1-pro`, `grok-4.5` (full) and `hermes-4-14b` (restricted). The founder removed it from the roster on 2026-08-15 (`DEC-20260719-02` v1.1). **This model can no longer satisfy Tier-2.** The `tier2-shape` gate has not accepted `opus-4.8` as a `Tier2-Reviewer-Id` since the gate shipped on 2026-08-14 (`DEC-20260814-02`); this entry now matches that behaviour. Verdicts issued while the binding was active remain valid for the work they reviewed.
+- **Tier 2 binding removed (2026-08-15).** From 2026-07-19 to 2026-08-15 `DEC-20260719-02` bound this model as an `independent-reviewer` Tier 2 **full roster** reviewer (invoked per-case; no runtime capability — Tier 2 is performed outside the Telegram runtime); roster peers as of v0.7 were `gpt-5.6`, `gemini-3.1-pro`, `grok-4.5` (full) and `hermes-4-14b` (restricted). The founder removed it from the roster on 2026-08-15 (`DEC-20260719-02` v1.1). **This model can no longer satisfy Tier-2.** (That was written of the model roster. For FounderOS, `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B3 records a review's model without binding it; for Build Room, from the merge of FounderOS pull request 434, a review on a Tier-2 lane whose surface serves this model counts on the conditions of `DEC-20261020-01` clause 4 as Amendment 4 amends it.) The `tier2-shape` gate has not accepted `opus-4.8` as a `Tier2-Reviewer-Id` since the gate shipped on 2026-08-14 (`DEC-20260814-02`); this entry now matches that behaviour. Verdicts issued while the binding was active remain valid for the work they reviewed.
 - **Identity correction:** `opus` is a **model-family compatibility alias** within the model class. It is not a role alias for `independent-reviewer` — that historical association is typed evidence on the role entry and in the identity map.
 - **Authority statement:** owns no independent governance authority.
 - **Evidence sources:** `04-agents/opus.md` (unchanged); `01-constitution/agent-rules.md` (Opus lane); `05-workflows/wf-13-code-review.md`; `07-decisions/DEC-20260719-02-independent-reviewer-two-tier-binding.md` (tier-2 binding: active v0.7, removed v1.1 on 2026-08-15).
@@ -1511,29 +1513,38 @@ data_class_boundary: not permitted on this channel while it carries no asserted 
 ## Lanes (`DEC-20261020-01`, active 2026-10-21)
 
 
-Every Build Room builder seat lane and every `independent-reviewer` Tier-2
-lane binds to a `surface:provider` token plus the closed allowlist below
-(`DEC-20261020-01` clauses 1 and 2). The table is copied from that
-decision's clause 2, with the one addition named below; the decision
-governs if the two otherwise differ.
+Every Build Room builder seat lane binds to a `surface:provider` token
+plus the closed allowlist below, and every `independent-reviewer` Tier-2
+lane binds to its `surface:provider` token alone, with no allowlist
+(`DEC-20261020-01` clauses 1 and 2, as its Amendment 4 amends them). The
+table is copied from that decision's clause 2, with the one addition named
+below; the decision governs if the two otherwise differ.
 Each listed model's entry above carries a `lanes:` field naming its
-lanes. Adding a lane or a model to an allowlist is a Founder act recorded
-here.
+lanes. Adding a lane, or a model to a builder lane's allowlist, is a
+Founder act recorded here. Superseded wording, kept as history: "Every
+Build Room builder seat lane and every `independent-reviewer` Tier-2
+lane binds to a `surface:provider` token plus the closed allowlist below
+(`DEC-20261020-01` clauses 1 and 2)." and "Adding a lane or a model to an
+allowlist is a Founder act recorded here."
 
 | Lane | Role | Allowlist | Source |
 |---|---|---|---|
 | `claude-code:anthropic` | builder | `claude-opus-5.5`, `claude-fable-5.1`, `claude-fable-5.2`; `claude-fable-5.5` on registration | Opus 5.5: `DEC-20261019-01` Clause D. Fable 5.1 and 5.5: the Founder's answer of 2026-10-21. Fable 5.2: the Founder's act of 2026-11-17, recorded here |
 | `codex:openai` | builder | `gpt-6.1-sol`, `gpt-6-astra` | `DEC-20261019-01` Clause B |
-| `codex:openai` | Tier-2 | `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-luna` | `DEC-20261019-01` Clause B |
-| `antigravity:google` | Tier-2 | `gemini-4-argon` | `DEC-20261019-01` Clause A; public class only |
-| `antigravity:anthropic` | Tier-2 | `claude-opus-5.5`, `claude-sonnet-5.5` | `DEC-20261019-01` Clause D; public class only (the Founder's answer of 2026-10-21) |
-| `grok-build:xai` | Tier-2 | `grok-4.5`; `grok-4.6`, `grok-4.7`, `grok-4.7-build-fast` on registration | `DEC-20260719-02`; the added models: the Founder's answer of 2026-10-21 |
+| `codex:openai` | Tier-2 | none (any model the surface serves from the provider) | `DEC-20261019-01` Clause B; allowlist retired by `FOUNDER-RULING-20261118-TIER2-SURFACE-LANES` B1, formerly `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-luna` |
+| `antigravity:google` | Tier-2 | none (any model the surface serves from the provider) | `DEC-20261019-01` Clause A; public class only; allowlist retired by `FOUNDER-RULING-20261118-TIER2-SURFACE-LANES` B1, formerly `gemini-4-argon` |
+| `antigravity:anthropic` | Tier-2 | none (any model the surface serves from the provider) | `DEC-20261019-01` Clause D; public class only (the Founder's answer of 2026-10-21); allowlist retired by `FOUNDER-RULING-20261118-TIER2-SURFACE-LANES` B1, formerly `claude-opus-5.5`, `claude-sonnet-5.5` |
+| `grok-build:xai` | Tier-2 | none (any model the surface serves from the provider) | `DEC-20260719-02`; allowlist retired by `FOUNDER-RULING-20261118-TIER2-SURFACE-LANES` B1, formerly `grok-4.5`; `grok-4.6`, `grok-4.7`, `grok-4.7-build-fast` on registration (the Founder's answer of 2026-10-21) |
 
 `claude-code` carries no Tier-2 lane. A model marked "on registration"
 joins its allowlist only once its own entry, built from its provider's
 documentation, merges here; work it serves before then is off-list.
 `grok-4.6`, `grok-4.7` and `grok-4.7-build-fast` are registered (2026-10-25,
-above) and so join the `grok-build:xai` allowlist. `claude-fable-5.5` has
+above) and so joined the `grok-build:xai` allowlist, which
+`FOUNDER-RULING-20261118-TIER2-SURFACE-LANES` later retired (below).
+Superseded wording, kept as history: "`grok-4.6`, `grok-4.7` and
+`grok-4.7-build-fast` are registered (2026-10-25, above) and so join the
+`grok-build:xai` allowlist." `claude-fable-5.5` has
 no entry yet: Anthropic has not released it (models overview, read
 2026-10-25). `claude-fable-5.2` is not in clause 2's table: the Founder
 added it to the `claude-code:anthropic` allowlist on 2026-11-17, an act
@@ -1547,7 +1558,34 @@ comment. Entries outside the table, including retired ones such as
 history. FounderOS Tier-2 verdicts stay under
 `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` B2 and B3 (surface
 named, model recorded, not bound); clause 4's refusal of off-list work
-applies on Build Room lanes only.
+applies on Build Room builder lanes only. Superseded wording, kept as
+history: "clause 4's refusal of off-list work applies on Build Room lanes
+only."
+
+**Tier-2 lanes bound to surface and provider alone (ruled 2026-11-18).** The Founder's
+`FOUNDER-RULING-20261118-TIER2-SURFACE-LANES`, recorded verbatim as
+Amendment 4 to `DEC-20261020-01`, retires the allowlists of the four
+Tier-2 rows above when FounderOS pull request 434 merges; a review run
+before then is judged under the allowlist in force when it ran (B6). A Build Room review on one of these lanes may run on
+any model the surface serves from that provider, with no act and no
+entry here. It records the model or models that served it in its
+`Tier2-Reviewer-Model:` line, from the surface's own report (on `codex`,
+the client's `/status`, recorded as
+`<model id> (requested and routed; codex client /status)`). It does not
+count when it announces no model, as when that line is missing or reads
+`unavailable-from-current-harness`; when a model it names has the
+builder's family or is on the restricted roster of `DEC-20260719-02`
+clause 5; or when the material's data class is not permitted by its
+lane's terms or by stricter terms that a named model's own provider
+documentation or registry entry states. A review that names more than one
+model is judged on each, and nothing else about the model stops it. The
+builder flags, without refusing, a model its provider does not present as
+a main model, and the Founder accepts the review or has it run again. The "on
+registration" rule above now applies to builder lanes only; the Tier-2
+lanes' former allowlists are kept in their Source cells, and the model
+entries keep their `lanes:` fields as they stand. Build Room's seat
+registry copy of these lanes follows in its own pull request (the
+ruling's C2).
 
 ## Verified runtime model references without committed model IDs
 
@@ -1637,7 +1675,16 @@ created by `DEC-20260807-01`, and only the Tier-2 binding it gained on
 2026-08-15 comes from v1.1 — recorded inline on that binding's own `decision:`
 field, where it cannot be misread.
 
-#### Tier-2 full roster — current, and the `model_id` / attestation-id variance
+#### Tier-2 full roster — dated history, and the `model_id` / attestation-id variance
+
+*Heading updated 2026-11-18; it read "Tier-2 full roster — current, and
+the `model_id` / attestation-id variance". No roster in this section is
+current: for Build Room, Tier-2 lanes are surfaces and providers with no
+model roster from the merge of FounderOS pull request 434
+(`DEC-20261020-01` Amendment 4), and for FounderOS the surface act below
+governs. The full-roster Tier-2 bindings the cross-reference below
+points to are dated history on the same terms; the restricted roster is
+unaffected.*
 
 *Dated history for the FounderOS gate from 2026-10-11.* Under
 `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` (recorded in
@@ -1646,8 +1693,12 @@ FounderOS `tier2-shape` gate accepts only the surface ids `antigravity`,
 `codex`, `chatgpt` and `grok-build` in `Tier2-Reviewer-Id:`, and records the
 model in `Tier2-Reviewer-Model:` as the reviewer reports it. The table and
 the variance below describe the gate from 2026-08-14 until that merge, and
-the roster as it still applies outside FounderOS (Build Room reviews under
-`DEC-20260815-05`). The open item at the end of the variance note is closed
+the roster as it applied outside FounderOS (Build Room reviews under
+`DEC-20260815-05`) until `DEC-20261020-01` and its Amendment 4
+(`FOUNDER-RULING-20261118-TIER2-SURFACE-LANES`), under which a Build Room
+Tier-2 lane is a surface and provider with no model roster. Superseded
+wording, kept as history: "the roster as it still applies outside
+FounderOS (Build Room reviews under `DEC-20260815-05`)". The open item at the end of the variance note is closed
 for FounderOS by the same act: the gate no longer matches model ids, so the
 trap no longer exists there.
 
@@ -1698,7 +1749,7 @@ Entries moved to the registry above: `gpt-6-astra`, `gpt-6-luna`.
 
 Entries moved to the registry above: `grok-4.6`, `grok-4.7`, `grok-4.7-build-fast`.
 
-Three of the four models `DEC-20261020-01`'s clause 2 table admits "on registration", each built from its provider's documentation as read on 2026-10-25. xAI's pages now name the company SpaceXSI; the registry keeps provider `xai`, as the lane token `grok-build:xai` does. `claude-fable-5.5` has no entry: Anthropic's models overview (https://platform.claude.com/docs/en/models/overview, read 2026-10-25) lists Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 and no Fable 5.5, so the Founder's condition ("once becomes available") is not met.
+Three of the four models `DEC-20261020-01`'s clause 2 table admits "on registration", each built from its provider's documentation as read on 2026-10-25. From the merge of FounderOS pull request 434, Amendment 4 retires the `grok-build:xai` allowlist, so the three Grok entries are no longer a condition of a Build Room review; their data-boundary conditions stand, and `claude-fable-5.5`'s builder-lane admission is unchanged. xAI's pages now name the company SpaceXSI; the registry keeps provider `xai`, as the lane token `grok-build:xai` does. `claude-fable-5.5` has no entry: Anthropic's models overview (https://platform.claude.com/docs/en/models/overview, read 2026-10-25) lists Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 and no Fable 5.5, so the Founder's condition ("once becomes available") is not met.
 
 ## Cross-references
 

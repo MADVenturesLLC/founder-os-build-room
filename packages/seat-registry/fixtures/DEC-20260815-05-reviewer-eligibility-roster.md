@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-08-15
-updated: 2026-08-15
-version: 0.2
+updated: 2026-11-18
+version: 0.3
 review_cycle: monthly
 source_of_truth: true
 related_decisions:
@@ -69,6 +69,19 @@ Build Room scope.
 3. **The reviewer workspace** is read-only, credential-free, and
    push-incapable by construction (architecture §3.11), attested by the
    Gateway before review opens.
+
+> **Note (2026-11-18), the roster of clause 1.** Under `DEC-20261020-01` as its Amendment 4
+> (`FOUNDER-RULING-20261118-TIER2-SURFACE-LANES`) amends it, in force when
+> FounderOS pull request 434 merges, a Build Room Tier-2 review runs on one
+> of four `surface:provider` lanes (`codex:openai`, `antigravity:google`,
+> `antigravity:anthropic`, `grok-build:xai`), on any model the surface
+> serves from that provider, with no model allowlist and no registry entry
+> needed; the review announces its model in `Tier2-Reviewer-Model:`.
+> Clause 1's model roster is therefore dated history for Build Room; its
+> requirement that the reviewing model differ from the implementation
+> model of the same run stands, and `DEC-20261020-01` clause 7 carries it
+> as the family rule. The ruled text above is unaltered
+> (`FOUNDER-ACT-20261118-TIER2-SURFACE-LANES-CONSUMERS` B2).
 
 ## Owner
 
@@ -150,6 +163,11 @@ requirement it is built to, not a state already reached.
 
 ## Notes
 
+- **v0.3 (2026-11-18):** adds a dated note after the ruled operative text,
+  pointing to `DEC-20261020-01` Amendment 4: clause 1's model roster is
+  dated history for Build Room, and its per-run independence requirement
+  stands. The ruled text is unaltered
+  (`FOUNDER-ACT-20261118-TIER2-SURFACE-LANES-CONSUMERS` B2).
 - Drafted 2026-08-15 under the Founder's WF-04 Step 2 drafting authorization,
   and ratified `active` by the Founder the same day. The identifier was
   allocated 2026-08-15 after the mandatory five-source search

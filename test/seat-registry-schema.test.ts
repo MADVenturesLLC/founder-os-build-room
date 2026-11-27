@@ -431,14 +431,20 @@ describe('DEC-20261020-01 — not-approved records keep every field as bound', (
 });
 
 describe('DEC-20261020-01 — every lane is well formed at runtime', () => {
-  it('builder and reviewer lanes are surface:provider lanes with a token equal to surface:provider and a non-empty, duplicate-free allowlist; architect lanes are model-exact', () => {
+  it('builder and reviewer lanes are surface:provider lanes with a token equal to surface:provider; a builder lane has a non-empty, duplicate-free allowlist and a Tier-2 lane none; architect lanes are model-exact', () => {
     for (const seat of RATIFIED_SEATS) {
       for (const lane of seat.routing) {
         if (seat.seat_id === 'builder' || seat.seat_id === 'independent-reviewer') {
           assert.ok(isSurfaceProviderLane(lane), `${seat.seat_id} ${lane.lane_label} is a surface:provider lane`);
           assert.equal(lane.lane, `${lane.surface_id}:${lane.provider}`);
-          assert.ok(lane.allowlist.length > 0, `${seat.seat_id} ${lane.lane} has a non-empty allowlist`);
-          assert.equal(new Set(lane.allowlist).size, lane.allowlist.length, `${seat.seat_id} ${lane.lane} lists each model once`);
+          if (seat.seat_id === 'independent-reviewer') {
+            // FOUNDER-RULING-20261118-TIER2-SURFACE-LANES B1: bound to surface and provider alone.
+            assert.equal(lane.allowlist, null, `${seat.seat_id} ${lane.lane} has no allowlist (Amendment 4, B1)`);
+          } else {
+            // B5: builder lanes keep their allowlists.
+            assert.ok(lane.allowlist !== null && lane.allowlist.length > 0, `${seat.seat_id} ${lane.lane} has a non-empty allowlist`);
+            assert.equal(new Set(lane.allowlist).size, lane.allowlist.length, `${seat.seat_id} ${lane.lane} lists each model once`);
+          }
           assert.equal((lane as { model_id?: unknown }).model_id, undefined);
           assert.equal((lane as { tier2_attestation_id?: unknown }).tier2_attestation_id, undefined);
         } else {

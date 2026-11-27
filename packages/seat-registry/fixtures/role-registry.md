@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-07-15
-updated: 2026-10-30
-version: 0.25
+updated: 2026-11-18
+version: 0.26
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -369,8 +369,13 @@ approved_bindings:
     scope: routine code-review PRs across FounderOS, founder-os-console, founder-os-telegram (WF-13 merge gate)
     binding_status: active           # DEC-20260719-02, founder-activated 2026-07-19
   tier-2:
-    # Closed roster. Since DEC-20261020-01 (active 2026-10-21) it is the Tier-2 lanes and
-    # their allowlists in the Lanes section of the model registry; that decision governs.
+    # Since DEC-20261020-01 Amendment 4 (FOUNDER-RULING-20261118-TIER2-SURFACE-LANES, in force
+    # when FounderOS PR 434 merges), the Build Room Tier-2 roster is the four surface:provider
+    # lanes in the Lanes section of the model registry, with no model allowlist; the review
+    # announces its model in Tier2-Reviewer-Model. That decision governs. Superseded comment,
+    # kept as history: "Closed roster. Since DEC-20261020-01 (active 2026-10-21) it is the
+    # Tier-2 lanes and their allowlists in the Lanes section of the model registry; that
+    # decision governs."
     # No "equivalent model" escape hatch.
     roster_source: /04-agents/model-registry.md   # section "Lanes (DEC-20261020-01, active 2026-10-21)"
     # Superseded, kept as dated history: the DEC-20260719-02 v1.1 roster (2026-08-15),
@@ -381,7 +386,9 @@ approved_bindings:
     # chatgpt-5.6-luna. See /04-agents/model-registry.md."
     # FounderOS now attests by surface (antigravity | codex | chatgpt | grok-build) plus a
     # Tier2-Reviewer-Model line, per FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION; the
-    # Lanes allowlists are the Build Room roster (DEC-20260815-05, DEC-20261020-01).
+    # Build Room Tier-2 is the four Lanes surface:provider tokens with no allowlist (DEC-20261020-01
+    # Amendment 4). Superseded, kept as history: "the Lanes allowlists are the Build Room roster
+    # (DEC-20260815-05, DEC-20261020-01)."
     model_ids_full_removed: [opus-4.8, gpt-5.6]        # removed 2026-08-15, founder-directed (v1.1)
     model_ids_restricted: [hermes-4-14b, tencent-hy3]
     # clause 5 (v0.9): paired, NON-BINDING findings only; cannot independently satisfy
@@ -403,7 +410,8 @@ historical_identifiers:
 - **Known authority:** Review and critique; no implementation or final architecture authority.
 - **Owned capabilities:** none verified.
 - **Tier 2 roster (DEC-20260719-02 v1.1, 2026-08-15):** **full** — `gemini-3.1-pro`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `grok-4.5` (`opus-4.8` and `gpt-5.6` removed 2026-08-15, founder-directed); **restricted (local)** — `hermes-4-14b`, `tencent-hy3`, which provide paired, **non-binding** Tier-2 findings only and **cannot independently satisfy the binding Tier-2 verdict on any artifact** — not merely on doctrine packages — unless the Founder grants the exact one-task / one-repository / one-committed-SHA local-only exception. *(Corrected 2026-08-15: this line previously scoped the restriction to `07-decisions/` / `01-constitution/` / `00-system/` packages, clause 5's superseded v0.8 wording.)* Any **one** full-roster model independently satisfies the role for in-scope work; dual full-roster review encouraged for high stakes. Author of the PR cannot serve Tier 2 for that PR.
-- **FounderOS Tier-2 attestation (2026-10-11, `FOUNDER-ACT-20261011-TIER2-SURFACE-CONSUMERS` B1 item 4):** In FounderOS, from the merge of the pull request implementing `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` (recorded in `DEC-20260719-02` v1.2), a binding Tier-2 verdict is attested by surface: the marker is `Tier2-Reviewer-Id:` naming the surface the review ran on (`antigravity`, `codex`, `chatgpt` or `grok-build`), then `Tier2-Reviewer-Model:` (the model the reviewer reports, or `unavailable-from-current-harness`), `Tier2-Head-Sha:` and `Tier2-Verdict:`, in that order, and the reviewer's surface must differ from every `Execution-Surface` in the attribution. The model roster stays the roster for Build Room reviews (`DEC-20260815-05`) and is dated history for FounderOS; the restricted-roster rule and each model's data-boundary condition still bind whatever the surface. The roster line above was written for the model-id marker; for FounderOS its attestation role is dated history.
+- **Build Room Tier-2 lanes (2026-11-18, `FOUNDER-ACT-20261118-TIER2-SURFACE-LANES-CONSUMERS` B1 item 4):** the v1.1 roster in the item above is dated history for Build Room. A Build Room Tier-2 review runs on one of four `surface:provider` lanes (`codex:openai`, `antigravity:google`, `antigravity:anthropic`, `grok-build:xai`), on any model the surface serves from that provider, with no allowlist; it records the model or models that served it in `Tier2-Reviewer-Model:`, and is not a Tier-2 pass when it announces no model, as when its line is missing or reads `unavailable-from-current-harness`; when a model it names has the builder's family or is on the restricted roster, or when the material's data class is not permitted; nothing else about the model stops it (`DEC-20261020-01` Amendment 4, `FOUNDER-RULING-20261118-TIER2-SURFACE-LANES`; in force when FounderOS pull request 434 merges, and a review run before then is judged under the allowlist in force when it ran).
+- **FounderOS Tier-2 attestation (2026-10-11, `FOUNDER-ACT-20261011-TIER2-SURFACE-CONSUMERS` B1 item 4):** In FounderOS, from the merge of the pull request implementing `FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION` (recorded in `DEC-20260719-02` v1.2), a binding Tier-2 verdict is attested by surface: the marker is `Tier2-Reviewer-Id:` naming the surface the review ran on (`antigravity`, `codex`, `chatgpt` or `grok-build`), then `Tier2-Reviewer-Model:` (the model the reviewer reports, or `unavailable-from-current-harness`), `Tier2-Head-Sha:` and `Tier2-Verdict:`, in that order, and the reviewer's surface must differ from every `Execution-Surface` in the attribution. The model roster stays the roster for Build Room reviews (`DEC-20260815-05`) and is dated history for FounderOS; the restricted-roster rule and each model's data-boundary condition still bind whatever the surface. (For Build Room, superseded by `DEC-20261020-01` Amendment 4 when FounderOS pull request 434 merges: see the item above.) The roster line above was written for the model-id marker; for FounderOS its attestation role is dated history.
 - **Evidence sources:** `01-constitution/agent-rules.md` (Opus lane); `04-agents/opus.md`; `05-workflows/wf-13-code-review.md` (reviewer-routing guidance); `07-decisions/DEC-20260719-02-independent-reviewer-two-tier-binding.md` (two-tier binding; v0.8 restricted roster; v1.1 full-roster reconciliation 2026-08-15).
 
 ## 7. `product-lead`

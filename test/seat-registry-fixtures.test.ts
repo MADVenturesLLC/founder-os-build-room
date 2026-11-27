@@ -6,7 +6,7 @@
  * Ratified plan: docs/planning/seat-registry-v1/seat-registry-v1-implementation-plan-r7-DRAFT.md
  * (sha256 b1bc4159b8cdb1ce6c342d84b4be3650a340abfc467624154ea5ba2a54815b60).
  * Governing decision: DEC-20260902-02 (active, source_of_truth: true, version 0.2).
- * Doctrine pin: FounderOS d3049d9233000ed7a0c107a365fd035ff5d2b05c.
+ * Doctrine pin: FounderOS c788495466db52e576a58d0856345e41fdcac9cb.
  *
  * Requirements:
  * - imports only the public entry point (../packages/seat-registry/src/index.js)
@@ -46,8 +46,8 @@ function fixtureLines(filename: string): string[] {
 }
 
 describe('Test 14 — Fixture integrity (doctrine pin) (r7 §9.1 test 14)', () => {
-  it('recorded doctrine pin is the full 40-character d3049d9233000ed7a0c107a365fd035ff5d2b05c', () => {
-    assert.equal(DOCTRINE_PIN, 'd3049d9233000ed7a0c107a365fd035ff5d2b05c');
+  it('recorded doctrine pin is the full 40-character c788495466db52e576a58d0856345e41fdcac9cb', () => {
+    assert.equal(DOCTRINE_PIN, 'c788495466db52e576a58d0856345e41fdcac9cb');
     assert.match(DOCTRINE_PIN, /^[0-9a-f]{40}$/);
   });
 
@@ -190,21 +190,30 @@ describe('Test 8 — Binding status is mirrored, never assigned (r7 §9.1 test 8
 describe('DEC-20261020-01 — lanes mirror the model registry Lanes table', () => {
   const ROLE_SEAT: Readonly<Record<string, string>> = { builder: 'builder', 'Tier-2': 'independent-reviewer' };
 
-  /** The Lanes table at the pin: lane token, seat, and the allowlist as the registry stands. */
-  function lanesTable(): { lane: string; seat: string; allowlist: string[] }[] {
+  /**
+   * The Lanes table at the pin: lane token, seat, and the allowlist as the
+   * registry stands, or null where the row's Allowlist cell reads "none":
+   * a Tier-2 lane bound to its surface and provider alone
+   * (FOUNDER-RULING-20261118-TIER2-SURFACE-LANES B1).
+   */
+  function lanesTable(): { lane: string; seat: string; allowlist: string[] | null }[] {
     const lines = fixtureLines('model-registry.md');
     const start = lines.findIndex((l) => l.startsWith('## Lanes (`DEC-20261020-01`'));
     assert.ok(start !== -1, 'found the Lanes section in model-registry.md');
     const registered = new Set(
       lines.map((l) => /^model_id:\s*([-a-z0-9.]+)\s*$/.exec(l)?.[1]).filter((m): m is string => m !== undefined),
     );
-    const rows: { lane: string; seat: string; allowlist: string[] }[] = [];
+    const rows: { lane: string; seat: string; allowlist: string[] | null }[] = [];
     for (let i = start + 1; i < lines.length && !lines[i]!.startsWith('## '); i++) {
       const cells = lines[i]!.split('|').map((c) => c.trim());
       const lane = /^`([a-z0-9-]+:[a-z0-9-]+)`$/.exec(cells[1] ?? '')?.[1];
       if (lane === undefined) continue;
       const seat = ROLE_SEAT[cells[2] ?? ''];
       assert.ok(seat !== undefined, `Lanes row ${lane} names a known role, got ${JSON.stringify(cells[2])}`);
+      if ((cells[3] ?? '').startsWith('none')) {
+        rows.push({ lane, seat, allowlist: null });
+        continue;
+      }
       // "a; b on registration": the first part is listed; the rest join only
       // once their own entry is in the registry (clause 2 table note).
       const allowlist: string[] = [];
@@ -226,16 +235,32 @@ describe('DEC-20261020-01 — lanes mirror the model registry Lanes table', () =
       const seat = RATIFIED_SEATS.find((s) => s.seat_id === seatId)!;
       const expected = table
         .filter((r) => r.seat === seatId)
-        .map((r) => `${r.lane}=${[...r.allowlist].sort().join(',')}`)
+        .map((r) => `${r.lane}=${r.allowlist === null ? 'none' : [...r.allowlist].sort().join(',')}`)
         .sort();
       const actual = seat.routing
         .map((lane) => {
           assert.ok(isSurfaceProviderLane(lane), `${seatId} lane ${lane.lane_label} is a surface:provider lane (clause 1)`);
           assert.equal(lane.lane, `${lane.surface_id}:${lane.provider}`, `${seatId} lane token is surface:provider`);
-          return `${lane.lane}=${[...lane.allowlist].sort().join(',')}`;
+          return `${lane.lane}=${lane.allowlist === null ? 'none' : [...lane.allowlist].sort().join(',')}`;
         })
         .sort();
       assert.deepEqual(actual, expected, `${seatId} routing mirrors the Lanes table`);
+    }
+  });
+
+  it('every Tier-2 row has no allowlist and every builder row lists its models (Amendment 4, B1 and B5)', () => {
+    const table = lanesTable();
+    const tier2 = table.filter((r) => r.seat === 'independent-reviewer');
+    assert.deepEqual(
+      tier2.map((r) => r.lane).sort(),
+      ['antigravity:anthropic', 'antigravity:google', 'codex:openai', 'grok-build:xai'],
+      'the four Tier-2 lanes of the clause 2 table',
+    );
+    for (const row of tier2) assert.equal(row.allowlist, null, `Tier-2 row ${row.lane} reads "none"`);
+    const builderRows = table.filter((r) => r.seat === 'builder');
+    assert.deepEqual(builderRows.map((r) => r.lane).sort(), ['claude-code:anthropic', 'codex:openai']);
+    for (const row of builderRows) {
+      assert.ok(row.allowlist !== null && row.allowlist.length > 0, `builder row ${row.lane} lists its models`);
     }
   });
 
@@ -360,16 +385,21 @@ describe('Test 10 — Data eligibility, carried conditions, and provider-class p
     assert.ok(archPrimary.conditions.includes(antiApproval), 'architect primary carries antiApproval byte-exact');
     assert.ok(archPrimary.conditions.includes(antiProhibited), 'architect primary carries antiProhibited byte-exact');
 
+    // Both antigravity Tier-2 lanes carry the surface's approval and
+    // prohibition lines and clause 3, but not its model-selection line, which
+    // names Gemini models only and requires a registry entry: DEC-20261020-01
+    // clause 9, as Amendment 4 amends it, lifts both for these two lanes, and
+    // the surface registry records that at the pin, "with or without a
+    // model-registry entry". The architect's primary lane keeps the line.
+    assert.match(antiModel, /Gemini model ID carrying a model-registry entry/, 'the selection line still names Gemini only, with an entry');
+    const surfaceText = fixtureLines('execution-surface-registry.md').join('\n').replace(/\s+/g, ' ');
+    assert.ok(surfaceText.includes('(the `antigravity:google` lane), with or without a model-registry entry'), 'the surface registry records the Tier-2 exception for both lanes');
     const reviewerGemini = reviewer.routing.find((l) => l.surface_id === 'antigravity' && l.provider === 'google')!;
-    assert.ok(reviewerGemini.conditions.includes(antiModel), 'reviewer gemini carries antiModel byte-exact');
+    assert.ok(!reviewerGemini.conditions.includes(antiModel), 'reviewer antigravity:google does not carry the Gemini selection line');
     assert.ok(reviewerGemini.conditions.includes(antiApproval), 'reviewer gemini carries antiApproval byte-exact');
     assert.ok(reviewerGemini.conditions.includes(antiProhibited), 'reviewer gemini carries antiProhibited byte-exact');
     assert.ok(reviewerGemini.conditions.includes(reviewerClause3), 'reviewer gemini carries clause 3 byte-exact');
 
-    // antigravity:anthropic carries the surface's approval and prohibition
-    // lines and clause 3, but not its model-selection line, which names
-    // Gemini models only at the pin.
-    assert.match(antiModel, /Gemini model ID/, 'the selection line still names Gemini only');
     const reviewerClaude = reviewer.routing.find((l) => l.surface_id === 'antigravity' && l.provider === 'anthropic')!;
     assert.ok(!reviewerClaude.conditions.includes(antiModel), 'reviewer antigravity:anthropic does not carry the Gemini selection line');
     assert.ok(reviewerClaude.conditions.includes(antiApproval), 'reviewer antigravity:anthropic carries antiApproval byte-exact');

@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-08-07
-updated: 2026-10-26
-version: 0.7
+updated: 2026-11-18
+version: 0.8
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -390,6 +390,24 @@ enforcement index. The approved amendment schedule is:
   > with the model recorded but not bound, is in the reconciliation note
   > under §5.1. The historical sentence is retained verbatim. This note
   > records the text reconciliation; it creates no binding.
+
+  > **Note (2026-11-18), Build Room Tier-2 lanes.** Under `DEC-20261020-01` as its Amendment 4
+  > (`FOUNDER-RULING-20261118-TIER2-SURFACE-LANES`) amends it, in force when
+  > FounderOS pull request 434 merges, a Build Room Tier-2 review runs on one
+  > of four `surface:provider` lanes (`codex:openai`, `antigravity:google`,
+  > `antigravity:anthropic`, `grok-build:xai`), on any model the surface
+  > serves from that provider, with no model allowlist and no registry entry
+  > needed; the review announces its model in `Tier2-Reviewer-Model:`.
+  > For both `antigravity` Tier-2 lanes, this bullet's Gemini-only model
+  > rule, its condition that a selected model carry a model-registry
+  > entry, and its statement that the two Gemini Flash models are
+  > non-binding are superseded through `DEC-20261020-01` clause 9, as
+  > Amendment 4 amends it: a review on `antigravity:google` may run on any
+  > model the surface serves from Google, and a model its provider does
+  > not present as a main model is flagged, not refused. `gemini-4-argon`
+  > is no longer the `antigravity:google` lane's allowlist. Every other role and model on `antigravity` stays under this
+  > bullet as written. The bullet's text is unaltered
+  > (`FOUNDER-ACT-20261118-TIER2-SURFACE-LANES-CONSUMERS` B2).
 - `hermes-local-code`: current proposed model `deepseek-v4-flash`; other local
   models require registration and Founder approval before writes or execution.
 
@@ -550,6 +568,18 @@ does not grant repository write authority.
   Other Gemini models selected through `antigravity` may build or provide
   supplemental review but cannot satisfy Tier-2 until an explicit roster
   amendment names the exact model.
+
+  > **Note (2026-11-18), Build Room Tier-2 lanes.** Under `DEC-20261020-01` as its Amendment 4
+  > (`FOUNDER-RULING-20261118-TIER2-SURFACE-LANES`) amends it, in force when
+  > FounderOS pull request 434 merges, a Build Room Tier-2 review runs on one
+  > of four `surface:provider` lanes (`codex:openai`, `antigravity:google`,
+  > `antigravity:anthropic`, `grok-build:xai`), on any model the surface
+  > serves from that provider, with no model allowlist and no registry entry
+  > needed; the review announces its model in `Tier2-Reviewer-Model:`.
+  > For Build Room, a Gemini model the surface serves can therefore satisfy
+  > Tier-2 on the `antigravity:google` lane without a roster amendment
+  > naming it. The sentence above is unaltered
+  > (`FOUNDER-ACT-20261118-TIER2-SURFACE-LANES-CONSUMERS` B2).
 - After the binding Tier-2 verdict, an `opus-4.7` execution assigned the
   `architect` or `strategist` stable role may reconcile findings before
   Founder merge authority is requested. This reconciliation is not the
@@ -1132,6 +1162,15 @@ ruling satisfies clause 6.3.
 activation ruling.
 
 ## Notes
+
+**v0.8 (2026-11-18) — dated notes under §3.4 and §5.1 for Build Room
+Tier-2 lanes.** Points to `DEC-20261020-01` Amendment 4
+(`FOUNDER-RULING-20261118-TIER2-SURFACE-LANES`): under §3.4's `antigravity`
+bullet, its registry-entry condition is superseded for both `antigravity`
+Tier-2 lanes; under §5.1, a Gemini model the surface serves can satisfy
+Build Room Tier-2 on `antigravity:google` without a roster amendment. The
+section text is unaltered (`FOUNDER-ACT-20261118-TIER2-SURFACE-LANES-CONSUMERS`
+B2).
 
 **v0.7 (2026-10-26) — note in §3.1 for the headless Planner mode.** Adds a
 dated note under the `antigravity` registration recording B4 of

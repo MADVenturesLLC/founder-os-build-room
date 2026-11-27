@@ -6,8 +6,8 @@ company: mad-ventures
 product: mad-ventures-os
 status: active
 created: 2026-07-15
-updated: 2026-11-09
-version: 0.16
+updated: 2026-11-18
+version: 0.18
 review_cycle: on-change
 source_of_truth: true
 related_decisions:
@@ -96,6 +96,43 @@ activation_phase: G3
 
 - **Identity rule:** Claude Code is an agentic coding application and coding execution surface — **not a model**, **not a provider** (the provider behind it is `anthropic`), **not a role**, and specifically **not the Builder**; the `builder` role may be performed *through* this surface. It is also not a tool in the future taxonomy.
 - **Evidence sources:** `04-agents/claude-code.md`, `04-agents/claude-code/capability-profile.md`, `CLAUDE.md` (all existing, active, unchanged).
+
+**Headless Builder mode (2026-11-17).** B5 of
+`FOUNDER-RULING-20261117-BR-BUILDER-EXECUTOR` (recorded verbatim in
+`DEC-20260827-01` Section 14) amends this registration by one mode:
+"headless Builder execution through the Claude Code CLI on Gateway
+1880c12d, only for Builder commands of a counted Phase 5 run my act
+authorizes, on the model that act names. Every other use of that surface
+stands as registered." So on this surface, from the merge of the FounderOS
+pull request that carries this paragraph:
+
+- The mode serves the `builder` seat's Builder only, on the lane
+  `claude-code:anthropic`, and runs only the model the counted-run act
+  names, which must be on that lane as `/04-agents/model-registry.md`
+  (*Lanes*) lists it (the ruling's B1).
+- Before any work is sent, the executor establishes the exact model that
+  will serve the command from a machine-verifiable primitive of the CLI,
+  never from terminal prose. If the CLI offers none, or reports a model
+  other than the act's, nothing is sent and the command fails closed (B3).
+- Each action the CLI takes passes Build Room's classification on the
+  Gateway before it runs: allowed, held for the Founder's approval through
+  T6 and T7, or refused. The CLI never runs in a mode that skips its
+  permission checks (B4).
+- The CLI runs only as a dedicated, unprivileged user, never the Gateway's
+  user, the planner user or root, started through one fixed privilege rule.
+  Each run works in a worktree the Gateway makes for it from a fresh clone,
+  never the Gateway's own checkout, and its remote carries no credential.
+  That user's connections go only to an allowlist of exact host names,
+  without GitHub, and its processes end when each run ends (Part C, D2).
+- Everything sent to the provider is public-class (B6). The Founder signs
+  the CLI in on the PC, and no metered API key is used (B7).
+- The Builder may not push, open a pull request, merge, deploy or operate
+  production; approve its own command or answer its own decision; change
+  model; write outside the approved plan's scope paths; or touch any
+  repository but `MADVenturesLLC/founder-os-build-room`. It holds no GitHub
+  credential and no repository push credential (B8, D1).
+- The yaml above is kept as written. In this mode the model is the one the
+  counted-run act names, not one a session configures (B1).
 
 ### `cursor`
 
@@ -386,11 +423,22 @@ amends it, supersedes `DEC-20260807-01` §3.1's model rule and §3.4's
 routing amendment for `antigravity`, which admit only Gemini models here,
 "for the `antigravity:anthropic` Tier-2 lane only". So on this surface:
 
-- An `independent-reviewer` Tier-2 review may run on a model of the
+- An `independent-reviewer` Tier-2 review may run on any model this
+  surface serves from Anthropic (the `antigravity:anthropic` lane) or from
+  Google (the `antigravity:google` lane), with or without a model-registry
+  entry, from the merge of FounderOS pull request 434, when
+  `DEC-20261020-01` Amendment 4
+  (`FOUNDER-RULING-20261118-TIER2-SURFACE-LANES`) retires those lanes'
+  allowlists and clause 9, as it amends it, lifts the Gemini-only rule
+  above for both lanes; a review run before then is judged under the
+  allowlist then in force. Earlier wording, kept as history: "An
+  `independent-reviewer` Tier-2 review may run on a model of the
   `antigravity:anthropic` lane, as `/04-agents/model-registry.md` (*Lanes*)
-  lists it, as well as on the Gemini model the line above admits.
-  Internal-class material on that lane needs the Founder's per-invocation
-  authorization (clause 8).
+  lists it, as well as on the Gemini model the line above admits."
+  Internal-class material on either lane, `antigravity:anthropic` or
+  `antigravity:google`, needs the Founder's per-invocation authorization
+  (clause 8); this sentence read "on that lane" while the bullet named
+  `antigravity:anthropic` alone.
 - Claude serves no other role here. Builder and architect work on this
   surface stays under the line above, Gemini only.
 - Independence holds as before: "the reviewer's model family must differ
@@ -401,8 +449,10 @@ routing amendment for `antigravity`, which admit only Gemini models here,
 - The review records its model as `DEC-20261020-01` clause 5 sets for this
   surface: the requested-and-routed model, by the client cross-check. A
   FounderOS Tier-2 verdict records it without binding it (B3, above); a
-  Build Room review on a model off the lane's allowlist is refused
-  (clause 4).
+  Build Room review records it too, and its model stops the review only
+  on the conditions of clause 4 as Amendment 4 amends it. Superseded
+  wording, kept as history: "a Build Room review on a model off the lane's
+  allowlist is refused (clause 4)".
 
 Build Room's seat registry carries this lane from [`056ffd1`](https://github.com/MADVenturesLLC/founder-os-build-room/commit/056ffd11d7db78b42463b233d758d41cdbf682a3),
 the merge of [Build Room pull request 128](https://github.com/MADVenturesLLC/founder-os-build-room/pull/128).
@@ -418,8 +468,9 @@ of the FounderOS pull request that carries this paragraph:
 
 - The mode serves the `architect` seat's Planner only, on the lane
   `antigravity`, `gemini-4-argon`, effort high (agy `gemini-4-argon-high`),
-  and only for planner commands of a counted Phase 4 run the Founder's act
-  authorizes (the ruling's B1).
+  and only for planner commands of a counted Phase 4 or Phase 5 run the
+  Founder's act authorizes (the ruling's B1, and E1 of
+  `FOUNDER-RULING-20261117-BR-BUILDER-EXECUTOR`).
 - Before work is sent, the executor reads agy's stream-json `init` event and
   sends the work only if its model is exactly the act's; otherwise the round
   fails closed (Amendment 1, B1 and B2).
@@ -439,6 +490,15 @@ of the FounderOS pull request that carries this paragraph:
 - The yaml above is kept as written, as the 2026-10-11 and 2026-10-25
   paragraphs keep it. In this mode, the model the Founder selects manually
   is the active model the counted-run act names (the ruling's A2 and B1).
+
+**Phase 5 runs (2026-11-17).** E1 of
+`FOUNDER-RULING-20261117-BR-BUILDER-EXECUTOR` (recorded verbatim in
+`DEC-20260827-01` Section 14) extends the Planner binding, "unchanged in
+every other term, to planner commands of a counted Phase 5 run that my
+counted-run act authorizes", and directs this registration's wording to
+match. The first bullet above read, until this change, "and only for
+planner commands of a counted Phase 4 run the Founder's act authorizes
+(the ruling's B1)." Every other line of this paragraph stands.
 
 ### `hermes-local-code`
 

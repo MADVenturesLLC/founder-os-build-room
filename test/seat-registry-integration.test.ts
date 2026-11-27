@@ -547,7 +547,6 @@ describe('T10 — Builder/reviewer model distinctness (predicate only)', () => {
     const gate = createSeatPolicyGate();
     let distinctSeen = 0;
     let sameFamilySeen = 0;
-    let sameModelSeen = 0;
     for (const implLane of builder.routing) {
       for (const modelId of laneModelIds(implLane)) {
         const implementation = { provider: implLane.provider, model_id: modelId };
@@ -563,15 +562,24 @@ describe('T10 — Builder/reviewer model distinctness (predicate only)', () => {
             !laneModelIds(reviewLane).includes(modelId) &&
             TIER2_ROSTER_ATTESTATION_IDS.includes(reviewLane.surface_id);
           assert.equal(actual, truth, `the predicate is exactly the three conditions for ${label}`);
-          if (implLane.provider === reviewLane.provider) sameFamilySeen += 1;
-          if (laneModelIds(reviewLane).includes(modelId)) sameModelSeen += 1;
+          if (implLane.provider === reviewLane.provider) {
+            sameFamilySeen += 1;
+            assert.equal(actual, false, `a same-family pairing is refused: ${label}`);
+          }
           if (actual) distinctSeen += 1;
         }
       }
     }
     assert.ok(distinctSeen > 0, 'at least one pairing is distinct');
     assert.ok(sameFamilySeen > 0, 'same-family pairings exist and are refused (claude-code:anthropic × antigravity:anthropic, codex:openai × codex:openai)');
-    assert.ok(sameModelSeen > 0, 'same-model pairings exist and are refused');
+    // FOUNDER-RULING-20261118-TIER2-SURFACE-LANES B1: no Tier-2 lane lists a
+    // model, so the same-model rule (DEC-20260815-05 clause 1) reaches these
+    // pairings through the family rule above (DEC-20261020-01 clause 7), as
+    // DEC-20260815-05's note of 2026-11-18 says. The model check itself is
+    // exercised on a lane that lists models, in the next test.
+    for (const reviewLane of reviewer.routing) {
+      assert.deepEqual(laneModelIds(reviewLane), [], `${reviewLane.surface_id}:${reviewLane.provider} lists no model`);
+    }
     // Every reviewer routing lane attests on the roster: the claude-code lane,
     // the one that did not, is a not-approved record now (clause 2).
     assert.deepEqual(
@@ -581,10 +589,25 @@ describe('T10 — Builder/reviewer model distinctness (predicate only)', () => {
     );
   });
 
-  it('the same-model case rejects, even across families', () => {
+  it('the same-model case rejects, even across families, on a lane that lists the model', () => {
     const gate = createSeatPolicyGate();
-    const reviewLane = reviewer.routing[0] as SeatRoutingLane;
-    assert.equal(gate.assertReviewDistinctness({ provider: 'another-provider', model_id: laneModelIds(reviewLane)[0]! }, reviewLane), false);
+    // A model-exact lane on the roster, as a lane outside Amendment 4's four
+    // would be; a Tier-2 routing lane lists no model (B1).
+    const listing: SeatRoutingLane = {
+      lane_label: 'tier-2',
+      provider: 'openai',
+      surface_id: 'codex',
+      model_id: 'gpt-6.1-sol',
+      tier2_attestation_id: 'codex',
+      binding_status: 'approved-binding',
+      binding_class: 'tier-2',
+      provider_class: 'NOT_RECORDED',
+      data_eligibility: ['public'],
+      conditions: [],
+      derivation: [],
+    };
+    assert.equal(gate.assertReviewDistinctness({ provider: 'another-provider', model_id: 'gpt-6.1-sol' }, listing), false);
+    assert.equal(gate.assertReviewDistinctness({ provider: 'another-provider', model_id: 'another-model' }, listing), true);
   });
 
   it('an off-roster attestation rejects', () => {
