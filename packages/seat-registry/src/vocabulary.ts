@@ -4,9 +4,9 @@
  * Ratified plan: docs/planning/seat-registry-v1/seat-registry-v1-implementation-plan-r7-DRAFT.md
  *   (sha256 b1bc4159b8cdb1ce6c342d84b4be3650a340abfc467624154ea5ba2a54815b60)
  * Governing decision: DEC-20260902-02 (FounderOS 8198ecf002324cc4e00cf035c7cb98c6de0bc746).
- * Doctrine/fixture pin: FounderOS d3049d9233000ed7a0c107a365fd035ff5d2b05c
+ * Doctrine/fixture pin: FounderOS c788495466db52e576a58d0856345e41fdcac9cb
  *   (re-pinned from the plan's 8d09e7ed36dcb2a67df2b45daa81c8ad7d170694 under
- *   DEC-20261020-01, then from 846190fd…; see fixtures.ts).
+ *   DEC-20261020-01, then from 846190fd… and from d3049d92…; see fixtures.ts).
  *
  * §1.1: seats are the four existing canonical FounderOS role IDs.
  * §1.2: display names come from the FOUNDER RULING — SEAT REGISTRY V1 RESERVED

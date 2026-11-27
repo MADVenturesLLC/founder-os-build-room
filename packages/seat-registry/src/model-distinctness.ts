@@ -21,9 +21,10 @@ import { isSurfaceProviderLane, laneModelIds, type SeatRoutingLane } from './sch
  * churn (provider retirement, HTTP 404, unserved tiers) and the churn failure
  * mode is a review that ran but could not be attested. The exact served model
  * is recorded in the Tier2-Reviewer-Model: evidence line (DEC-20261001-01
- * clause 3), and this roster never gates it; on Build Room lanes
- * DEC-20261020-01 clause 4 separately refuses a served model off its lane's
- * allowlist. FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION
+ * clause 3), and this roster never gates it. On Build Room's Tier-2 lanes
+ * the model is announced, not listed: under DEC-20261020-01 clause 4 as its
+ * Amendment 4 amends it, a review stops on its announced model only as that
+ * ruling's B3 states, judged per review. FOUNDER-ACT-20261011-TIER2-SURFACE-ATTESTATION
  * B2 fixes the surface set to the four tokens below; a reviewer on any other
  * surface cannot issue a binding Tier-2 verdict.
  */
@@ -50,8 +51,16 @@ export interface ImplementationIdentity {
  *   `claude-code:anthropic` is not reviewed on `antigravity:anthropic`
  *   (DEC-20261020-01 clause 7, keeping DEC-20261001-01 clause 5 and
  *   DEC-20260815-05);
- * - the implementation model is not a model the lane may serve
+ * - the implementation model is not a model the lane lists
  *   (DEC-20260815-05 clause 1).
+ *
+ * A Tier-2 lane lists no model (Amendment 4 to DEC-20261020-01, B1), so for
+ * one the third condition is empty and the second carries the same-model
+ * rule: a model belongs to one provider, so a reviewer of another family
+ * cannot be served the implementation model. DEC-20260815-05's note of
+ * 2026-11-18 says so: its clause 1 requirement "stands, and
+ * `DEC-20261020-01` clause 7 carries it as the family rule". The third
+ * condition still binds a lane that lists models.
  */
 export function isDistinctReviewLane(implementation: ImplementationIdentity, reviewLane: SeatRoutingLane): boolean {
   if (reviewLane.provider === implementation.provider) {

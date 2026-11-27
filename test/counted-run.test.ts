@@ -365,7 +365,7 @@ describe('counted run · the act’s terms, read at boot', () => {
     // The Seat Registry keeps its own pin (the Founder's selection of
     // 2026-10-16, quoted at COUNTED_RUN_REGISTRY). Its copy of this registry
     // was this text byte for byte from 8bc4c55 to 846190f and is not at
-    // d3049d9; either may hold again. Whichever it is, the counted run
+    // c788495; either may hold again. Whichever it is, the counted run
     // declares surfaces from that copy only when its bytes hash to the counted
     // run's own pinned digest, and from no other text, as the appended-byte
     // case above shows.

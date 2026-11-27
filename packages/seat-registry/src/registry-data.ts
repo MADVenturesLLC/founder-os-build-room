@@ -2,7 +2,7 @@
  * Seat Registry V1 — registry data and derived lane data (§2.5, §2.7).
  *
  * Every lane mirrors the controlling registries and decisions read at the
- * doctrine pin d3049d9233000ed7a0c107a365fd035ff5d2b05c. No lane, model
+ * doctrine pin c788495466db52e576a58d0856345e41fdcac9cb. No lane, model
  * identifier, provider class, surface, or binding status is asserted,
  * inferred from a nearby value, or carried forward from prior drafts.
  * Where the corpus establishes no lawful lane, the row is an
@@ -70,9 +70,11 @@ const ABSENT_REASON_RESTRICTED_LOCAL =
   'prohibited_actions';
 
 const ABSENT_REASON_SUPPLEMENTAL =
-  'Not on the closed Tier-2 roster (DEC-20260719-02 v1.1, DEC-20260815-05); the registry states "This model cannot ' +
-  'replace CodeRabbit Tier-1 or satisfy binding Tier-2"; a supplemental/advisory binding is never authority to issue ' +
-  'the binding Tier-2 verdict';
+  'A supplemental fast-review binding, not a Tier-2 lane: the registry states "This model cannot replace CodeRabbit ' +
+  'Tier-1 or satisfy binding Tier-2. That sentence describes its supplemental fast-review binding ' +
+  '(`DEC-20260807-01` §3.4).", and a supplemental/advisory binding is never authority to issue the binding Tier-2 ' +
+  'verdict. A Build Room review this model serves on the `antigravity:google` lane counts on that lane\'s terms, ' +
+  'flagged because Google labels the model Flash (FOUNDER-RULING-20261118-TIER2-SURFACE-LANES B1 and B4)';
 
 // The claude-code-tier2 absent lane is retired: BR-PHASE4-SURFACE-KEYED-SEATS-R1
 // (issued 2026-10-17) is the derivation act that entry anticipated, and the
@@ -392,51 +394,72 @@ const BUILDER: SeatRegistrationV1 = {
 
 /*
  * The four Tier-2 lanes, copied from the model registry's Lanes table at the
- * pin. The attestation token is the surface (DEC-20261020-01 clause 6), so
- * no lane carries `tier2_attestation_id`; the model that served a review is
- * recorded in its `Tier2-Reviewer-Model:` line, and on Build Room clause 4
- * refuses one that is not on its lane's allowlist. Effort is per model (each
- * entry's `modes:`) and is recorded per review, not pinned on the lane.
+ * pin. FOUNDER-RULING-20261118-TIER2-SURFACE-LANES (Amendment 4 to
+ * DEC-20261020-01, in force since FounderOS pull request 434 merged as
+ * c788495) binds each to its surface and provider alone: a review on one
+ * "may run on any model the surface serves from that provider", and adding a
+ * model needs no act and no registry entry (B1). So no lane lists a model
+ * (`allowlist: null`), and nothing here derives from a model's registry
+ * entry: `binding_status` is the lane's standing in the Lanes table,
+ * `provider_class` stays NOT_RECORDED because nothing at the pin classifies
+ * a lane, and `data_eligibility` is the lane's own terms under clause 8 (and,
+ * for the two `antigravity` lanes, the table's "public class only"), kept
+ * public-class only, so internal-class material needs the Founder's
+ * per-invocation authorization.
+ *
+ * The review announces its model in its `Tier2-Reviewer-Model:` line (B2),
+ * and it does not count when it announces none, when the announced model's
+ * family is the builder's, when that model is on the restricted roster of
+ * DEC-20260719-02 clause 5, or when the material's data class is not
+ * permitted by the lane's terms or stricter terms of the model's own (B3).
+ * Those are judged per review; this registry pins no model. The
+ * attestation token is the surface (DEC-20261020-01 clause 6), so no lane
+ * carries `tier2_attestation_id`. Effort is recorded per review, not pinned
+ * on the lane.
  */
 const TIER2_ANTIGRAVITY_GOOGLE: SurfaceProviderLane = {
   lane_label: 'tier-2',
   lane: 'antigravity:google',
   provider: 'google',
   surface_id: 'antigravity',
-  allowlist: ['gemini-4-argon'],
-  binding_status: 'approved-binding',
+  allowlist: null, // Amendment 4, B1
+  binding_status: 'approved-binding', // the Lanes row (DEC-20261020-01 clause 2 table, as Amendment 4 amends it)
   binding_class: 'tier-2', // DEC-20260719-02; DEC-20261020-01 clause 2 table
-  provider_class: 'NOT_RECORDED', // model-registry: deployment_channel `unverified`; nothing there classifies it P1
-  data_eligibility: ['public'], // model-registry data_class_boundary: "public-class only; internal-or-higher prohibited"
-  conditions: [ANTIGRAVITY_MODEL_SELECTION, ANTIGRAVITY_APPROVAL, ANTIGRAVITY_PROHIBITED, REVIEWER_CLAUSE_3],
-  derivation: ['DEC-20261020-01 clauses 1, 2 and 6', 'model-registry.md Lanes', 'DEC-20261019-01 Clause A', 'DEC-20260815-05', 'DEC-20260807-01 §3.3', 'model-registry.md gemini-4-argon', 'model-registry.md gemini-4-argon data_class_boundary'],
+  provider_class: 'NOT_RECORDED', // nothing at the pin classifies the antigravity:google lane P1–P5 (§2.2)
+  data_eligibility: ['public'], // DEC-20261020-01 clause 8: public-class only (DEC-20261016-01); the Lanes row: "public class only"
+  conditions: [ANTIGRAVITY_APPROVAL, ANTIGRAVITY_PROHIBITED, REVIEWER_CLAUSE_3],
+  derivation: ['DEC-20261020-01 clauses 1, 2, 6, 8 and 9, as Amendment 4 amends them', 'FOUNDER-RULING-20261118-TIER2-SURFACE-LANES B1 to B4', 'model-registry.md Lanes', 'DEC-20261019-01 Clause A', 'DEC-20260815-05', 'DEC-20260807-01 §3.3', 'execution-surface-registry.md antigravity, "Claude on Antigravity (2026-10-25)"'],
 };
 
 /*
- * `antigravity:anthropic` carries Claude as a Tier-2 lane only (DEC-20261020-01
- * clause 9). Its models' entries are P1 for Anthropic's own channel; this lane
- * reaches them through Antigravity, which nothing at the pin classifies, and
- * clause 8 holds it to public class. The execution-surface registry's
- * `underlying_model_selection` line for `antigravity` names Gemini models
- * only, so this lane does not carry it. At the pin the registry records the
- * exception beside that line, in its "Claude on Antigravity (2026-10-25)"
- * paragraph: clause 9, as Amendment 3 to DEC-20261020-01 amends it, lets an
- * `independent-reviewer` Tier-2 review run on this lane's models, and the
- * surface's approval and prohibited-action lines, which this lane carries as
- * conditions, apply to it unchanged.
+ * Both `antigravity` Tier-2 lanes carry the surface's approval and
+ * prohibited-action lines, which apply to them unchanged, and neither carries
+ * its `underlying_model_selection` line, which admits only "a registered,
+ * provider-verified Gemini model ID carrying a model-registry entry".
+ * Clause 9, as Amendment 4 amends it, supersedes for these two lanes
+ * DEC-20260807-01 §3.1's model rule and §3.4's routing amendment, which
+ * admit only Gemini models on the surface, and §3.4's condition that a
+ * selected model carry a registry entry: a review on `antigravity:anthropic`
+ * may run on any model the surface serves from Anthropic, and one on
+ * `antigravity:google` on any model it serves from Google. At the pin the
+ * surface registry records this beside that line, in its "Claude on
+ * Antigravity (2026-10-25)" paragraph: a review on either lane runs on such
+ * a model "with or without a model-registry entry". Builder and architect
+ * work on the surface stays under the line, Gemini only; the architect's
+ * primary lane carries it.
  */
 const TIER2_ANTIGRAVITY_ANTHROPIC: SurfaceProviderLane = {
   lane_label: 'tier-2',
   lane: 'antigravity:anthropic',
   provider: 'anthropic',
   surface_id: 'antigravity',
-  allowlist: ['claude-opus-5.5', 'claude-sonnet-5.5'],
-  binding_status: 'approved-binding',
+  allowlist: null, // Amendment 4, B1
+  binding_status: 'approved-binding', // the Lanes row (DEC-20261020-01 clause 2 table, as Amendment 4 amends it)
   binding_class: 'tier-2', // DEC-20261020-01 clause 2 table
-  provider_class: 'NOT_RECORDED',
-  data_eligibility: ['public'], // DEC-20261020-01 clause 8: public-class only
+  provider_class: 'NOT_RECORDED', // Anthropic's own channel is P1; this lane reaches it through Antigravity, which nothing at the pin classifies
+  data_eligibility: ['public'], // DEC-20261020-01 clause 8: public-class only; the Lanes row: "public class only"
   conditions: [ANTIGRAVITY_APPROVAL, ANTIGRAVITY_PROHIBITED, REVIEWER_CLAUSE_3],
-  derivation: ['DEC-20261020-01 clauses 1, 2, 6, 7, 8 and 9', 'model-registry.md Lanes', 'DEC-20261019-01 Clause D', "the Founder's answer of 2026-10-21 (public class only)", 'model-registry.md claude-opus-5.5', 'model-registry.md claude-sonnet-5.5'],
+  derivation: ['DEC-20261020-01 clauses 1, 2, 6, 7, 8 and 9, as Amendment 4 amends them', 'FOUNDER-RULING-20261118-TIER2-SURFACE-LANES B1 to B4', 'model-registry.md Lanes', 'DEC-20261019-01 Clause D', "the Founder's answer of 2026-10-21 (public class only)", 'execution-surface-registry.md antigravity, "Claude on Antigravity (2026-10-25)"'],
 };
 
 const TIER2_CODEX: SurfaceProviderLane = {
@@ -444,32 +467,27 @@ const TIER2_CODEX: SurfaceProviderLane = {
   lane: 'codex:openai',
   provider: 'openai',
   surface_id: 'codex',
-  allowlist: ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna'],
-  binding_status: 'approved-binding',
+  allowlist: null, // Amendment 4, B1
+  binding_status: 'approved-binding', // the Lanes row (DEC-20261020-01 clause 2 table, as Amendment 4 amends it)
   binding_class: 'tier-2-full-roster', // DEC-20260719-02 v1.1; DEC-20261020-01 clause 2 table
-  provider_class: 'NOT_RECORDED', // openai-first-party-api / verification-pending: no P1–P5 token (§2.2)
+  provider_class: 'NOT_RECORDED', // nothing at the pin classifies the codex:openai lane P1–P5 (§2.2)
   data_eligibility: ['public'], // internal-class review material requires explicit per-invocation Founder authorization
   conditions: [],
-  derivation: ['DEC-20261020-01 clauses 1, 2 and 6', 'model-registry.md Lanes', 'DEC-20261019-01 Clause B', 'DEC-20260719-02 v1.1', 'model-registry.md gpt-6.1-sol', 'model-registry.md gpt-6-astra', 'model-registry.md gpt-6-luna'],
+  derivation: ['DEC-20261020-01 clauses 1, 2 and 6, as Amendment 4 amends them', 'FOUNDER-RULING-20261118-TIER2-SURFACE-LANES B1 to B4', 'model-registry.md Lanes', 'DEC-20261019-01 Clause B', 'DEC-20260719-02 v1.1'],
 };
 
-/*
- * grok-4.6, grok-4.7 and grok-4.7-build-fast join this allowlist on
- * registration (DEC-20261020-01 clause 2 table); their entries merged on
- * 2026-10-25 and are in the registry at the pin.
- */
 const TIER2_GROK: SurfaceProviderLane = {
   lane_label: 'tier-2',
   lane: 'grok-build:xai',
   provider: 'xai',
   surface_id: 'grok-build',
-  allowlist: ['grok-4.5', 'grok-4.6', 'grok-4.7', 'grok-4.7-build-fast'],
-  binding_status: 'approved-binding',
+  allowlist: null, // Amendment 4, B1
+  binding_status: 'approved-binding', // the Lanes row (DEC-20261020-01 clause 2 table, as Amendment 4 amends it)
   binding_class: 'tier-2', // DEC-20260719-02 v1.1; DEC-20261020-01 clause 2 table
-  provider_class: 'NOT_RECORDED', // deployment_channel: unverified, for all four
-  data_eligibility: ['public'], // public-class only by default (§2.4.2); each entry's data_class_boundary
+  provider_class: 'NOT_RECORDED', // nothing at the pin classifies the grok-build:xai lane P1–P5 (§2.2)
+  data_eligibility: ['public'], // public-class only by default (§2.4.2); xAI's terms under DEC-20261020-01 clause 8
   conditions: [GROK_BULLET_1, GROK_BULLET_2],
-  derivation: ['DEC-20261020-01 clauses 1, 2 and 6', 'model-registry.md Lanes', 'DEC-20260719-02 v1.1', 'DEC-20260815-05', 'DEC-20260815-04', "the Founder's answer of 2026-10-21 (grok-4.6, grok-4.7, grok-4.7-build-fast)", 'model-registry.md grok-4.5', 'model-registry.md grok-4.6', 'model-registry.md grok-4.7', 'model-registry.md grok-4.7-build-fast'],
+  derivation: ['DEC-20261020-01 clauses 1, 2 and 6, as Amendment 4 amends them', 'FOUNDER-RULING-20261118-TIER2-SURFACE-LANES B1 to B4', 'model-registry.md Lanes', 'DEC-20260719-02 v1.1', 'DEC-20260815-05', 'DEC-20260815-04'],
 };
 
 /**
