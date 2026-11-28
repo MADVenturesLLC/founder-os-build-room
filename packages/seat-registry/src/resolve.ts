@@ -147,7 +147,7 @@ const LANE_STANDING_REQUIREMENT: ReadonlyMap<string, string> = new Map([
   // architect bounded reconciliation: per-invocation preconditions (DEC-20260807-01 §5.1)
   ['bounded reconciliation', 'its per-invocation preconditions: only after the binding Tier-2 verdict; only by an execution assigned the `architect` or `strategist` stable role; not the binding Tier-2 verdict; does not replace Founder authority; never by the execution that authored the code state'],
   // independent-reviewer tier-2 lanes: per-run Founder act (DEC-20260815-05 clause 2)
-  ['tier-2', 'a per-run Founder act naming the reviewer model (DEC-20260815-05 clause 2)'],
+  ['tier-2', 'a per-run Founder act (DEC-20260815-05 clause 2)'],
 ]);
 
 function registrationFor(seatId: string): SeatRegistrationV1 | undefined {
