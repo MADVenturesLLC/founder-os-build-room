@@ -17,10 +17,19 @@
 # merge disposition, REMEDIATION 5. NOT carried: the same rules for commit
 # messages in `validate_block` (so `pr` and `main` mode still accept a commit
 # whose trailers git cannot read), and FounderOS's other later changes.
-# CORRECTED HERE, NOT YET IN FounderOS: the divider character set (see
-# DIVIDER CHARACTER SET in `prbody`); FounderOS's `[[:space:]]` class is
-# broader than git's. ADDED HERE, NOT YET IN FounderOS: the MERGE WRAP and
-# TRAILER LINE LENGTH rules in `prbody`, for lines GitHub re-wraps at merge.
+# CORRECTED HERE FIRST, AND PORTED TO FounderOS ON 2026-09-29: the divider
+# character set (see DIVIDER CHARACTER SET in `prbody`); FounderOS's copy
+# now uses the same class, where it had used `[[:space:]]`, which is broader
+# than git's. ADDED HERE FIRST, AND PORTED TO FounderOS ON 2026-09-29: the
+# MERGE WRAP and TRAILER LINE LENGTH rules in `prbody`, for lines GitHub
+# re-wraps at merge (both stale notes corrected 2026-11-28, the fourth P3
+# advisory of the Tier-2 review of Build Room pull request 169).
+# CARRIED (2026-11-28): FounderOS's take on the three other P3 advisories of
+# that review and of FounderOS pull request 439 (decision-log v5.52):
+# first_match counts the hit line's number without walking the text, the
+# no-op handler guard also finds a handler on the line after `||`, and
+# `prbody` puts the title and body to the UNREADABLE TEXT test before `tr`
+# or `sed` sees them, with their selftest cases.
 # CARRIED (2026-11-25): FounderOS's fail-closed reading of the checker's
 # input, from FounderOS merge a83750926d942d74b71f84cee61856c60e40ce28
 # (pull request 439, decision-log v5.46, Tier-2 PASS-WITH-ADVISORIES at
@@ -199,7 +208,11 @@ CR=$'\r'
 # library's own (`.` or a newline, to the end), so it holds wherever a regex
 # here would have gone blind, and in a byte locale (LC_ALL=C) every string
 # passes it. split_lines makes the test, because every line a regex is put
-# to comes from split_lines.
+# to comes from split_lines. Each mode puts its text to it before any
+# external command sees that text: in `pr` and `main` the first thing done
+# with a branch name or a commit message is a match, and `prbody` splits
+# the title and body first (READ BEFORE ANY TOOL, under prbody), so a line
+# is named even where a tool then stops the checker.
 WHOLE_TEXT_ERE=$'^(.|\n)*$'
 UNREADABLE_SEEN=""
 
@@ -270,22 +283,34 @@ lines_matching() {
 # first_match <text> <ere>
 # 0 when some line of <text> matches <ere>, with its number in HIT_NO and its
 # text in HIT_LINE (what `grep -nE ... | head -n 1` printed); else 1. The
-# number counts every line, empty ones too: once there is a hit, the text is
-# walked line by line to the first line equal to it, which is the hit, since
-# an earlier equal line would have matched first.
+# number counts every line, empty ones too. The hit is the first line equal
+# to it, since an earlier equal line would have matched first, so the text
+# before that line is cut off in one step (the quoted line is matched
+# literally) and its newlines are counted by word splitting it on newlines
+# and joining the pieces: the newlines are the characters that go.
+# (2026-11-28: this used to walk the text line by line, copying the rest of
+# it at every step, which took seconds for a divider near line 10,000; the
+# P3 advisory of the Tier-2 reviews of FounderOS pull request 439 and Build
+# Room pull request 169.)
 first_match() {
-  local re="$2" line rest n=0
+  local re="$2" line before joined saved_ifs="$IFS" had_noglob=0
+  local -a pieces
   split_lines "$1"
   for line in "${SPLIT[@]}"; do
     if [[ "$line" =~ $re ]]; then
-      rest="$1"
-      while :; do
-        n=$((n + 1))
-        if [[ "${rest%%$NL*}" == "$line" ]]; then break; fi
-        if [[ "$rest" != *"$NL"* ]]; then break; fi
-        rest=${rest#*$NL}
-      done
-      HIT_NO="$n"; HIT_LINE="$line"; return 0
+      before="$NL$1$NL"
+      before="${before%%"$NL$line$NL"*}"
+      case "$-" in *f*) had_noglob=1 ;; esac
+      IFS="$NL"
+      set -f
+      pieces=($before)
+      IFS=""
+      # An empty array is unset to bash before 4.4 under `set -u`.
+      joined=""
+      if [[ "${#pieces[@]}" -gt 0 ]]; then joined="${pieces[*]}"; fi
+      if [[ "$had_noglob" -eq 0 ]]; then set +f; fi
+      IFS="$saved_ifs"
+      HIT_NO=$(( ${#before} - ${#joined} + 1 )); HIT_LINE="$line"; return 0
     fi
   done
   return 1
@@ -502,6 +527,17 @@ case "$MODE" in
     # because only the final paragraph becomes the merged commit's git
     # trailers, the body must actually END with the block, not merely
     # contain trailer-shaped lines somewhere above other content.
+    #
+    # READ BEFORE ANY TOOL (2026-11-28): the title and body are put to the
+    # UNREADABLE TEXT test (under helpers) before `tr` or `sed` sees them.
+    # On macOS, BSD `tr` and `sed` refuse bytes that are invalid in a UTF-8
+    # locale and stop the checker there, so a body holding one failed
+    # closed without the line being named (P3 advisory of the Tier-2 reviews
+    # of FounderOS pull request 439 and Build Room pull request 169). Each
+    # such line is now named first; a tool that stops after that still
+    # stops the checker.
+    split_lines "${PR_TITLE-}"
+    split_lines "${PR_BODY-}"
     body="$(printf '%s' "${PR_BODY-}" | tr -d '\r')"
     # PR TITLE (2026-09-21, Copilot on FounderOS PR #356): the merge commit
     # is "<PR title> (#N)\n\n<body>", so the title is the first line git
@@ -786,6 +822,26 @@ case "$MODE" in
                                                0 $'Summary.\n\n---\xe3\x80\x80\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     st "--- then CR mid-line is a divider"     1 $'Summary.\n\n---\rx\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     st "CRLF body with bare --- is a divider"  1 $'Summary.\r\n\r\n---\r\n\r\nRole-Id: builder\r\nActor-Id: session:x\r\nExecution-Surface: claude-code\r'
+    # Divider line numbers (2026-11-28; first_match): the number counts
+    # empty lines, an equal earlier line is the hit, and a line far down a
+    # long body is numbered as well.
+    st_divider_line() {
+      local name="$1" expected="$2" body="$3" rc=0 out
+      out="$(PR_BODY="$body" bash "$0" prbody 2>/dev/null)" || rc=$?
+      if [[ "$rc" -ne 1 || "$out" != *"PR body: line $expected is a git message divider"* ]]; then
+        echo "SELFTEST FAIL: $name (exit $rc; line $expected not named)"
+        fail=1
+      else
+        echo "selftest ok: $name"
+      fi
+    }
+    st_divider_line "divider line: first line"           1 $'---\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st_divider_line "divider line: after empty lines"    3 $'\n\n---\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    st_divider_line "divider line: CRLF lines"           2 $'Summary.\r\n---\r\n\r\nRole-Id: builder\r\nActor-Id: session:x\r\nExecution-Surface: claude-code\r'
+    st_divider_line "divider line: the first of two"     2 $'same\n---\nsame\n---\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
+    long_body=""
+    for ((long_i = 1; long_i <= 3000; long_i++)); do long_body="${long_body}L$long_i$NL"; done
+    st_divider_line "divider line: line 3001"         3001 "${long_body}---"$'\n\nRole-Id: builder\nActor-Id: session:x\nExecution-Surface: claude-code'
     # The shape that reached `main` in this repository (PR #83 at 69ca61b,
     # PR #82 at 0629c73): Cursor Bugbot's summary block, opening with a bare
     # `---`, above the trailers. The same block with `***` in place of the
@@ -932,32 +988,54 @@ case "$MODE" in
     # directions, and the no-op handler as `true` or `:` with any spacing
     # after `||`. They are tripwires for the usual spellings, not a proof:
     # a handler by another name is for review to catch.
+    #
+    # A HANDLER ON THE NEXT LINE (2026-11-28; P3 advisory of the Tier-2
+    # reviews of FounderOS pull request 439 and Build Room pull request
+    # 169): bash reads on past a newline, a comment or a line continuation
+    # after `||`, so the handler can sit on a line of its own. A line that
+    # ends in `||` (a continuation or a comment may follow it) arms the
+    # check, and the next line that is not a comment trips it when it
+    # begins with the handler. The scan is a function, so the cases after
+    # the guards can put small texts to it.
     lt='<'
     here_string="$lt$lt$lt"
     proc_subst_in="$lt("
     proc_subst_out='>''('
     grep_word='(^|[^A-Za-z0-9_-])gr''ep([^A-Za-z0-9_-]|$)'
     or_true='[|][|][[:space:]]*(tr''ue|:)([^A-Za-z0-9_-]|$)'
+    or_open='[|][|][[:space:]]*([\\][[:space:]]*)?(#.*)?$'
+    or_handler='^[[:space:]]*(tr''ue|:)([^A-Za-z0-9_-]|$)'
     comment_line='^[[:space:]]*#'
+    # scan_constructs <text>
+    # Scans <text> the way this script is scanned, and sets scan_lines,
+    # scan_in_checks and the four found_ flags.
+    scan_constructs() {
+      local line or_armed=0
+      local -a scan_src
+      scan_lines=0
+      scan_in_checks=1
+      found_here_string=0
+      found_grep=0
+      found_proc_subst=0
+      found_or_true=0
+      split_lines "$1"; scan_src=("${SPLIT[@]}")
+      for line in "${scan_src[@]}"; do
+        scan_lines=$((scan_lines + 1))
+        if [[ "$line" == "  selftest)" ]]; then scan_in_checks=0; fi
+        if [[ "$line" =~ $comment_line ]]; then continue; fi
+        if [[ "$line" == *"$here_string"* ]]; then found_here_string=1; fi
+        if [[ "$scan_in_checks" -eq 1 ]]; then
+          if [[ "$line" =~ $grep_word ]]; then found_grep=1; fi
+          if [[ "$line" == *"$proc_subst_in"* || "$line" == *"$proc_subst_out"* ]]; then found_proc_subst=1; fi
+          if [[ "$line" =~ $or_true ]]; then found_or_true=1; fi
+          if [[ "$or_armed" -eq 1 && "$line" =~ $or_handler ]]; then found_or_true=1; fi
+        fi
+        or_armed=0
+        if [[ "$line" =~ $or_open ]]; then or_armed=1; fi
+      done
+    }
     self_src="$(<"$0")"
-    scan_lines=0
-    scan_in_checks=1
-    found_here_string=0
-    found_grep=0
-    found_proc_subst=0
-    found_or_true=0
-    split_lines "$self_src"; lines=("${SPLIT[@]}")
-    for line in "${lines[@]}"; do
-      scan_lines=$((scan_lines + 1))
-      if [[ "$line" == "  selftest)" ]]; then scan_in_checks=0; fi
-      if [[ "$line" =~ $comment_line ]]; then continue; fi
-      if [[ "$line" == *"$here_string"* ]]; then found_here_string=1; fi
-      if [[ "$scan_in_checks" -eq 1 ]]; then
-        if [[ "$line" =~ $grep_word ]]; then found_grep=1; fi
-        if [[ "$line" == *"$proc_subst_in"* || "$line" == *"$proc_subst_out"* ]]; then found_proc_subst=1; fi
-        if [[ "$line" =~ $or_true ]]; then found_or_true=1; fi
-      fi
-    done
+    scan_constructs "$self_src"
     scan_ok=1
     if [[ "$scan_in_checks" -ne 0 || "$scan_lines" -lt 500 ]]; then scan_ok=0; fi
     guard() {
@@ -976,6 +1054,26 @@ case "$MODE" in
     guard "no check runs grep" "$found_grep"
     guard "no check reads through a process substitution" "$found_proc_subst"
     guard "no check wraps a command in '|| true'" "$found_or_true"
+    # The no-op handler tripwire, put to small texts. Each text ends the
+    # checks with the label line, as this script does.
+    st_scan() {
+      local name="$1" expected="$2" text="$3"
+      scan_constructs "$text"
+      if [[ "$found_or_true" -ne "$expected" ]]; then
+        echo "SELFTEST FAIL: $name (found $found_or_true, expected $expected)"
+        fail=1
+      else
+        echo "selftest ok: $name"
+      fi
+    }
+    st_scan "scan: handler on the same line found"            1 $'done || true\n  selftest)'
+    st_scan "scan: handler on the next line found"            1 $'done ||\n    true\n  selftest)'
+    st_scan "scan: ':' handler on the next line found"        1 $'done ||\n    :\n  selftest)'
+    st_scan "scan: handler after a comment line found"        1 $'done || # why\n    # more\n    true\n  selftest)'
+    st_scan "scan: handler after a line continuation found"   1 $'done || \\\n    true\n  selftest)'
+    st_scan "scan: another command on the next line passes"  0 $'a ||\n    b\n  selftest)'
+    st_scan "scan: a longer word on the next line passes"     0 $'a ||\n    trueish\n  selftest)'
+    st_scan "scan: a handler after the selftest label passes" 0 $'  selftest)\ndone ||\n    true'
     # Absolute path to this script: the fault and unreadable-text cases run
     # it with the working directory inside a throwaway repository, where a
     # relative $0 would not resolve.
@@ -1118,6 +1216,30 @@ case "$MODE" in
       st_expect "unreadable: a PR body holding an invalid byte is refused" 1 "$rc"
       rc=0; LC_ALL=C PR_BODY="$bad_body" bash "$self_abs" prbody >/dev/null 2>&1 || rc=$?
       st_expect "unreadable: the same PR body is read as bytes under LC_ALL=C" 0 "$rc"
+      # READ BEFORE ANY TOOL cases (2026-11-28; under prbody). BSD `tr` and
+      # `sed` refuse such a byte and stop the checker; GNU's pass it on. A
+      # stand-in that refuses every input, first on PATH, gives every system
+      # the macOS behaviour: the checker must stop, and must have named the
+      # line before it did.
+      st_named_first() {
+        local name="$1" cmd="$2" rc=0 out tmp
+        tmp="$(mktemp -d)"
+        printf '#!/bin/sh\necho "%s: Illegal byte sequence" >&2\nexit 1\n' "$cmd" > "$tmp/$cmd"
+        chmod +x "$tmp/$cmd"
+        out="$(PATH="$tmp:$PATH" LC_ALL="$utf8_locale" PR_BODY="$bad_body" bash "$self_abs" prbody 2>/dev/null)" || rc=$?
+        rm -rf "$tmp"
+        if [[ "$rc" -eq 0 ]]; then
+          echo "SELFTEST FAIL: $name (exit 0)"
+          fail=1
+        elif [[ "$out" != *"FAIL (text)"* ]]; then
+          echo "SELFTEST FAIL: $name (exit $rc before the line was named)"
+          fail=1
+        else
+          echo "selftest ok: $name"
+        fi
+      }
+      st_named_first "unreadable: a PR body's line is named before tr can stop the checker" tr
+      st_named_first "unreadable: a PR body's line is named before sed can stop the checker" sed
       # `git commit` rewrites an invalid byte as Latin-1 before it stores the
       # message (measured, git 2.43.0: 0xFF is stored as 0xC3 0xBF), so these
       # commits are written as objects, the way another tool could write one.
